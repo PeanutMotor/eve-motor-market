@@ -1,4 +1,5 @@
 """Authenticated + public ESI calls."""
+import logging
 import time
 
 import requests
@@ -6,6 +7,10 @@ from requests.adapters import HTTPAdapter
 
 from . import auth, config, store, tokens
 from . import APP_NAME as _APP_NAME, __version__ as _VERSION
+
+# Ohne Handler landet eine Warnung nur auf stderr (in der EXE: nirgends) -
+# das ist gewollt: kein Dialog fuer einen fehlgeschlagenen Nebenabruf.
+_log = logging.getLogger(__name__)
 
 # CCP moechte an dieser Kennung erkennen koennen, welches Werkzeug spricht -
 # das ist der Weg, auf dem sie bei Problemen den Entwickler erreichen, statt
@@ -706,7 +711,9 @@ def resolve_names(type_ids) -> dict:
     """Resolve typeIDs -> names, using cache + ESI /universe/names/. Resilient to
     individual bad ids (one bad id no longer blanks the whole batch). IDs that
     /universe/names/ can't resolve get a second try via /universe/types/{id}/."""
-    ids = sorted(set(int(t) for t in type_ids))
+    # NIE NEGATIVE IDS AN ESI (Multi-Bauplan 1.0.9: das Buendel heisst -1
+    # und ist kein Item - /universe/names/ wuerde den ganzen Block ablehnen).
+    ids = sorted(set(int(t) for t in type_ids if int(t) > 0))
     result = store.cached_names(ids)
     missing = [t for t in ids if t not in result]
     new = {}
@@ -798,6 +805,9 @@ def fetch_active_jobs(client_id: str, character_id: int,
             "activity_id": j.get("activity_id"),
             "product_type_id": j.get("product_type_id"),
             "blueprint_type_id": j.get("blueprint_type_id"),
+            # DIE BLAUPAUSE IM JOB (item_id, 26.09.2026): damit
+            # `blaupausen_in_jobs` sie aus dem Vorrat streichen kann.
+            "blueprint_id": j.get("blueprint_id"),
             "runs": j.get("runs"),
             "start_date": j.get("start_date"),
             "end_date": j.get("end_date"),
@@ -807,23 +817,45 @@ def fetch_active_jobs(client_id: str, character_id: int,
     return out
 
 
+# Aktivitaeten, die WIRKLICH ein Item herstellen: Fertigung und die beiden
+# Reaktions-Kennungen. Forschung (3/4), Kopieren (5) und Invention (8)
+# gehoeren NICHT dazu - ihr `product_type_id` ist eine Blaupause, kein
+# gebautes Stueck; wer sie mitzaehlt, meldet Fortschritt fuer etwas, das
+# nie im Hangar landet.
+HERSTELLENDE_AKTIVITAETEN = (1, 9, 11)
+
+
 def fetch_delivered_jobs(client_id: str, character_id: int) -> list:
-    """Abgeschlossene ("delivered") FERTIGUNGS-Jobs des Charakters - für die
-    "Meine Baupläne"-Fertig-Erkennung (hat der Nutzer die geplante Stückzahl
-    inzwischen wirklich gebaut?). NUR activity_id=1 (Fertigung) - Forschung/
-    Kopieren/Invention/Reaktion produzieren kein verkaufbares Endprodukt im
-    Sinne eines Bauplans. ESI liefert hier standardmäßig nur die letzten ~90
-    Tage zurück (CCP-seitige Grenze, nicht unsere)."""
+    """Abgeschlossene ("delivered") HERSTELLENDE Jobs des Charakters -
+    Grundlage der "Meine Baupläne"-Fertig-Erkennung UND des
+    Fortschrittsbalkens. ESI liefert hier standardmäßig nur die letzten ~90
+    Tage zurück (CCP-seitige Grenze, nicht unsere).
+
+    BEFUND 22.09.2026 (Nutzer: "es fühlt sich an, als gäbe es am Anfang kaum
+    Fortschritt und dann springt der Balken von 20 % auf 100 %"): hier stand
+    `activity_id != 1` - REAKTIONEN fielen also komplett heraus. Für die
+    Fertig-Erkennung des Endprodukts war das gedacht und meist harmlos; der
+    Fortschrittsbalken kam aber später dazu und zählt POSITIONEN über ALLE
+    Stufen - und die ersten Stufen eines Schiffsplans sind fast nur
+    Reaktionen. Die konnten damit NIE als erledigt gelten, egal wie viele
+    davon liefen. Genau dieselbe Fehlerklasse wie "unrefined war keine
+    Reaktion" (21.09.2026): eine Liste, die für einen Zweck gefiltert wurde,
+    bekam später einen zweiten Zweck.
+    `activity_id` wandert jetzt mit, damit der Aufrufer die Frage selbst
+    stellen kann, statt sie hier vorentschieden zu bekommen."""
     url = f"{config.ESI_BASE}/characters/{character_id}/industry/jobs/"
     r = _get_with_retry(url, headers=_auth_headers(client_id, character_id),
                      params={"include_completed": "true"}, timeout=30)
     r.raise_for_status()
     out = []
     for j in r.json() or []:
-        if j.get("status") != "delivered" or j.get("activity_id") != 1:
+        if j.get("status") != "delivered":
+            continue
+        if j.get("activity_id") not in HERSTELLENDE_AKTIVITAETEN:
             continue
         out.append({
             "job_id": j.get("job_id"),
+            "activity_id": j.get("activity_id"),
             "product_type_id": j.get("product_type_id"),
             "blueprint_type_id": j.get("blueprint_type_id"),
             "runs": j.get("runs"),
@@ -843,17 +875,76 @@ def fetch_character_implants(client_id: str, character_id: int) -> list:
     return r.json() or []
 
 
-def fetch_blueprints(client_id: str, character_id: int) -> list:
+JOB_SPERRT_BLAUPAUSE = ("active", "paused")
+# FERTIGUNG SPERRT NIE (Nutzer 26.09.2026: "ich moechte, dass Fertigungs-
+# auftraege niemals die Blueprints sperren. Das muss sein, weil ESI zu
+# langsam trackt"): ein abgelieferter Bau-Job steht bei ESI noch Minuten
+# als laufend, und solange fehlte die Blaupause im Runplaner. Nur
+# Forschung, Kopie, Invention (und Reaktion) sperren.
+JOB_SPERRT_NICHT_AKTIVITAET = (1,)     # 1 = Manufacturing
+
+
+def blaupausen_in_jobs(blueprints, jobs):
+    """Blaupausen markieren, die gerade in einem Industrie-Job stecken.
+    Rein: {b} bekommt `in_job` = {job_id, activity_id, end_date}, wenn ihre
+    item_id die blueprint_id eines nicht abgelieferten Jobs ist. Gibt
+    (verfuegbar, belegt) zurueck.
+
+    NUTZER-BEFUND 26.09.2026: "ich habe Component Blueprints am Researchen
+    auf ME und TE in der Bauschleife, das Tool denkt jetzt ich habe diese
+    zur Verfuegung ... ich habe eigentlich nur 5 Titanium Diborite Armor
+    Plate Blueprint, die ich benutzen kann, die anderen sind am Researchen
+    und das Tool denkt ich besitze 8 Stueck." ESI listet eine Blaupause im
+    Job weiter unter /blueprints/; nur der Job (/industry/jobs/,
+    blueprint_id) verraet, dass sie gerade nicht greifbar ist - egal ob
+    Research, Kopie, Invention oder Fertigung. Regel 3: lieber eine
+    Blaupause zu wenig als eine, die im Spiel gar nicht frei ist."""
+    # NUR laufende Jobs sperren (Nutzer 26.09.2026: "Fertigung koennte zum
+    # Problem werden, wenn etwas abholbereit ist, sollte es dennoch
+    # zaehlen"): 'ready' braucht nur den Klick auf Abliefern, 'delivered',
+    # 'cancelled' und 'reverted' haben die Blaupause schon zurueckgegeben.
+    # 'paused' (Struktur ohne Strom) haelt sie weiter fest.
+    belegt_von = {}
+    for j in jobs or []:
+        bid = j.get("blueprint_id")
+        if bid is None or j.get("status") not in JOB_SPERRT_BLAUPAUSE:
+            continue
+        if j.get("activity_id") in JOB_SPERRT_NICHT_AKTIVITAET:
+            continue
+        belegt_von[int(bid)] = j
+    frei, belegt = [], []
+    for b in blueprints or []:
+        j = belegt_von.get(b.get("item_id")) if b.get("item_id") is not None else None
+        if j is None:
+            frei.append(b)
+            continue
+        b = dict(b)
+        b["in_job"] = {"job_id": j.get("job_id"),
+                       "activity_id": j.get("activity_id"),
+                       "end_date": j.get("end_date")}
+        belegt.append(b)
+    return frei, belegt
+
+
+def fetch_blueprints(client_id: str, character_id: int, jobs=None,
+                     mit_belegten: bool = False) -> list:
     """Alle persönlichen Blueprints eines Charakters (egal wo sie liegen:
     Stationen, Strukturen, Container, im Schiff). Braucht den Scope
     esi-characters.read_blueprints.v1.
 
     Rückgabe je Blueprint:
-    [{type_id, quantity, material_efficiency, time_efficiency, runs,
+    [{item_id, type_id, quantity, material_efficiency, time_efficiency, runs,
       is_bpo, location_id}].
     - runs = -1 bei einer BPO (unbegrenzt), sonst verbleibende Runs einer BPC.
     - quantity = -1 bedeutet laut ESI eine einzelne BPO, -2 eine einzelne BPC;
       wir leiten daraus is_bpo ab und normalisieren quantity auf >=1.
+
+    BLAUPAUSEN IN JOBS (26.09.2026, s. blaupausen_in_jobs) fehlen in der
+    Rueckgabe - sie sind im Spiel nicht greifbar. `jobs` kann der Aufrufer
+    mitgeben (spart den Abruf); sonst werden sie hier geholt. Scheitert
+    dieser Abruf, bleibt es beim alten Verhalten (alle Blaupausen), und der
+    Grund steht im Log. `mit_belegten=True` liefert sie MIT, markiert mit
+    `in_job` (fuer den Blueprints-Ueberblick).
 
     ACHTUNG: Nur PERSÖNLICHE Blueprints. Blueprints in einem Corp-Hangar
     erscheinen hier NICHT (die bräuchten einen Corp-Scope + Rollen)."""
@@ -876,6 +967,7 @@ def fetch_blueprints(client_id: str, character_id: int) -> list:
         is_bpo = (runs == -1) or (raw_qty == -1)
         qty = raw_qty if raw_qty and raw_qty > 0 else 1
         out.append({
+            "item_id": b.get("item_id"),
             "type_id": b.get("type_id"),
             "quantity": qty,
             "material_efficiency": b.get("material_efficiency", 0),
@@ -884,7 +976,18 @@ def fetch_blueprints(client_id: str, character_id: int) -> list:
             "is_bpo": is_bpo,
             "location_id": b.get("location_id"),
         })
-    return out
+    if jobs is None:
+        try:
+            jobs = fetch_active_jobs(client_id, character_id)
+        except Exception as _e:
+            # Englisch, weil de_scan jede deutsche Zeichenkette zaehlt
+            # (Logtext, nie Oberflaeche).
+            _log.warning("blueprints: jobs of %s unavailable (%s) - "
+                         "blueprints in jobs stay listed as free",
+                         character_id, _e)
+            jobs = []
+    frei, belegt = blaupausen_in_jobs(out, jobs)
+    return frei + belegt if mit_belegten else frei
 
 
 # ---------------------------------------------------------------------------
@@ -996,6 +1099,7 @@ def fetch_corporation_blueprints(client_id: str, character_id: int,
         is_bpo = (runs == -1) or (raw_qty == -1)
         qty = raw_qty if raw_qty and raw_qty > 0 else 1
         out.append({
+            "item_id": b.get("item_id"),
             "type_id": b.get("type_id"),
             "quantity": qty,
             "material_efficiency": b.get("material_efficiency", 0),
@@ -1032,6 +1136,7 @@ def fetch_corporation_jobs(client_id: str, character_id: int,
             "product_type_id": j.get("product_type_id"),
             "blueprint_type_id": j.get("blueprint_type_id"),
             "runs": j.get("runs"),
+            "blueprint_id": j.get("blueprint_id"),
             "start_date": j.get("start_date"),
             "end_date": j.get("end_date"),
             "completed_date": j.get("completed_date"),

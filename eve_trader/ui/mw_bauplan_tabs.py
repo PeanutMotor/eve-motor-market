@@ -18,18 +18,75 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout,
-    QLabel, QPushButton, QSlider, QSpinBox, QStackedWidget, QTableWidget,
-    QVBoxLayout, QWidget,
+    QLabel, QPushButton, QSizePolicy, QSlider, QSpinBox, QStackedWidget,
+    QTableWidget, QVBoxLayout, QWidget,
 )
 
 from .. import esi, hubs, industry, reprocess, store
 from . import icons, theme
 from ..sprache import t
 from .mw_basis import (KEIN_DECRYPTOR, ROLLE_KOPIERNAME, NumericItem,
-                       dec_anzeige, isk)
+                       dec_anzeige, isk, ohne_mausrad)
 
 
 class BauplanTabs:
+    def _inv_alle_besten(self):
+        """"Best Decryptor for all Blueprints" (Nutzer 26.09.2026).
+
+        NACHEINANDER, nicht gleichzeitig: die Rangliste jeder Karte rechnet den
+        GANZEN Plan (Materialkosten haengen an der ME aller erfundenen Teile).
+        Nach jeder Wahl stehen deshalb die neuen Decryptoren schon in
+        `_bd_opts`, die naechste Karte rechnet damit weiter. Am Ende EIN
+        Neuaufbau statt einer je Karte (jede Combo-Aenderung loeste sonst
+        einen eigenen aus - bei 5 Karten 5 volle Rechnungen)."""
+        from PySide6.QtWidgets import QApplication as _QA
+        _rang = dict(getattr(self, "_bd_inv_rang", None) or {})
+        _alle = len(getattr(self, "_bd_inv_combos", None) or {})
+        _lbl = getattr(self, "_bd_inv_alle_lbl", None)
+        _geaendert = 0
+        _QA.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for _bp, (_fn, _dl) in _rang.items():
+                try:
+                    _ranked = _fn()
+                except Exception as _e:
+                    self._log_exception("Best Decryptor for all", str(_e))
+                    continue
+                if not _ranked:
+                    continue
+                _name = _ranked[0]["name"]
+                _dv = next((v for n, v in _dl if n == _name), None)
+                if _dv is None:
+                    continue
+                if self._bd_decryptor_map.get(_bp) != _name:
+                    _geaendert += 1
+                self._bd_dec_bestaetigt = set(getattr(self, "_bd_dec_bestaetigt", None) or ())
+                self._bd_dec_bestaetigt.add(int(_bp))
+                self._bd_decryptor_map[_bp] = _name
+                self._bd_opts.setdefault("inv_decryptor_map", {})[_bp] = _dv
+        finally:
+            _QA.restoreOverrideCursor()
+        _cb = getattr(self, "_bd_full_rebuild", None)
+        if _cb is not None:
+            _cb()
+        # RUECKMELDUNG (Nutzer 26.09.2026: "der Knopf macht nichts"). Bei ihm
+        # stand die einzige erfundene Karte schon auf ihrem besten Decryptor,
+        # die andere hatte "Own BPC" - also aenderte sich sichtbar nichts. Jetzt
+        # sagt die Seitenleiste, was geschah: gewechselt / schon beste /
+        # uebersprungen. Jede Blaupause bekommt IHREN besten Decryptor.
+        if _lbl is not None:
+            try:
+                _lbl.setText(t(
+                    "Checked {n} blueprint(s): {chg} changed, {same} already on "
+                    "their best decryptor, {skip} skipped (Own BPC).").format(
+                        n=len(_rang), chg=_geaendert,
+                        same=len(_rang) - _geaendert,
+                        skip=max(0, _alle - len(_rang))))
+                _lbl.show()
+            except RuntimeError:
+                pass
+        return _geaendert
+
     # REIHENFOLGE DER BAU-STUFEN in der Blaupausen-Warnzeile - dieselbe wie
     # `_stage_order` im Blaupausen-Reiter (main_window). Die Werte sind die
     # SCHLUESSEL, die dort vergeben werden; angezeigt wird uebersetzt.
@@ -542,8 +599,7 @@ class BauplanTabs:
               "scan over a single region yields no price at all for "
               "many types, or just one.\nTAKES LONGER (all of New Eden "
               "instead of one region, several minutes depending on "
-              "time of day) – runs in the background, you can keep "
-              "working.\nThe MEDIAN is shown (the middle price): "
+              "time of day).\nThe MEDIAN is shown (the middle price): "
               "contract prices regularly have outliers on the high "
               "side that would skew an average. The average is in the "
               "tooltip of the cell next to it.\nPublic offers only – "
@@ -645,7 +701,18 @@ class BauplanTabs:
         self.b_stack.addWidget(_bp_scroll)      # 1 – Meine Blueprints
         self.b_stack.addWidget(plans_page)      # 2 – Aktuelle Baupläne
         self.b_stack.addWidget(_struct_scroll)  # 3 – Struktur-Fitting (+ Setup)
-        self._reload_saved_plans()
+        # PLAN-KARTEN ERST BEIM ERSTEN ZEIGEN (Nutzer 27.09.2026: "ja bitte
+        # mach das"; Start-Messung: der Build-Reiter kostete 1,4 s, fast
+        # alles fuer die Karten aller gespeicherten Plaene - dazu starteten
+        # sie zwei Hintergrund-Jobs (Schaetzung, ESI-Fertigstatus), die beim
+        # Start mitrechneten). Gebaut wird, sobald Seite 2 "My build plans"
+        # erscheint (Leiste und Tutorial gehen beide ueber _bau_nav).
+        # Jeder andere Aufruf von _reload_saved_plans baut wie bisher sofort.
+        # KEIN eigener Seiten-Waechter: _bau_nav(2) baut die Karten ohnehin
+        # bei jedem Oeffnen neu, und es ist der einzige Weg auf die Seite
+        # (b_stack.setCurrentIndex steht nur dort). Ein zweiter Waechter
+        # haette beim ersten Oeffnen doppelt gebaut (Rotprobe fand das).
+        self._plan_karten_gebaut = False
         outer.addWidget(self._build_bau_rail())
 
         self.tabs.addTab(w, t("Build"))
@@ -664,6 +731,7 @@ class BauplanTabs:
         Ein Decryptor-Wechsel schreibt in self._bd_opts['inv_decryptor_map']
         und löst self._bd_full_rebuild() aus, damit auch die Kopfzeile
         (Invention-Kosten, Gewinn) sofort den neuen Wert zeigt."""
+        import html as _h_sum      # Kurzfassung in der Kopfzeile (Decryptor-Name)
 
         def _kv_rows(rows):
             """Kompakte Zwei-Spalten-Liste: Beschriftung links (gedaempft),
@@ -709,6 +777,10 @@ class BauplanTabs:
             if w:
                 w.deleteLater()
         cards_layout.addStretch()
+        self._bd_inv_combos = {}          # je Blaupause die Decryptor-Wahl
+        self._bd_inv_best_btns = {}       # je Blaupause der Best-Choice-Knopf
+        self._bd_inv_karten = {}          # je Blaupause Pfeil/Rumpf/Kurzfassung
+        self._bd_inv_own = {}             # je Buendel-Ende: Own-BPC-Haken + ME/TE
         # SEITENLEISTE EBENFALLS LEEREN. Diese Funktion laeuft bei JEDEM
         # Rebuild - ohne das stapeln sich Struktur-Zeile und Skill-Auswahl
         # bei jeder Mengenaenderung erneut untereinander.
@@ -741,6 +813,14 @@ class BauplanTabs:
             Endprodukt selbst keine Invention braucht (reines T1/BPO) - sonst
             wären diese Felder nirgends mehr zu finden."""
             if own_bpc_widgets is None:
+                return
+            # KEINE KARTE FUER DAS BUENDEL SELBST (Nutzer 26.09.2026: "das
+            # T1-Item soll da nicht angezeigt sein, wirklich nur, was
+            # invented werden muss"): die Pseudo-Blaupause (-2) braucht
+            # keine Invention, ME/TE je Ende stehen in der Karte
+            # "Endprodukte". T1-Enden stehen ohnehin nicht im Tab - nur
+            # Items mit Eintrag in invention_for_bpc bekommen eine Karte.
+            if top_type_id == industry.BUENDEL_ID:
                 return
             _me_sp, _te_sp, _obc_cb, _obc_runs_lbl, _obc_runs_sp = own_bpc_widgets
             fb_card = QFrame(); fb_card.setObjectName("Card")
@@ -853,7 +933,7 @@ class BauplanTabs:
             "How likely the planned attempts are really enough.\n"
             "Higher = more attempts, more datacores, more certain to finish - but "
             "more expensive.\nThis does NOT change the success chance per attempt.\n"
-            "Also affects \u201eBest choice for profit\u201c: at high certainty, "
+            "Also affects \u201eBest Decryptor\u201c: at high certainty, "
             "decryptors with a better success chance pay off sooner.\n"
             "Applies to this build plan only; a new one starts again at {pct} %."
         ).format(pct=int(industry.DEFAULT_INVENTION_CONFIDENCE * 100)))
@@ -892,6 +972,7 @@ class BauplanTabs:
             if cb:
                 cb()
         inv_char_combo.currentIndexChanged.connect(_on_inv_char_change)
+        ohne_mausrad(inv_char_combo)
         char_row_l.addWidget(inv_char_combo)
         # Der einzelne Lade-Knopf wurde entfernt (Übersichtlichkeit) - "🛰 Alles
         # aus ESI laden" oben im Dialog deckt das jetzt mit ab. Nur der
@@ -1003,6 +1084,52 @@ class BauplanTabs:
         # Seitenleiste, die Kartenspalte beginnt also bei 0. Mit 2 landete
         # alles hinter dem Stretch.
         insert_at = 0
+        self._bd_inv_rang = {}            # je Blaupause: Rang-Funktion fuer "Best Decryptor for all"
+        # EINMAL OBEN STATT JE KARTE (Nutzer 26.09.2026: "Buy-Haken nur
+        # einmal oben"). "Buy datacores/decryptors" sind globale Einstellungen
+        # (ein Haken gilt fuer alle Karten), und die freien Science-Slots sind
+        # DIESELBEN fuer jede Invention - beides stand bisher in jeder Karte.
+        self._bd_inv_split_w = {}         # je Blaupause Regler/Anzeige/Fuellung
+        _mem_sp = getattr(self, "_bd_inv_split", None)
+        if not isinstance(_mem_sp, dict):
+            # Alte Form (kopien, slots) aus einer frueheren Fassung: die
+            # Slot-Zahl uebernehmen, die Kopienzahl galt fuer KEINE bestimmte
+            # Karte (sie hing an der letzten) - verwerfen.
+            if isinstance(_mem_sp, (tuple, list)) and len(_mem_sp) == 2:
+                self._bd_inv_slots = int(_mem_sp[1] or 10)
+            self._bd_inv_split = {}
+        if items:
+            _top = QFrame(); _top.setObjectName("Card")
+            _tl = QHBoxLayout(_top)
+            _tl.setContentsMargins(12, 6, 12, 6); _tl.setSpacing(12)
+            # "Buy datacores/decryptors" stehen seit 26.09.2026 (Nutzer) in der
+            # Seitenleiste, Karte "Buy or not?" ganz oben (mw_bauplan_fenster).
+            _tl.addStretch()
+            _tl.addWidget(QLabel(t("Free science slots:")))
+            self._inv_slots = QSpinBox()
+            self._inv_slots.setRange(1, 30)
+            self._inv_slots.setValue(int(getattr(self, "_bd_inv_slots", 10) or 10))
+            self._inv_slots.setToolTip(t(
+                "Your simultaneously usable science slots (in game at the bottom "
+                "left of the industry window, e.g. \u201eScience jobs 4/10\u201c). "
+                "Limits how many copies can really work in parallel."))
+            ohne_mausrad(self._inv_slots)
+            _tl.addWidget(self._inv_slots)
+
+            def _slots_neu(v):
+                self._bd_inv_slots = int(v)
+                for _sw in (getattr(self, "_bd_inv_split_w", None) or {}).values():
+                    try:
+                        # Den rechten Anschlag setzt die Fuellung (EINE Stelle:
+                        # min(freie Slots, Versuche)).
+                        if _sw.get("fill"):
+                            _sw["fill"]()
+                    except Exception:
+                        pass       # Anzeige darf den Bauplan nie blockieren
+            self._inv_slots.valueChanged.connect(_slots_neu)
+            cards_layout.insertWidget(insert_at, _top)
+            self._bd_inv_top = _top          # b-Suite
+            insert_at += 1
         for tid, bp_id, runs_needed, inv in items:
             self._bd_invention_targets.add(tid)
             t1_bp, base_runs, base_prob_sde, datacores = inv
@@ -1014,46 +1141,97 @@ class BauplanTabs:
             _skill_mod, _skill_char = self._bau_invention_skill_modifier_with_char(t1_bp)
             base_prob = min(1.0, base_prob_sde * _skill_mod)
             card = QFrame(); card.setObjectName("Card")
-            outer = QVBoxLayout(card); outer.setContentsMargins(14, 12, 14, 12)
-            outer.setSpacing(8)
+            outer = QVBoxLayout(card); outer.setContentsMargins(14, 10, 14, 10)
+            outer.setSpacing(6)
+            # ZUKLAPPBARE KARTE (Nutzer 26.09.2026: "alle Eintraege der
+            # verschiedenen erforschbaren T2-Copys kompakter und
+            # uebersichtlicher, es verbraucht zu viel Platz"). Die Kopfzeile
+            # bleibt immer stehen und traegt rechts die Kurzfassung
+            # (Decryptor · Versuche · Invention-Kosten, `sum_lbl`, gefuellt
+            # in _recompute); alles andere liegt in `_body` und klappt mit
+            # dem Pfeil weg. Zustand je Blaupause in `bau_inv_zu` (Liste der
+            # zugeklappten Blaupausen-IDs, Standard OFFEN - wie `bau_multi_zu`).
+            head_row = QHBoxLayout(); head_row.setSpacing(6)
+            _pf = QPushButton()
+            _pf.setCheckable(True)
+            _pf.setFixedWidth(26)
+            _pf.setFlat(True)
+            _pf.setToolTip(t("Show or hide the details of this invention"))
+            head_row.addWidget(_pf)
             head = QLabel(f"{self._icon_html(t1_bp, size=22, kind='bp')}\u2699 "
                          f"{extra_names.get(t1_bp, f'#{t1_bp}')}")
             head.setStyleSheet(f"color:{theme.CYAN}; font-size:15px; font-weight:700;")
-            outer.addWidget(head)
+            head_row.addWidget(head)
+            head_row.addStretch()
+            sum_lbl = QLabel("")
+            sum_lbl.setObjectName("Muted")
+            sum_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            head_row.addWidget(sum_lbl)
+            outer.addLayout(head_row)
+            _body = QWidget()
+            body = QVBoxLayout(_body); body.setContentsMargins(0, 0, 0, 0)
+            body.setSpacing(6)
+            outer.addWidget(_body)
+            self._bd_inv_karten = getattr(self, "_bd_inv_karten", None) or {}
+            self._bd_inv_karten[int(bp_id)] = {"pfeil": _pf, "body": _body,
+                                               "kurz": sum_lbl}   # b-Suite
+
+            def _klapp(_on, _b=_body, _btn=_pf, _bp=int(bp_id)):
+                _b.setVisible(bool(_on))
+                _btn.setIcon(icons.icon("chevron" if _on else "arrow_right"))
+                try:
+                    _zu = [int(x) for x in (self.settings.get("bau_inv_zu") or [])]
+                except (TypeError, ValueError):
+                    _zu = []
+                _zu = [x for x in _zu if x != _bp]
+                if not _on:
+                    _zu.append(_bp)
+                if _zu != list(self.settings.get("bau_inv_zu") or []):
+                    self.settings["bau_inv_zu"] = _zu
+                    from .. import config as _cfg_k
+                    _cfg_k.save_settings(self.settings)
+            _pf.toggled.connect(_klapp)
+            try:
+                _offen0 = int(bp_id) not in [int(x) for x in
+                                             (self.settings.get("bau_inv_zu") or [])]
+            except (TypeError, ValueError):
+                _offen0 = True
+            _pf.setChecked(_offen0)
+            _klapp(_offen0)          # Symbol und Sichtbarkeit auch ohne Wechsel
+
+            # DATACORES UND SKILL-BONUS IN EINER ZEILE (Nutzer 26.09.2026,
+            # kompakter). Vorher: gruenes Band ueber die ganze Breite plus
+            # zwei zweizeilige Datacore-Bloecke mit 32-px-Symbolen. Jetzt:
+            # "[Symbol] Name x8 · [Symbol] Name x8 · Skills x1.392 Name".
+            # Der lange Erklaertext bleibt als Tooltip erhalten.
             _via_txt = (t("pinned") if getattr(self, "_bd_invention_char", 0)
                        else t("best character marked \u201eFor invention\u201c"))
+            import html as _h_sk
             if _skill_mod > 1.0 + 1e-9:
-                # DER CHARAKTERNAME IST DIE WICHTIGSTE INFORMATION DER ZEILE
-                # (Nutzer: "welcher Charakter den besten Skillbonus hat, sollte
-                # farblich hervorgehoben werden") - deshalb amber und groesser
-                # als der Rest, statt nur fett im gleichen Gruen unterzugehen.
-                # `html.escape`, weil EVE-Namen Zeichen wie & enthalten
-                # duerfen und das Label Rich-Text rendert.
-                import html as _h_sk
-                _skill_lbl = QLabel(t(
+                # DER CHARAKTERNAME IST DIE WICHTIGSTE INFORMATION (Nutzer:
+                # "welcher Charakter den besten Skillbonus hat, sollte farblich
+                # hervorgehoben werden") - amber und fett; `html.escape`, weil
+                # EVE-Namen & enthalten duerfen.
+                _skill_lbl = QLabel(
+                    f'<span style="color:{theme.GREEN}; font-weight:700;">'
+                    + t("Skills \u00d7{mod}").format(mod=f"{_skill_mod:.3f}")
+                    + f'</span> <span style="color:{theme.AMBER}; font-weight:800;">'
+                    f'{_h_sk.escape(str(_skill_char))}</span>')
+                _skill_lbl.setToolTip(t(
                     "<b>Skill bonus active: \u00d7{mod}</b> on the base success "
                     "chance \u2013 skills of <span style='color:{color}; font-size:15px; "
                     "font-weight:800;'>{name}</span> ({via})"
                 ).format(mod=f"{_skill_mod:.3f}", color=theme.AMBER,
                          name=_h_sk.escape(str(_skill_char)), via=_via_txt))
-                # Lange Namen sind moeglich - umbrechen statt den Dialog
-                # breiter zu ziehen.
-                _skill_lbl.setWordWrap(True)
-                _skill_lbl.setStyleSheet(
-                    f"color:{theme.GREEN}; font-size:13px; font-weight:700; "
-                    f"padding:4px 8px; background: rgba(63,185,80,0.12); "
-                    f"border-radius:6px;")
-                outer.addWidget(_skill_lbl)
             else:
-                _skill_lbl = QLabel(t(
+                _skill_lbl = QLabel(
+                    f'<span style="color:{theme.AMBER}; font-weight:700;">'
+                    + t("\u26A0 No skill bonus") + '</span>')
+                _skill_lbl.setToolTip(t(
                     "\u26A0 <b>No skill bonus included</b> (base SDE value) - mark a "
                     "character as \u201eFor invention\u201c in the build characters tab "
                     "+ \u201eLoad job slots\u201c for the real, higher success chance."))
-                _skill_lbl.setStyleSheet(
-                    f"color:{theme.AMBER}; font-size:13px; font-weight:700; "
-                    f"padding:4px 8px; background: rgba(242,162,60,0.12); "
-                    f"border-radius:6px;")
-                outer.addWidget(_skill_lbl)
+            _skill_lbl.setStyleSheet("font-size:13px;")
 
             # Ingame-Layout nachgebaut: LINKS Input (Datacores + Decryptor mit
             # Icons, wie die zwei Slots + der Decryptor-Slot im Spiel), Pfeil,
@@ -1061,18 +1239,25 @@ class BauplanTabs:
             # artige Zeilen, wie das "OUTCOME"-Panel im Ingame-Fenster).
             row = QHBoxLayout(); row.setSpacing(14)
             left = QVBoxLayout(); left.setSpacing(4)
+            dc_row = QHBoxLayout(); dc_row.setSpacing(6)
             for d, q in datacores:
-                dc_row = QHBoxLayout(); dc_row.setSpacing(6)
-                dc_row.addWidget(self._icon_label(d, size=32))
-                dc_lbl = QLabel(f"{extra_names.get(d, f'#{d}')}")
+                dc_row.addWidget(self._icon_label(d, size=20))
+                _dc_name = extra_names.get(d, f'#{d}')
+                # "Datacore - " steht im Namen jedes Datacores; das Symbol
+                # sagt es schon. Voller Name im Tooltip (so heisst er im Spiel
+                # und auf der Einkaufsliste).
+                # de_scan6: aus  (Item-Name-Praefix aus der SDE, kein Anzeigetext)
+                _dc_kurz = _dc_name[11:] if _dc_name.startswith("Datacore - ") else _dc_name
+                # de_scan6: an
+                dc_lbl = QLabel(f"{_dc_kurz} <b>\u00d7{q}</b>")
                 dc_lbl.setStyleSheet("font-size:11px;")
-                dc_col = QVBoxLayout(); dc_col.setSpacing(0)
-                dc_col.addWidget(dc_lbl)
-                qty_lbl = QLabel(t("\u00d7{n} per attempt").format(n=q)); qty_lbl.setObjectName("Muted")
-                qty_lbl.setStyleSheet("font-size:11px;")
-                dc_col.addWidget(qty_lbl)
-                dc_row.addLayout(dc_col); dc_row.addStretch()
-                left.addLayout(dc_row)
+                dc_lbl.setToolTip(_dc_name + " \u2013 " + t("\u00d7{n} per attempt").format(n=q))
+                dc_row.addWidget(dc_lbl)
+                _dc_sep = QLabel("\u00b7"); _dc_sep.setObjectName("Muted")
+                dc_row.addWidget(_dc_sep)
+            dc_row.addWidget(_skill_lbl)
+            dc_row.addStretch()
+            left.addLayout(dc_row)
             dec_row = QHBoxLayout(); dec_row.setSpacing(6)
             dec_icon_lbl = QLabel(); dec_icon_lbl.setFixedSize(32, 32)
             dec_row.addWidget(dec_icon_lbl)
@@ -1080,63 +1265,60 @@ class BauplanTabs:
             for nm, v in decryptor_list:
                 combo.addItem(_dv_label(nm, v), nm)
             self._combo_select(combo, self._bd_decryptor_map.get(bp_id, KEIN_DECRYPTOR))
+            # NUR PER KLICK (Nutzer 26.09.2026): das Mausrad ueber dem
+            # Dropdown scrollt den Reiter, statt den Decryptor zu wechseln
+            # und damit eine Rechnung auszuloesen. Gilt fuer alle Bedien-
+            # elemente dieses Reiters (Combo, Spinner, Regler) - `ohne_mausrad`.
+            ohne_mausrad(combo)
             dec_row.addWidget(combo, 1)
             left.addLayout(dec_row)
-            dc_sum_lbl = QLabel("")
-            dc_sum_lbl.setObjectName("Muted")
-            dc_sum_lbl.setStyleSheet("font-size:11px;")
-            dc_sum_lbl.setWordWrap(True)
-            left.addWidget(dc_sum_lbl)
-            best_btn = QPushButton(t("Best choice for profit"))
+            # Die Zeile "Total for n attempts: ..." ist seit 26.09.2026 weg
+            # (Nutzer: "diese Zusammenfassung sieht man auch so"). Die Summe
+            # steht unten im Reiter ("Invention total (all items)").
+            # WARNUNG OHNE DECRYPTOR (Nutzer 26.09.2026: "vielleicht irgendwo eine
+            # Warnung, wenn man noch keinen Decryptor gewaehlt hat oder noch keine
+            # eigene BPC ME/TE eingegeben - das ist wichtig beim Bauen von T2").
+            # Gefuellt in _recompute (kennt Wahl und Own-BPC-Zustand).
+            dec_warn_lbl = QLabel("")
+            dec_warn_lbl.setWordWrap(True)
+            dec_warn_lbl.setStyleSheet(f"color:{theme.AMBER}; font-weight:700;")
+            left.addWidget(dec_warn_lbl)
+            dec_warn_lbl.hide()
+            # NAME (Nutzer 26.09.2026): "Best Decryptor" statt "Best choice
+            # for profit" - sagt, WAS gewaehlt wird.
+            best_btn = QPushButton(t("Best Decryptor"))
             best_btn.setIcon(icons.icon("trophy"))
             best_btn.setToolTip(t(
                 "Runs through all decryptors (plus „no decryptor“) for "
                   "the current build quantity and picks the one with the "
                   "lowest expected total cost."))
-            # AUFFAELLIGER (Nutzer, Sitzung 20: "groesser, fetter, amber
-            # umrandet"). Es ist der Knopf, der die Decryptor-Wahl abnimmt -
-            # er sah aus wie eine Beschriftung.
+            # KOMPAKT, LINKS, GEFUELLT (Nutzer 26.09.2026: "der Best-Choice-
+            # Knopf ist so bloed ueber das ganze Fenster gezogen, dass man ihn
+            # gar nicht sieht. Kompakter links ueber dem Blueprint-Namen,
+            # ersichtlicher"). Vorher: nur Rahmen, ueber die volle Breite der
+            # Spalte gestreckt - ein amberner Strich mit Text in der Mitte.
+            # Jetzt: amberne FLAECHE mit dunkler Schrift (wie das Reservierungs-
+            # Schloss "an"), in einer Zeile mit Stretch, damit er so breit ist
+            # wie sein Text; die Zeile sitzt direkt ueber dem Ergebnis-Block
+            # (Blaupausen-Name), s. u. `_best_row`. Rahmen in Ruhe und Hover
+            # gleich stark, sonst springt das Layout.
+            # SEIT 26.09.2026 WIE "CREATE SHOPPING LIST" (Nutzer: "Best
+            # Decryptor optisch anpassen - Hintergrund normale Tool-Farbe,
+            # nur Umrandung und Text Amber"). Kompakt und links bleibt.
             best_btn.setMinimumHeight(34)
-            best_btn.setStyleSheet(
-                f"QPushButton{{border:1px solid {theme.AMBER}; "
-                f"color:{theme.AMBER}; font-weight:800; font-size:13px; "
-                f"border-radius:6px; padding:4px 10px;}}"
-                f"QPushButton:hover{{background:{theme.AMBER}; "
-                f"color:{theme.BG};}}")
-            left.addWidget(best_btn)
-            # DIE ZWEI EINKAUFS-HAEKCHEN DIREKT DARUNTER (Nutzer): dort, wo
-            # man die Decryptor- und Datacore-Frage ohnehin entscheidet, und
-            # neben ME/TE sichtbar - statt ganz unten am Reiterende.
-            try:
-                _inv_kauf_row = self._build_invention_purchase_panel()
-                left.addWidget(_inv_kauf_row)
-            except Exception:
-                pass
-            manual_row = QHBoxLayout(); manual_row.setSpacing(6)
-            manual_cb = QCheckBox(t("Attempts manually:"))
-            manual_cb.setToolTip(t(
-                "Off: the number of attempts is calculated automatically from the "
-                "build plan quantity (\u2265{pct}% certainty). On: you set yourself how "
-                "many invention attempts you want to make - also affects the header "
-                "(job cost/margin/profit)."
-            ).format(pct=int(industry.DEFAULT_INVENTION_CONFIDENCE * 100)))
-            manual_row.addWidget(manual_cb)
-            manual_spin = QSpinBox(); manual_spin.setRange(0, 100000)
-            manual_spin.setEnabled(False)
-            # Erst bei Enter/Fokusverlust (oder Pfeiltasten) auslösen, nicht bei
-            # jedem Tastendruck - sonst würde ein Full-Rebuild (für die Kopfzeile,
-            # s.u.) mitten im Tippen die Eingabe unterbrechen.
-            manual_spin.setKeyboardTracking(False)
-            _restore = (getattr(self, "_bd_manual_attempts", None) or {}).get(bp_id)
-            if _restore:
-                _r_manual, _r_val = _restore
-                manual_cb.setChecked(bool(_r_manual))
-                manual_spin.setEnabled(bool(_r_manual))
-                if _r_val:
-                    manual_spin.setValue(int(_r_val))
-            manual_row.addWidget(manual_spin)
-            manual_row.addStretch()
-            left.addLayout(manual_row)
+            best_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            best_btn.setStyleSheet(theme.amber_rahmen_knopf())
+            _best_row = QHBoxLayout(); _best_row.setSpacing(6)
+            _best_row.addWidget(best_btn); _best_row.addStretch()
+            self._bd_inv_best_btns = getattr(self, "_bd_inv_best_btns", None) or {}
+            self._bd_inv_best_btns[int(bp_id)] = best_btn   # b-Suite
+            # Die zwei Einkaufs-Haken stehen seit 26.09.2026 EINMAL oben im
+            # Reiter (s. `_top`), nicht mehr in jeder Karte.
+            # "ATTEMPTS MANUALLY" IST SEIT 26.09.2026 WEG (Nutzer: "nehmen wir
+            # raus, ist nur verwirrend"). Die Versuchszahl kommt immer aus der
+            # Sicherheit unter "Invention settings" (Standard 75 %); eigene
+            # T2-Kopien im Hangar zieht die Rechnung selbst ab. Alte gespeicherte
+            # Handwerte wirken nicht mehr (`_resolve_inv_manual_attempts`).
             # EINSPALTIG (Nutzer: "Flycatcher-Blueprint nach links nehmen,
             # unter Datacores und Decryptor-Dropdown"). Vorher lag das Ergebnis
             # RECHTS neben der Eingabe, mit einem Pfeil dazwischen - das war
@@ -1224,68 +1406,133 @@ class BauplanTabs:
                 _own_row2.addWidget(_obc_runs_sp)
                 _own_row2.addStretch()
                 out_col.addLayout(_own_row2)
+            elif int(getattr(self, "_bd_type", 0) or 0) == industry.BUENDEL_ID \
+                    and (getattr(self, "_bd_own_bpc_je_ende", None) or {}).get(int(tid)):
+                # BUENDEL, ENDE MIT "EIGENE BPC" (26.09.2026, Invention je
+                # Ende): der Haken sitzt in der Karte "Endprodukte", die
+                # Rechnung laesst die Invention fuer DIESES Ende aus
+                # (_multi_opts_je_ende -> inv_manual_override). Der Decryptor
+                # ist dann bedeutungslos - ausgrauen und sagen, warum, sonst
+                # stuende hier eine Wahl, die nichts bewegt.
+                combo.setEnabled(False)
+                combo.setToolTip(t(
+                    "With \u201eOwn BPC instead of invention\u201c the invention is "
+                    "skipped - the decryptor no longer matters."))
+                _obc_hint = QLabel(t(
+                    "\u26a0 Own BPC for this end product: the invention is skipped, "
+                    "your ME/TE count (below or in the \u201eEnd products\u201c card)."))
+                _obc_hint.setWordWrap(True)
+                _obc_hint.setStyleSheet(f"color:{theme.AMBER}; font-size:11px;")
+                out_col.addWidget(_obc_hint)
+            # EIGENE ME/TE DIREKT IN DER INVENTION-KARTE (Nutzer 26.09.2026:
+            # "eigentlich sollte man da manuell ME/TE eingeben koennen, und dann
+            # sollte es oben in der Endprodukt-Anzeige automatisch auf 'Own'
+            # wechseln und die eigene ME/TE uebernehmen - und auch umgekehrt").
+            # EIN ZUSTAND, ZWEI GRIFFE: die Felder hier schreiben NICHT selbst in
+            # den Zustand, sondern bedienen die Zeile der Endprodukte-Karte
+            # (`_bd_multi_zeilen[tid]`) - deren Handler setzen Zustand, Override
+            # und den entprellten Neuaufbau; der baut diese Karte aus dem
+            # Zustand neu (= die Gegenrichtung). keyboardTracking aus: erst
+            # Enter/Verlassen uebernimmt, sonst zerstoert der Neuaufbau das
+            # Feld mitten im Tippen (Sitzung-8-Falle).
+            _mz_i = (getattr(self, "_bd_multi_zeilen", None) or {}).get(int(tid))
+            if int(getattr(self, "_bd_type", 0) or 0) == industry.BUENDEL_ID \
+                    and _mz_i is not None:
+                _own_an = bool((getattr(self, "_bd_own_bpc_je_ende", None) or {}).get(int(tid)))
+                _own_row = QHBoxLayout(); _own_row.setSpacing(8)
+                _own_cb = QCheckBox(t("Own BPC (your own ME/TE)"))
+                _own_cb.setChecked(_own_an)
+                _own_cb.setToolTip(t(
+                    "Ticked = you build from your own researched copy: the invention "
+                    "for this end product is skipped and your ME/TE count. Same "
+                    "switch as \u201eOwn\u201c in the \u201eEnd products\u201c card."))
+                _own_row.addWidget(_own_cb)
+                _me_lbl_i = QLabel(t("ME:")); _own_row.addWidget(_me_lbl_i)
+                _me_i = QSpinBox(); _me_i.setRange(0, 10); _me_i.setKeyboardTracking(False)
+                _me_i.setValue(int((getattr(self, "_bd_me_je_ende", None) or {}).get(int(tid), 0) or 0))
+                ohne_mausrad(_me_i); _own_row.addWidget(_me_i)
+                _te_lbl_i = QLabel(t("TE:")); _own_row.addWidget(_te_lbl_i)
+                _te_i = QSpinBox(); _te_i.setRange(0, 20); _te_i.setKeyboardTracking(False)
+                _te_i.setValue(int((getattr(self, "_bd_te_je_ende", None) or {}).get(int(tid), 0) or 0))
+                ohne_mausrad(_te_i); _own_row.addWidget(_te_i)
+                _own_row.addStretch()
+                out_col.addLayout(_own_row)
+                if not _own_an:
+                    # nur hide(): setVisible(True) auf Widgets ohne fertige
+                    # Eltern-Kette macht Fenster daraus (b8-Falle).
+                    for _w_h in (_me_lbl_i, _me_i, _te_lbl_i, _te_i):
+                        _w_h.hide()
+                _own_cb.toggled.connect(
+                    lambda v, _z=_mz_i: _z["obpc"].setChecked(bool(v)))
+                _me_i.valueChanged.connect(
+                    lambda v, _z=_mz_i: _z["me"].setValue(int(v)))
+                _te_i.valueChanged.connect(
+                    lambda v, _z=_mz_i: _z["te"].setValue(int(v)))
+                self._bd_inv_own = getattr(self, "_bd_inv_own", None) or {}
+                self._bd_inv_own[int(tid)] = {"cb": _own_cb, "me": _me_i, "te": _te_i}
+            self._bd_inv_combos = getattr(self, "_bd_inv_combos", None) or {}
+            self._bd_inv_combos[int(bp_id)] = combo      # b-Suite / Diagnose
             right.addLayout(out_col, 1)
-            outer.addLayout(row)          # Eingabe (Datacores + Decryptor)
+            body.addLayout(row)          # Eingabe (Datacores + Decryptor)
+            body.addLayout(_best_row)    # "Best Decryptor" links, ueber dem Namen
             _out_w = QWidget(); _out_w.setLayout(right)
-            outer.addWidget(_out_w)       # Ergebnis DARUNTER, nicht daneben
+            body.addWidget(_out_w)       # Ergebnis DARUNTER, nicht daneben
 
             need_lbl = QLabel(); need_lbl.setWordWrap(True)
-            outer.addWidget(need_lbl)
+            body.addWidget(need_lbl)
 
-            # AUFTEILUNG AUF T1-KOPIEN (Nutzer-Problem, Sitzung 8): "ich kann
-            # nicht aufteilen, in wievielen Tagen ich die Invention gemacht
-            # haben will. Wenn ich 500 T2-Runs brauche, macht es mehr Sinn,
-            # das auf 10 Kopien aufzuteilen." Der Grund ist Parallelitaet:
-            # EIN Invention-Job verbraucht EINEN Run EINER Kopie, und eine
-            # Kopie traegt nur EINEN Job gleichzeitig. Eine 212-Run-Kopie
-            # arbeitet 212 Jobs NACHEINANDER ab; 10 Kopien lassen 10 Jobs
-            # parallel laufen.
+            # KOPIERANLEITUNG JE KARTE (Nutzer 26.09.2026: "Alles, was ich pro
+            # T2-Blueprint sehen will, ist, wie ich kopieren muss und wie viel -
+            # schoen angezeigt und groesser: Copy your T1 original like this ->
+            # Job Runs / Runs per Copy"; "jede Karte ihren eigenen Regler";
+            # "eine Anzeige, wie lange es dauert und wie viele Science-Slots
+            # belegt werden").
+            # DER GRUND FUER DEN REGLER (Sitzung 8): EIN Invention-Job
+            # verbraucht EINEN Run EINER Kopie, und eine Kopie traegt nur EINEN
+            # Job gleichzeitig. Mehr Kopien = mehr Jobs parallel = mehr
+            # belegte Science-Slots, kuerzere Wartezeit. Wie viele T2-
+            # Blaupausen am Ende herauskommen, aendert der Regler NICHT (das
+            # machen Menge und Decryptor).
+            # FEHLER BIS 26.09.2026 (nachgestellt): Regler, Kopien-Feld und
+            # Anzeige lagen auf `self._inv_*` - JEDE Karte ueberschrieb sie,
+            # also bediente der Regler der ersten Karte die LETZTE. Jetzt
+            # gehoert alles der Karte (`_bd_inv_split_w[bp_id]`), gemerkt wird
+            # je Blaupause (`_bd_inv_split` {bp_id: Kopien}).
             _sp_box = QFrame(); _sp_box.setObjectName("Card")
-            _spl = QHBoxLayout(_sp_box)
-            _spl.setContentsMargins(12, 8, 12, 8); _spl.setSpacing(10)
-            _spl.addWidget(QLabel(t("Split across")))
-            self._inv_kopien = QSpinBox()
-            self._inv_kopien.setRange(1, 50)
-            self._inv_kopien.setValue(1)
-            self._inv_kopien.setSuffix(t(" copies"))
-            self._inv_kopien.setToolTip(t(
-                "How many T1 copies the attempts are spread across.\n"
-                "Each copy can carry ONE invention job at a time - more copies = "
-                "more parallel jobs = less waiting.\n"
-                "You have to make the copies from the original first (copy jobs "
-                "run one after another on ONE original)."))
-            _spl.addWidget(self._inv_kopien)
-            _spl.addWidget(QLabel(t("\u00b7 free slots")))
-            self._inv_slots = QSpinBox()
-            self._inv_slots.setRange(1, 30)
-            self._inv_slots.setValue(10)
-            self._inv_slots.setToolTip(t(
-                "Your simultaneously usable science slots (in game at the bottom "
-                "left of the industry window, e.g. \u201eScience jobs 4/10\u201c). "
-                "Limits how many copies can really work in parallel."))
-            _spl.addWidget(self._inv_slots)
-            # ZEIT-REGLER (Nutzer, Sitzung 9: "nur einen Regler bedienen, der
-            # mir die Zeit anzeigt - wenn ich ihn auf 2 Tage ziehe, zeigt das
-            # Tool, wie ich die T1-Kopien aufteilen soll"). Die Zeit ist eine
-            # TREPPENFUNKTION der Kopienzahl (Wandzeit = Wellen x Versuchs-
-            # zeit) - mehr Stufen als 1..freie Slots gibt es nicht. Der
-            # Regler faehrt deshalb ueber genau diese Stufen und die Zeile
-            # rechts zeigt beim Ziehen LIVE die Wandzeit samt Ingame-Eingabe.
-            # Regler und Kopien-Feld sind DERSELBE Wert, nur zwei Griffe.
-            _spl.addWidget(QLabel(t("\u00b7 time")))
-            self._inv_zeit = QSlider(Qt.Horizontal)
-            self._inv_zeit.setRange(1, self._inv_slots.value())
-            self._inv_zeit.setValue(1)
-            self._inv_zeit.setMinimumWidth(120)
-            self._inv_zeit.setToolTip(t(
-                "Drag until the shown wall time fits.\n"
-                "Left = 1 copy (slow, few slots used),\n"
-                "right = all free slots (as fast as possible)."))
-            _spl.addWidget(self._inv_zeit)
-            self._inv_split_lbl = QLabel("\u2013")
-            self._inv_split_lbl.setWordWrap(True)
-            _spl.addWidget(self._inv_split_lbl, 1)
-            outer.addWidget(_sp_box)
+            _spl = QVBoxLayout(_sp_box)
+            _spl.setContentsMargins(12, 8, 12, 8); _spl.setSpacing(6)
+            _cp_kopf = QLabel("\u2013")
+            _cp_kopf.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            _spl.addWidget(_cp_kopf)
+            _inv_row = QHBoxLayout(); _inv_row.setSpacing(10)
+            _inv_row.addWidget(QLabel(t("Invention jobs at once:")))
+            _sl = QSlider(Qt.Horizontal)
+            _sl.setRange(1, max(1, int(getattr(self, "_bd_inv_slots", 10) or 10)))
+            _sl.setValue(max(1, int((self._bd_inv_split or {}).get(int(bp_id), 1) or 1)))
+            _sl.setMinimumWidth(140)
+            _sl.setMaximumWidth(260)
+            ohne_mausrad(_sl)
+            _sl.setToolTip(t(
+                "How many invention jobs run at the same time \u2013 one T1 copy "
+                "each, one science slot each.\n"
+                "Left = 1 job (slow, 1 slot busy),\n"
+                "right = all free science slots (as fast as possible).\n"
+                "It does NOT change how many T2 blueprints you get \u2013 that "
+                "depends on quantity and decryptor."))
+            _inv_row.addWidget(_sl)
+            _inv_lbl = QLabel("")
+            _inv_lbl.setWordWrap(True)
+            _inv_row.addWidget(_inv_lbl, 1)
+            _spl.addLayout(_inv_row)
+            body.addWidget(_sp_box)
+            # EIGENE BPC IM BUENDEL: keine Invention fuer dieses Ende, also
+            # auch nichts zu kopieren - die Kopieranleitung waere irrefuehrend.
+            if int(getattr(self, "_bd_type", 0) or 0) == industry.BUENDEL_ID \
+                    and (getattr(self, "_bd_own_bpc_je_ende", None) or {}).get(int(tid)):
+                _sp_box.hide()
+            self._bd_inv_split_w[int(bp_id)] = {"slider": _sl, "kopf": _cp_kopf,
+                                                "lbl": _inv_lbl, "fill": None,
+                                                "att": 0}
             # ZEILE "Materialkosten / Bauzeit / Invention-Zeit" ENTFERNT
             # (Nutzer: "unnoetige Ueberlastung des UI"). Alle drei Werte sind
             # NEBENINFORMATION: die Materialkosten stehen als Gesamtsumme oben
@@ -1297,7 +1544,7 @@ class BauplanTabs:
             score_lbl = QLabel(); score_lbl.setWordWrap(True)
             score_lbl.setObjectName("Muted"); score_lbl.setStyleSheet("font-size:11px;")
             score_lbl.setVisible(False)
-            outer.addWidget(score_lbl)
+            body.addWidget(score_lbl)
             cards_layout.insertWidget(insert_at, card)
             insert_at += 1
 
@@ -1346,7 +1593,7 @@ class BauplanTabs:
                           base_prob=base_prob, datacores=datacores,
                           runs_needed=runs_needed, outcome_lbl=outcome_lbl,
                           need_lbl=need_lbl, dec_icon_lbl=dec_icon_lbl,
-                          manual_cb=manual_cb, manual_spin=manual_spin,
+                          dec_warn_lbl=dec_warn_lbl,
                           score_lbl=score_lbl, mc0_per_run=mc0_per_run,
                           build_seconds_0dec=build_seconds_0dec,
                           inv_time_per_attempt=_inv_time_per_attempt,
@@ -1404,90 +1651,33 @@ class BauplanTabs:
                 _dc_stock_txt = (t(" ({have} already in the hangar \u2192 {buy} more to buy)").format(
                                     have=_dc_owned, buy=max(0, _dc_total_needed - _dc_owned))
                                 if _dc_owned else "")
-                if not manual_cb.isChecked():
-                    manual_spin.blockSignals(True)
-                    manual_spin.setValue(int(ap["confident_attempts"] or 0))
-                    manual_spin.blockSignals(False)
-                    _owned_txt = (t(" (\u2212{n} already on hand as own BPC)").format(n=_owned_runs)
-                                 if _owned_runs else "")
-                    # ZEILENWEISE STATT FLIESSTEXT (Nutzer: "weniger Text zum
-                    # Lesen, schoener aufgelistet untereinander"). Vorher stand
-                    # das alles in EINER Zeile mit Mittelpunkten getrennt und
-                    # lief ueber die volle Fensterbreite.
-                    # AUFGERAEUMT (Nutzer, Sitzung 8): "Entferne jegliche
-                    # unnoetigen Informationen, behalte nur was ich
-                    # brauche. Davon gelingen -> nicht noetig. Datacores
-                    # -> nicht noetig. Hervorheben: fuer 75% Sicherheit,
-                    # weil das ist die Zahl, die ich ingame eingeben muss."
-                    # Also: EINE grosse Leitzahl, darunter der Kontext
-                    # klein. Die Datacore-Rechnung laeuft weiter (die
-                    # Gesamtzeile unten nennt sie), nur die Doppelung hier
-                    # ist weg.
-                    need_lbl.setText(
-                        f'<div style="font-size:11px;color:{theme.MUTED};'
-                        f'margin-bottom:2px;">'
-                        + t("Enter in game \u2013 attempts for \u2265{pct}% certainty").format(
-                            pct=int(ap["confidence"] * 100))
-                        + f'</div>'
-                        f'<div style="font-size:26px;font-weight:800;'
-                        f'color:{theme.AMBER};font-family:{theme.MONO};'
-                        f'line-height:1.05;">{ap["confident_attempts"]}'
-                        f'<span style="font-size:13px;font-weight:600;'
-                        f'"> ' + t("attempts") + '</span></div>'
-                        + _kv_rows([
-                            (t("for {n} runs").format(n=runs_needed) + _owned_txt,
-                             t("{n} successes").format(n=ap["successes_needed"]), None),
-                            (t("on average it would take"),
-                             t("\u2248{n} attempts").format(n=f'{ap["expected_attempts"]:.1f}'),
-                             None),
-                            (t("T1 copies"),
-                             t("{n} copy runs (1 attempt = 1 run, split as you like)").format(
-                                 n=ap["confident_attempts"]),
-                             theme.CYAN),
-                            (t("Invention cost"),
-                             f'\u2248{isk(ap["confident_cost"])}',
-                             theme.AMBER),
-                        ]))
-                    total_cost = ap["confident_cost"]
-                    _inv_attempts_n = int(ap["confident_attempts"] or 0)
-                else:
-                    mpn = industry.invention_manual_plan(
-                        manual_spin.value(), outcome, [dc_cost], dcy_cost,
-                        successes_needed=ap["successes_needed"])
-                    conf_actual = mpn.get("confidence_actual", 0.0)
-                    status_col = (theme.GREEN if conf_actual >= 0.75 else
-                                 theme.AMBER if conf_actual >= 0.5 else theme.RED)
-                    # Manueller Zweig, gleicher Aufbau wie oben: die Zahl,
-                    # die ingame eingetippt wird, ist die Leitzahl - hier
-                    # der selbst gesetzte Wert. Darunter, wie sicher er
-                    # reicht (gruen/amber/rot) und der Kontext.
-                    need_lbl.setText(
-                        f'<div style="font-size:11px;color:{theme.MUTED};'
-                        f'margin-bottom:2px;">'
-                        + t("Enter in game \u2013 set by you")
-                        + f'</div>'
-                        f'<div style="font-size:26px;font-weight:800;'
-                        f'color:{theme.AMBER};font-family:{theme.MONO};'
-                        f'line-height:1.05;">{manual_spin.value()}'
-                        f'<span style="font-size:13px;font-weight:600;'
-                        f'"> ' + t("attempts") + '</span></div>'
-                        + _kv_rows([
-                            (t("enough for all {n} runs").format(n=runs_needed),
-                             f'<b>{conf_actual*100:.0f}%</b>', status_col),
-                            (t("yields on average"),
-                             t("\u2248{runs} runs from \u2248{succ} successes").format(
-                                 runs=f'{mpn["expected_runs"]:.1f}',
-                                 succ=f'{mpn["expected_successes"]:.1f}'),
-                             None),
-                            (t("T1 copies"),
-                             t("{n} copy runs (1 attempt = 1 run, split as you like)").format(
-                                 n=manual_spin.value()),
-                             theme.CYAN),
-                            (t("Invention cost"),
-                             f'\u2248{isk(mpn["total_cost"])}', theme.AMBER),
-                        ]))
-                    total_cost = mpn["total_cost"]
-                    _inv_attempts_n = max(0, int(manual_spin.value() or 0))
+                # KEINE ZUSATZZEILEN (Nutzer 26.09.2026: "for runs = successes,
+                # on average it would take, invention cost - die koennen weg").
+                # Geblieben ist nur der Hinweis auf eigene T2-Kopien - der
+                # aendert die Zahl.
+                need_lbl.setText(
+                    f'<span style="color:{theme.CYAN};">'
+                    + t("{n} runs already on hand as own BPC \u2013 fewer "
+                        "attempts needed").format(n=_owned_runs) + '</span>'
+                    if _owned_runs else "")
+                need_lbl.setVisible(bool(_owned_runs))
+                total_cost = ap["confident_cost"]
+                _inv_attempts_n = int(ap["confident_attempts"] or 0)
+                # WARNUNG OHNE DECRYPTOR: "No decryptor" steht, der Nutzer hat
+                # ihn nie selbst gewaehlt (Combo, "Best Decryptor", "for all"
+                # oder gespeicherter Plan -> `_bd_dec_bestaetigt`) und die Karte
+                # rechnet wirklich mit Invention (Combo nicht gesperrt = keine
+                # eigene BPC).
+                _dec_offen = (key == KEIN_DECRYPTOR and combo.isEnabled()
+                              and int(bp_id) not in
+                              (getattr(self, "_bd_dec_bestaetigt", None) or set()))
+                dec_warn_lbl.setText(t(
+                    "\u26a0 No decryptor chosen yet \u2013 pick one or press "
+                    "\u201eBest Decryptor\u201c; building from your own copy? "
+                    "Tick \u201eOwn BPC\u201c and enter its ME/TE.") if _dec_offen else "")
+                dec_warn_lbl.setVisible(_dec_offen)
+                self._bd_inv_dec_offen = getattr(self, "_bd_inv_dec_offen", None) or {}
+                self._bd_inv_dec_offen[int(bp_id)] = _dec_offen
                 material_cost = mc0_per_run * (1 - outcome["me_pct"] / 100.0) * runs_needed
                 _bz_txt = _iz_txt = _iz_tip_extra = ""
                 time_txt = ""
@@ -1496,75 +1686,83 @@ class BauplanTabs:
                            * runs_needed) / 86400.0
                     time_txt = "x"          # nur noch Bedingung
                     _bz_txt = t("\u2248{d} days").format(d=f"{days:.2f}")
-                # AUFTEILUNGS-PANEL fuellen (Nutzer: Parallelitaet planen).
-                # Als Funktion auf self gemerkt, damit die Regler sie ohne
-                # vollen Rebuild aufrufen koennen (s. _split_refresh).
+                # KOPIERANLEITUNG DIESER KARTE fuellen (je Karte, s. `_sp_box`).
+                # Als Funktion an der Karte gemerkt, damit Regler und Slot-
+                # Feld sie ohne vollen Rebuild aufrufen koennen.
                 def _fuelle_aufteilung(_att=_inv_attempts_n, _oc=outcome,
-                                       _ipa=inv_time_per_attempt):
-                    # Versuchszahl fuer die Nutzstufen des Zeit-Reglers
-                    # merken (s. _zeit_zieht unten).
-                    self._bd_inv_att_n = int(_att or 0)
+                                       _ipa=inv_time_per_attempt, _bp=int(bp_id)):
+                    _sw = (getattr(self, "_bd_inv_split_w", None) or {}).get(_bp)
+                    if not _sw:
+                        return
+                    # Versuchszahl fuer die Nutzstufen des Reglers merken.
+                    _sw["att"] = int(_att or 0)
+                    # GANZE BREITE NUTZBAR (Nutzer 26.09.2026: "warum kann ich
+                    # die Regler nicht ganz bis rechts ziehen?"): der Regler
+                    # reichte bis zu den freien Slots (10), aber mehr Kopien als
+                    # Versuche gibt es nicht - bei 4 Versuchen blieb er bei 4/10
+                    # stehen. Rechts = min(freie Slots, Versuche).
+                    _max_sl = max(1, min(int(getattr(self, "_bd_inv_slots", 10) or 10),
+                                         int(_att or 0) or 1))
+                    if _sw["slider"].maximum() != _max_sl:
+                        _sw["slider"].blockSignals(True)
+                        _sw["slider"].setMaximum(_max_sl)
+                        _sw["slider"].blockSignals(False)
                     _auf = industry.kopien_aufteilung(
                         _att, int(_oc.get("runs") or 1),
-                        slots=self._inv_slots.value(),
-                        kopien=self._inv_kopien.value(),
+                        slots=int(getattr(self, "_bd_inv_slots", 10) or 10),
+                        kopien=_sw["slider"].value(),
                         prob=_oc.get("prob"))
-                    if _auf["kopien"]:
-                        # Bis Sitzung 22 ohne t(): kein deutscher Text, aber
-                        # in der deutschen Fassung waere er englisch geblieben.
-                        # de_scan3 sah ihn nicht - er laeuft ueber `_rest` in
-                        # setText, und dorthin folgt der Scanner nicht.
-                        _rest = (" \u00b7 " + t("{n} runs in reserve").format(
-                                     n=_auf["rest_reserve"])
-                                 if _auf["rest_reserve"] else "")
-                        # Wandzeit = Wellen x Zeit je Versuch. Bei 1 Kopie
-                        # ist das die volle Kette, bei N Kopien entsprechend
-                        # weniger - genau die Zahl, nach der der Nutzer
-                        # gefragt hat ("in wievielen Tagen").
-                        _dauer = ""
-                        if _ipa:
-                            _secs = _ipa * _auf["wellen"]
-                            # "bei N parallel" lief bis Sitzung 22 ohne t():
-                            # der Text wandert ueber die Variable `_dauer` in
-                            # setText, de_scan sieht dort nur einen Namen.
-                            _dauer = (f' \u00b7 <b>{self._fmt_dur(_secs)}</b> '
-                                      + t("at {n} in parallel").format(
-                                          n=_auf["parallel"]))
-                        self._inv_split_lbl.setText(
-                            f'<span style="color:{theme.CYAN};">'
-                            + t("{n}\u00d7 T1 copy with ").format(n=_auf["kopien"])
-                            + '<b>'
-                            + t("{n} runs").format(n=_auf["runs_je_kopie"])
-                            + '</b></span>'
-                            + f'{_rest}{_dauer}'
-                            # INGAME-UEBERSETZUNG (Nutzer, Sitzung 9: "wie
-                            # lese ich es nochmal, was muss ich ingame
-                            # eingeben?"). Die Feldnamen des Kopierfensters
-                            # stehen WOERTLICH dabei - "Job Runs" und "Runs
-                            # per Copy" heissen im Spiel so und bleiben
-                            # englisch, in JEDER Sprachfassung.
-                            + '<br>' + t("\u2192 in-game copy job: ")
-                            # de_scan3: aus  (EVE-Feldnamen, bleiben in jeder Sprache englisch)
-                            + f'<b>Job Runs {_auf["kopien"]}</b> \u00b7 '
-                            + f'<b>Runs per Copy {_auf["runs_je_kopie"]}</b>')
-                            # de_scan3: an
-                        _warn = ""
-                        if _auf["kopien"] > self._inv_slots.value():
-                            _warn = (f'<br><span style="color:{theme.AMBER};">'
-                                     + t("More copies than slots \u2013 only {n} run "
-                                         "at a time.").format(n=_auf["parallel"])
-                                     + '</span>')
-                            self._inv_split_lbl.setText(
-                                self._inv_split_lbl.text() + _warn)
-                        self._inv_split_lbl.setToolTip(t(
-                            "{total} copy runs in total for {att} required attempts.\n"
-                            "{waves} job waves one after another (each wave {par} jobs "
-                            "in parallel).\n"
-                            "You have to make the copies yourself first \u2013 with ONE "
-                            "original, copy jobs run one after another."
-                        ).format(total=_auf["versuche_gesamt"], att=_att,
-                                 waves=_auf["wellen"], par=_auf["parallel"]))
-                self._fuelle_aufteilung = _fuelle_aufteilung
+                    if not _auf["kopien"]:
+                        _sw["kopf"].setText("\u2013")
+                        _sw["lbl"].setText("")
+                        return
+                    # GROSS, WIE IM SPIEL ZU TIPPEN. "Job Runs" und "Runs per
+                    # Copy" heissen im Kopierfenster so und bleiben englisch, in
+                    # JEDER Sprachfassung.
+                    _zahl = (f'font-size:{theme.FS_KPI}; font-weight:800; '
+                             f'color:{theme.AMBER}; font-family:{theme.MONO};')
+                    _sw["kopf"].setText(
+                        f'<div style="color:{theme.MUTED}; font-size:{theme.FS_BASE};">'
+                        + t("Copy your T1 original like this \u2192") + '</div>'
+                        # de_scan3: aus  (EVE-Feldnamen, bleiben in jeder Sprache englisch)
+                        + f'<div style="font-size:15px; font-weight:700;">'
+                        f'Job Runs: <span style="{_zahl}">{_auf["kopien"]}</span>'
+                        f'</div><div style="font-size:15px; font-weight:700;">'
+                        f'Runs per Copy: <span style="{_zahl}">'
+                        f'{_auf["runs_je_kopie"]}</span></div>')
+                        # de_scan3: an
+                    # DAUER UND BELEGTE SLOTS (Nutzer: "eine Anzeige, wo man
+                    # sieht, wie lange es dauert und wie viele Science-Slots
+                    # belegt werden"). Wandzeit = Wellen x Zeit je Versuch.
+                    # WEISS UND SO GROSS WIE "Job Runs", ZAHLEN AMBER (Nutzer
+                    # 26.09.2026: "zeige deutlicher, wie viele Science-Slots
+                    # belegt werden ... in Weiss und gleiche Groesse wie oben
+                    # Job Runs und Runs per Copy, Zahlen auch gleich gross und
+                    # Amber").
+                    _teile = [t("{n} science slot(s) busy").format(
+                        n=f'<span style="{_zahl}">{_auf["parallel"]}</span>')]
+                    if _ipa:
+                        _teile.append(t("done in \u2248{d}").format(
+                            d=f'<span style="{_zahl}">'
+                              f'{self._fmt_dur(_ipa * _auf["wellen"])}</span>'))
+                    if _auf["rest_reserve"]:
+                        _teile.append(t("{n} runs in reserve").format(
+                            n=_auf["rest_reserve"]))
+                    _sw["lbl"].setText(
+                        f'<span style="color:{theme.TEXT}; font-size:15px; '
+                        f'font-weight:700;">'
+                        + " \u00b7 ".join(_teile) + '</span>')
+                    _sw["lbl"].setToolTip(t(
+                        "{total} copy runs in total for {att} required attempts.\n"
+                        "{waves} job waves one after another (each wave {par} jobs "
+                        "in parallel).\n"
+                        "You have to make the copies yourself first \u2013 with ONE "
+                        "original, copy jobs run one after another."
+                    ).format(total=_auf["versuche_gesamt"], att=_att,
+                             waves=_auf["wellen"], par=_auf["parallel"]))
+                _sw0 = (getattr(self, "_bd_inv_split_w", None) or {}).get(int(bp_id))
+                if _sw0 is not None:
+                    _sw0["fill"] = _fuelle_aufteilung
                 try:
                     _fuelle_aufteilung()
                 except Exception:
@@ -1601,14 +1799,14 @@ class BauplanTabs:
                 score_lbl.setToolTip(t(
                     "Material cost: only the base ME of this item \u2013 structure and "
                     "rig ME apply on top and are the same for all decryptors.\n"
-                    "Build time is for information only \u2013 \u201eBest choice\u201c looks "
+                    "Build time is for information only \u2013 \u201eBest Decryptor\u201c looks "
                     "at total profit alone.\n"
                     "Invention time is sequential with 1 free science slot; faster "
                     "accordingly with more slots.")
                     + (("\n" + _iz_tip_extra) if _iz_tip_extra else ""))
                 self._bd_decryptor_map[bp_id] = key
                 _card_costs[bp_id] = total_cost
-                _attempts_n = max(0, int(manual_spin.value() or 0))
+                _attempts_n = max(0, int(_inv_attempts_n or 0))
                 self._bd_invention_needs[bp_id] = {
                     "datacores": [(d, q * _attempts_n) for d, q in datacores],
                     "decryptor_id": dv[4], "decryptor_qty": _attempts_n if dv[4] else 0,
@@ -1619,22 +1817,25 @@ class BauplanTabs:
                     "inv_secs": int((inv_time_per_attempt or 0) * _attempts_n),
                     "copy_secs": int((copy_secs_per_attempt or 0) * _attempts_n),
                 }
-                # Nutzer-Wunsch: nicht nur „x2 je Versuch", sondern die
-                # GESAMT-Stückzahl für alle Versuche dieses Items sichtbar.
-                _parts = [f"{int(q * _attempts_n)}\u00d7 "
-                          f"{extra_names.get(d, f'#{d}')}"
-                          for d, q in datacores]
-                if dv[4]:
-                    _parts.append(f"{_attempts_n}\u00d7 "
-                                  f"{extra_names.get(dv[4], f'#{dv[4]}')}")
-                dc_sum_lbl.setText(
-                    t("Total for {n} attempts: ").format(n=_attempts_n)
-                    + " \u00b7 ".join(_parts) if _parts and _attempts_n else "")
+                # KURZFASSUNG IN DER KOPFZEILE (zugeklappte Karte): Decryptor,
+                # Versuche, Invention-Kosten - dieselben Zahlen wie unten.
+                _kz = (getattr(self, "_bd_inv_karten", None) or {}).get(int(bp_id))
+                if _kz and _kz.get("kurz") is not None:
+                    _kz["kurz"].setText(
+                        (f'<span style="color:{theme.AMBER}; font-weight:700;">\u26a0 </span>'
+                         if _dec_offen else "")
+                        + f"{_h_sum.escape(dec_anzeige(key))}  \u00b7  "
+                        + t("{n} attempts").format(n=_attempts_n)
+                        + f'  \u00b7  <span style="color:{theme.AMBER};">'
+                          f'\u2248{isk(total_cost)}</span>')
                 _update_total()
 
             def _on_change(_idx, bp_id=bp_id, combo=combo):
                 key = combo.currentData()
                 self._bd_decryptor_map[bp_id] = key
+                # selbst gewaehlt -> keine Warnung mehr (auch "No decryptor")
+                self._bd_dec_bestaetigt = set(getattr(self, "_bd_dec_bestaetigt", None) or ())
+                self._bd_dec_bestaetigt.add(int(bp_id))
                 dv = next((v for n, v in decryptor_list if n == key),
                           (1.0, 0, 0, 0, None))
                 self._bd_opts.setdefault("inv_decryptor_map", {})[bp_id] = dv
@@ -1643,98 +1844,45 @@ class BauplanTabs:
                     cb()
             combo.currentIndexChanged.connect(_on_change)
 
-            def _on_manual_change(bp_id=bp_id, manual_cb=manual_cb, manual_spin=manual_spin):
-                self._bd_manual_attempts[bp_id] = (manual_cb.isChecked(),
-                                                   manual_spin.value())
-                cb = getattr(self, "_bd_full_rebuild", None)
-                if cb:
-                    cb()   # aktualisiert auch Kopfzeile (Job-Kosten/Marge/Gewinn)
-                else:
-                    _recompute()
-
-            def _on_manual_toggle(v, s=manual_spin):
-                s.setEnabled(v)
-                _on_manual_change()
-            manual_cb.toggled.connect(_on_manual_toggle)
-            manual_spin.valueChanged.connect(lambda *_a: _on_manual_change())
             # NUTZER-FUND (Sitzung 8): "ich kann hier gar nichts eingeben."
-            # URSACHE: die Regler hingen an _on_manual_change, und das ruft
-            # _bd_full_rebuild - der baut den GANZEN Invention-Tab neu und
-            # ZERSTOERT dabei genau die Spinbox, in die man gerade tippt.
-            # Nach dem ersten Tastendruck war das Widget weg, Fokus futsch,
-            # Eingabe unmoeglich. FIX: die Regler rufen NUR die
-            # Panel-Aktualisierung (_split_refresh) - kein Rebuild, kein
-            # Fokusverlust. Die Werte werden gemerkt, damit sie einen
-            # spaeteren echten Rebuild ueberleben.
-            def _split_refresh(*_a):
-                self._bd_inv_split = (self._inv_kopien.value(),
-                                      self._inv_slots.value())
-                _fn = getattr(self, "_fuelle_aufteilung", None)
-                if _fn:
-                    try:
-                        _fn()
-                    except Exception:
-                        pass
-            self._inv_kopien.valueChanged.connect(_split_refresh)
-            self._inv_slots.valueChanged.connect(_split_refresh)
-            # Regler <-> Kopien-Feld: EIN Wert, zwei Griffe. blockSignals
-            # gegen das Signal-Pingpong; die Slot-Zahl deckelt den Regler.
-            # NUTZSTUFEN-SCHNAPPEN (Nutzer, Sitzung 9: "ich kann ihn hoeher
-            # ziehen als er einen Nutzen hat"): die Wandzeit haengt an
-            # ceil(Versuche/Kopien) - jede Kopienzahl, die dieselben Runs je
-            # Kopie ergibt wie eine kleinere, bringt NICHTS (gleiche Zeit,
-            # nur mehr belegte Slots und Reserve-Runs). Beide Griffe
-            # schnappen deshalb auf die KLEINSTE Kopienzahl derselben
-            # Zeitstufe: ceil(att / ceil(att / N)).
-            def _nutzstufe(v):
+            # URSACHE damals: der Regler rief _bd_full_rebuild, das baute den
+            # Reiter neu und ZERSTOERTE das Bedienelement unter der Maus. Der
+            # Regler ruft deshalb NUR die Fuellung seiner Karte - kein Rebuild.
+            # NUTZSTUFEN-SCHNAPPEN (Sitzung 9: "ich kann ihn hoeher ziehen als
+            # er einen Nutzen hat"): die Wandzeit haengt an ceil(Versuche/
+            # Kopien) - jede Kopienzahl, die dieselben Runs je Kopie ergibt
+            # wie eine kleinere, bringt NICHTS. Der Regler schnappt auf die
+            # KLEINSTE Kopienzahl derselben Zeitstufe: ceil(att / ceil(att / N)).
+            _sw_k = self._bd_inv_split_w[int(bp_id)]
+
+            def _nutzstufe(v, _sw=_sw_k):
                 import math
-                _att = int(getattr(self, "_bd_inv_att_n", 0) or 0)
+                _att = int(_sw.get("att", 0) or 0)
                 v = int(v)
                 if _att <= 0 or v <= 1:
                     return v
                 return math.ceil(_att / math.ceil(_att / min(v, _att)))
 
-            def _zeit_zieht(v):
-                v = _nutzstufe(v)
-                _s = self._inv_zeit
-                if _s.value() != v:
+            def _regler_zieht(v, _sw=_sw_k, _bp=int(bp_id)):
+                v2 = _nutzstufe(v)
+                _s = _sw["slider"]
+                if _s.value() != v2:
                     _s.blockSignals(True)
-                    _s.setValue(v)
+                    _s.setValue(v2)
                     _s.blockSignals(False)
-                if self._inv_kopien.value() != v:
-                    self._inv_kopien.setValue(v)
-            self._inv_zeit.valueChanged.connect(_zeit_zieht)
+                self._bd_inv_split[_bp] = int(v2)
+                if _sw.get("fill"):
+                    try:
+                        _sw["fill"]()
+                    except Exception:
+                        pass
+            _sw_k["slider"].valueChanged.connect(_regler_zieht)
 
-            def _kopien_zieht(v):
-                v = _nutzstufe(v)
-                if self._inv_kopien.value() != v:
-                    self._inv_kopien.blockSignals(True)
-                    self._inv_kopien.setValue(v)
-                    self._inv_kopien.blockSignals(False)
-                _s = self._inv_zeit
-                if _s.value() != int(v):
-                    _s.blockSignals(True)
-                    _s.setValue(min(int(v), _s.maximum()))
-                    _s.blockSignals(False)
-            self._inv_kopien.valueChanged.connect(_kopien_zieht)
-
-            def _slots_deckeln(v):
-                self._inv_zeit.setMaximum(max(1, int(v)))
-            self._inv_slots.valueChanged.connect(_slots_deckeln)
-            # Gemerkte Werte nach einem Rebuild zurueckstellen (ohne dabei
-            # ein weiteres Signal auszuloesen).
-            _alt = getattr(self, "_bd_inv_split", None)
-            if _alt:
-                for _w, _v in ((self._inv_kopien, _alt[0]),
-                               (self._inv_slots, _alt[1])):
-                    _w.blockSignals(True); _w.setValue(int(_v))
-                    _w.blockSignals(False)
-
-            def _pick_best(_checked=False, combo=combo, base_runs=base_runs,
-                          base_prob=base_prob, datacores=datacores,
-                          runs_needed=runs_needed, mc0_per_run=mc0_per_run,
-                          build_seconds_0dec=build_seconds_0dec, score_lbl=score_lbl,
-                          bp_id=bp_id, top_type_id=top_type_id):
+            def _rangliste(combo=combo, base_runs=base_runs,
+                           base_prob=base_prob, datacores=datacores,
+                           runs_needed=runs_needed, mc0_per_run=mc0_per_run,
+                           build_seconds_0dec=build_seconds_0dec, score_lbl=score_lbl,
+                           bp_id=bp_id, top_type_id=top_type_id):
                 """Rechnet ALLE Decryptoren (inkl. 'Kein Decryptor') mit der
                 ECHTEN production_plan-Formel durch (exakt dieselbe wie die
                 Kopfzeile: Material inkl. Job-Kosten-Kopplung an den
@@ -1793,10 +1941,36 @@ class BauplanTabs:
                         base_runs, base_prob, runs_needed, decryptor_list, [dc_cost],
                         mc0_per_run, lambda t: adj_prices.get(t, 0) or 0.0,
                         build_seconds_per_run_0decryptor=build_seconds_0dec)
+                return ranked
+
+            def _pick_best(_checked=False, combo=combo, bp_id=bp_id):
+                ranked = _rangliste()
+                self._bd_dec_bestaetigt = set(getattr(self, "_bd_dec_bestaetigt", None) or ())
+                self._bd_dec_bestaetigt.add(int(bp_id))
+                if ranked and ranked[0]["name"] == combo.currentData():
+                    # Schon der beste: die Combo aendert sich nicht, also auch
+                    # kein Neuaufbau - die Warnung trotzdem wegnehmen.
+                    _cb_r = getattr(self, "_bd_full_rebuild", None)
+                    if _cb_r is not None:
+                        _cb_r()
+                    return
                 if ranked:
                     best = ranked[0]
                     self._combo_select(combo, best["name"])  # löst _on_change aus
             best_btn.clicked.connect(_pick_best)
+            # "BEST DECRYPTOR FOR ALL BLUEPRINTS" (Nutzer 26.09.2026: "damit man
+            # nicht jeden Blueprint separat ansteuern muss"). Nur Karten, deren
+            # Decryptor-Wahl ueberhaupt gilt (bei "Own BPC" ist sie gesperrt).
+            if combo.isEnabled():
+                self._bd_inv_rang[int(bp_id)] = (_rangliste, decryptor_list)
+            else:
+                # EIGENE BPC: der Decryptor zaehlt nicht - der Knopf der Karte
+                # waere sonst ein Schalter ohne Wirkung (Nutzer-Screenshot
+                # 26.09.2026: Sacrilege mit Own BPC bekam "Parity").
+                best_btn.setEnabled(False)
+                best_btn.setToolTip(t(
+                    "With \u201eOwn BPC instead of invention\u201c the invention is "
+                    "skipped - the decryptor no longer matters."))
 
             _recompute()
             # Direkt beim Aufbau auch in opts eintragen (falls schon ein
@@ -1930,23 +2104,12 @@ class BauplanTabs:
             except Exception:
                 _fehl_auto = None          # Anzeige, nie kritisch
             if _fehl_auto:
-                _n_f = len(_fehl_auto)
-                # NAMEN AUS DEM PARAMETER `names` - `_bd_names` gibt es in
-                # dieser Funktion NICHT. Der Nutzer sah deshalb Typ-Nummern
-                # statt Item-Namen ("16656, 16660, 16667") und konnte mit
-                # der Warnung nichts anfangen.
-                # ALLE NAMEN, NICHT DIE ERSTEN DREI (Sitzung 16): waehrend
-                # einer Materialsuche stand ausgerechnet das gesuchte Item
-                # hinter den drei Punkten, der Nutzer hat es nicht gesehen.
-                # Eine Warnung, die den entscheidenden Namen verschweigt, ist
-                # keine. Das Label bricht um.
-                _erste = ", ".join(
-                    str((names or {}).get(_t) or _t)
-                    for _t, *_ in _fehl_auto)
-                _zeilen_info.append(
-                    "\u26a0 " + t("{n} materials will be missing for the "
-                                  "remaining runs: {items}").format(
-                        n=_n_f, items=_erste))
+                # KEIN BANNER MEHR (Nutzer 26.09.2026: "Dieser riesige
+                # Informationstext ist unnoetig, den liest sowieso keiner.
+                # Was fehlt, sieht man ja unten in der Liste"). Bei einem
+                # Capital stand dort eine Liste von 51 Namen ueber der
+                # Tabelle. Der Live-Fehlbedarf bleibt - in der ZEILE des
+                # Materials (rot, "{fehlt} missing"), s. `_bd_fehl_live`.
                 # FUER DIE TABELLE MERKEN: die Zeile des Materials soll den
                 # Live-Fehlbedarf selbst tragen, nicht nur der Banner oben.
                 self._bd_fehl_live = {int(_t): (int(_f or 0), int(_da or 0))
@@ -2004,6 +2167,29 @@ class BauplanTabs:
             _rest_bekannt = True
         except Exception:
             _rest_fehlt, _rest_bekannt = {}, False
+        # WAS DER RUNPLANER NOCH BAUT (Nutzer 26.09.2026: "ich will, dass
+        # diese Runs nicht mehr einfach angezeigt werden, obwohl ich sie gar
+        # nicht brauche"). Silicon Diborite stand mit "can be built - 13'019
+        # units" da - Plan-Bedarf minus Bestand -, waehrend der Runplaner
+        # 0 Runs offen hatte (39 geliefert, 27 laufend). Die Eigenbau-Zeile
+        # zeigt jetzt die OFFENEN Runs x Stueck je Run; laufende Jobs
+        # zaehlen dabei als gestartet (dieselbe Regel wie `_rest_budget` im
+        # Runplaner: geliefert + laufend). Nur Anzeige - die Einkaufsliste
+        # rechnet weiter ueber `_restbedarf_jetzt` / `_fehlbedarf_jetzt`.
+        _rest_runs = None
+        try:
+            _rest_runs = self._rest_runs_jetzt()
+        except Exception as _rr_e:
+            self._log_exception("Materialien: offene Runs", str(_rr_e))
+        _out_je_run = {}
+        try:
+            _rz = getattr(self, "_bd_recipes", None)
+            for _t_o in (plan.get("build_runs") or {}):
+                _bp_o = _rz.product_to_bp.get(_t_o) if _rz is not None else None
+                if _bp_o:
+                    _out_je_run[int(_t_o)] = int(_bp_o[2] or 1)
+        except Exception:
+            _out_je_run = {}
         buy = plan.get("buy") or {}
         stock_used = plan.get("stock_used") or {}
         build_runs = plan.get("build_runs") or {}
@@ -2023,8 +2209,9 @@ class BauplanTabs:
         # ungedeckten Rest als Reaktions-/Bau-Runs einplante (gemeldeter Bug:
         # "Materialien sagt alles da, Runplaner will trotzdem bauen").
         built_net = {}
+        _enden_mat = self._bd_enden(_root, _recipes) if _root is not None else set()
         for tid, runs in build_runs.items():
-            if tid == _root:
+            if tid in _enden_mat:
                 continue          # das Endprodukt selbst ist kein "Material"
             out_qty = 1
             if _recipes is not None:
@@ -2269,6 +2456,25 @@ class BauplanTabs:
                              t("Owned"), t("Pasted"), t("Missing"),
                              t("Status")])
         _groups, _gstat = {}, {}
+        # WAS STECKT SCHON IN LAUFENDEN JOBS? (Nutzer 25.09.2026, Silicon
+        # Diborite.) Reine Auskunft - die Rechnung bleibt unberuehrt
+        # (Nutzer-Entscheid: "koennen wir 2 und 3 kombinieren?", also
+        # anzeigen statt umrechnen). Quelle ist dieselbe wie beim Runplaner
+        # (`_bd_active_jobs_map`), damit nicht zwei Stellen verschieden
+        # zaehlen.
+        try:
+            from .mw_helpers import laufend_verbraucht as _mwh_lv
+            _lauf_runs = {}
+            for _t_l, _js_l in ((getattr(self, "_bd_active_jobs_map", None)
+                                 or {}).items()):
+                _n_l = sum(int(_j.get("runs") or 0) for _j in (_js_l or []))
+                if _n_l > 0:
+                    _lauf_runs[int(_t_l)] = _n_l
+            _lauf_verbr = _mwh_lv(plan.get("build_runs") or {},
+                                  plan.get("build_mats") or {}, _lauf_runs)
+        except Exception as _lv_e:
+            _lauf_verbr = {}
+            self._log_exception("Materialien: laufend verbraucht", str(_lv_e))
 
         def _baubereit(tid):
             """True, wenn die Zutaten fuer die geplanten Runs dieses Items
@@ -2317,7 +2523,7 @@ class BauplanTabs:
             _gf = _g.font(0); _gf.setBold(True); _g.setFont(0, _gf)
             _g.setForeground(0, QColor(theme.CYAN))
             _groups[_c] = _g
-            _gstat[_c] = [0, 0, 0.0, 0.0]      # gedeckt, gesamt, ist, soll
+            _gstat[_c] = [0, 0, 0.0, 0.0, 0]   # gedeckt, gesamt, ist, soll, im Bau
         n_missing = 0
         n_built = 0
         for i, r in enumerate(rows):
@@ -2332,6 +2538,17 @@ class BauplanTabs:
             # mit Screenshot). Gerechnet wird jetzt aus DENSELBEN Zahlen wie
             # die MISSING-Spalte, damit die Zeile in sich stimmt.
             _noch_bauen = max(0, int(r["total"]) - int(owned))
+            # OFFENE RUNS statt Plan-minus-Bestand (s. `_rest_runs` oben):
+            # geliefert und laufend sind abgezogen, gedeckelt auf den Plan.
+            _offen_runs = None
+            _lauf_runs = 0
+            if _rest_runs is not None and int(r["tid"]) in _rest_runs:
+                _lauf_runs = sum(
+                    int(_j.get("runs") or 0) for _j in
+                    ((getattr(self, "_bd_active_jobs_map", None) or {})
+                     .get(int(r["tid"])) or []))
+                _offen_runs = max(0, int(_rest_runs[int(r["tid"])]) - _lauf_runs)
+                _noch_bauen = _offen_runs * int(_out_je_run.get(int(r["tid"]), 1))
             if not stock:
                 have_txt = t("\u23f3 loading \u2026")
                 have_col = theme.MUTED
@@ -2391,25 +2608,41 @@ class BauplanTabs:
                 # NUTZER-FUND: "Rest wird gebaut" klang so, als h\u00e4tte man
                 # schon Bestand - bei owned=0 wird aber die GANZE Menge
                 # gebaut, da ist kein "Rest".
-                if _baubereit(r["tid"]):
+                _runs_hint = ""
+                if _offen_runs is not None:
+                    _runs_hint = " \u00b7 " + t("{r} of {n} runs open").format(
+                        r=_offen_runs,
+                        n=int((plan.get("build_runs") or {}).get(int(r["tid"]), 0) or 0))
+                    if _lauf_runs > 0:
+                        _runs_hint += " \u00b7 " + t("{n} running").format(n=_lauf_runs)
+                if _offen_runs == 0:
+                    # NICHTS MEHR ZU BAUEN: alle Runs geliefert oder gestartet.
+                    # Vorher stand hier "can be built - 13'019 units" (Nutzer
+                    # 26.09.2026) - eine Zahl, die vom Bauen nichts wusste.
+                    status_txt = t("nothing left to build \u2713") + _runs_hint
+                    status_col = theme.GREEN
+                    r["reason"] = t("Every planned run of this item is delivered or "
+                                    "running according to ESI (or ticked in the run "
+                                    "planner). Nothing to buy, nothing to start.")
+                elif _baubereit(r["tid"]):
                     # Zutaten liegen KOMPLETT im Bestand -> Job kann sofort
                     # starten. Helleres Gruen als "genug" (das hier ist eine
                     # Handlungs-Zusage, kein blosser Deckungs-Status).
                     status_txt = t("can be built \u2713 \u00b7 {n} units").format(
-                        n=f"{int(_noch_bauen):,}".replace(",", "'"))
+                        n=f"{int(_noch_bauen):,}".replace(",", "'")) + _runs_hint
                     status_col = theme.GREEN_BRIGHT
                     r["reason"] = t("All ingredients for the planned runs are in stock "
                                     "NOW \u2013 the build job can be started right away "
                                     "(see run planner). Nothing to buy.")
                 elif owned > 0:
                     status_txt = t("still to build \u00b7 {n} units").format(
-                        n=f"{int(_noch_bauen):,}".replace(",", "'"))
+                        n=f"{int(_noch_bauen):,}".replace(",", "'")) + _runs_hint
                     status_col = theme.BLUE
                     r["reason"] = t("Stock covers part of it, the rest is BUILT per plan "
                                     "(see run planner) \u2013 nothing to buy here.")
                 else:
                     status_txt = t("will be built \u00b7 {n} units").format(
-                        n=f"{int(_noch_bauen):,}".replace(",", "'"))
+                        n=f"{int(_noch_bauen):,}".replace(",", "'")) + _runs_hint
                     status_col = theme.BLUE
                     r["reason"] = t("Built entirely per plan (see run planner) \u2013 "
                                     "nothing to buy, no stock needed.")
@@ -2458,6 +2691,24 @@ class BauplanTabs:
                     n=f"{int(r['missing']):,}".replace(",", "'"))
                 status_col = theme.RED
                 n_missing += 1
+            # WARUM ES "FEHLT", OBWOHL NICHTS FEHLT (Nutzer 25.09.2026):
+            # steckt ein Teil davon in JETZT laufenden Jobs, ist es im Spiel
+            # schon verbraucht - der Plan zaehlt seinen Bedarf aber weiter
+            # mit, weil das Erzeugnis noch nicht da ist. Nur eine Auskunft,
+            # die Zahlen bleiben unveraendert.
+            _lv_n = int(_lauf_verbr.get(int(r["tid"]), 0) or 0)
+            if _lv_n > 0 and (int(r["missing"]) > 0 or int(built or 0) > 0):
+                status_txt += " · " + t("{n} in running jobs").format(
+                    n=f"{_lv_n:,}".replace(",", "'"))
+                r["reason"] = ((r.get("reason") or "") + "\n\n" + t(
+                    "{n} units of this are already used up by jobs that are "
+                    "RUNNING right now – in game the material is gone, "
+                    "but their output is not in the hangar yet, so the plan "
+                    "keeps counting the need. Nothing is really missing "
+                    "here. The number stays as it is on purpose (better to "
+                    "buy too much than too little); tick the running rows in "
+                    "the run planner to take their material out of the "
+                    "list.").format(n=f"{_lv_n:,}".replace(",", "'"))).strip()
             if r.get("grund_art") == "blacklist":
                 # Blacklist ist der einzige Grund, den "Alles selbst bauen" NICHT
                 # überstimmen kann - eigene, klar sichtbare Farbe statt normalem Rot.
@@ -2521,6 +2772,17 @@ class BauplanTabs:
             _missing_q = max(0, int(r["total"]) - int(_src_qty))
             if (r.get("gratis", 0) or 0) > 0:
                 _missing_q = 0          # wird gestellt - fehlt nicht
+            # EIGENBAU MIT BEKANNTEN OFFENEN RUNS: die Spalte zeigt, was der
+            # Runplaner noch baut - nicht Plan minus Bestand (Nutzer
+            # 26.09.2026). Der Tooltip nennt die Herkunft.
+            _bau_hint = ""
+            if (_offen_runs is not None and r["missing"] <= 0
+                    and int(built or 0) > 0):
+                _missing_q = int(_noch_bauen)
+                _bau_hint = "\n" + t("Still to build for the open runs: {n} "
+                                     "({r} runs open, delivered and running "
+                                     "runs deducted).").format(
+                    n=f"{int(_noch_bauen):,}".replace(",", "'"), r=_offen_runs)
             miss_txt = ("\u2013" if _missing_q <= 0
                         else f"{_missing_q:,}".replace(",", "'"))
             # DIE FARBE FOLGT DER AUSSAGE (Sitzung 17, Nutzer: "es sieht auf
@@ -2543,7 +2805,7 @@ class BauplanTabs:
                         + " \u2212 " + _src_word + " "
                         + f"{_src_qty:,}".replace(",", "'")
                         + " = " + f"{_missing_q:,}".replace(",", "'")
-                        + _job_hint)
+                        + _job_hint + _bau_hint)
             # GROSSE ZAHLEN KUERZEN (Nutzer): 21'957'687 -> 21.96M. Der
             # exakte Wert steht im Tooltip der jeweiligen Zelle, es geht also
             # keine Information verloren.
@@ -2564,10 +2826,25 @@ class BauplanTabs:
             # ueberlesen.
             _fl = (getattr(self, "_bd_fehl_live", None) or {}).get(int(r["tid"]))
             if _fl and _fl[0] > 0:
-                status_txt = (t("\u26a0 LIVE: only {da} on hand \u2013 {fehlt} missing "
+                # DIE ZAHL HIESS "LIVE" UND WAR ES NICHT (Nutzer-Befund
+                # 25.09.2026): sie kommt aus `_bd_opts["stock"]`, und das ist
+                # bei einem eingefrorenen Plan max(eingefroren, live). Bei ihm
+                # stand deshalb "LIVE: only 9'913 on hand", waehrend im Hangar
+                # 198 lagen - er hat gesucht. Genau die Fehlerklasse aus
+                # Sitzung 9: eine Zahl traegt einen Namen, der etwas anderes
+                # meint. Die Rechnung bleibt (max ist gewollt, sonst reisst
+                # die Einkaufsliste fuer laengst gekauftes Material wieder
+                # auf) - nur der Name wird ehrlich, und der ECHTE Hangar-Stand
+                # steht daneben, wenn er abweicht.
+                _echt = int((getattr(self, "_bd_live_stock", None) or {})
+                            .get(int(r["tid"]), _fl[1]) or 0)
+                status_txt = (t("\u26a0 counted {da} \u2013 {fehlt} missing "
                                 "for the remaining runs").format(
                     da=f"{_fl[1]:,}".replace(",", "'"),
                     fehlt=f"{_fl[0]:,}".replace(",", "'"))
+                              + ("" if _echt >= int(_fl[1]) else
+                                 "  \u00b7  " + t("really in the hangar: {n}")
+                                 .format(n=f"{_echt:,}".replace(",", "'")))
                               + "  \u00b7  " + status_txt)
                 status_col = theme.RED
             # WIEVIEL DAVON IST SCHON VERGEBEN? (Nutzer, Sitzung 19)
@@ -2698,10 +2975,27 @@ class BauplanTabs:
             if _par is not None:
                 _s = _gstat[r["category"]]
                 _s[1] += 1
-                if not _missing_q:
+                # EIGENBAU ZAEHLT ALS GEDECKT (Nutzer-Entscheid 26.09.2026,
+                # "Punkt 3 einfuehren"): seit MISSING bei Eigenbau-Zeilen
+                # die offenen Runs zeigt, stand eine Kategorie, die man
+                # komplett selbst baut, mit "0 / 11 covered" in Rot da -
+                # obwohl nichts zu KAUFEN fehlt. Der Balken beantwortet
+                # jetzt die Frage "muss ich noch etwas kaufen?": eine
+                # Zeile, die der Plan selbst baut (_gedeckt, gruen), ist
+                # gedeckt und wird getrennt als "im Bau" gezaehlt.
+                _im_bau = bool(_gedeckt and _missing_q > 0)
+                if not _missing_q or _im_bau:
                     _s[0] += 1
-                _s[2] += float(min(int(_src_qty), int(r["total"])))
+                if _im_bau:
+                    _s[4] += 1
+                    _s[2] += float(r["total"])
+                else:
+                    _s[2] += float(min(int(_src_qty), int(r["total"])))
                 _s[3] += float(r["total"])
+            # STATUS AN DER ZEILE MERKEN (26.09.2026): `_bd_mat_rows` traegt
+            # ihn fuer Pruefungen und Nachzuege - dieselbe Zeichenkette wie
+            # der Balken, keine zweite Rechnung.
+            r["status"] = status_txt
             # Daten fuer den Deckungs-Balken merken - angehaengt wird er
             # ERST NACH setSortingEnabled(), s. unten.
             _bar_data[int(r["tid"])] = (
@@ -2748,6 +3042,12 @@ class BauplanTabs:
                              else theme.AMBER if _s[0] else theme.RED)
                     _stip = t("{a} of {b} materials of this category are fully "
                               "covered.").format(a=_s[0], b=_s[1])
+                    if _s[4]:
+                        _stxt += "  \u00b7  " + t("{n} being built").format(n=_s[4])
+                        _stip += "\n" + t(
+                            "{n} of them are built by this plan itself \u2013 "
+                            "nothing to buy, the open runs are in the run "
+                            "planner.").format(n=_s[4])
                 else:
                     _d = _bar_data.get(_tid0)
                     if not _d:
@@ -2775,8 +3075,13 @@ class BauplanTabs:
         _hdr_mat = tbl.header()
         # Auch hier: nur die EIGENE alte Verbindung loesen (disconnect()
         # ohne Argument toetet Qts internes Sortieren, s. Capital-Fund).
+        # NUR AM SELBEN KOPF LOESEN (pruefe.py beim Nutzer 27.09.2026:
+        # "RuntimeWarning: libpyside: Failed to disconnect ... _alt_mat"):
+        # nach einem Neuaufbau ist die Tabelle neu, der alte Slot hing am
+        # ALTEN Kopf - dort gibt es nichts zu loesen, PySide warnte nur.
         _alt_mat = getattr(self, "_mat_bars_sort_slot", None)
-        if _alt_mat is not None:
+        if (_alt_mat is not None
+                and getattr(self, "_mat_bars_sort_kopf", None) is _hdr_mat):
             try:
                 _hdr_mat.sortIndicatorChanged.disconnect(_alt_mat)
             except (TypeError, RuntimeError):
@@ -2797,6 +3102,7 @@ class BauplanTabs:
                 self._mat_bars_laeuft = False
 
         self._mat_bars_sort_slot = _sort_slot
+        self._mat_bars_sort_kopf = _hdr_mat
         _hdr_mat.sortIndicatorChanged.connect(self._mat_bars_sort_slot)
         # Startzustand: nach Kategorie gruppiert. Wer nach Status sortiert,
         # bekommt weiterhin "fehlt zuerst" - ein Klick auf "Kategorie" holt
@@ -2885,6 +3191,476 @@ class BauplanTabs:
                               "(ESI data is fresher)")
                 status_lbl.setText(_txt)
         return n_missing
+
+    # ZIELZEIT JE STUFE (Nutzer 24.09.2026: "wie lange moechtest du
+    # Reactions fahren? -> Regler 1-24 h / Tage / Wochen"). Die Werte sind
+    # STUNDEN; 0 heisst "so schnell wie moeglich" (die Stufe wird dann nur
+    # gestrafft, s. industry.schedule_build). Die Auswahl deckt den Abend
+    # (4-12 h), die Nacht bis zum naechsten Abend (16-24 h) und das
+    # Wochenende ab - laenger als eine Woche plant niemand einen Bauabend.
+    # OBERGRENZE EINE WOCHE (Nutzer 24.09.2026: "bis 1 Woche hoch"). Die
+    # Untergrenze ist keine feste Zahl, sondern die GEMESSENE Mindestdauer
+    # der Stufe - s. `_runplan_ziel_feld`.
+    _RUNPLAN_ZIEL_MAX = 168
+    # Die sechs Stufen, wie schedule_build sie nennt. Reihenfolge = Bau-
+    # reihenfolge, damit die Auswahl oben genauso steht wie der Plan unten.
+    _RUNPLAN_STUFEN = ("fuel", "unrefined", "reaction_1", "reaction_2",
+                       "component", "end")
+
+    def _runplan_erledigt_pflegen(self, key, an):
+        """Die abgehakten RUNS je (Stufe, Item) nachfuehren.
+
+        Der Haken-Schluessel traegt die Charakter-ID (`stufe|cid|item`).
+        Wechselt der Nutzer die Bau-Charaktere und drueckt "Apply", verteilt
+        der Planer neu - die alten Schluessel zeigen dann ins Leere, und die
+        abgehakten Runs standen wieder als offen da (Nutzer 24.09.2026:
+        "jetzt weiss ich nicht mehr, was ich bauen muss, bis die ESI
+        aktualisiert"). Was der Haken WIRKLICH sagt, ist "so viele Runs
+        dieses Items habe ich gestartet" - ohne Charakter. Genau das steht
+        hier, und daraus werden die Haken nach einer Umverteilung wieder
+        aufgebaut.
+        """
+        _rk = getattr(self, "_bd_runplan_runs_by_key", None) or {}
+        _paar = _rk.get(key)
+        if not _paar:
+            return          # Charakter- und Reprocessing-Zeilen tragen keine Runs
+        _tid, _runs = int(_paar[0]), int(_paar[1] or 0)
+        if _runs <= 0:
+            return
+        _stufe = str(key).split("|")[0]
+        _erl = getattr(self, "_bd_runplan_erledigt", None)
+        if _erl is None:
+            _erl = {}
+            self._bd_runplan_erledigt = _erl
+        _k = f"{_stufe}|{_tid}"
+        _alt = int(_erl.get(_k, 0) or 0)
+        _erl[_k] = max(0, _alt + _runs) if an else max(0, _alt - _runs)
+
+    def _runplan_ziel_stunden(self, stage):
+        """Zielzeit DIESER Stufe in Stunden - 0 = so schnell wie moeglich."""
+        _z = (self.settings.get("bau_runplan_ziel") or {})
+        try:
+            _v = int(_z.get(str(stage), 0) or 0)
+        except (TypeError, ValueError):
+            _v = 0
+        if _v == 0:
+            try:
+                _v = int(self.settings.get("bau_runplan_ziel_std", 0) or 0)
+            except (TypeError, ValueError):
+                _v = 0
+        return _v if _v >= 0 else -1
+
+    def _runplan_ziel_sekunden(self):
+        """{stage: Sekunden} fuer `schedule_build` - leere Eintraege weg.
+
+        EINE Stelle fuer die Umrechnung: die Einstellung steht in STUNDEN
+        (so steht sie auch im Auswahlfeld), der Planer rechnet in Sekunden.
+        """
+        _out = {}
+        for _st in self._RUNPLAN_STUFEN:
+            _h = self._runplan_ziel_stunden(_st)
+            if _h < 0:
+                # "SO LANGE WIE MOEGLICH" (Nutzer 24.09.2026): keine Grenze -
+                # der Planer nimmt dann so wenige Jobs wie ueberhaupt
+                # moeglich. Unendlich statt einer grossen Zahl, damit
+                # niemand spaeter raetselt, was "999999" bedeuten sollte.
+                _out[_st] = float("inf")
+            elif _h > 0:
+                _out[_st] = float(_h) * 3600.0
+        return _out
+
+    def _runplan_ziel_setzen(self, stage, stunden):
+        """Zielzeit einer Stufe merken (stage=None -> Vorgabe fuer alle)."""
+        if stage is None:
+            self.settings["bau_runplan_ziel_std"] = int(stunden or 0)
+        else:
+            _z = dict(self.settings.get("bau_runplan_ziel") or {})
+            if int(stunden or 0) != 0:
+                _z[str(stage)] = int(stunden)
+            else:
+                _z.pop(str(stage), None)
+            self.settings["bau_runplan_ziel"] = _z
+        try:
+            from .. import config as _cfgz
+            _cfgz.save_settings(self.settings)
+        except Exception:
+            pass
+
+    # DIE ZWEI FELDER: Tage und Stunden (Nutzer 24.09.2026: "es springt von
+    # 23 h auf 1 T 1 h automatisch [...] vielleicht sollten wir den Regler
+    # weglassen und stattdessen 2 Dropdowns einfuegen, Tage Stunden").
+    # GEMESSEN: der Regler hatte in der Spalte rund 150 px fuer 27 Rasten -
+    # 5 Pixel je Stunde. Ein Auswahlfeld trifft jede Stunde, ohne Zielen.
+    _RUNPLAN_TAGE_MAX = 7
+
+    def _planer_diagnose_schreiben(self, jobs, chars, te, res, names, type_id):
+        """Die EINGABEN und das ERGEBNIS des Runplaners in eine Textdatei.
+
+        WOZU: Fragen wie "warum nur 11 von 19 Blaupausen" oder "warum sind
+        es bei 23 h Ziel nur 15 h 26 m" lassen sich ohne die echten Eingaben
+        nicht nachstellen - jede Antwort waere geraten (Regel 5). Hier
+        stehen sie: Jobs mit Runs und Zeit je Run, die angekreuzten
+        Charaktere mit ihren Slots, alle Deckel, die Zielzeiten - und was
+        der Planer daraus gemacht hat.
+
+        NUR LESEN UND SCHREIBEN, keine Rechnung: die Datei darf nie
+        beeinflussen, was der Planer tut.
+        """
+        import os as _os
+        import time as _zt
+        # `config` ist in dieser Datei NICHT importiert (nur esi, hubs,
+        # industry, reprocess, store) - hier holen, nicht oben, damit der
+        # Import-Kopf der Datei unveraendert bleibt.
+        from .. import config as _cfg
+        _z = (lambda v: f"{int(v):,}".replace(",", "'"))
+        _pfad = _os.path.join(_cfg.app_data_dir(), "planer_diagnose.txt")
+        _cap = self._resolve_per_item_bp_cap() or {}
+        _rcap = self._resolve_per_item_runs_cap(type_id) or {}
+        _ziel = self._runplan_ziel_sekunden() or {}
+        _nm = (lambda t: str((names or {}).get(int(t)) or t))
+        _z2 = []
+        _a = _z2.append
+        # de_scan4: aus - Diagnosedatei fuer die Fehlersuche (planer_diagnose.txt),
+        # bewusst deutsch wie unrefined_diagnose.txt; erscheint nie auf dem Schirm.
+        _a("=" * 78)
+        _a(f"PLANER-DIAGNOSE  (Plan {type_id})")
+        _a(f"Erstellt: {_zt.strftime('%Y-%m-%d %H:%M:%S')}")
+        _a("=" * 78)
+        _a(f"TE-Faktor: {te}")
+        _a("")
+        _a("ZIELZEITEN JE STUFE (Sekunden; inf = so lange wie noetig):")
+        for _k, _v in sorted(_ziel.items()):
+            _a(f"  {_k}: {_v}")
+        if not _ziel:
+            _a("  (keine - 'so schnell wie moeglich')")
+        _a("")
+        _a("CHARAKTERE (angekreuzt) - Slots:")
+        for _c in (chars or []):
+            _a(f"  {_c.get('name')}  mfg={_c.get('mfg_slots')} "
+               f"react={_c.get('reaction_slots')} "
+               f"can_mfg={_c.get('can_mfg')} can_react={_c.get('can_react')} "
+               f"zeit_mfg={_c.get('mfg_time')} zeit_react={_c.get('react_time')}")
+        _a("")
+        _a("JOBS (Eingabe des Planers):")
+        _a("  ITEM                          RUNS   ZEIT/RUN(s)  AKTIV  "
+           "KOPIEN  RUNS/KOPIE  ENDE  TE-JOB")
+        for _j in (jobs or []):
+            _t = int(_j.get("tid") or 0)
+            _a(f"  {_nm(_t)[:28]:<28} {_z(_j.get('runs') or 0):>6} "
+               f"{_z(_j.get('base_time') or 0):>12} "
+               f"{str(_j.get('activity')):>6} "
+               f"{str(_cap.get(_t, '-')):>7} {str(_rcap.get(_t, '-')):>11}  "
+               f"{'ja' if _j.get('is_end') else '  '}    "
+               f"{_j.get('te_factor', te)}")
+        _a("")
+        _a("ERGEBNIS - Stufenzeiten (Sekunden):")
+        for _k, _v in sorted((res or {}).get("stage_times", {}).items()):
+            _a(f"  {_k}: {_v}")
+        _a("")
+        _a("ERGEBNIS - Mindestdauer je Stufe (stage_min_times):")
+        for _k, _v in sorted((res or {}).get("stage_min_times", {}).items()):
+            _a(f"  {_k}: {_v}")
+        _a("")
+        _a("ERGEBNIS - Zuteilungen (je Item/Charakter):")
+        _a("  ITEM                          CHARAKTER          RUNS  JOBS  "
+           "TEILE                STUFE")
+        for _x in ((res or {}).get("assignments") or []):
+            _a(f"  {_nm(_x.get('tid'))[:28]:<28} "
+               f"{str(_x.get('char_name'))[:17]:<17} "
+               f"{_z(_x.get('runs') or 0):>6} {str(_x.get('njobs') or ''):>5}  "
+               f"{str(_x.get('parts') or '')[:20]:<20} {_x.get('stage')}")
+        _a("")
+        _a("ENDE")
+        # de_scan4: an
+        with open(_pfad, "w", encoding="utf-8") as _fh:
+            _fh.write("\n".join(_z2) + "\n")
+
+    def _runplan_ziel_feld(self, tbl, item, stage, min_sek=0.0, min_info=None):
+        """Zielzeit einer Stufe: zwei Auswahlfelder, Tage und Stunden.
+
+        NUTZER 24.09.2026: "vielleicht sollten wir den Regler weglassen und
+        stattdessen 2 Dropdowns einfuegen, Tage Stunden" - und danach: "das
+        Dropdown erlaubt Einstellungen, die nicht moeglich sind, 0 d und 1 h
+        geht nicht".
+
+        WAS NICHT GEHT, STEHT NICHT ZUR WAHL. Die Stufe braucht eine
+        Mindestdauer (`stage_min_times`, gemessen) - jede Zeit darunter
+        aendert am Plan nichts. Ein Auswahlfeld, das sie trotzdem anbietet,
+        verspricht etwas, das nicht eintritt; deshalb beginnen die Stunden
+        beim kleinsten moeglichen Wert, und die Tage beginnen bei den vollen
+        Tagen der Mindestdauer. Der erste Eintrag heisst "so schnell wie
+        moeglich" und ist genau diese Mindestdauer.
+        """
+        import math
+        from PySide6.QtWidgets import (QComboBox as _QCb, QHBoxLayout as _QHb,
+                                       QWidget as _QWd, QLabel as _QLb)
+        _LEER = -999      # "keine Stundenangabe" (Strich), s. _stunden_fuellen
+        _min_h = max(0, int(math.ceil(float(min_sek or 0.0) / 3600.0)))
+        _ziel = self._runplan_ziel_stunden(stage)
+        _box = _QWd()
+        _lay = _QHb(_box)
+        _lay.setContentsMargins(2, 0, 4, 0)
+        _lay.setSpacing(4)
+        _cd = _QCb(_box)          # Tage (plus die zwei Sonderfaelle)
+        _cd.addItem(t("as fast as possible"), 0)
+        for _d in range(_min_h // 24, self._RUNPLAN_TAGE_MAX + 1):
+            _cd.addItem(t("{n} d").format(n=_d), _d + 1000)   # +1000 = echte Tage
+        _cd.addItem(t("as long as it takes"), -1)
+        # BREITE GEMESSEN, NICHT GERATEN (Nutzer 25.09.2026: "as fast as
+        # possible ist abgeschnitten"). Die festen 120 px reichten hier
+        # offscreen; auf seinem Windows sind dieselben Widgets rund 1,6-1,85x
+        # breiter - derselbe Befund wie b66 und die ME/TE-Felder im
+        # Multi-Bauplan. Deshalb der groessere von Vorgabe und gemessenem
+        # Bedarf.
+        _cd.setSizeAdjustPolicy(_QCb.AdjustToContents)
+
+        def _combo_breite(_cb, _mindest):
+            """Breite eines Auswahlfelds aus dem LAENGSTEN Eintrag - nicht
+            nur aus sizeHint. Zweiter Nutzer-Screenshot 26.09.2026: "as fast
+            as possibl" blieb im Feld selbst abgeschnitten, obwohl das Feld
+            seine sizeHint-Breite hatte. sizeHint kennt das Polster des
+            Themas (QComboBox: padding 3px 6px, 1 px Rahmen) und den Pfeil
+            nur ungefaehr; auf seinem Windows fehlten ein paar Pixel.
+            Gemessen: Textbreite + 12 px Polster + 2 px Rahmen + 24 px Pfeil
+            + 6 px Reserve, mindestens sizeHint + 8."""
+            _fmc = _cb.fontMetrics()
+            _txtw = max([_fmc.horizontalAdvance(_cb.itemText(_i))
+                         for _i in range(_cb.count())] or [0])
+            return max(_mindest, _cb.sizeHint().width() + 8, _txtw + 44)
+
+        _cd.setFixedWidth(_combo_breite(_cd, 120))
+        _ch = _QCb(_box)          # Stunden
+        _tip = t(
+            "How long may THIS stage run? Days and hours together. The first "
+            "entry is \u201eas fast as possible\u201c \u2013 the time the stage "
+            "needs anyway; anything shorter is not offered because it would "
+            "not change the plan. The more time you give it, the fewer "
+            "blueprints and slots the planner uses.")
+        if min_info and min_info.get("name"):
+            _tip += "\n\n" + t(
+                "Shorter than {d} is not possible: {name} needs {runs} run(s) "
+                "and can use {slots} slot(s) at once. More characters or more "
+                "blueprint copies for that item would shorten it."
+            ).format(d=self._fmt_dur(float(min_sek or 0.0)),
+                     name=min_info.get("name"),
+                     runs=int(min_info.get("runs") or 0),
+                     slots=int(min_info.get("slots") or 1))
+        _cd.setToolTip(_tip)
+        _ch.setToolTip(_tip)
+
+        def _stunden_fuellen(tage, wunsch=0, leer=False):
+            """Nur Stunden anbieten, die zusammen mit den Tagen ueber der
+            Mindestdauer liegen - sonst waere die Wahl folgenlos.
+
+            `leer=True` stellt einen Strich voran und waehlt ihn: ohne
+            gesetzte Zielzeit darf hier KEINE Stundenzahl stehen. Der Nutzer
+            las sonst eine Vorgabe, die es nicht gibt (25.09.2026: "da steht
+            7 h, sind aber eigentlich 5 h 36 m"; die 7 war bloss die
+            aufgerundete Mindestdauer). Auswaehlbar bleibt das Feld
+            trotzdem - wer eine Stunde waehlt, setzt damit ein Ziel."""
+            _ab = max(0, _min_h - int(tage) * 24) if int(tage) * 24 < _min_h else 0
+            _alt = _ch.blockSignals(True)
+            _ch.clear()
+            if leer:
+                _ch.addItem("\u2013", _LEER)
+            for _h in range(min(_ab, 23), 24):
+                _ch.addItem(t("{n} h").format(n=_h), _h)
+            _i = _ch.findData(_LEER if leer else int(wunsch))
+            _ch.setCurrentIndex(_i if _i >= 0 else 0)
+            _ch.setSizeAdjustPolicy(_QCb.AdjustToContents)
+            _ch.setFixedWidth(_combo_breite(_ch, 76))
+            _ch.blockSignals(_alt)
+
+        _st_lbl = _QLb(_box)
+        _st_lbl.setStyleSheet(f"color:{theme.CYAN}; font-weight:700;")
+        _st_lbl.setText(self._runplan_ziel_text(_ziel, _min_h))
+        if int(_ziel or 0) < 0:
+            _cd.setCurrentIndex(_cd.count() - 1)
+            _stunden_fuellen(0, leer=True)
+            _ch.setEnabled(False)
+        elif int(_ziel or 0) > 0:
+            _z = int(_ziel)
+            _i = _cd.findData(min(_z // 24, self._RUNPLAN_TAGE_MAX) + 1000)
+            _cd.setCurrentIndex(_i if _i >= 0 else 0)
+            _stunden_fuellen(_z // 24, _z % 24)
+        else:
+            # KEIN ZIEL = KEINE STUNDENZAHL, aber bedienbar: wer hier eine
+            # Stunde waehlt, setzt damit das Ziel (die Tage springen auf 0 d).
+            _cd.setCurrentIndex(0)
+            _stunden_fuellen(0, leer=True)
+        _lay.addWidget(_cd)
+        _lay.addWidget(_ch)
+        _lay.addWidget(_st_lbl, 1)
+
+        def _gewaehlt(*_a):
+            _d = int(_cd.currentData() or 0)
+            _hd = _ch.currentData()
+            if _d < 0:                      # so lange wie noetig
+                _ch.setEnabled(False)
+                _stunden_fuellen(0, leer=True)
+                _neu = -1
+            elif _d == 0 and _hd is not None and int(_hd) != _LEER:
+                # STUNDE OHNE TAGE: das ist ein Ziel, kein "so schnell wie
+                # moeglich". Die Tage springen sichtbar auf 0 d, sonst
+                # stuenden zwei Aussagen nebeneinander.
+                _neu = int(_hd)
+                _alt_d = _cd.blockSignals(True)
+                _i0 = _cd.findData(1000)
+                if _i0 >= 0:
+                    _cd.setCurrentIndex(_i0)
+                _cd.blockSignals(_alt_d)
+            elif _d == 0:                   # so schnell wie moeglich
+                _ch.setEnabled(True)
+                _stunden_fuellen(0, leer=True)
+                _neu = 0
+            else:
+                _ch.setEnabled(True)
+                _tage = _d - 1000
+                _stunden_fuellen(_tage, int(_ch.currentData() or 0))
+                _neu = _tage * 24 + int(_ch.currentData() or 0)
+            _st_lbl.setText(self._runplan_ziel_text(_neu, _min_h))
+            self._runplan_ziel_gewaehlt(stage, _neu)
+        _cd.currentIndexChanged.connect(_gewaehlt)
+        _ch.currentIndexChanged.connect(_gewaehlt)
+        tbl.setItemWidget(item, 2, _box)
+        # DIE SPALTE MUSS DAS FELD FASSEN (Nutzer 26.09.2026: "die
+        # Zeitdropdowns bissl abgeschnitten"). Die Blaupausen-Spalte ist
+        # 280 px breit (mw_bauplan_fenster); auf seinem Windows sind beide
+        # Auswahlfelder zusammen breiter - Qt schneidet das Feld dann am
+        # Spaltenrand ab, egal wie sauber seine eigene Breite gemessen ist.
+        # Gemessen: feste Breiten der zwei Felder + Abstand + Platz fuer
+        # die Textzeile daneben.
+        _need = (_cd.width() + _ch.width() + 3 * _lay.spacing()
+                 + _st_lbl.fontMetrics().horizontalAdvance(_st_lbl.text()) + 12)
+        if tbl.columnWidth(2) < _need:
+            tbl.setColumnWidth(2, int(_need))
+        return _cd
+
+    def _runplan_ziel_alle_gewaehlt(self, stunden):
+        """Die Vorgabe fuer ALLE Stufen setzen (und Ausnahmen zuruecknehmen).
+
+        Sonst waehlte man oben etwas, und unten bliebe eine Stufe stumm bei
+        ihrem alten Regler stehen - zwei Aussagen ueber dieselbe Sache.
+        """
+        _h = int(stunden or 0)
+        if (_h == int(self.settings.get("bau_runplan_ziel_std", 0) or 0)
+                and not (self.settings.get("bau_runplan_ziel") or {})):
+            return
+        self.settings["bau_runplan_ziel"] = {}
+        self._runplan_ziel_setzen(None, _h)
+        _fn = getattr(self, "_bd_full_rebuild", None)
+        if _fn is not None:
+            QTimer.singleShot(0, _fn)
+
+    def _runplan_ziel_gewaehlt(self, stage, stunden):
+        """Auswahl uebernehmen und den Plan neu rechnen lassen."""
+        if int(stunden or 0) == self._runplan_ziel_stunden(stage):
+            return
+        self._runplan_ziel_setzen(stage, stunden)
+        _fn = getattr(self, "_bd_full_rebuild", None)
+        if _fn is not None:
+            QTimer.singleShot(0, _fn)
+
+    @staticmethod
+    def _runplan_ziel_text(stunden, min_h=0):
+        """Beschriftung eines Zielwerts. 0 und -1 bekommen einen eigenen
+        Satz - eine Zahl waere dort eine Behauptung ueber eine Dauer, die
+        gar nicht eingestellt ist."""
+        _h = int(stunden or 0)
+        if _h < 0:
+            return t("as long as it takes")
+        if _h <= 0 or (min_h and _h <= int(min_h)):
+            return t("as fast as possible")
+        if _h < 24:
+            return t("{n} h").format(n=_h)
+        if _h % 24 == 0:
+            return t("{n} d").format(n=_h // 24)
+        return t("{d} d {h} h").format(d=_h // 24, h=_h % 24)
+
+    def _planer_diagnose_fortschritt(self, plan, names, plan_runs, rest_budget):
+        """Anhang an planer_diagnose.txt: WOHER der Rest je Item kommt.
+
+        NUTZER 26.09.2026 (Titanium Diborite Armor Plate): "schau wieviel ich
+        baue und der Runplaner will trotzdem nochmal 6'718 nachbauen ...
+        genau das passiert die ganze Zeit". Vom Schirm ist das nicht
+        nachrechenbar - hier stehen je Item: Plan-Runs, gelieferte und
+        laufende Runs (ESI), das Rest-Budget, dazu der Bestand in seinen
+        Schichten (Einfrier-Stand, Hangar live, Pipeline, Einfuegung,
+        wirksam) und was der Plan davon verbraucht (stock_used). NUR
+        SCHREIBEN, keine Rechnung - die Datei darf nie beeinflussen, was
+        der Planer tut (wie _planer_diagnose_schreiben)."""
+        import os as _os
+        import time as _zt
+        from .. import config as _cfg
+        _z = (lambda v: f"{int(v or 0):,}".replace(",", "'"))
+        _nm = (lambda t: str((names or {}).get(int(t)) or t))
+        _pfad = _os.path.join(_cfg.app_data_dir(), "planer_diagnose.txt")
+        _frz = getattr(self, "_bd_frozen", None) or {}
+        _fz_stock = {int(k): int(v or 0) for k, v in (_frz.get("stock") or {}).items()}
+        _hangar = getattr(self, "_bd_hangar_only", None) or {}
+        _pipe = getattr(self, "_bd_pipeline_live", None) or {}
+        _manual = getattr(self, "_bd_manual_stock", None) or {}
+        _wirksam = (getattr(self, "_bd_opts", None) or {}).get("stock") or {}
+        _used = (plan or {}).get("stock_used") or {}
+        _gel = getattr(self, "_bd_runplan_delivered", None) or {}
+        _gel_s = getattr(self, "_bd_runplan_delivered_sicher", None) or {}
+        _akt = getattr(self, "_bd_active_jobs_map", None) or {}
+        _dlv = getattr(self, "_bd_delivered_jobs", None) or []
+        _zl = []
+        _a = _zl.append
+        # de_scan4: aus - Diagnosedatei (planer_diagnose.txt), nie auf dem Schirm
+        # de_scan2: aus  (dieselbe Diagnosedatei, deutsch wie planer_diagnose)
+        _a("")
+        _a("=" * 78)
+        _a(f"FORTSCHRITT UND BESTAND JE ITEM  ({_zt.strftime('%Y-%m-%d %H:%M:%S')})")
+        _a(f"Plan eingefroren: "
+           + (_zt.strftime('%Y-%m-%d %H:%M', _zt.localtime(float(_frz.get('ts'))))
+              if _frz.get("ts") else "nein")
+           + f"   Schnappschuss: {'ja' if _frz.get('plan_snapshot') else 'nein'}"
+           + f"   Einfrier-Bestand: {len(_fz_stock)} Items")
+        _a(f"ESI-Jobdaten von: "
+           + (_zt.strftime('%Y-%m-%d %H:%M:%S',
+                           _zt.localtime(float(getattr(self, '_bd_jobs_ts', 0) or 0)))
+              if getattr(self, "_bd_jobs_ts", None) else "(noch kein Abruf)"))
+        _a("")
+        _a("RUNS:  Plan = Summe der Zuteilungen; geliefert = ESI-Jobs seit dem "
+           "Einfrieren (sicher zugeordnet); laufend = aktive Jobs; "
+           "erledigt = min(Plan, geliefert + laufend); Rest = Plan - erledigt "
+           "(das zeigt der Runplaner)")
+        _a("  ITEM                            PLAN   GELIEFERT  (unsicher)  "
+           "LAUFEND  ERLEDIGT      REST")
+        for _t in sorted(plan_runs, key=lambda t: -int(plan_runs.get(t) or 0)):
+            _lauf = sum(int(_j.get("runs") or 0) for _j in (_akt.get(_t) or []))
+            _erl = int(rest_budget.get(_t) or 0)
+            _a(f"  {_nm(_t)[:30]:<30} {_z(plan_runs.get(_t)):>7} "
+               f"{_z(_gel_s.get(_t)):>10} {_z(_gel.get(_t)):>11} "
+               f"{_z(_lauf):>8} {_z(_erl):>9} "
+               f"{_z(int(plan_runs.get(_t) or 0) - _erl):>9}")
+            for _j in (_akt.get(_t) or []):
+                _a(f"      laufend: {_z(_j.get('runs')):>7} Runs  {_j.get('status')}"
+                   f"  {_j.get('char')}  Ende {_j.get('end_date')}")
+            for _j in _dlv:
+                if int(_j.get("product_type_id") or 0) != int(_t):
+                    continue
+                _a(f"      geliefert: {_z(_j.get('runs')):>5} Runs  Job {_j.get('job_id')}"
+                   f"  Start {_j.get('start_date')}  fertig {_j.get('completed_date')}")
+        _a("")
+        _a("BESTAND je Item (Stueck): Einfrier-Stand | Hangar live (ESI) | "
+           "Pipeline (Jobs) | Einfuegung | WIRKSAM (= max(eingefroren, "
+           "Hangar+Pipeline) bei eingefrorenen Plaenen) | vom Plan verbraucht")
+        _a("  ITEM                          EINGEFR.    HANGAR  PIPELINE  "
+           "EINFUEG.   WIRKSAM  VERBRAUCHT")
+        _alle = set(plan_runs) | set(_used)
+        for _t in sorted(_alle, key=lambda t: -int(_wirksam.get(int(t), 0) or 0)):
+            _t = int(_t)
+            _a(f"  {_nm(_t)[:28]:<28} {_z(_fz_stock.get(_t)):>9} {_z(_hangar.get(_t)):>9} "
+               f"{_z(_pipe.get(_t)):>9} {_z(_manual.get(_t)):>9} "
+               f"{_z(_wirksam.get(_t)):>9} {_z(_used.get(_t)):>11}")
+        _a("ENDE FORTSCHRITT")
+        # de_scan2: an
+        # de_scan4: an
+        with open(_pfad, "a", encoding="utf-8") as _fh:
+            _fh.write("\n".join(_zl) + "\n")
 
     def _fill_bauplan_schedule(self, plan, names, type_id, qty, hdr, sub, tbl, bp_tbl=None,
                                bp_warn_lbl=None):
@@ -3004,6 +3780,7 @@ class BauplanTabs:
         except Exception:
             _stage_map_rp = {}
         jobs = []
+        _enden_jobs = self._bd_enden(type_id, recipes)   # Buendel: alle Enden
         for _tid, runs in plan.get("build_runs", {}).items():
             if runs < 1:
                 continue
@@ -3030,7 +3807,7 @@ class BauplanTabs:
                          "runs": runs,
                          "activity": activity, "base_time": base_t,
                          "is_unrefined": _is_unref,
-                         "is_end": (_tid == type_id), "bp_id": bp_id,
+                         "is_end": (_tid in _enden_jobs), "bp_id": bp_id,
                          "is_fuel": self._ist_fuel_block(_tid, _groups,
                                                          recipes.reaction_products),
                          "sci_skills": _sci,
@@ -3087,7 +3864,7 @@ class BauplanTabs:
                         react_struct=_s_item or _react_struct)
                     _bp_jobs.append({"tid": _tid, "name": names.get(_tid, f"#{_tid}"),
                                      "runs": runs, "activity": activity,
-                                     "base_time": base_t, "is_end": (_tid == type_id),
+                                     "base_time": base_t, "is_end": (_tid in _enden_jobs),
                                      "bp_id": bp_id, "sci_skills": _sci,
                                      "is_fuel": self._ist_fuel_block(
                                          _tid, _groups, recipes.reaction_products),
@@ -3221,11 +3998,26 @@ class BauplanTabs:
         res = industry.schedule_build(
             jobs, sched_chars, te_factor=te,
             mfg_bp=_cap("component"), react_bp=_cap("reaction"), end_bp=_cap("end"),
+            # ZIELZEIT JE STUFE (Nutzer 24.09.2026) - siehe
+            # `_runplan_ziel_sekunden`. Leeres Ergebnis = nur straffen.
+            stage_ziel=self._runplan_ziel_sekunden(),
             fuel_ids={j["tid"] for j in jobs if j.get("is_fuel")},
             per_item_cap=self._resolve_per_item_bp_cap(),
             # RUNS JE JOB DECKELN (Nutzer 19.09.2026: "17 Stueck mit einem
             # Blueprint ... gibts maximal 10 runs"): BPC-Runs / SDE-Limit.
             per_item_runs_cap=self._resolve_per_item_runs_cap(type_id))
+        # PLANER-DIAGNOSE (Nutzer 25.09.2026: "ich habe 19 Blueprints und
+        # nicht nur 11, as fast as possible nutzt nicht alle" und "stelle ich
+        # 23 h ein, dauert die Reaktion 15 h 26 m"). Beides laesst sich von
+        # aussen nicht nachstellen, solange die EINGABEN des Planers nicht
+        # sichtbar sind - genau die schreibt diese Datei, roh und
+        # unkommentiert. Dieselbe Bauart wie `unrefined_diagnose.txt`:
+        # schreiben, nie darauf verlassen (jede Zeile in try/except).
+        try:
+            self._planer_diagnose_schreiben(jobs, sched_chars, te, res,
+                                            names, type_id)
+        except Exception as _pd:
+            self._log_exception("Planer-Diagnose", str(_pd))
         # FORTSCHRITT AUS ESI-JOBS (nur eingefrorene Plaene, Nutzer-Spez
         # Punkt 2): gelieferte Runs seit dem Einfrieren je Item aufsummieren;
         # deckt die Summe die Plan-Runs, wird die Zeile automatisch abgehakt -
@@ -3235,7 +4027,22 @@ class BauplanTabs:
         # hier bei JEDEM Aufbau neu bestimmt (transient, nichts Gespeichertes).
         self._bd_runplan_auto = {}
         self._bd_runplan_delivered = {}
+        # NUR DAS SICHER ZUGEORDNETE (Befund 21.09.2026): dieselbe Zahl
+        # steuerte bisher die ANZEIGE und den RESTBEDARF. Die beiden haben
+        # voellig verschiedene Fehlerkosten - eine falsch eingefaerbte Zeile
+        # kostet nichts, eine zu kleine Einkaufsliste kostet Material.
+        # Deshalb zwei Karten: `_bd_runplan_delivered` faerbt weiter (darf
+        # raten), `_bd_runplan_delivered_sicher` speist `_restbedarf_jetzt`
+        # und `_fehlbedarf_jetzt` (darf NICHT raten).
+        self._bd_runplan_delivered_sicher = {}
+        # OFFENE ZUORDNUNGS-FRAGEN (Stufe C, Teil 2) - transient wie
+        # `_bd_runplan_auto`, entsteht bei jedem Aufbau neu.
+        self._bd_job_offen = []
         self._bd_runplan_runs_by_key = {}
+        # WAS IST SCHON ERLEDIGT? Kopie der gemerkten Runs je (Stufe, Item);
+        # sie wird beim Bauen der Zeilen aufgebraucht (s. `_k_erl` unten).
+        import time as _zeit_mod
+        _rest_erl = dict(getattr(self, "_bd_runplan_erledigt", None) or {})
         # Fremde Reservierungen EINMAL je Aufbau (fuer die Job-Zuordnung).
         _fremd_res = self._fremde_reservierungen(
             self.settings, getattr(self, "_bd_open_plan_id", None))
@@ -3255,7 +4062,98 @@ class BauplanTabs:
             # Geliefert-Stand JE ITEM auch fuer teilweise gelieferte merken -
             # der Nutzer will sehen "ESI hat 12 von 24 Runs gesehen", nicht
             # erst beim Vollstand ein Zeichen bekommen (Sitzung 8).
+            # STUFE B (21.09.2026): erst die BELEGTE Zuordnung, dann der Rest.
+            #
+            # Ein Job, den ein Klick dieses Plans belegt, gehoert ihm - und
+            # zwar dauerhaft (`store.job_zuordnung_setzen` laesst eine
+            # bestehende Zuordnung stehen). Damit wandert Fortschritt nicht
+            # mehr zwischen Plaenen, die dasselbe Zwischenprodukt bauen.
+            #
+            # Das ERSETZT die Raterei nicht, es geht ihr VOR: was kein Klick
+            # belegt, laeuft weiter durch `_frozen_auto_checked` und wird
+            # fuer die Materialrechnung durch `delivered_sicher` gefiltert.
+            try:
+                self._job_zuordnung_nachfuehren(res["assignments"],
+                                                float(_frz_sched["ts"]))
+                # NAMEN AUS DEM PARAMETER `names` (s. der Hinweis weiter
+                # oben: `_bd_names` gibt es hier nicht) - im Frage-Dialog
+                # soll das Item stehen, nicht seine Typ-Nummer.
+                for _of in (getattr(self, "_bd_job_offen", None) or []):
+                    _of["name"] = str((names or {}).get(_of["type_id"])
+                                      or _of["type_id"])
+                self._jobfrage_knopf_auffrischen()
+            except Exception as _jz:
+                # Zuordnen ist eine VERBESSERUNG, kein Muss: faellt sie aus,
+                # gilt exakt das bisherige Verhalten (Regel 3).
+                self._log_exception("Job-Zuordnung", str(_jz))
             self._bd_runplan_delivered = dict(_auto_runs or {})
+            # Die sichere Karte: Deckel auf die Plan-Runs, und umstrittene
+            # Items (ein anderer gespeicherter Plan beansprucht sie auch)
+            # zaehlen gar nicht. s. mw_helpers.delivered_sicher.
+            try:
+                _plan_runs_s = {}
+                for _a_s in (res["assignments"] or []):
+                    _t_s = int(_a_s["tid"])
+                    _plan_runs_s[_t_s] = (_plan_runs_s.get(_t_s, 0)
+                                          + int(_a_s.get("runs") or 0))
+                from .mw_helpers import delivered_sicher as _mwh_sicher
+                # BELEGTE RUNS (Stufe B): Jobs, die MIR gehoeren, weil ich
+                # ihre Zeile angeklickt habe - und die ESI als geliefert
+                # meldet. Beides muss zusammenkommen: die Zuordnung sagt
+                # "wem", ESI sagt "ob ueberhaupt". Ein im Spiel abgebrochener
+                # Job faellt aus der Liste und zaehlt damit von selbst nicht
+                # mehr (Skizze 2.4 - die Tabelle ist ein Adressbuch, kein
+                # Fortschrittsspeicher).
+                _belegt_s = {}
+                try:
+                    _zu_s = store.job_zuordnung_fuer_plan(
+                        getattr(self, "_bd_open_plan_id", None))
+                    if _zu_s:
+                        for _dj in (getattr(self, "_bd_delivered_jobs",
+                                            None) or []):
+                            _jid_s = _dj.get("job_id")
+                            if _jid_s is None or int(_jid_s) not in _zu_s:
+                                continue
+                            # NUR seit dem Einfrieren (dieselbe Grenze wie
+                            # `_frozen_auto_checked`): ein Job aus einem
+                            # FRUEHEREN Durchlauf desselben Plans ist kein
+                            # Fortschritt dieses Durchlaufs - sonst schrumpfte
+                            # die Einkaufsliste nach dem Neu-Einfrieren um
+                            # Material, das laengst verbaut ist (Regel 3).
+                            _fts_b = self._iso_job_ts(
+                                _dj.get("completed_date"))
+                            if _fts_b is None or _fts_b < float(
+                                    _frz_sched["ts"]):
+                                continue
+                            _t_b = int(_dj.get("product_type_id") or 0)
+                            if _t_b:
+                                _belegt_s[_t_b] = (_belegt_s.get(_t_b, 0)
+                                                   + int(_dj.get("runs") or 0))
+                except Exception as _be:
+                    _belegt_s = {}
+                    self._log_exception("Belegte Runs", str(_be))
+                self._bd_runplan_delivered_sicher = _mwh_sicher(
+                    self._bd_runplan_delivered, _plan_runs_s,
+                    self._umstrittene_items(
+                        self.settings,
+                        getattr(self, "_bd_open_plan_id", None)),
+                    _belegt_s)
+                # EINE KARTE (Stufe C, Abschluss - Nutzer 26.09.2026 "machen
+                # okey"): die Anzeige liest ab jetzt DIESELBE sichere Karte
+                # wie die Einkaufsliste. Bis hierher durfte sie raten
+                # (Befund 21.09.2026) - seit Klick, Eindeutigkeit, Zeitregel
+                # und Frage-Dialog bleibt nur noch der Job ungeraten, den
+                # wirklich niemand zuordnen kann; der steht als offene Frage
+                # in der Leiste statt als gruener Punkt. Zwei Karten hiessen
+                # zwei Wahrheiten auf einem Bildschirm ("building 16/40"
+                # neben "13'019 fehlen").
+                self._bd_runplan_delivered = dict(
+                    self._bd_runplan_delivered_sicher)
+            except (KeyError, TypeError, ValueError) as _se:
+                # Im Zweifel NICHTS abbuchen (Regel 3) - lieber eine zu
+                # grosse Einkaufsliste als eine zu kleine.
+                self._bd_runplan_delivered_sicher = {}
+                self._log_exception("Runplaner: sichere Liefer-Karte", str(_se))
             # NUTZER-ENTSCHEIDUNG (Sitzung 8): "nur ich darf streichen" -
             # Haekchen setzt AUSSCHLIESSLICH der Nutzer (das fruehere
             # Auto-Abhaken ist raus). ESI blendet stattdessen voll gedeckte
@@ -3438,6 +4336,28 @@ class BauplanTabs:
             # dem man MEHR gebaut hat als der Plan vorsah, negative Runs
             # zeigen.
             _rest_budget[_t_r] = _mwh_fertig(_pl_r, _fertig, 0)
+        # FORTSCHRITTS-DIAGNOSE (26.09.2026, Nutzer: "der Runplaner will
+        # trotzdem nochmal 6'718 nachbauen ... genau das passiert die ganze
+        # Zeit"): dieselben Zahlen, aus denen das Rest-Budget eben entstand,
+        # in planer_diagnose.txt anhaengen - nur schreiben, nie rechnen.
+        try:
+            self._planer_diagnose_fortschritt(plan, names, _plan_runs_tid,
+                                              _rest_budget)
+        except Exception as _pdf:
+            self._log_exception("Planer-Diagnose Fortschritt", str(_pdf))
+        # WAS WAR AUFGEKLAPPT? (Nutzer 24.09.2026: "dann laedt es auch keine
+        # Runs".) Es lud sie sehr wohl - der Neuaufbau klappte nur jede
+        # Charakterzeile wieder zu, und die Runs stehen darunter. Nach einer
+        # Zielzeit-Aenderung baut sich der Baum neu, also war nach jedem Klick
+        # alles zu. Hier wird der Stand gemerkt und unten wiederhergestellt.
+        # Der Stand liegt am FENSTER (`_bd_sched_klapp`, gepflegt von den
+        # Klapp-Signalen) - beim Neuaufbau ist der alte Baum schon leer.
+        # Angewandt wird er an EINER Stelle, unten bei `_stage_citems`: dort
+        # setzt die Vorgabe "fertige Stufe auf, offene zu" den Zustand
+        # ohnehin, ein zweites setExpanded weiter oben wuerde sie nur wieder
+        # ueberschrieben bekommen (genau daran ist die erste Fassung
+        # gescheitert - gemessen, nicht vermutet).
+        _klapp_vorher = dict(getattr(self, "_bd_sched_klapp", None) or {})
         tbl.blockSignals(True)
         tbl.clear()
         cslots = {c["id"]: (c["mfg_slots"], c["reaction_slots"]) for c in sched_chars}
@@ -3811,6 +4731,23 @@ class BauplanTabs:
             stage_item.setToolTip(0, _txt("This phase only starts once the previous one is "
                                           "completely finished \u2013 never at the same time."))
             tbl.addTopLevelItem(stage_item)
+            # ZIELZEIT DIESER STUFE (Nutzer 24.09.2026). Das Feld sitzt in der
+            # Runs-Spalte der Stufenzeile - dort steht bei einer Stufe nie
+            # etwas, und es steht DIREKT neben der Dauer, die es beeinflusst.
+            # Keine eigene Leiste, kein Dialog: die Zeile, die die Zeit zeigt,
+            # ist auch die Zeile, an der man sie einstellt.
+            # DIE STUFE HAENGT AN DER ZEILE (Rolle 8), nicht am Text: der
+            # Kopf heisst je nach Struktur und Nummerierung anders, und die
+            # Reprocessing-Bloecke daneben sind gar keine Planer-Stufen.
+            # BEWUSST HIER und nicht im Feld-Aufbau: sonst verschwaende mit
+            # dem Feld auch die Markierung, und eine Pruefung "genau die
+            # Stufenzeilen haben ein Feld" waere tautologisch (die Rotprobe
+            # hat genau das gemeldet).
+            stage_item.setData(1, Qt.UserRole + 8, str(stage))
+            self._runplan_ziel_feld(
+                tbl, stage_item, stage,
+                (res.get("stage_min_times") or {}).get(stage, 0.0),
+                (res.get("stage_min_by") or {}).get(stage))
             _checked_set = getattr(self, "_bd_runplan_checked", None) or set()
 
             def _apply_struck(titem):
@@ -4128,6 +5065,28 @@ class BauplanTabs:
                     # macht die Haken fuer `_restbedarf_jetzt` lesbar.
                     self._bd_runplan_runs_by_key[_ckey_item] = (
                         int(a["tid"]), int(a.get("runs") or 0))
+                    # HAKEN UEBERLEBEN EINE UMVERTEILUNG (Nutzer 24.09.2026):
+                    # kennt der Plan noch offene "erledigte Runs" dieses
+                    # Items, bekommt diese Zeile den Haken zurueck, auch wenn
+                    # sie jetzt einem anderen Charakter gehoert. Der
+                    # Zeitstempel wandert mit - ohne ihn duerfte die
+                    # mitlaufende Reservierung nichts freigeben.
+                    _k_erl = f"{stage}|{int(a['tid'])}"
+                    _runs_hier = int(a.get("runs") or 0)
+                    if (_ckey_item not in _checked_set and _runs_hier > 0
+                            and int(_rest_erl.get(_k_erl, 0) or 0) >= _runs_hier):
+                        _checked_set.add(_ckey_item)
+                        _cs_alle = getattr(self, "_bd_runplan_checked", None)
+                        if _cs_alle is not None:
+                            _cs_alle.add(_ckey_item)
+                        _tsm_e = getattr(self, "_bd_runplan_ts", None)
+                        if _tsm_e is not None and _ckey_item not in _tsm_e:
+                            _tsm_e[_ckey_item] = float(
+                                (getattr(self, "_bd_runplan_erledigt_ts", None)
+                                 or {}).get(_k_erl) or _zeit_mod.time())
+                    if _ckey_item in _checked_set:
+                        _rest_erl[_k_erl] = max(
+                            0, int(_rest_erl.get(_k_erl, 0) or 0) - _runs_hier)
                     if _ckey_item in _checked_set:
                         iit.setCheckState(0, Qt.Checked)
                         _apply_struck(iit)
@@ -4247,7 +5206,21 @@ class BauplanTabs:
                             else:
                                 _passt9 = False
                                 break
-                        if not _passt9 and sum(_lauf9) != _pl_runs9:
+                        # TEILWEISE GESTARTET ZAEHLT AUCH (Nutzer-Befund
+                        # 24.09.2026, Screenshot der Bauschleife: ingame
+                        # laufen 64 Runs Titanium Carbide, die Zeile
+                        # verlangt 130 - und blieb voellig unmarkiert).
+                        # Die alten zwei Regeln verlangten, dass die
+                        # laufenden Jobs GENAU in die geplante Aufteilung
+                        # passen oder die Zeile voll decken. Seit man die
+                        # Zeit je Stufe einstellen kann, schneidet der Plan
+                        # aber anders als das Spiel (130 in EINEM Job gegen
+                        # 5 Jobs a 13) - dann traf keine der beiden Regeln
+                        # mehr zu, obwohl die Arbeit sichtbar laeuft.
+                        # Weniger als die Zeile braucht ist kein Widerspruch,
+                        # sondern der Normalfall eines angefangenen Satzes.
+                        _teil9 = 0 < sum(_lauf9) < _pl_runs9
+                        if not _passt9 and sum(_lauf9) != _pl_runs9 and not _teil9:
                             _active = []
                     if _active:
                         _ready = [j for j in _active if j.get("status") == "ready"]
@@ -4289,7 +5262,34 @@ class BauplanTabs:
                                 "({what}) - before starting this again, check "
                                 "whether it is already enough.").format(
                                     who=_cname_here, what=_who))
-                            iit.setText(0, iit.text(0) + " " + _txt("(building)"))
+                            # WIE VIEL laeuft, wenn es weniger ist als die
+                            # Zeile braucht - sonst sagt "(building)" dasselbe
+                            # bei 5 wie bei 130 Runs.
+                            _lauf_n9 = sum(int(j.get("runs") or 0) for j in _active)
+                            _soll_n9 = int(a.get("runs") or 0)
+                            # VOLL GEDECKT (Nutzer 26.09.2026): bei 0 offenen
+                            # Runs zeigt die Zeile ihre PLAN-Runs (Rueckblick),
+                            # und "(building 16/40)" las sich wie "24 fehlen
+                            # noch". Sind Plan-Runs = geliefert + laufend,
+                            # steht jetzt die ganze Rechnung des ITEMS da.
+                            _gel_i9 = int((getattr(self, "_bd_runplan_delivered",
+                                                   None) or {}).get(_tid_a, 0) or 0)
+                            _lauf_i9 = sum(
+                                int(_j.get("runs") or 0) for _j in
+                                ((getattr(self, "_bd_active_jobs_map", None)
+                                  or {}).get(_tid_a) or []))
+                            _plan_i9 = int(_plan_runs_tid.get(_tid_a, 0) or 0)
+                            if _weg >= R_plan and _plan_i9 > 0 and \
+                                    _gel_i9 + _lauf_i9 >= _plan_i9:
+                                iit.setText(0, iit.text(0) + " " + _txt(
+                                    "(covered \u2713 {plan}/{plan}: {gel} delivered "
+                                    "\u00b7 {lauf} running)").format(
+                                        plan=_plan_i9, gel=_gel_i9, lauf=_lauf_i9))
+                            else:
+                                iit.setText(0, iit.text(0) + " " + (
+                                    _txt("(building {n}/{m})").format(
+                                        n=_lauf_n9, m=_soll_n9)
+                                    if 0 < _lauf_n9 < _soll_n9 else _txt("(building)")))
                     # Aktivität merken (für "Blueprint-Name kopieren": Reaktion vs
                     # Fertigung -> "Reaction Formula" bzw. "Blueprint").
                     iit.setData(0, Qt.UserRole + 7, a.get("activity"))
@@ -4397,8 +5397,31 @@ class BauplanTabs:
                     # voll gedeckte Zeilen ohnehin ausgeblendet wurden. Jetzt
                     # entscheidet allein der ESI-Befund.
                     if _zustand is not None:
-                        iit.setFlags(iit.flags() & ~Qt.ItemIsUserCheckable)
-                        iit.setData(0, Qt.CheckStateRole, None)
+                        # DAS KAESTCHEN BLEIBT (Nutzer-Entscheid 21.09.2026:
+                        # "ist der Tool gruene Hacken da kann ich selber kein
+                        # gruenen Hacken mehr setzen").
+                        #
+                        # WARUM DAS EIN MATERIAL-FEHLER WAR, nicht nur eine
+                        # Unbequemlichkeit: der HAND-Haken ist die einzige
+                        # Quelle, aus der `_reserve_map_mitlaufend` die
+                        # Zutaten einer Zeile abbucht. Wurde das Kaestchen
+                        # entfernt, sobald ESI die Zeile als fertig/laufend
+                        # meldete, konnte fuer sie NIE ein Haken entstehen -
+                        # und ihr Material blieb fuer immer reserviert.
+                        # Nachgerechnet (aa384): mit Haken bleiben von
+                        # 1'000 + 500 + 100 reservierten Einheiten nur die
+                        # 100 des Erzeugnisses uebrig, ohne Haken alle 1'600.
+                        # Je weiter ein Plan gebaut wurde, desto mehr Zeilen
+                        # verloren ihr Kaestchen - ein fertiger Plan konnte
+                        # sich per Bauart nicht mehr entlasten. Genau so kam
+                        # ein laengst gebauter Plan dazu, 380'000 Einheiten
+                        # festzuhalten und jeden Nachschub abzufangen.
+                        #
+                        # Der Entscheid aus Sitzung 14 bleibt gewahrt: die
+                        # Zeile wird gedimmt und bekommt ihren Punkt, sie
+                        # verschwindet nicht. Sie bleibt nur bedienbar.
+                        if iit.data(0, Qt.CheckStateRole) is None:
+                            iit.setCheckState(0, Qt.Unchecked)
                         # de_scan4: aus - interner Zustands-Schluessel
                         if _zustand == "fertig":
                             # de_scan4: an
@@ -4429,8 +5452,15 @@ class BauplanTabs:
                         _dim = QColor(theme.MUTED)
                         for _c_z in range(tbl.columnCount()):
                             iit.setForeground(_c_z, _dim)
+                        # WOFUER DAS KAESTCHEN JETZT NOCH GUT IST, und das
+                        # muss dastehen - sonst sieht es nach Arbeit aus, die
+                        # laengst erledigt ist (Regel 6).
+                        _frei_tip = "\n" + _txt(
+                            "Tick it once you are really done: that releases "
+                            "the material this line still reserves for other "
+                            "build plans.")
                         if not iit.toolTip(0):
-                            iit.setToolTip(0, _txt(
+                            iit.setToolTip(0, (_txt(
                                 "Nothing left to do here \u2013 ESI has this "
                                 "covered. The line stays so you can look up "
                                 "later what was built and what it needed.")
@@ -4438,7 +5468,9 @@ class BauplanTabs:
                                 if _zustand == "fertig" else _txt(
                                 # de_scan4: an
                                 "Currently in the build queue according to "
-                                "ESI \u2013 nothing to do here."))
+                                "ESI \u2013 nothing to do here.")) + _frei_tip)
+                        else:
+                            iit.setToolTip(0, iit.toolTip(0) + _frei_tip)
                     citem.addChild(iit)
                     _stage_items += 1
                     _c_items += 1
@@ -4531,9 +5563,22 @@ class BauplanTabs:
                                     f"padding:0px 10px; font-weight:700;}}"
                                     f"QPushButton:hover{{border-color:"
                                     f"{theme.AMBER}; background:{theme.PANEL};}}")
+                                # DER KLICK WIRD GEMERKT (Stufe B, 21.09.2026).
+                                # Er kopiert weiterhin nur die Zahl; zusaetzlich
+                                # haelt das Tool fest, WELCHE Zeile welches
+                                # Plans du gerade ins Spiel uebertraegst. Das
+                                # ist die einzige Stelle, an der diese
+                                # Zuordnung ueberhaupt entstehen kann - ESI
+                                # liefert sie nicht.
+                                # `activity` statt `stage`: die Unrefined-Stufe
+                                # ist ebenfalls eine Reaktion (9/11), heisst
+                                # aber nicht "reaction_x".
                                 _b.clicked.connect(
-                                    lambda _c=False, _v=_r, _n=a["name"]:
-                                    self._copy_runs_value(_v, _n))
+                                    lambda _c=False, _v=_r, _n=a["name"],
+                                    _t=a.get("tid"), _ak=a.get("activity"): (
+                                        self._copy_runs_value(_v, _n),
+                                        self._run_klick_merken(
+                                            _t, _v, _ak in (9, 11))))
                                 _cl.addWidget(_b)
                             _cl.addStretch()
                             # Der Text steckt jetzt IM Widget - die Spalte
@@ -4568,8 +5613,15 @@ class BauplanTabs:
                 # wenn wirklich alles geliefert ist. Die vorsichtigere
                 # Aussage gewinnt (Regel 3).
                 if _c_items > 0 and _c_zustand == _c_items:
-                    citem.setFlags(citem.flags() & ~Qt.ItemIsUserCheckable)
-                    citem.setData(0, Qt.CheckStateRole, None)
+                    # KAESTCHEN BLEIBT - wie bei den Positionen darunter
+                    # (Nutzer-Entscheid 21.09.2026, s. aa384). Es waere
+                    # inkonsequent und in der Praxis muehsam, wenn man jede
+                    # Position einzeln abhaken muesste, aber nicht mehr den
+                    # ganzen Charakter auf einmal: der Sammel-Haken zieht die
+                    # Positionen mit, und genau darueber gibt die
+                    # Reservierung ihr Material frei.
+                    if citem.data(0, Qt.CheckStateRole) is None:
+                        citem.setCheckState(0, Qt.Unchecked)
                     citem.setIcon(0, icons.lauf_punkt() if _c_laeuft
                                   else icons.gruener_punkt())
                     _dim_c = QColor(theme.MUTED)
@@ -4577,7 +5629,6 @@ class BauplanTabs:
                         citem.setForeground(_c_cc, _dim_c)
                 stage_item.addChild(citem)
                 _stage_citems.append(citem)
-                citem.setExpanded(False)
             # ---- FERTIGE STUFE: ZUGEKLAPPT, ABER VOLLSTAENDIG -------------
             # NUTZER (Sitzung 14): "wie koennte man die darstellung schoener
             # machen fuer fertige Runs? aktuell kann ich da immernoch haken
@@ -4613,6 +5664,11 @@ class BauplanTabs:
             if _stufe_abgedeckt:
                 if _stufe_fertig:
                     stage_item.setText(0, f"\u2713  {label}")
+                    # DER ZEIT-REGLER WEICHT DER MELDUNG: eine fertige Stufe
+                    # stellt niemand mehr ein, und die Zeile soll sagen, was
+                    # sie geschafft hat - nicht, was man haette einstellen
+                    # koennen.
+                    tbl.removeItemWidget(stage_item, 2)
                     stage_item.setText(2, _txt("finished \u00b7 {n} position(s) "
                                                "completed").format(
                                                    n=_stage_erledigt))
@@ -4666,8 +5722,15 @@ class BauplanTabs:
             # im Bau hat nichts zu tun und soll zu bleiben - genau so hat der
             # Nutzer sie gesehen ("die Ueberkategorie davon, wenn zugeklappt").
             # Haenge das Zuklappen an _stufe_fertig, klappte sie ploetzlich auf.
+            # WAS DER NUTZER SELBST GEKLAPPT HAT, GEWINNT (`_klapp_vorher`,
+            # s. oben): die Vorgabe gilt nur fuer Zeilen, die er nie
+            # angefasst hat. Sonst klappte jeder Neuaufbau - und den loest
+            # schon eine geaenderte Zielzeit aus - seine offene Zeile wieder
+            # zu ("dann laedt es auch keine Runs").
             for _cf in _stage_citems:
-                _cf.setExpanded(_stufe_abgedeckt)
+                _k_cf = str(_cf.data(0, Qt.UserRole + 6) or "")
+                _cf.setExpanded(bool(_klapp_vorher.get(_k_cf,
+                                                       _stufe_abgedeckt)))
             stage_item.setExpanded(not _stufe_abgedeckt)
             if stage == _ub_nach:
                 _unref_block()

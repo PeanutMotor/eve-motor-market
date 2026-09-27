@@ -12,9 +12,9 @@ Qt-Overrides und werden vom Framework gerufen. Nicht loeschen.
 """
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import (QAbstractButton, QAbstractSpinBox,
-                               QApplication, QComboBox, QDialog,
-                               QDoubleSpinBox, QLineEdit, QSpinBox, QStyle,
+from PySide6.QtWidgets import (QAbstractButton, QAbstractScrollArea,
+                               QAbstractSpinBox, QApplication, QComboBox, QDialog,
+                               QDoubleSpinBox, QLineEdit, QSlider, QSpinBox, QStyle,
                                QStyleOptionViewItem, QTableWidgetItem,
                                QWidget)
 
@@ -27,7 +27,7 @@ from . import icons, theme
 # zusammen mit `dec_anzeige` aus derselben Datei holen.
 __all__ = ["KEIN_DECRYPTOR", "dec_anzeige", "isk", "tab_icon", "tab_icon_at",
            "NumericItem", "IskMillionSpin", "IskGroupedSpin",
-           "MinimizableDialog"]
+           "MinimizableDialog", "ohne_mausrad", "combos_ohne_mausrad"]
 
 
 def dec_anzeige(nm):
@@ -415,6 +415,82 @@ class KartenSortierer(QObject):
             if _k is not None:
                 raus.append(_k)
         return raus
+
+
+# MAUSRAD GEHOERT DER BILDLAUFLEISTE (Nutzer 26.09.2026, Invention-Reiter:
+# "wenn man scrollen will und mit der Maus per Zufall auf einem Decryptor-
+# Dropdown ist, scrollt das Dropdown und dann faengt der Plan automatisch an
+# zu rechnen und alles laggt. Dropdowns nur ueber Klicken bedienen"). Ein
+# QComboBox/QSpinBox/QSlider nimmt das Rad von Haus aus als Wertaenderung -
+# in einem langen, scrollbaren Reiter ist das eine Falle: jede Aenderung
+# loest die Rechnung aus. Der Filter schluckt das Rad am Bedienelement und
+# gibt es der naechsten umgebenden Bildlaufflaeche (QAbstractScrollArea,
+# ueber ihren Viewport). NICHT einfach an den Eltern-Widget schicken: ein
+# per sendEvent erzeugtes Rad-Ereignis wandert in Qt nicht mehr die
+# Eltern-Kette hoch (nur spontane tun das) - gemessen, es kam nie an.
+# Bedienen: Klick/Tastatur.
+class _RadSperre(QObject):
+    def eventFilter(self, obj, ev):
+        try:
+            if ev.type() == QEvent.Wheel:
+                _w = obj.parentWidget() if isinstance(obj, QWidget) else None
+                while _w is not None and not isinstance(_w, QAbstractScrollArea):
+                    _w = _w.parentWidget()
+                if _w is not None:
+                    QApplication.sendEvent(_w.viewport(), ev)
+                return True
+        except Exception:
+            pass
+        return False
+
+
+class _FensterComboRadSperre(QObject):
+    """ANWENDUNGSWEIT, aber nur in Fenstern mit der Eigenschaft
+    "combo_ohne_mausrad" (Nutzer 27.09.2026, Bauplan-Seitenleiste:
+    "wenn ich aus Versehen mit der Maus bei Reprocessing stehe und das
+    Scrollrad nutze, scrollt das Dropdown und nicht die rechte Sidebar -
+    Dropdown bitte nur klickbar machen"; gleich danach: "dasselbe in den
+    Invention-Settings, 75 % laesst sich scrollen" - also auch Zahlenfelder
+    und Regler). Als App-Filter erfasst er auch Bedienelemente, die erst
+    spaeter entstehen (Runplaner-Zeilen, Karten nach einem Neuaufbau) -
+    ohne dass jede Stelle daran denken muss. Das Rad geht an die naechste
+    Bildlaufflaeche, wie bei `ohne_mausrad`; die offene Liste eines
+    Dropdowns (eigenes Popup) rollt weiter normal."""
+    def eventFilter(self, obj, ev):
+        try:
+            if ev.type() == QEvent.Wheel and isinstance(
+                    obj, (QComboBox, QAbstractSpinBox, QSlider)):
+                _fen = obj.window()
+                if _fen is not None and _fen.property("combo_ohne_mausrad"):
+                    return _RadSperre().eventFilter(obj, ev) or True
+        except Exception:
+            pass
+        return False
+
+
+_FENSTER_RAD_SPERRE = []
+
+
+def combos_ohne_mausrad(fenster):
+    """Alle Dropdowns, Zahlenfelder und Regler in `fenster` (auch spaeter
+    entstehende) nur per Klick/Tastatur - das Mausrad scrollt die Seite."""
+    from PySide6.QtWidgets import QApplication as _QA
+    fenster.setProperty("combo_ohne_mausrad", True)
+    _app = _QA.instance()
+    if _app is not None and not _FENSTER_RAD_SPERRE:
+        _f = _FensterComboRadSperre(_app)
+        _app.installEventFilter(_f)
+        _FENSTER_RAD_SPERRE.append(_f)
+    return fenster
+
+
+def ohne_mausrad(w):
+    """Bedienelement nur per Klick/Tastatur: das Mausrad scrollt die Seite."""
+    w.installEventFilter(_RadSperre(w))
+    # WheelFocus (Vorgabe bei Combo/Spin) wuerde beim Rad zusaetzlich den
+    # Fokus holen; StrongFocus reicht fuer Klick und Tab.
+    w.setFocusPolicy(Qt.StrongFocus)
+    return w
 
 
 def isk(n, suffix=True):

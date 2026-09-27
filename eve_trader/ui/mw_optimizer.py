@@ -54,6 +54,27 @@ class Optimizer:
                                        QSpinBox, QDoubleSpinBox, QPushButton,
                                        QTableWidget, QTableWidgetItem)
         name = getattr(self, "_bd_name", None) or str(tid)
+        # BUENDEL (Nutzer 26.09.2026: "Optimale Menge funktioniert bisher nur
+        # auf 1 Endprodukt - entweder auf Multibauplaene anpassen oder
+        # entfernen"): die Kurve "wie viel bauen?" gehoert zu EINEM Produkt
+        # (Verkaufspreis, Markttiefe, Absorption sind je Item). Fuer ein
+        # Buendel fragt der Optimierer deshalb JE ENDPRODUKT - Auswahl oben
+        # im Fenster, gerechnet wird das gewaehlte Ende allein mit den
+        # Rezepten und Einstellungen des Buendels (ME/TE je Ende, Decryptor,
+        # "Eigene BPC" stecken in denselben opts). Die Buendel-ID selbst
+        # (-1) darf nie an production_plan/ESI als "das Produkt" gehen: ihre
+        # Menge ist fest 1, ein Verkaufspreis je "Buendel" waere sinnlos,
+        # und die Markthistorie einer negativen ID gibt es nicht.
+        _ist_buendel = (tid == industry.BUENDEL_ID)
+        _enden_opt = []
+        if _ist_buendel:
+            _namen_b = getattr(self, "_bd_names", None) or {}
+            for _e in sorted(self._bd_enden(tid, recipes)):
+                _enden_opt.append((int(_e), str(_namen_b.get(int(_e)) or f"#{_e}")))
+            if not _enden_opt:
+                self._flash_tip(_txt("Calculate a build plan first ( Build plan)"))
+                return
+            name = _enden_opt[0][1]
         # Bewusst KEINE Übernahme der Bauplan-Menge (_bd_qty): der Optimierer ist
         # rein item-abhängig, sonst lieferte dieselbe Anfrage je nach Hintergrund-
         # Menge unterschiedliche Kurven.
@@ -83,14 +104,46 @@ class Optimizer:
               "tool and applies to all tabs."))
         self._register_tool_hub_label(_ahub_lbl)
         row.addWidget(_ahub_lbl)
+        # ENDPRODUKT-WAHL nur beim Buendel (s. o.). Gemerkt fuer die b-Suite.
+        ende_cb = None
+        if _ist_buendel:
+            row.addWidget(QLabel(_txt("End product:")))
+            ende_cb = QComboBox()
+            for _e, _n in _enden_opt:
+                ende_cb.addItem(_n, _e)
+            ende_cb.setToolTip(_txt(
+                "A bundle has several end products; the quantity curve is "
+                "calculated for ONE of them at a time (with the bundle's "
+                "settings for that product)."))
+            row.addWidget(ende_cb)
+        self._opt_ende_cb = ende_cb
+
+        def _produkt_tid():
+            """Das Produkt, um das es geht: beim Buendel das gewaehlte Ende."""
+            if ende_cb is not None:
+                return int(ende_cb.currentData())
+            return getattr(self, "_bd_type", None)
         row.addWidget(QLabel(_txt("Sale price/unit:")))
         sell_spin = QDoubleSpinBox(); sell_spin.setRange(0, 1_000_000_000_000)
         sell_spin.setDecimals(0); sell_spin.setGroupSeparatorShown(True)
         # de_scan3: aus  (Einheit, in beiden Sprachen gleich)
         sell_spin.setSuffix(" ISK"); sell_spin.setMinimumWidth(150)
         # de_scan3: an
-        default_sell = float((getattr(self, "_bd_pricemap", None) or {}).get(tid) or 0.0)
+        default_sell = float((getattr(self, "_bd_pricemap", None) or {}).get(
+            _produkt_tid()) or 0.0)
         sell_spin.setValue(default_sell)
+        if ende_cb is not None:
+            # Beim Wechsel des Endes: Verkaufspreis und Titel des gewaehlten
+            # Endes vorbelegen - die Kurve kommt erst mit "Berechnen".
+            def _ende_gewechselt(*_a):
+                _t = _produkt_tid()
+                sell_spin.setValue(float((getattr(self, "_bd_pricemap", None)
+                                          or {}).get(_t) or 0.0))
+                _n = ende_cb.currentText()
+                dlg.setWindowTitle(_txt("Optimiser \u2013 {name}").format(name=_n))
+                head_title.setText(_txt("OPTIMAL BUILD QUANTITY \u2013 {name}").format(
+                    name=_n))
+            ende_cb.currentIndexChanged.connect(_ende_gewechselt)
         sell_spin.setToolTip(_txt(
             "Your actual sell price per unit – FIXED, independent of "
               "quantity (you sell at your own price, no price decay on "
@@ -364,8 +417,9 @@ class Optimizer:
             # Bauplan-Kontext frisch lesen -- so kann man im Hintergrund das
             # Endprodukt wechseln und hier bei offenem Fenster neu berechnen.
             cur_recipes = getattr(self, "_bd_recipes", None)
-            cur_tid = getattr(self, "_bd_type", None)
-            if not cur_recipes or not cur_tid:
+            cur_tid = _produkt_tid()
+            if not cur_recipes or not cur_tid \
+                    or not cur_recipes.product_to_bp.get(cur_tid):
                 eff_summary.setText(_txt("Calculate a build plan first ( Build plan)."))
                 return
             region, station, structure = self._active_hub()

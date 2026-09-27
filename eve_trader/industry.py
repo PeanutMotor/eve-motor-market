@@ -27,6 +27,140 @@ INVENTION = 8
 REACTION = 11
 ACTIVITIES = (MANUFACTURING, REACTION)
 
+# MULTI-BAUPLAN (1.0.9, Weg 1 "Buendel-Plan"): ein Multi-Plan ist ein normaler
+# Bauplan, dessen Endprodukt ein PSEUDO-ITEM ist - Rezept "1 Buendel = 20 Viator
+# + 10 Ishtar + ...". Negative IDs, damit sie nie mit einer EVE-Type-ID
+# kollidieren. Das Buendel selbst hat ME 0, keine Job-Kosten, keine Zeit, wird
+# nie gekauft und taucht in keinem Job auf - seine direkten Zutaten sind die
+# Endprodukte des Multi-Plans (werden IMMER gebaut, wie ein Endprodukt).
+BUENDEL_ID = -1
+BUENDEL_BP = -2
+
+
+def buendel_rezepte(recipes, enden):
+    """Flache Rezept-Kopie mit dem Buendel als baubarem Pseudo-Item.
+    `enden`: [(type_id, stueck), ...] - die Endprodukte des Multi-Plans mit
+    ihren Mengen. Doppelte Type-IDs werden addiert, Mengen <= 0 fallen weg.
+    Das Original bleibt unberuehrt (Prozess-Cache). Kombinierbar mit
+    reprocess.rezepte_mit_unrefined (beide kopieren ihre Tabellen)."""
+    import copy as _copy
+    summe = {}
+    for t, q in enden or ():
+        t, q = int(t), int(q)
+        if q > 0:
+            summe[t] = summe.get(t, 0) + q
+    if not summe:
+        raise ValueError("bundle without end products")
+    neu = _copy.copy(recipes)
+    neu.product_to_bp = dict(recipes.product_to_bp)
+    neu.bp_materials = dict(recipes.bp_materials)
+    neu.activity_time = dict(recipes.activity_time)
+    neu.product_to_bp[BUENDEL_ID] = (BUENDEL_BP, MANUFACTURING, 1)
+    neu.bp_materials[(BUENDEL_BP, MANUFACTURING)] = sorted(summe.items())
+    neu.activity_time[(BUENDEL_BP, MANUFACTURING)] = 0
+    neu.buendel_enden = dict(summe)
+    return neu
+
+
+def buendel_enden(recipes) -> dict:
+    """{type_id: stueck} der Endprodukte, wenn `recipes` ein Buendel traegt,
+    sonst leer. EINE Stelle, an der die Kopie erkannt wird."""
+    return dict(getattr(recipes, "buendel_enden", None) or {})
+
+
+def enden_von(type_id, recipes) -> set:
+    """Die Endprodukt-MENGE eines Plans: {type_id} - beim Buendel seine
+    Enden. Jede Stelle, die frueher `tid == type_id` fragte ("ist das das
+    Endprodukt?"), fragt jetzt `tid in enden_von(...)` - sonst waeren die
+    Enden eines Multi-Bauplans ueberall "Komponenten" (falsche Stufe,
+    Kategorie-ME statt eigener ME, Fortschritt am falschen Item)."""
+    if type_id == BUENDEL_ID:
+        return set(buendel_enden(recipes))
+    return {type_id}
+
+
+def ist_ende(tid, type_id, recipes) -> bool:
+    """Kurzform von `tid in enden_von(type_id, recipes)`."""
+    return tid == type_id or (type_id == BUENDEL_ID and tid in buendel_enden(recipes))
+
+
+def buendel_kosten_je_ende(plan: dict) -> dict:
+    """Was kostet JEDES Endprodukt eines Buendels - obwohl der Plan geteilte
+    Zwischenprodukte nur EINMAL kauft oder baut?
+
+    Zuordnung ANTEILIG NACH BEDARF: die Gesamtkosten eines Items (gekauft:
+    Kaufpreis x Menge; gebaut: seine Zutaten zu deren Stueckkosten + Job +
+    Invention; dazu verbrauchter Bestand) werden durch die Gesamtnachfrage
+    geteilt und jedem Verbraucher mit seiner Menge belastet. Ueberschuss
+    (Batch-Rundung) verteilt sich damit auf alle, die das Item brauchen -
+    braucht A 2'000 X und B 1'000 X, traegt A zwei Drittel der X-Kosten.
+    Ein Endprodukt, das selbst Zutat eines anderen Endes ist, gibt den
+    Anteil weiter, den das andere Ende verbraucht.
+
+    Rechnet NUR mit den Zahlen, die production_plan() exportiert
+    (build_mats, *_cost_items) - kein zweiter Preisabruf, keine Nachrechnung
+    (Arbeitsregel 9). Invariante: Summe von "gesamt" ueber alle Enden ==
+    plan["total_cost"] (bis auf Gleitkomma).
+
+    Rueckgabe {ende: {"menge", "gesamt", "je_stueck"}}; ohne Buendel {}."""
+    enden = dict(plan.get("buendel_enden") or {})
+    if not enden:
+        return {}
+    build_mats = plan.get("build_mats") or {}
+    jc = plan.get("job_cost_items") or {}
+    iv = plan.get("inv_cost_items") or {}
+    kauf = plan.get("buy_cost_items") or {}
+    bestand = plan.get("stock_cost_items") or {}
+    # Gesamtnachfrage je Item = alles, was Verbraucher (Bau-Items + das
+    # Buendel selbst) davon anfordern - VOR dem Bestandsabzug, denn auch der
+    # verbrauchte Bestand kostet (stock_cost) und gehoert den Verbrauchern.
+    bedarf = {}
+    for tid, zutaten in build_mats.items():
+        for m, jq in zutaten or ():
+            bedarf[m] = bedarf.get(m, 0.0) + float(jq)
+    for e, q in enden.items():
+        bedarf[e] = bedarf.get(e, 0.0) + float(q)
+    memo = {}
+    unterwegs = set()
+
+    def _gesamt(tid):
+        """Alle Kosten, die dieses Item im Plan verursacht."""
+        if tid in memo:
+            return memo[tid]
+        if tid in unterwegs:            # Kreis - production_plan laesst keinen zu
+            return 0.0
+        unterwegs.add(tid)
+        k = float(kauf.get(tid, 0.0)) + float(bestand.get(tid, 0.0))
+        if tid in build_mats:
+            k += float(jc.get(tid, 0.0)) + float(iv.get(tid, 0.0))
+            for m, jq in build_mats[tid] or ():
+                k += float(jq) * _je_stueck(m)
+        unterwegs.discard(tid)
+        memo[tid] = k
+        return k
+
+    def _je_stueck(tid):
+        b = bedarf.get(tid, 0.0)
+        return _gesamt(tid) / b if b > 0 else 0.0
+
+    aus = {}
+    for e, q in enden.items():
+        js = _je_stueck(e)
+        aus[e] = {"menge": int(q), "gesamt": js * float(q), "je_stueck": js}
+    # NACHGELAGERTE ERSPARNISSE ANTEILIG (Erz statt Mineral, Unrefined-
+    # Ruecklaeufer): _reprocess_anwenden senkt plan["total_cost"], ohne die
+    # Einzelposten zu aendern. Die Differenz zur Summe der Enden wird im
+    # Verhaeltnis ihrer Kosten verteilt - so bleibt die Invariante
+    # "Summe der Enden == total_cost" auch nach dem Reprocessing.
+    summe = sum(k["gesamt"] for k in aus.values())
+    tc = plan.get("total_cost")
+    if summe > 0 and tc is not None and abs(float(tc) - summe) > 1e-6:
+        f = float(tc) / summe
+        for k in aus.values():
+            k["gesamt"] *= f
+            k["je_stueck"] *= f
+    return aus
+
 
 def _db_path():
     return os.path.join(config.app_data_dir(), "industry.db")
@@ -167,17 +301,64 @@ def init_db():
             pass   # column already present
 
 
+_KATMAP_CACHE = {"sig": None, "obj": None}
+# SDE-STAND: wird bei jedem Neueinlesen der SDE hochgezaehlt. Der Datei-
+# Schluessel allein reicht NICHT (gemessen, aa425): industry.db laeuft im
+# WAL-Modus, neue Zeilen stehen zuerst in der -wal-Datei, und die Hauptdatei
+# aendert Groesse und Zeit erst beim Checkpoint - solange noch Verbindungen
+# offen sind, kann das dauern. Deshalb verwirft download_sde die gemerkten
+# Kopien ausdruecklich, und eine Lesung, waehrend der die SDE neu kam, wird
+# nicht gemerkt.
+_SDE_STAND = [0]
+
+
+def _sde_caches_verwerfen():
+    """Gemerkte SDE-Kopien (Kategorien, Rezepte) verwerfen - nach jedem
+    Neueinlesen der SDE."""
+    _SDE_STAND[0] += 1
+    _KATMAP_CACHE.update({"sig": None, "obj": None})
+    _RECIPES_CACHE.update({"sig": None, "obj": None})
+
+
+def _industry_db_sig():
+    """(Groesse, Aenderungszeit) von industry.db - dasselbe Prinzip und
+    derselbe Schluessel wie `recipes_cached`: die Datei selbst, kein Zaehler.
+    Die -wal-Datei zaehlt bewusst NICHT mit: sqlite legt sie beim Oeffnen an
+    und loescht sie beim Schliessen der letzten Verbindung wieder - der
+    Schluessel wuerde dann bei jedem Aufruf kippen (gemessen, aa425)."""
+    try:
+        _st = os.stat(_db_path())
+        return (_st.st_size, int(_st.st_mtime_ns))
+    except OSError:
+        return None
+
+
 def item_category_map() -> dict:
-    """type_id -> (category_id, group_id, meta_group_id)."""
+    """type_id -> (category_id, group_id, meta_group_id).
+
+    GEMERKT (Ladezeit-Messung des Nutzers, 27.09.2026): die ganze Tabelle
+    item_cat wurde bei JEDEM Aufruf neu gelesen - 309 Mal beim Oeffnen eines
+    Bauplans samt Plan-Karten, 21 s reine Rechenzeit. Die Daten aendern sich
+    nur, wenn die SDE neu eingelesen wird; dann aendert sich die Datei und
+    die Kopie wird verworfen. NUR LESEN: niemand im Programm schreibt in das
+    zurueckgegebene Woerterbuch (gemessen, wie bei recipes_cached)."""
     if not os.path.exists(_db_path()):
         return {}
+    sig = _industry_db_sig()
+    if sig is not None and _KATMAP_CACHE["sig"] == sig and _KATMAP_CACHE["obj"] is not None:
+        return _KATMAP_CACHE["obj"]
+    stand = _SDE_STAND[0]
     try:
         with _conn() as c:
-            return {r["type_id"]: (r["category_id"], r["group_id"], r["meta_group_id"])
-                    for r in c.execute(
-                        "SELECT type_id,category_id,group_id,meta_group_id FROM item_cat")}
+            obj = {r["type_id"]: (r["category_id"], r["group_id"], r["meta_group_id"])
+                   for r in c.execute(
+                       "SELECT type_id,category_id,group_id,meta_group_id FROM item_cat")}
     except Exception:
         return {}
+    if stand == _SDE_STAND[0]:           # waehrenddessen keine neue SDE
+        _KATMAP_CACHE["sig"] = sig
+        _KATMAP_CACHE["obj"] = obj
+    return obj
 
 
 # Standard-Rassen-IDs (feste EVE-Konstanten, seit Spielbeginn unverändert):
@@ -726,9 +907,18 @@ def scrap_char_faktor(scrapmetal):
 
 def scrap_ausbeute(char_faktor):
     """Ausbeute 0..1 fuer Items ohne Erz-Skill (Unrefined-Produkte, Module):
-    feste 50 % x Charakter-Faktor. Struktur, Rig und Implantat: nicht
-    beteiligt (gemessen; Implantat nicht getestet, deshalb NICHT gerechnet -
-    Regel 3)."""
+    feste 50 % x Charakter-Faktor. Struktur, Rig und Implantat: NICHT
+    beteiligt.
+
+    DAS IMPLANTAT IST JETZT GEMESSEN (Nutzer 25.09.2026, Vorschau mit
+    gestecktem Zainou 'Beancounter' Reprocessing RX-804): Unrefined Titanium
+    Chromide liefert weiterhin 164 -> 86 Titanium und 36 -> 19 Titanium
+    Chromide - exakt dieselben Zahlen wie ohne Implantat (53,0 %). Mit
+    Implantat waeren es 90 und 19 gewesen. Das Implantat sagt es selbst:
+    "4% bonus to ore and ice reprocessing yield" - ein Unrefined-Reaktions-
+    produkt ist weder Erz noch Eis. Auf dem ERZ-Pfad (Weg B) zaehlt es
+    weiterhin, dort ist es richtig angeschlossen. Wer hier ein Implantat
+    einrechnen will, rechnet gegen eine Messung."""
     return reprocess_ausbeute(REPRO_SERVICE_BASIS, char_faktor)
 
 
@@ -2640,6 +2830,9 @@ def download_sde(progress=None):
                 "VALUES (?,?,?,?,?,?)", repro_rig_records)
         c.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('updated', ?)",
                   (str(time.time()),))
+    # ERST NACH DEM SCHREIBEN: gemerkte Kategorien/Rezepte verwerfen (der
+    # Datei-Schluessel allein sieht die neue SDE im WAL-Modus nicht sicher).
+    _sde_caches_verwerfen()
     _meta_counts = {}
     for _row in item_cat_rows:
         _meta_counts[_row[3]] = _meta_counts.get(_row[3], 0) + 1
@@ -2945,7 +3138,9 @@ def build_cost(type_id, price_fn, recipes: Recipes, opts: dict,
         return None
 
     me_map = opts.get("me_map")
-    if activity == MANUFACTURING:
+    if type_id == BUENDEL_ID:
+        me = 0.0                     # Buendel: Stueckzahlen sind exakt, kein ME
+    elif activity == MANUFACTURING:
         inv_me = _invention_me_pct(bp_id, recipes, opts)
         if inv_me is not None:
             rig_me = (opts.get("rig_me_map") or {}).get(type_id, 0) or 0
@@ -3030,7 +3225,8 @@ def build_cost(type_id, price_fn, recipes: Recipes, opts: dict,
         memo[type_id] = None
         _no_parts(type_id)
         return None
-    jc = _job_cost(mats, activity, prod_qty, opts, type_id=type_id)
+    jc = (0.0 if type_id == BUENDEL_ID
+          else _job_cost(mats, activity, prod_qty, opts, type_id=type_id))
     if jc is not None:
         run_cost = total + jc
         _p_job += jc
@@ -3263,7 +3459,9 @@ def build_tree(type_id, price_fn, recipes: Recipes, opts: dict,
         return None
 
     me_map = opts.get("me_map")
-    if activity == MANUFACTURING:
+    if type_id == BUENDEL_ID:
+        me = 0.0                     # Buendel: Stueckzahlen sind exakt, kein ME
+    elif activity == MANUFACTURING:
         inv_me = _invention_me_pct(bp_id, recipes, opts)
         if inv_me is not None:
             rig_me = (opts.get("rig_me_map") or {}).get(type_id, 0) or 0
@@ -3352,7 +3550,8 @@ def build_tree(type_id, price_fn, recipes: Recipes, opts: dict,
     if not ok:
         return None
 
-    jc = _job_cost(mats, activity, prod_qty, opts, type_id=type_id)
+    jc = (0.0 if type_id == BUENDEL_ID
+          else _job_cost(mats, activity, prod_qty, opts, type_id=type_id))
     if jc is not None:
         run_cost = total + jc
     else:
@@ -3736,11 +3935,21 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
     me_map = opts.get("me_map") or {}
     me_map_reaction = opts.get("me_map_reaction") or {}
 
+    # MULTI-BAUPLAN: die direkten Zutaten des Buendels sind Endprodukte -
+    # sie werden wie DAS Endprodukt behandelt (immer bauen, kein Bestand,
+    # keine Blacklist). Ohne Buendel ist die Menge leer und nichts aendert sich.
+    _enden = set(buendel_enden(recipes)) if type_id == BUENDEL_ID else set()
+
+    def _ist_ende(tid):
+        return tid == type_id or tid in _enden
+
     def _me_of(tid, activity):
         """ME-Faktor pro Item: Rig wirkt nur auf die passende Item-Domäne (me_map),
         sonst der pauschale Wert (Blueprint-ME ohne passenden Rig). Für invented
         T2-Items gilt die ECHTE Invention-ME (2% Basis + Decryptor-Bonus) statt
         der Kategorie-/Blueprint-Annahme - siehe _invention_me_pct."""
+        if tid == BUENDEL_ID:
+            return 1.0                  # Buendel: Stueckzahlen exakt, kein ME
         if activity == MANUFACTURING:
             bp = recipes.product_to_bp.get(tid)
             inv_me = _invention_me_pct(bp[0], recipes, opts) if bp else None
@@ -3854,11 +4063,15 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
             return
         bp = recipes.product_to_bp.get(tid)
         mats = recipes.bp_materials.get((bp[0], bp[1])) if bp else None
+        # Die Enden eines Buendels kennen weder never_build noch Blacklist -
+        # sie sind Endprodukte und werden gebaut. (Das EINE Endprodukt eines
+        # normalen Plans bleibt hier bewusst wie bisher: bestehendes Verhalten
+        # nicht mitveraendern.)
+        _sperre = (tid in never or tid in excluded) and tid not in _enden
         if bp and mats and tid not in path and depth <= maxd and tid in never \
-                and tid not in excluded:
+                and tid not in excluded and tid not in _enden:
             never_hit.add(tid)
-        if not bp or not mats or tid in path or depth > maxd or tid in never \
-                or tid in excluded:
+        if not bp or not mats or tid in path or depth > maxd or _sperre:
             buildable[tid] = False
             return
         buildable[tid] = True
@@ -3890,6 +4103,10 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
     jc_total = 0.0; inv_total = 0.0
     jc_parts = {}          # Index/Tax/SCC, von _job_cost aufaddiert (parts_out)
     inv_mats = {}          # Datacores/Decryptoren, von _inv_cost gemeldet
+    # JE ITEM (Multi-Bauplan, Kosten je Endprodukt): dieselben Zahlen, die
+    # unten in jc_total/inv_total/mat_cost/stock_cost einfliessen - nur
+    # nicht zusammengeworfen. Invariante: Summe der Werte == Gesamtwert.
+    jc_items = {}; inv_items = {}; buy_cost_items = {}; stock_cost_items = {}
     queue = deque(t for t in buildable if consumers[t] == 0)
     processed = set()
 
@@ -3905,9 +4122,10 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
                 complete = False
             c += jq * (em or 0)
             eiv.append((m, base_qty * runs))
-        c += _job_cost(eiv, activity, out_qty, opts) or 0.0
-        if activity == MANUFACTURING:
-            c += _inv_cost(bp_id, runs, recipes, price_fn, opts)
+        if tid != BUENDEL_ID:           # das Buendel ist kein Job
+            c += _job_cost(eiv, activity, out_qty, opts) or 0.0
+            if activity == MANUFACTURING:
+                c += _inv_cost(bp_id, runs, recipes, price_fn, opts)
         # WEG A: Ruecklaeufer-Gutschrift je Run (s. build_cost, gleiche
         # Quelle recipes.unrefined) - sonst kauft der Plan X, das die Wahl
         # gerade als guenstiger befunden hat (Thulium-Hafnite-Fund).
@@ -3921,11 +4139,11 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
         if tid in processed or consumers[tid] > 0:
             continue
         processed.add(tid)
-        if tid in excluded and tid != type_id:
+        if tid in excluded and not _ist_ende(tid):
             decision[tid] = "owned"          # vorhanden → raus aus dem Plan
             continue
         D = demand[tid]
-        if stock and tid != type_id:
+        if stock and not _ist_ende(tid):
             owned = stock.get(tid, 0)
             if owned > 0:
                 used = min(owned, D)
@@ -3946,7 +4164,7 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
         if ok:
             bcost, runs, eiv, activity, out_qty, bp_id, complete = build_estimate(tid, D)
             buy_est = (buy_price * D) if buy_price is not None else None
-            if tid == type_id:
+            if _ist_ende(tid):
                 # Endprodukt wird IMMER gebaut, nie gekauft. Sonst würde bei
                 # bcost > Marktpreis der Bauplan das Endprodukt „kaufen“ →
                 # total_cost = Marktpreis × Menge, Baukosten/Stk konstant und
@@ -4041,11 +4259,16 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
         # oben rechnet auch fuer Items, die am Ende GEKAUFT werden (reine
         # Entscheidungs-Schaetzung); dort mitzuzaehlen wuerde die Teile
         # groesser machen als die Summe.
-        jc_total += _job_cost(eiv, activity, out_qty, opts,
-                              parts_out=jc_parts, type_id=tid) or 0.0
-        if activity == MANUFACTURING:
-            inv_total += _inv_cost(bp_id, runs, recipes, price_fn, opts,
-                                   mats_out=inv_mats)
+        if tid != BUENDEL_ID:               # das Buendel ist kein Job
+            _jc1 = _job_cost(eiv, activity, out_qty, opts,
+                             parts_out=jc_parts, type_id=tid) or 0.0
+            jc_total += _jc1
+            jc_items[tid] = jc_items.get(tid, 0.0) + _jc1
+            if activity == MANUFACTURING:
+                _iv1 = _inv_cost(bp_id, runs, recipes, price_fn, opts,
+                                 mats_out=inv_mats)
+                inv_total += _iv1
+                inv_items[tid] = inv_items.get(tid, 0.0) + _iv1
 
     # INVENTION-MATERIAL (Datacores/Decryptoren) als echter Bedarf, aufgeteilt
     # in "aus dem Bestand gedeckt" und "muss gekauft werden" - genau das
@@ -4082,6 +4305,7 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
         _p, _from_adj = buy_price_src(t)
         _c = (_p or 0) * q
         mat_cost += _c
+        buy_cost_items[t] = _c
         if _from_adj:
             mat_cost_adjusted += _c
     # BESTAND IST NICHT GRATIS (Nutzer-Entscheid: "alles was ich habe hat
@@ -4104,9 +4328,17 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
     # opts["stock_at_market"]=False stellt das alte Verhalten wieder her.
     stock_cost = 0.0
     if opts.get("stock_at_market", True):
-        stock_cost = sum((stock_price_of(t) or 0) * q
-                         for t, q in stock_used.items())
+        stock_cost_items = {t: (stock_price_of(t) or 0) * q
+                            for t, q in stock_used.items()}
+        stock_cost = sum(stock_cost_items.values())
     total = mat_cost + stock_cost + jc_total + inv_total
+    # DAS BUENDEL IST KEIN JOB: aus Runs, Zutaten, Herstellung und Entscheidung
+    # streichen - die Endprodukte darunter bleiben als echte Jobs stehen.
+    # `buendel_enden` nennt sie, damit UI und Runplaner die Stufe "Endprodukt"
+    # ueber die Menge statt ueber EIN Item bestimmen koennen.
+    if type_id == BUENDEL_ID:
+        for _d in (build_runs, build_mats, build_made, decision, surplus, demand):
+            _d.pop(BUENDEL_ID, None)
     seq = sorted(build_runs.keys(), key=lambda t: -depth_of.get(t, 0))
     build_seq = [(t, build_runs[t]) for t in seq if build_runs[t] > 0]
     # "owned" wird NUR für Blacklist-Treffer vergeben (s. oben) - daraus lässt
@@ -4134,6 +4366,11 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
             "decision": dict(decision), "build_mats": build_mats,
             "excluded_hit": excluded_hit,
             "never_build_hit": never_build_hit,
+            "buendel_enden": dict(buendel_enden(recipes)) if type_id == BUENDEL_ID else {},
+            # Je Item (Summe je Schluessel == job_cost / inv_cost / mat_cost /
+            # stock_cost) - Eingabe fuer buendel_kosten_je_ende().
+            "job_cost_items": jc_items, "inv_cost_items": inv_items,
+            "buy_cost_items": buy_cost_items, "stock_cost_items": stock_cost_items,
             # NUR die Items, die am Ende auch wirklich im Plan stehen -
             # sonst meldete die Anzeige Positionen, die gar nicht vorkommen.
             "nicht_kaufbar": {t for t in nicht_kaufbar
@@ -4754,6 +4991,23 @@ def me_invented_pct(inv_me, rig_me, ec_me=0.0):
             * (1 - float(ec_me or 0) / 100.0)) * 100.0
 
 
+def decryptor_fuer_bp(bp_id, opts):
+    """Welcher Decryptor gilt fuer DIESE Blaupause?
+
+    Erst die Wahl je Item aus dem Invention-Tab
+    (`opts["inv_decryptor_map"][bp_id]`), sonst die globale Einstellung,
+    sonst "Kein Decryptor". EINE Stelle dafuer (Arbeitsregel 9): die Frage
+    stellen `_invention_me_pct` (fuer die ME) und der Multi-Bauplan (fuer
+    Runs je erfundener BPC) - stuende sie zweimal im Code, koennten ME und
+    Kopienzahl irgendwann von VERSCHIEDENEN Decryptoren ausgehen."""
+    per_item = (opts.get("inv_decryptor_map") or {}).get(bp_id)
+    if per_item is not None:
+        return per_item
+    return (opts.get("inv_prob_mult", 1.0), opts.get("inv_run_mod", 0),
+            opts.get("inv_me_mod", 0), opts.get("inv_te_mod", 0),
+            opts.get("inv_decryptor_id"))
+
+
 def _invention_me_pct(bp_id, recipes, opts):
     """ECHTE ME einer invented BPC (2% Basis-Invention-ME + Decryptor-Bonus)
     statt der geschätzten Kategorie-/Blueprint-ME - eine invented BPC hat NIE
@@ -4775,14 +5029,8 @@ def _invention_me_pct(bp_id, recipes, opts):
     if not inv:
         return None
     _t1_bp, base_runs, base_prob, _datacores = inv
-    per_item = (opts.get("inv_decryptor_map") or {}).get(bp_id)
-    if per_item is not None:
-        dv = per_item
-    else:
-        dv = (opts.get("inv_prob_mult", 1.0), opts.get("inv_run_mod", 0),
-              opts.get("inv_me_mod", 0), opts.get("inv_te_mod", 0),
-              opts.get("inv_decryptor_id"))
-    return invention_outcome(base_runs, base_prob, dv)["me_pct"]
+    return invention_outcome(base_runs, base_prob,
+                             decryptor_fuer_bp(bp_id, opts))["me_pct"]
 
 
 def invention_outcome(base_runs, base_prob, decryptor):
@@ -5161,7 +5409,7 @@ def job_slots(skills):
 
 def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None,
                    fuel_ids=None,
-                   per_item_cap=None, per_item_runs_cap=None):
+                   per_item_cap=None, per_item_runs_cap=None, stage_ziel=None):
     """Verteilt die Runs eines Bauplans auf Charaktere/Slots, damit alles möglichst
     gleichzeitig fertig wird – mit Aufteilung großer Items über mehrere Slots/Chars.
       jobs:  [{tid, name, runs, activity, base_time, is_end, te_factor?}]  (base_time
@@ -5183,6 +5431,17 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
         ... gibts maximal 10 runs" und "moeglichst alle Blueprints am Ende
         verbraucht haben, nicht dass Blueprints mit angefangenen Runs stehen
         bleiben". Zuteilungen tragen dann "max_runs" und "parts".
+      stage_ziel: optional {stage: Sekunden} - wie lange diese Stufe LAUFEN
+        DARF. Nutzer 24.09.2026: "90 % der Nutzer setzen sich abends an den PC,
+        lassen die Reactions laufen und loggen aus [...] am nächsten Tag um
+        dieselbe Uhrzeit bauen sie weiter". Eine Stufe, die nachts ohnehin 23
+        Stunden Zeit hat, braucht keine zehn Blaupausen mit je einem Run - sie
+        braucht so WENIGE Jobs wie möglich, die in der Zeit fertig werden.
+        Ohne Eintrag (oder 0) wird nur gestrafft: die Stufe ist ohnehin erst
+        fertig, wenn ihr LÄNGSTES Item fertig ist, also dürfen alle kürzeren
+        auf genau diese Zeit gestreckt werden - das kostet keine Minute und
+        spart Slots und Blaupausen. Eine Zielzeit UNTER der so erreichbaren
+        Dauer verkürzt nichts (dann fehlt es an Slots, nicht am Willen).
     Modell: drei Stufen nacheinander (Reaktionen → Komponenten → Endprodukt). Je Stufe
     ist jeder Slot eines geeigneten Chars ein „Track“. Ein Item wird über bis zu
     min(bp, #Tracks, runs) Tracks aufgeteilt (längster Job zuerst, auf die am wenigsten
@@ -5241,6 +5500,14 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
     assignments = []
     stage_times = {"fuel": 0.0, "unrefined": 0.0, "reaction_1": 0.0, "reaction_2": 0.0,
                    "component": 0.0, "end": 0.0}
+    # WIE KURZ KOENNTE DIESE STUFE? Die gestraffte Dauer OHNE Zielzeit - also
+    # das, was mit den vorhandenen Slots ueberhaupt geht. Der Regler in der
+    # Oberflaeche beginnt genau dort: links steht die Zeit, die man sowieso
+    # braucht, nach rechts verlaengert man sie (Nutzer 24.09.2026).
+    stage_min_times = {"fuel": 0.0, "unrefined": 0.0, "reaction_1": 0.0,
+                       "reaction_2": 0.0, "component": 0.0, "end": 0.0}
+    # WER SETZT DIESE UNTERGRENZE? {stage: {tid, name, runs, slots, seconds}}
+    stage_min_by = {}
     per_char = defaultdict(float)
     per_char_stage = {}
     job_durs = {}          # (cid, stage) -> Liste einzelner Job-Dauern (Sekunden)
@@ -5474,6 +5741,92 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
                 if best is None:
                     break
                 budget[best] += 1
+            # ===== ZIELZEIT / STRAFFUNG (Nutzer 24.09.2026) =====
+            # BIS HIERHER wurde so breit wie moeglich verteilt - das ergibt die
+            # SCHNELLSTE Stufe, aber auch zehn Blaupausen mit je einem Run.
+            # Die Stufe ist jedoch erst fertig, wenn ihr LAENGSTES Item fertig
+            # ist; jedes kuerzere darf bis dahin gestreckt werden, ohne dass
+            # der Plan eine Minute spaeter fertig ist. Genau das passiert hier:
+            # jedes Item behaelt nur so viele Slots, wie es fuer die Zeit T
+            # braucht. T ist die Dauer der Stufe - oder die Zielzeit des
+            # Nutzers, wenn er mehr Zeit hat als noetig (nachts, ueber Tage).
+            # EINE ZIELZEIT UNTER DER ERREICHBAREN DAUER AENDERT NICHTS: mehr
+            # Slots als hier verteilt gibt es nicht, also waere jede kuerzere
+            # Zahl ein Versprechen, das der Plan nicht halten kann.
+            # DIE ZEIT JE RUN, WIE DER SLOT SIE WIRKLICH SIEHT (Nutzer
+            # 25.09.2026, planer_diagnose.txt nachgestellt: "as fast as
+            # possible" zeigte 7 h, das Spiel 5 h 36 m; "23 h eingestellt"
+            # ergab 15 h 26 m). `work_of` rechnet mit base_time x TE - OHNE
+            # den Zeitfaktor des Charakters (Reactions V = x0.8, bei ihm
+            # 6'318 s statt 5'054 s je Run). Damit war jede Mindestdauer
+            # ein Viertel zu lang und die Straffung hielt ein Slot mehr als
+            # noetig (66 Runs: ceil(66x6318/82800) = 6 Slots a 11 Runs =
+            # 15 h 26 m statt 5 Slots a 14 Runs = 19 h 40 m). Hier zaehlt
+            # der SCHNELLSTE zulaessige Charakter - er bekommt die Slots
+            # auch zuerst (char_cycle unten ist nach factor sortiert).
+            # Und: eine Kopie faehrt GANZE Runs. 66 Runs auf 19 Kopien sind
+            # 4 Runs auf der vollsten, nicht 3,47 - die Stufe dauert
+            # 4 x 5'054 s = 5 h 37 m, exakt was das Spiel zeigt.
+            def _sek_je_run(j):
+                _tb = j["base_time"] * j.get("te_factor", te_factor)
+                _fb = min((factor.get(_c, 1.0)
+                           * sci_factor.get((_c, j["tid"]), 1.0)
+                           for _c, _n, _s in machines), default=1.0)
+                return _tb * _fb
+            _dauer_st = 0.0
+            _wer_st = None
+            for j in jobs_sorted:
+                _s0 = budget.get(j["tid"]) or 0
+                if _s0 >= 1 and work_of.get(j["tid"]):
+                    _d_j = (math.ceil(int(j["runs"]) / _s0)
+                            * _sek_je_run(j))
+                    if _d_j > _dauer_st:
+                        # WER BREMST? (Nutzer 24.09.2026: "es ist mir nicht
+                        # moeglich, bei Composite Reactions 2 Stunden
+                        # einzustellen".) Eine Untergrenze ohne Begruendung
+                        # sieht aus wie eine Sperre. Der Verursacher ist das
+                        # Item mit der laengsten Arbeit je Slot - genau das,
+                        # was auch die Stufendauer setzt.
+                        _dauer_st = _d_j
+                        _wer_st = (j["tid"], j.get("name") or "", int(j["runs"]),
+                                   _s0)
+            if _wer_st is not None:
+                stage_min_by[stage] = {
+                    "tid": _wer_st[0], "name": _wer_st[1],
+                    "runs": _wer_st[2], "slots": _wer_st[3],
+                    "seconds": _dauer_st}
+            stage_min_times[stage] = _dauer_st
+            if _dauer_st > 0:
+                _T_st = max(_dauer_st, float((stage_ziel or {}).get(stage) or 0.0))
+                for j in jobs_sorted:
+                    _tid_st = j["tid"]
+                    _s0 = budget.get(_tid_st) or 0
+                    if _s0 <= 1 or not work_of.get(_tid_st):
+                        continue
+                    # GANZE KOPIEN WERDEN NICHT GESTRAFFT (Nutzer-Befund
+                    # 24.09.2026: "bei Endprodukt hat Peanut Motor 2 Wellen
+                    # bekommen, warum? da gibt es noch mehr Charaktere zur
+                    # Auswahl [...] da koennte man sich die 2. Welle sparen").
+                    # Bei einem Item mit Runs-Deckel liegt die ZAHL DER JOBS
+                    # fest - 13 Kopien a 4 Runs bleiben 13 Jobs, ob sie
+                    # nebeneinander oder nacheinander laufen. Weniger Slots
+                    # sparen dort also keine einzige Blaupause; sie zwingen
+                    # denselben Charakter nur, spaeter noch einmal ranzugehen
+                    # (die zweite Welle). Gespart wird nur, wo der Planer die
+                    # Runs wirklich zusammenfassen kann.
+                    if _tid_st in _unit:
+                        continue
+                    # WIE VIELE GANZE RUNS PASSEN IN T? So viele bekommt jede
+                    # Kopie, und daraus folgt die Zahl der Kopien. So bleibt
+                    # die Stufe unter T (ceil(R/n) x t <= T), und bei 23 h
+                    # Ziel bekommt eine Kopie 16 Runs a 1 h 24 m = 22 h 28 m
+                    # statt 11 (Nutzer: "obwohl man bis auf 3 Tage+
+                    # hochschrauben koennte"). 1e-9: sonst macht ein
+                    # Rundungsrest aus genau passenden Runs einen Run weniger.
+                    _je = max(1, int(math.floor(_T_st / _sek_je_run(j) + 1e-9)))
+                    _noetig = max(1, int(math.ceil(int(j["runs"]) / _je)))
+                    if _noetig < _s0:
+                        budget[_tid_st] = _noetig
             # Jetzt die Slots (Tracks) den Items zuweisen. WICHTIG (korrigiert):
             # NICHT mehr strikt round-robin pro einzelnem Slot - das hat ein Item
             # unnötig über ALLE Chars verteilt, selbst wenn ein einzelner Char mit
@@ -5730,6 +6083,8 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
             + stage_times["reaction_2"]
             + stage_times["component"] + stage_times["end"])
     return {"assignments": assignments, "stage_times": stage_times,
+            "stage_min_times": stage_min_times,
+            "stage_min_by": stage_min_by,
             "total_seconds": total, "per_char": dict(per_char),
             "per_char_stage": {f"{cid}|{st}": v
                                for (cid, st), v in per_char_stage.items()},

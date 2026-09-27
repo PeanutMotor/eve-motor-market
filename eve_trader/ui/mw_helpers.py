@@ -134,6 +134,187 @@ class MainWindowHelpers:
         base, extra = divmod(R, njobs)
         return njobs, [base + 1] * extra + [base] * (njobs - extra)
 
+    def _bd_enden(self, type_id, recipes=None):
+        """Die Endprodukt-MENGE des offenen Plans (Multi-Bauplan 1.0.9):
+        {type_id} - beim Buendel seine Enden aus den Rezepten (Aufrufer-
+        Rezepte, sonst self._bd_recipes). Ein Buendel ohne Rezepte kennt
+        keine Enden -> leere Menge, nie das Buendel selbst."""
+        from .. import industry as _ind
+        _rec = recipes if recipes is not None else getattr(self, "_bd_recipes", None)
+        if type_id == _ind.BUENDEL_ID and _rec is None:
+            return set()
+        return _ind.enden_von(type_id, _rec)
+
+    def _run_klick_merken(self, tid, runs, reaktion):
+        """Klick auf einen Run-Knopf festhalten (Stufe B, 21.09.2026).
+
+        DER KLICK IST KEIN FORTSCHRITT. Er sagt nur: "diese Zeile, dieser
+        Plan, jetzt". Wirksam wird er erst, wenn ESI danach einen passenden
+        Job meldet (`job_zuordnen`) - ein Fehlklick bleibt folgenlos, und
+        wer die Zahl lieber abtippt, verliert nichts: dann greift wie bisher
+        die Reihenfolge Signatur -> Reservierung -> im Zweifel nichts.
+
+        Nur fuer GESPEICHERTE Plaene: ohne Plan-ID gibt es niemanden, dem
+        ein Job gehoeren koennte.
+        """
+        _pid = getattr(self, "_bd_open_plan_id", None)
+        if _pid is None:
+            return
+        try:
+            from .. import store as _st
+            _st.run_klick_merken(_pid, int(tid), int(runs), bool(reaktion))
+        except Exception as _e:
+            # Ein nicht gemerkter Klick kostet nur Genauigkeit, nie Material.
+            self._log_exception("Run-Klick merken", str(_e))
+
+    def _job_zuordnung_nachfuehren(self, assignments, seit_ts=None):
+        """Neue ESI-Jobs den Klicks dieses Plans zuordnen und das MERKEN.
+
+        Laeuft bei jedem Runplaner-Aufbau. Neu ist daran nur eines: die
+        Entscheidung wird gespeichert statt jedes Mal neu getroffen. Schon
+        vergebene Jobs bleiben unangetastet - auch die anderer Plaene.
+
+        ZWEI QUELLEN, in dieser Reihenfolge (Stufe C, 24.09.2026):
+          1. der KLICK (`job_zuordnen`) - der staerkere Beleg, er gilt auch
+             bei umstrittenem Item;
+          2. die EINDEUTIGKEIT (`job_zuordnen_eindeutig`) - kein anderer
+             gespeicherter Plan will dieses Item, also kann der Job nur von
+             hier stammen. Erst was zuerst geschrieben wird, gilt; die
+             Klick-Zuordnung laeuft deshalb vorher.
+        """
+        _pid = getattr(self, "_bd_open_plan_id", None)
+        if _pid is None:
+            return
+        from .. import store as _st
+        _jobs = []
+        for _j in (getattr(self, "_bd_delivered_jobs", None) or []):
+            _ts = MainWindowHelpers._iso_job_ts(_j.get("start_date"))
+            _fts = MainWindowHelpers._iso_job_ts(_j.get("completed_date"))
+            if _j.get("job_id") is None or _ts is None:
+                continue          # Alt-Daten ohne job_id: nichts zu merken
+            _jobs.append({"job_id": _j.get("job_id"),
+                          "product_type_id": _j.get("product_type_id"),
+                          "runs": _j.get("runs"),
+                          "activity_id": _j.get("activity_id"),
+                          "start_ts": _ts,
+                          "fertig_ts": _fts})
+        if not _jobs:
+            return
+        _plan_runs = {}
+        _is_react = {}
+        for _a in (assignments or []):
+            try:
+                _t = int(_a["tid"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            _plan_runs[_t] = _plan_runs.get(_t, 0) + int(_a.get("runs") or 0)
+            # EINE Wahrheit fuer "ist das eine Reaktion", s. stufe_ist_reaktion.
+            _is_react[_t] = stufe_ist_reaktion(_a.get("stage"))
+        import time as _time_jz
+        _klicks = _st.run_klicks_fuer_plan(
+            _pid, aelter_als=_time_jz.time() - KLICK_FENSTER_SEK)
+        _neu = job_zuordnen(_jobs, _klicks, _st.job_zuordnung_alle(),
+                            _pid, _plan_runs)
+        for _jid, (_t, _r) in _neu.items():
+            _st.job_zuordnung_setzen(_jid, _pid, _t, _r, "klick")
+        if seit_ts is None:
+            return
+        _um_seit = self._umstrittene_seit(getattr(self, "settings", None), _pid)
+        _eind = job_zuordnen_eindeutig(
+            _jobs, _plan_runs, _is_react, _st.job_zuordnung_alle(),
+            self._umstrittene_items(getattr(self, "settings", None), _pid),
+            seit_ts, umstritten_seit=_um_seit)
+        for _jid, (_t, _r) in _eind.items():
+            _st.job_zuordnung_setzen(_jid, _pid, _t, _r, "eindeutig")
+        # WAS DANACH NOCH OFFEN IST, wird EINMAL gefragt (Stufe C, Teil 2).
+        # Hier wird nur GESAMMELT - gefragt wird ueber die Zeile im
+        # Runplaner, nie von selbst. `_bd_job_offen` ist transient wie
+        # `_bd_runplan_auto`: es entsteht bei jedem Aufbau neu.
+        self._bd_job_offen = [
+            dict(_f, kandidaten=self._job_plan_kandidaten(_f["type_id"]))
+            for _f in offene_job_fragen(
+                _jobs, _plan_runs, _is_react, _st.job_zuordnung_alle(),
+                self._umstrittene_items(getattr(self, "settings", None), _pid),
+                seit_ts, umstritten_seit=_um_seit)]
+
+    def _job_plan_kandidaten(self, type_id):
+        """Welche gespeicherten Plaene kommen fuer diesen Job in Frage?
+
+        Gelesen wird `reserve_map` - dieselbe Quelle wie
+        `_umstrittene_items`, also genau die Liste, aus der der Streit
+        ueberhaupt entstanden ist. Der OFFENE Plan steht vorn: er ist der
+        wahrscheinlichste, und der Dialog soll nicht zum Suchspiel werden.
+        Rueckgabe: [(plan_id, Name), ...].
+        """
+        _tid = int(type_id)
+        _pid = getattr(self, "_bd_open_plan_id", None)
+        raus, _gesehen = [], set()
+        _mitgl = MainWindowHelpers.buendel_mitglieder(getattr(self, "settings", None) or {})
+        for _p in ((getattr(self, "settings", None) or {})
+                   .get("bau_saved_plans") or []):
+            _id = _p.get("id")
+            if _id is None:
+                continue
+            # Buendel-Mitglied: zur Wahl steht das Buendel, nicht sein Teil.
+            if str(_id) in _mitgl:
+                continue
+            # Die Schluessel der reserve_map sind mal Text, mal Zahl (JSON
+            # macht daraus Text) - deshalb ueber int() vergleichen, nie
+            # ueber die Schreibweise.
+            _hat = False
+            for _k, _v in (_p.get("reserve_map") or {}).items():
+                try:
+                    if int(_k) == _tid and int(_v or 0) > 0:
+                        _hat = True
+                        break
+                except (TypeError, ValueError):
+                    continue
+            if not _hat:
+                continue
+            if str(_id) in _gesehen:
+                continue
+            _gesehen.add(str(_id))
+            raus.append((_id, str(_p.get("label")
+                                  or _p.get("item_name") or "?")))
+        # DER OFFENE PLAN GEHOERT IMMER DAZU - er baut das Item ja gerade
+        # (sonst waere der Job hier nie aufgetaucht). Seine reserve_map kann
+        # trotzdem leer sein: sie entsteht erst beim Speichern.
+        if _pid is not None and str(_pid) not in _gesehen:
+            for _p in ((getattr(self, "settings", None) or {})
+                       .get("bau_saved_plans") or []):
+                if str(_p.get("id")) == str(_pid):
+                    raus.append((_p.get("id"),
+                                 str(_p.get("label")
+                                     or _p.get("item_name") or "?")))
+                    break
+        raus.sort(key=lambda kv: (str(kv[0]) != str(_pid), str(kv[1]).lower()))
+        return raus
+
+    def _job_frage_antworten(self, antworten):
+        """Die Antworten des Nutzers festschreiben. {job_id: plan_id|None}.
+
+        `None` heisst "zu keinem meiner Plaene" - auch das ist eine Antwort
+        und wird gemerkt (`store.PLAN_KEINER`), sonst kaeme dieselbe Frage
+        bei jedem Aufbau wieder. Die Quelle ist immer `nutzer`: seine
+        Entscheidung steht ueber jeder Automatik und wird deshalb auch
+        ueber eine bestehende Zuordnung geschrieben.
+        """
+        from .. import store as _st
+        _offen = {int(_f["job_id"]): _f
+                  for _f in (getattr(self, "_bd_job_offen", None) or [])}
+        _n = 0
+        for _jid, _plan in (antworten or {}).items():
+            _f = _offen.get(int(_jid))
+            if _f is None:
+                continue
+            _ziel = _st.PLAN_KEINER if _plan is None else _plan
+            if not _st.job_zuordnung_setzen(int(_jid), _ziel,
+                                            _f["type_id"], _f["runs"],
+                                            "nutzer"):
+                _st.job_zuordnung_umhaengen(int(_jid), _ziel)
+            _n += 1
+        return _n
+
     def _resolve_per_item_runs_cap(self, end_tid=None):
         """{type_id: max Runs je JOB} fuer schedule_build's per_item_runs_cap
         (Nutzer-Befund 19.09.2026, Einherji II: "Der Runplaner denkt ich kann
@@ -166,6 +347,12 @@ class MainWindowHelpers:
         if _cache:
             for t, _m in self._bpc_runs_by_tid(_cache, _runs, _p2b).items():
                 out[t] = min(out.get(t, _m), _m)
+        # MULTI-BAUPLAN, SCHRITT 4: "Runs/BPC" je ENDPRODUKT. `_bd_bp["end"]`
+        # unten kennt nur EIN Endprodukt - im Buendel braucht jedes Ende
+        # seine eigene Grenze (eine 10er-Kopie kann keinen 40er-Job fahren).
+        _mr = getattr(self, "_multi_runs_cap_je_ende", None)
+        if _mr is not None:
+            out = _mr(out)
         _end = (getattr(self, "_bd_bp", None) or {}).get("end") or {}
         if end_tid is not None and _end.get("runs_known") and not _end.get("bpo"):
             try:
@@ -201,6 +388,12 @@ class MainWindowHelpers:
                 getattr(_rec, "product_to_bp", None)))
         for stage_dict in (getattr(self, "_bd_stage_bp_esi", None) or {}).values():
             out.update(stage_dict)
+        # MULTI-BAUPLAN, SCHRITT 4b: Kopien JE ENDPRODUKT. Die Stufen-Zahl
+        # `end_bp` gilt fuer alle Enden gemeinsam - beim Buendel beschreibt
+        # sie mehrere verschiedene Produkte mit EINER Zahl.
+        _mc = getattr(self, "_multi_bp_cap_je_ende", None)
+        if _mc is not None:
+            out = _mc(out)
         return out
 
     @staticmethod
@@ -341,8 +534,50 @@ class MainWindowHelpers:
                                 "(stock/jobs)"))
 
     @staticmethod
+    @staticmethod
+    def belegte_runs_seit(zuordnung, stock_seen_ts):
+        """{type_id: Runs} aus der Job-Zuordnung eines Plans - NUR Eintraege,
+        die ESI im Bestand schon gesehen hat.
+
+        RESERVIERUNG OHNE HAND-HAKEN (Nutzer 26.09.2026: "machen okey, aber
+        Handhaken als optischen Marker will ich behalten, weil ESI einfach
+        sehr langsam ist"). Bisher gab NUR der Hand-Haken die Zutaten einer
+        Zeile frei (`_reserve_map_mitlaufend`). Seit Stufe B/C steht in
+        `job_zuordnung`, welche GELIEFERTEN Jobs diesem Plan gehoeren
+        (Klick, eindeutig, Nutzer-Antwort) - ihre Zutaten sind im Spiel
+        laengst verbraucht, der Plan hielt sie trotzdem fest, bis jemand
+        hakte. Der Haken bleibt (Marker und Sofort-Freigabe), der Beleg
+        kommt dazu.
+
+        DIESELBE ESI-VERZUGS-SPERRE wie beim Haken: ein Eintrag zaehlt erst,
+        wenn der Bestand von NACH der Zuordnung stammt (`ts` <=
+        `stock_seen_ts`). Ohne Bestandszeit zaehlt nichts (Regel 3: lieber
+        zu viel reserviert als zu wenig). Rein und ohne Fenster pruefbar;
+        `zuordnung` ist {job_id: {type_id, runs, ts, ...}} wie
+        `store.job_zuordnung_fuer_plan`.
+        """
+        if not zuordnung or stock_seen_ts is None:
+            return {}
+        try:
+            _grenze = float(stock_seen_ts)
+        except (TypeError, ValueError):
+            return {}
+        aus = {}
+        for _e in (zuordnung or {}).values():
+            try:
+                _t = int(_e.get("type_id"))
+                _r = int(_e.get("runs") or 0)
+                _ts = float(_e.get("ts") or 0.0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if _r <= 0 or _ts > _grenze:
+                continue
+            aus[_t] = aus.get(_t, 0) + _r
+        return aus
+
+    @staticmethod
     def _reserve_map_mitlaufend(plan, reserve_map, checked_ts, assignments,
-                                stock_seen_ts):
+                                stock_seen_ts, belegt=None):
         """Reservierung, die dem Baufortschritt FOLGT statt beim Speichern
         stehenzubleiben.
 
@@ -372,10 +607,15 @@ class MainWindowHelpers:
         RESERVIEREN: zu viel heisst, ein anderer Plan wartet eine Stunde
         laenger; zu wenig heisst, dem Nutzer fehlt mitten im Bau Material.
 
+        BELEGTE RUNS (26.09.2026, `belegt` = {type_id: Runs} aus
+        `belegte_runs_seit`): zaehlen wie ein Haken - je Item das MAXIMUM
+        aus Haken und Beleg, nie die Summe (derselbe Run kann in beiden
+        stehen), gedeckelt auf die geplanten Runs.
+
         Gibt eine NEUE Karte zurueck, die Eingaben bleiben unangetastet.
         """
         out = {int(t): int(q) for t, q in (reserve_map or {}).items()}
-        if not checked_ts or not assignments:
+        if (not checked_ts and not belegt) or not assignments:
             return out
         # Geplante und erledigte Runs je Item aus den Zuteilungen.
         geplant, erledigt = {}, {}
@@ -395,6 +635,16 @@ class MainWindowHelpers:
             if stock_seen_ts is None or float(_ts) > float(stock_seen_ts):
                 continue          # ESI hat den Verbrauch noch nicht gesehen
             erledigt[_tid] = erledigt.get(_tid, 0) + _runs
+        for _tid, _n in (belegt or {}).items():
+            try:
+                _tid = int(_tid)
+                _n = int(_n or 0)
+            except (TypeError, ValueError):
+                continue
+            if _n <= 0 or _tid not in geplant:
+                continue
+            # MAXIMUM, nicht Summe - und nie mehr als geplant.
+            erledigt[_tid] = min(geplant[_tid], max(erledigt.get(_tid, 0), _n))
         if not erledigt:
             return out
         _mats = (plan or {}).get("build_mats") or {}
@@ -414,6 +664,40 @@ class MainWindowHelpers:
         return out
 
     @staticmethod
+    def buendel_mitglieder(settings):
+        """ids der Einzelplaene, die in einem NICHT abgeschlossenen
+        Multi-Bauplan stecken (dessen `quellen`).
+
+        NUTZER 26.09.2026: "Flycatcher, Stork und Ametat II sollten gar
+        nicht mehr als Einzelplaene gelten, die sind aktuell in einem
+        Multiplan verflochten - die sollen NUR noch da existieren, nicht
+        doppelt oder sonstwo als einzelner." Vorher galt jeder der drei
+        weiter als eigener, offener Plan: seine reserve_map machte Titanium
+        Carbide STRITTIG, die 143 gelieferten TC-Runs durfte die Einkaufs-
+        liste darum keinem Plan zuschreiben, und der Bauplan verlangte 66
+        statt 0 Silicon-Diborite-Runs (zuordnung_bericht 25.09.2026).
+
+        ABGELEITET wie `_multi_gehoert_zu` in mw_multi_bauplan: die Quelle
+        ist das Buendel, kein Merker am Einzelplan. Ein abgeschlossenes
+        Buendel gibt seine Mitglieder wieder frei - sie sind dann ohnehin
+        selbst abgeschlossen oder wieder eigenstaendig.
+
+        Rein und ohne Fenster pruefbar. Rueckgabe: set von str(plan_id).
+        """
+        raus = set()
+        for p in ((settings or {}).get("bau_saved_plans") or []):
+            try:
+                if int(p.get("type_id", 0) or 0) != -1:   # industry.BUENDEL_ID (kein Import: Zirkel)
+                    continue
+            except (TypeError, ValueError):
+                continue
+            if p.get("done_manual"):
+                continue
+            for qid in (p.get("quellen") or []):
+                raus.add(str(qid))
+        return raus
+
+    @staticmethod
     def _fremde_reservierungen(settings, exclude_plan_id):
         """{Plan-Name: reserve_map} aller ANDEREN Plaene mit aktivem Schloss.
 
@@ -422,8 +706,12 @@ class MainWindowHelpers:
         Name nennen.
         """
         raus = {}
+        _mitgl = MainWindowHelpers.buendel_mitglieder(settings)
         for p in (settings.get("bau_saved_plans") or []):
             if not p.get("reserve"):
+                continue
+            # Buendel-Mitglied: sein Anspruch lebt im Buendel, nicht doppelt.
+            if str(p.get("id")) in _mitgl:
                 continue
             try:
                 if exclude_plan_id is not None and int(p.get("id") or 0) == int(exclude_plan_id):
@@ -434,6 +722,93 @@ class MainWindowHelpers:
             if rm:
                 raus[str(p.get("label") or p.get("item_name") or "?")] = {
                     int(k): int(v) for k, v in rm.items()}
+        return raus
+
+    @staticmethod
+    def _umstrittene_items(settings, exclude_plan_id):
+        """type_ids, die mindestens ein ANDERER gespeicherter Plan beansprucht.
+
+        Gelesen wird `reserve_map` - die schreibt jeder Plan beim Speichern,
+        UNABHAENGIG vom Schloss. Das ist hier die richtige Quelle: die Frage
+        lautet nicht "wer hat reserviert", sondern "wer koennte denselben
+        Job gebaut haben". Ein Plan ohne Schloss baut genauso.
+
+        Unterschied zu `_fremde_reservierungen` (die nur Plaene MIT Schloss
+        nennt): dort geht es um den Materialpool, hier um die Zuordnung
+        eines Jobs.
+
+        ABGESCHLOSSENE PLAENE ZAEHLEN NICHT MEHR (Nutzer 25.09.2026: "die
+        Frage war relativ unnoetig, es ist der einzige nicht abgeschlossene
+        Bauplan den ich habe"). Die Frage lautet "wer koennte den Job gebaut
+        haben" - wer seinen Plan auf FERTIG gestellt hat, baut dafuer nichts
+        mehr. Seine `reserve_map` bleibt trotzdem stehen (das Schloss geht
+        beim Abschliessen nur auf), und genau daran haengt sonst jedes
+        Zwischenprodukt fuer immer im Streit fest: der laufende Plan
+        verliert seinen Fortschritt, und gefragt wird ueber Plaene, die
+        niemand mehr baut.
+        """
+        raus = set()
+        _mitgl = MainWindowHelpers.buendel_mitglieder(settings)
+        for p in ((settings or {}).get("bau_saved_plans") or []):
+            if p.get("done_manual"):
+                continue
+            # BUENDEL-MITGLIEDER ZAEHLEN NICHT (Nutzer 26.09.2026): wer in
+            # einem Multiplan steckt, baut nicht noch einmal fuer sich.
+            if str(p.get("id")) in _mitgl:
+                continue
+            try:
+                if exclude_plan_id is not None and \
+                        int(p.get("id") or 0) == int(exclude_plan_id):
+                    continue
+            except (TypeError, ValueError):
+                pass
+            for k in (p.get("reserve_map") or {}):
+                try:
+                    raus.add(int(k))
+                except (TypeError, ValueError):
+                    continue
+        return raus
+
+    @staticmethod
+    def _umstrittene_seit(settings, exclude_plan_id):
+        """{type_id: fruehester Einfrier-Zeitpunkt eines ANDEREN Plans, der
+        das Item beansprucht}.
+
+        ZEIT ENTSCHEIDET (Nutzer 26.09.2026: "wie koennte man so etwas
+        zusaetzlich verhindern im Falle von Einzelplaenen?" - "ja macht
+        Sinn"). Ein Plan, der erst NACH dem Start eines Jobs eingefroren
+        wurde, kann diesen Job nicht gebaut haben - er existierte in dieser
+        Form noch nicht. Bleibt fuer den Job kein anderer Plan uebrig, ist
+        er eindeutig, ohne Frage.
+
+        Dieselbe Auswahl wie `_umstrittene_items` (offen, kein Buendel-
+        Mitglied, nicht der eigene Plan). Ein Plan OHNE Einfrier-Zeitpunkt
+        zaehlt als "schon immer" (0.0) - ohne Beleg gilt der Streit
+        (Regel 3). Rein und ohne Fenster pruefbar; s. `job_umstritten`.
+        """
+        raus = {}
+        _mitgl = MainWindowHelpers.buendel_mitglieder(settings)
+        for p in ((settings or {}).get("bau_saved_plans") or []):
+            if p.get("done_manual"):
+                continue
+            if str(p.get("id")) in _mitgl:
+                continue
+            try:
+                if exclude_plan_id is not None and \
+                        int(p.get("id") or 0) == int(exclude_plan_id):
+                    continue
+            except (TypeError, ValueError):
+                pass
+            try:
+                _ts = float((p.get("frozen") or {}).get("ts") or 0.0)
+            except (TypeError, ValueError):
+                _ts = 0.0
+            for k in (p.get("reserve_map") or {}):
+                try:
+                    _t = int(k)
+                except (TypeError, ValueError):
+                    continue
+                raus[_t] = min(raus.get(_t, _ts), _ts)
         return raus
 
     @staticmethod
@@ -597,7 +972,9 @@ class MainWindowHelpers:
             except (KeyError, TypeError, ValueError):
                 continue
             plan_runs[tid] = plan_runs.get(tid, 0) + int(a.get("runs") or 0)
-            is_react[tid] = str(a.get("stage", "")).startswith("reaction")
+            # EINE Wahrheit, s. stufe_ist_reaktion - "unrefined" ist
+            # ebenfalls eine Reaktion und wurde hier frueher uebersehen.
+            is_react[tid] = stufe_ist_reaktion(a.get("stage"))
             keys_by_tid.setdefault(tid, set()).add(
                 f"{a.get('stage')}|{a.get('char_id')}|{tid}")
         delivered = {}
@@ -702,11 +1079,24 @@ class MainWindowHelpers:
                         MainWindowHelpers._plan_snapshot_unpack(_snap), rm,
                         p.get("checked_runplan_ts") or {},
                         p.get("assignments") or [],
-                        (p.get("frozen") or {}).get("stock_seen_ts"))
+                        (p.get("frozen") or {}).get("stock_seen_ts"),
+                        belegt=MainWindowHelpers._belegt_fuer_plan(p))
                 except Exception:
                     rm = p.get("reserve_map") or {}
             return {int(t): int(q or 0) for t, q in (rm or {}).items()}
         return {}
+
+    @staticmethod
+    def _belegt_fuer_plan(p):
+        """Belegte Runs eines gespeicherten Plans (s. `belegte_runs_seit`);
+        ohne Speicher oder bei Fehlern leer - dann gilt der Haken allein."""
+        try:
+            from .. import store as _st
+            return MainWindowHelpers.belegte_runs_seit(
+                _st.job_zuordnung_fuer_plan(p.get("id")),
+                (p.get("frozen") or {}).get("stock_seen_ts"))
+        except Exception:
+            return {}
 
     @staticmethod
     def _reserved_by_other_plans(settings, exclude_plan_id):
@@ -726,10 +1116,14 @@ class MainWindowHelpers:
         """
         agg = {}
         labels = []
+        _mitgl = MainWindowHelpers.buendel_mitglieder(settings)
         for p in (settings or {}).get("bau_saved_plans", []) or []:
             if not p.get("reserve"):
                 continue
             if exclude_plan_id is not None and p.get("id") == exclude_plan_id:
+                continue
+            # Buendel-Mitglied: reserviert nicht noch einmal neben dem Buendel.
+            if str(p.get("id")) in _mitgl:
                 continue
             # BEIDE RICHTUNGEN (Nutzer-Entscheid Sitzung 16, nach Verlust).
             #
@@ -776,7 +1170,8 @@ class MainWindowHelpers:
                         MainWindowHelpers._plan_snapshot_unpack(_snap), rm,
                         p.get("checked_runplan_ts") or {},
                         p.get("assignments") or [],
-                        (p.get("frozen") or {}).get("stock_seen_ts"))
+                        (p.get("frozen") or {}).get("stock_seen_ts"),
+                        belegt=MainWindowHelpers._belegt_fuer_plan(p))
                 except Exception:
                     rm = p.get("reserve_map") or {}
             if not rm:
@@ -917,6 +1312,427 @@ class MainWindowHelpers:
                 continue
             preise.append(f"{neu:.2f}")
         return preise, notizen
+
+
+# Wie lange ein gemerkter Klick einen Job noch an sich binden darf.
+# BEGRUENDUNG statt runder Zahl: ein Job wird gestartet, kurz nachdem man
+# die Run-Zahl kopiert hat - meist Sekunden, bei einem langen Runplaner-
+# Abend auch Stunden. Sieben Tage sind grosszuegig genug, dass niemand
+# seinen Fortschritt verliert, und eng genug, dass ein vergessener Klick
+# von vorletzter Woche keinen fremden Job mehr schluckt. Die eigentliche
+# Bremse ist ohnehin der Plan-Deckel, nicht die Zeit.
+KLICK_FENSTER_SEK = 7 * 24 * 3600
+
+
+def stufe_ist_reaktion(stage) -> bool:
+    """Laeuft diese Runplaner-Stufe als REAKTION (ESI-Aktivitaet 9/11)?
+
+    EINE WAHRHEIT FUER EINE REGEL (Befund 21.09.2026). Die Antwort stand
+    zweimal im Code, und die zwei Fassungen waren verschieden:
+      * `_fill_bauplan_schedule`:  stage.startswith("reaction") or
+                                   stage == "unrefined"        - richtig
+      * `_frozen_auto_checked`:    stage.startswith("reaction") - FALSCH
+
+    Folge der falschen Fassung: die Stufe "unrefined" galt dort als
+    FERTIGUNG, also wurde fuer sie ein Job mit activity_id == 1 verlangt.
+    Unrefined-Reaktionen laufen aber als 9/11 - ihre gelieferten Jobs
+    wurden deshalb NIE als Fortschritt erkannt. Die Zeilen blieben offen,
+    egal wie oft man sie gebaut hat. Nutzer-Bild dazu: "ich muss staendig
+    Reactions nachbauen".
+
+    Gemessen: derselbe Job, einmal mit stage "reaction_1" (erkannt: 10 Runs)
+    und einmal mit "unrefined" (erkannt: nichts).
+    """
+    _s = str(stage or "")
+    return _s.startswith("reaction") or _s == "unrefined"
+
+
+def job_zuordnen(jobs, klicks, vergeben, plan_id, plan_runs,
+                 fenster_sek=KLICK_FENSTER_SEK):
+    """Welche ESI-Jobs gehoeren DIESEM Plan - belegt durch deine Klicks?
+
+    DIE LOGIK, und sie ist bewusst herum (Skizze 21.09.2026, Punkt 2.1):
+
+        ESI belegt, DASS gebaut wurde. Der Klick belegt, FUER WEN.
+
+    Ein Klick allein bewirkt hier gar nichts. Er wird erst wirksam, wenn ESI
+    einen Job mit demselben Item und derselben Run-Zahl meldet, der NACH dem
+    Klick gestartet wurde. Ein Fehlklick kann deshalb nichts kaputtmachen -
+    ohne passenden Job bleibt er folgenlos. (Meine erste Fassung im Gespraech
+    nannte den Klick selbst den Beweis; das war falsch - man kann kopieren
+    und den Job dann doch nicht starten.)
+
+    EIN KLICK ORDNET DIE ZEILE ZU, NICHT EINEN JOB (Skizze 2.2): bei "6 x 375"
+    klickt man EINMAL und startet SECHS Jobs. Der Klick wird deshalb nicht
+    verbraucht. Die Bremse ist der DECKEL: zugeordnet wird nur, solange die
+    bereits vergebenen Runs dieses Items unter den Plan-Runs bleiben - wie in
+    `delivered_sicher`.
+
+    SCHON VERGEBENE JOBS BLEIBEN, WO SIE SIND. `vergeben` ist {job_id:
+    plan_id} ueber ALLE Plaene; ein Job darin wird uebersprungen, egal zu wem
+    er gehoert. Genau das macht die Zuordnung stabil: sie wird einmal
+    getroffen und nicht bei jedem Abruf neu gewuerfelt.
+
+    AKTIVITAET MUSS PASSEN (wie in `_frozen_auto_checked`): eine Reaktion
+    (9/11) darf keine Fertigungs-Zeile abrechnen und umgekehrt.
+
+    Eingaben sind einfache Datentypen, damit das hier ohne Fenster und ohne
+    ESI pruefbar bleibt:
+      jobs    [{job_id, product_type_id, runs, activity_id, start_ts}]
+      klicks  [{tid, runs, ts, reaktion}]
+      plan_runs {tid: geplante Runs}   - der Deckel
+    Rueckgabe: {job_id: (type_id, runs)} - die neu zuzuordnenden Jobs.
+    """
+    if not jobs or not klicks or plan_id is None:
+        return {}
+    _pr = {int(t): int(r or 0) for t, r in (plan_runs or {}).items()}
+    # Runs, die dieser Lauf dem Item schon zugeteilt hat - gegen den Deckel.
+    # Was FRUEHERE Laeufe zugeteilt haben, steckt in `vergeben`: jene Jobs
+    # werden unten uebersprungen, ihre Runs koennen also nicht doppelt
+    # zaehlen.
+    _schon = {}
+    _klicks = []
+    for k in (klicks or []):
+        try:
+            _klicks.append((int(k["tid"]), int(k["runs"]), float(k["ts"]),
+                            bool(k.get("reaktion"))))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not _klicks:
+        return {}
+    aus = {}
+    # Aelteste Jobs zuerst: wer zuerst gebaut wurde, bekommt den Deckel-Platz.
+    # Ohne feste Reihenfolge waere das Ergebnis von der Listenfolge abhaengig
+    # und damit nicht reproduzierbar - dieselbe Regel wie in
+    # `reprocess.plane_erz_einkauf` (deterministisch, nicht "wie es kommt").
+    def _sk(j):
+        try:
+            return (float(j.get("start_ts") or 0), int(j.get("job_id") or 0))
+        except (TypeError, ValueError):
+            return (0.0, 0)
+    for j in sorted(jobs or [], key=_sk):
+        try:
+            jid = int(j["job_id"])
+            tid = int(j["product_type_id"])
+            runs = int(j.get("runs") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if runs <= 0 or jid in (vergeben or {}) or jid in aus:
+            continue
+        akt = j.get("activity_id")
+        ist_reaktion = akt in (9, 11)
+        if akt not in (1, 9, 11):
+            continue
+        try:
+            jts = float(j.get("start_ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        # DECKEL: nicht mehr Runs zuordnen, als der Plan fuer dieses Item hat.
+        _grenze = _pr.get(tid, 0)
+        if _grenze <= 0:
+            continue
+        if _schon.get(tid, 0) + runs > _grenze:
+            continue
+        for k_tid, k_runs, k_ts, k_reaktion in _klicks:
+            if k_tid != tid or k_runs != runs:
+                continue
+            if k_reaktion != ist_reaktion:
+                continue
+            # Der Job muss NACH dem Klick gestartet sein - ein Klick kann
+            # nichts belegen, was vorher schon lief.
+            if jts < k_ts or jts - k_ts > float(fenster_sek):
+                continue
+            aus[jid] = (tid, runs)
+            _schon[tid] = _schon.get(tid, 0) + runs
+            break
+    return aus
+
+
+def job_umstritten(tid, start_ts, umstritten, umstritten_seit=None):
+    """Ist DIESER Job umstritten - nicht nur sein Item?
+
+    Ein Item ist umstritten, wenn ein anderer offener Plan es beansprucht.
+    Ein JOB ist es nur, wenn so ein Plan beim Start des Jobs schon
+    eingefroren war (`umstritten_seit` = fruehester Einfrier-Zeitpunkt je
+    Item). Ohne `umstritten_seit`, ohne Startzeit oder ohne Eintrag fuer
+    das Item bleibt es bei der Item-Regel - lieber einmal zu viel fragen
+    als einen fremden Job anrechnen (Regel 3).
+    """
+    try:
+        _t = int(tid)
+    except (TypeError, ValueError):
+        return True
+    if _t not in {int(x) for x in (umstritten or set())}:
+        return False
+    if not umstritten_seit or _t not in umstritten_seit or start_ts is None:
+        return True
+    try:
+        return float(umstritten_seit[_t]) <= float(start_ts)
+    except (TypeError, ValueError):
+        return True
+
+
+def job_zuordnen_eindeutig(jobs, plan_runs, is_react, vergeben, umstritten,
+                           seit_ts, umstritten_seit=None):
+    """STUFE C: Jobs, die NUR dieser Plan gebaut haben kann - festgeschrieben.
+
+    WOZU. Bis Stufe B wurde ein gelieferter Job bei JEDEM Abruf neu geraten
+    (Item + Aktivitaet + Zeitpunkt). Solange nur ein Plan das Item baut,
+    faellt die Raterei immer gleich aus - bis der Nutzer einen ZWEITEN Plan
+    mit demselben Zwischenprodukt anlegt. Von da an ist das Item
+    "umstritten", `delivered_sicher` verwirft seine Runs, und der
+    Fortschritt, den er laengst gebaut hat, verschwindet aus dem alten Plan.
+    Das ist sein Bild "es gehen bei anderen Plaenen die Runs zurueck".
+
+    DIE HEILUNG ist nicht eine bessere Vermutung, sondern ein GEDAECHTNIS:
+    solange es keinen Streit gibt, ist die Zuordnung eindeutig - und genau
+    dann wird sie in `job_zuordnung` geschrieben. Ein spaeter angelegter
+    Plan kann sie nicht mehr kippen (`INSERT OR IGNORE`, die erste
+    Entscheidung gewinnt). Was heute stimmt, bleibt morgen stehen.
+
+    WAS DAS NICHT IST: ein Beweis wie der Klick. Es ist die Feststellung
+    "zum Zeitpunkt der Lieferung wollte kein anderer Plan dieses Item".
+    Deshalb aendert sich am RECHNEN nichts: eindeutige Items zaehlten in
+    `delivered_sicher` schon bisher voll mit (sie waren ja nicht
+    umstritten). Festgeschrieben wird nur, WEM sie gehoeren - die
+    Einkaufsliste wird davon in keinem Fall kleiner als vorher.
+
+    Die Sicherungen, dieselben wie in `job_zuordnen`:
+      * der Plan muss das Item ueberhaupt bauen (`plan_runs` > 0),
+      * die Aktivitaet muss zur Stufe passen (`is_react` je Item),
+      * der Job muss NACH `seit_ts` fertig geworden sein (Einfrier-
+        Zeitpunkt - dieselbe Grenze wie `_frozen_auto_checked`),
+      * DECKEL auf die Plan-Runs,
+      * schon vergebene Jobs bleiben, wo sie sind,
+      * aelteste Jobs zuerst, damit das Ergebnis nicht an der
+        Listenreihenfolge haengt.
+
+    Eingaben sind einfache Datentypen (ohne Fenster und ohne ESI pruefbar):
+      jobs   [{job_id, product_type_id, runs, activity_id, fertig_ts}]
+    Rueckgabe: {job_id: (type_id, runs)}.
+    """
+    if not jobs or not plan_runs:
+        return {}
+    try:
+        _seit = float(seit_ts)
+    except (TypeError, ValueError):
+        return {}
+    _pr = {int(t): int(r or 0) for t, r in (plan_runs or {}).items()}
+    _um = {int(t) for t in (umstritten or set())}
+    _schon = {}
+    aus = {}
+
+    def _sk(j):
+        try:
+            return (float(j.get("fertig_ts") or 0), int(j.get("job_id") or 0))
+        except (TypeError, ValueError):
+            return (0.0, 0)
+    for j in sorted(jobs or [], key=_sk):
+        try:
+            jid = int(j["job_id"])
+            tid = int(j["product_type_id"])
+            runs = int(j.get("runs") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if runs <= 0 or jid in (vergeben or {}) or jid in aus:
+            continue
+        # ZEIT ENTSCHEIDET (26.09.2026): ein anderer Plan, der erst nach
+        # dem Start dieses Jobs eingefroren wurde, kann ihn nicht gebaut
+        # haben - dann ist der Job eindeutig, obwohl das Item strittig ist.
+        if job_umstritten(tid, j.get("start_ts"), _um, umstritten_seit):
+            continue          # umstritten: kein Gedaechtnis, nur Vorsicht
+        grenze = _pr.get(tid, 0)
+        if grenze <= 0:
+            continue
+        akt = j.get("activity_id")
+        if (is_react or {}).get(tid):
+            if akt not in (9, 11):
+                continue
+        elif akt != 1:
+            continue
+        try:
+            fts = float(j.get("fertig_ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        if fts < _seit:
+            continue
+        if _schon.get(tid, 0) + runs > grenze:
+            continue
+        aus[jid] = (tid, runs)
+        _schon[tid] = _schon.get(tid, 0) + runs
+    return aus
+
+
+def laufend_verbraucht(build_runs, build_mats, laufend):
+    """Wie viel von jedem Material steckt schon in LAUFENDEN Jobs?
+
+    WOZU (Nutzer-Befund 25.09.2026: "es fehlen anscheinend Silicon Diborite,
+    das ist aber neu, die haben nicht immer gefehlt"). Gemessen an seinen
+    Zahlen: der Plan braucht 22'932 Silicon Diborite, im Hangar liegen noch
+    9'913, es fehlen 13'019. Gleichzeitig laufen 143 von 194 Runs Titanium
+    Carbide, und jeder davon frisst laut SDE 100 Silicon Diborite - 14'300
+    Stueck, die im Spiel also laengst weg sind.
+
+    Das ist KEIN Fehler in der Rechnung, sondern eine Luecke in der
+    AUSKUNFT: die Einkaufsliste zaehlt den Bedarf eines laufenden Jobs
+    weiter mit (sein Erzeugnis ist ja noch nicht da), und der Nutzer sieht
+    nur "fehlt". Nutzer-Entscheid: die Rechnung bleibt, wie sie ist (lieber
+    zu viel als zu wenig, Regel 3) - aber die Zeile sagt jetzt, warum.
+
+    Gerechnet wird mit denselben Zahlen wie `restbedarf_map`: die Mengen in
+    `build_mats[t]` gelten fuer ALLE `build_runs[t]` Runs, also anteilig.
+    ABGERUNDET, und die laufenden Runs sind auf die Plan-Runs gedeckelt -
+    eine Auskunft darf lieber zu wenig behaupten als zu viel.
+
+    Rein und ohne Fenster pruefbar. `laufend` ist {type_id: laufende Runs}.
+    Rueckgabe: {material_id: Menge, die in laufenden Jobs steckt}.
+    """
+    aus = {}
+    for t, mats in (build_mats or {}).items():
+        try:
+            runs_t = int((build_runs or {}).get(t, 0) or 0)
+            lauf_t = int((laufend or {}).get(t, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if runs_t <= 0 or lauf_t <= 0:
+            continue
+        lauf_t = min(lauf_t, runs_t)
+        for m in (mats or []):
+            try:
+                _mid, _jq = int(m[0]), int(m[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if _jq <= 0:
+                continue
+            aus[_mid] = aus.get(_mid, 0) + (_jq * lauf_t) // runs_t
+    return {k: v for k, v in aus.items() if v > 0}
+
+
+def offene_job_fragen(jobs, plan_runs, is_react, vergeben, umstritten,
+                      seit_ts, umstritten_seit=None):
+    """STUFE C, Teil 2: die Jobs, bei denen die Zuordnung WIRKLICH offen ist.
+
+    Uebrig bleibt genau der Fall, den weder ein Klick noch die
+    Eindeutigkeit loesen kann: ZWEI gespeicherte Plaene bauen dasselbe Item,
+    ESI meldet einen gelieferten Job, und niemand kann sagen, zu wem er
+    gehoert. Bisher zaehlte er deshalb fuer GAR KEINEN Plan (sicher, aber
+    man kauft dauerhaft zu viel). Nutzer-Entscheid 24.09.2026: **einmal
+    fragen und die Antwort an der job_id merken.**
+
+    Was hier NICHT auftaucht (und warum):
+      * Jobs mit Zuordnung - die Frage ist beantwortet, auch wenn die
+        Antwort "keiner" war (`store.PLAN_KEINER`);
+      * Jobs, deren Aktivitaet nicht zur Stufe passt - die kann der Plan
+        gar nicht gebaut haben;
+      * Jobs von vor dem Einfrieren;
+      * ein Job, dessen Runs ALLEIN schon mehr sind, als der Plan fuer das
+        Item ueberhaupt vorhat - der stammt sicher von woanders.
+
+    Rein und ohne Fenster pruefbar. Rueckgabe: Liste
+    [{job_id, type_id, runs, fertig_ts}], aelteste zuerst - damit die
+    Reihenfolge im Dialog nicht an der Listenfolge von ESI haengt.
+    """
+    if not jobs or not plan_runs:
+        return []
+    try:
+        _seit = float(seit_ts)
+    except (TypeError, ValueError):
+        return []
+    _pr = {int(t): int(r or 0) for t, r in (plan_runs or {}).items()}
+    _um = {int(t) for t in (umstritten or set())}
+    raus = []
+    for j in (jobs or []):
+        try:
+            jid = int(j["job_id"])
+            tid = int(j["product_type_id"])
+            runs = int(j.get("runs") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if runs <= 0 or jid in (vergeben or {}):
+            continue
+        # dieselbe Zeit-Regel wie in `job_zuordnen_eindeutig`: was dort
+        # eindeutig ist, wird hier nicht gefragt.
+        if not job_umstritten(tid, j.get("start_ts"), _um, umstritten_seit):
+            continue          # eindeutig - dafuer gibt es keine Frage
+        grenze = _pr.get(tid, 0)
+        if grenze <= 0 or runs > grenze:
+            continue
+        akt = j.get("activity_id")
+        if (is_react or {}).get(tid):
+            if akt not in (9, 11):
+                continue
+        elif akt != 1:
+            continue
+        try:
+            fts = float(j.get("fertig_ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        if fts < _seit:
+            continue
+        raus.append({"job_id": jid, "type_id": tid, "runs": runs,
+                     "fertig_ts": fts})
+    raus.sort(key=lambda d: (d["fertig_ts"], d["job_id"]))
+    return raus
+
+
+def delivered_sicher(geliefert, plan_runs, umstritten, belegt=None):
+    """Von den ESI-gelieferten Runs NUR das, was diesem Plan sicher gehoert.
+
+    WOZU (Befund 21.09.2026, nachgestellt): `_frozen_auto_checked` ordnet
+    einen gelieferten Job allein ueber Item + Aktivitaet + Zeitpunkt zu -
+    ESI sagt naemlich NICHT, zu welchem Bauplan ein Job gehoert. Bauen zwei
+    eingefrorene Plaene dieselbe Reaktion, bekommen BEIDE dieselben Runs
+    angerechnet. In der Messung: ein Job ueber 2'250 Runs, Plan A braucht
+    2'250 (richtig), Plan B nur 400 - und bekam trotzdem 2'250 gutge-
+    schrieben. Beider Einkaufsliste fiel auf leer, obwohl Plan B nie etwas
+    gebaut hatte. Nutzer-Bild dazu: "ich muss staendig Reactions nachbauen,
+    es gehen aber bei anderen Plaenen die Runs zurueck".
+
+    DIE TRENNUNG, die diese Funktion durchzieht: eine GERATENE Zuordnung
+    darf die ANZEIGE steuern (Zeile einfaerben, Punkt setzen) - dort kostet
+    ein Irrtum nichts. Sie darf NICHT den Restbedarf steuern: dort kostet
+    ein Irrtum Material, weil die Einkaufsliste zu klein wird und der
+    Nutzer vor dem Reaktor steht (Regel 3). Deshalb rechnet die
+    Einkaufsliste ab jetzt mit DIESER Karte, die Anzeige weiter mit der
+    vollen.
+
+    Zwei Sicherungen:
+      1. DECKEL auf die Plan-Runs - kein Job kann mehr abbuchen, als der
+         Plan ueberhaupt vorhat.
+      2. UMSTRITTENE Items zaehlen GAR NICHT. Beansprucht ein anderer
+         gespeicherter Plan dasselbe Item, laesst sich der Job nicht
+         zuordnen; dann lieber zu viel einkaufen als zu wenig.
+
+    `belegt` HEBT SICHERUNG 2 AUF - aber nur, wo es etwas zu belegen gibt
+    (Stufe B, 21.09.2026): {type_id: Runs} aus Jobs, die diesem Plan
+    nachweislich gehoeren, weil du ihre Zeile angeklickt hast und ESI
+    danach den passenden Job gemeldet hat. Diese Runs sind keine Vermutung
+    mehr, also darf der Streit sie nicht mehr verwerfen - sonst wuerde
+    ausgerechnet der belegte Fortschritt verschenkt und du kauftest dauerhaft
+    zu viel. Der DECKEL gilt auch fuer sie.
+
+    Rein und ohne Fenster pruefbar. `umstritten` ist die Menge der
+    type_ids, die mindestens ein ANDERER Plan ebenfalls beansprucht.
+    """
+    aus = {}
+    _bel = {int(t): int(n or 0) for t, n in (belegt or {}).items() if n}
+    for t, n in (geliefert or {}).items():
+        t = int(t)
+        if t in (umstritten or set()):
+            # Umstritten: nur was BELEGT ist, zaehlt - der Rest ist geraten.
+            _b = _bel.get(t, 0)
+            _d = int((plan_runs or {}).get(t, 0) or 0)
+            if _b > 0 and _d > 0:
+                aus[t] = min(_b, _d)
+            continue
+        n = int(n or 0)
+        if n <= 0:
+            continue
+        deckel = int((plan_runs or {}).get(t, 0) or 0)
+        if deckel <= 0:
+            continue
+        aus[t] = min(n, deckel)
+    return aus
 
 
 def restbedarf_map(build_runs, build_mats, delivered=None):
@@ -1084,3 +1900,161 @@ def rest_und_budget(runs, budget):
     b = max(0, int(budget or 0))
     weg = min(b, r)
     return r - weg, b - weg
+
+
+def plan_fortschritt_runs(plan_runs, geliefert, laufend=None, fremd=None,
+                          plan_id=None, laufend_gewicht=0.5):
+    """Fortschritt eines Bauplans in RUNS statt in Positionen.
+    Gibt (erledigte Runs, geplante Runs) zurueck - beides als float.
+
+    NUTZER 22.09.2026: "es fuehlt sich an, als gaebe es am Anfang kaum
+    Fortschritt und dann springt der Fortschrittsbalken von 20 % auf 100 %
+    und fertig."
+
+    WARUM ER SPRANG: gezaehlt wurden POSITIONEN - eine Stufe galt als
+    erledigt, sobald EIN Job dafuer geliefert war. Ein Plan mit 30 Positionen
+    bewegt sich damit in 3,3-%-Spruengen, und eine Position mit 52 Runs sieht
+    genauso weit aus wie eine mit 2. Jetzt zaehlen die RUNS: jeder einzelne
+    Job schiebt den Balken ein Stueck.
+
+    LAUFENDE JOBS ZAEHLEN HALB (`laufend_gewicht`). Gestartet ist nicht
+    fertig - ein 4-Tage-Job darf nicht sofort als erledigt gelten. Aber er
+    ist auch nicht nichts: der Nutzer hat Material verbraucht und einen Slot
+    belegt. Halb heisst auch: der Balken geht beim Abliefern noch einmal
+    HOCH, nie zurueck.
+
+    "FEST ZUGEORDNET" (seine Worte): `fremd` ist {job_id: plan_id} aus der
+    Zuordnungs-Tabelle. Ein Job, der nachweislich einem ANDEREN Plan gehoert,
+    zaehlt hier nicht mit - sonst steigt der Balken zweier Plaene an
+    demselben Job. Ohne Eintrag bleibt es bei der bisherigen Zaehlung
+    (die Karte meldet solche Faelle als "shared").
+
+    DECKEL JE POSITION: mehr als geplant kann eine Position nicht beitragen,
+    sonst gliche ein einzelner grosser Job einen ganzen Plan aus.
+    """
+    def _i(v):
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError):
+            return 0
+    ziel = {int(t): _i(r) for t, r in (plan_runs or {}).items() if _i(r) > 0}
+    if not ziel:
+        return 0.0, 0.0
+    _fremd = fremd or {}
+    _pid = None if plan_id is None else str(plan_id)
+
+    def _summe(jobs):
+        aus = {}
+        for j in (jobs or []):
+            _t = j.get("product_type_id")
+            if _t is None or int(_t) not in ziel:
+                continue
+            _jid = j.get("job_id")
+            if _jid is not None:
+                _gehoert = _fremd.get(int(_jid))
+                if _gehoert is not None and str(_gehoert) != _pid:
+                    continue      # belegt fremd - nicht meiner
+            aus[int(_t)] = aus.get(int(_t), 0) + _i(j.get("runs"))
+        return aus
+
+    _gel = _summe(geliefert)
+    _lauf = _summe(laufend)
+    erledigt = 0.0
+    for _t, _soll in ziel.items():
+        _g = min(_soll, _gel.get(_t, 0))
+        # Der laufende Rest fuellt nur auf, was die Lieferungen offen lassen.
+        _l = min(_soll - _g, _lauf.get(_t, 0))
+        erledigt += _g + _l * float(laufend_gewicht)
+    return erledigt, float(sum(ziel.values()))
+
+
+def eigene_kopie_lage(noetig, user_runs, esi_runs, esi_kopien=None):
+    """Blaupausen-Lage eines Endprodukts mit Haken "Eigene BPC":
+    {"copies", "runs"} - oder None, wenn die Kopiengroesse UNBEKANNT ist.
+
+    NUTZER-BEFUND 21.09.2026 (Multi-Bauplan, Runplaner Stufe "End product"):
+    "es werden zwar die bpc copy runs vollstaendig aufgeteilt, doch werden
+    nicht alle charaktere verwendet und somit steht 51 Tage Bauzeit."
+    NACHGESTELLT (aa387, nicht hergeleitet): Flycatcher 52 Runs, 13 eigene
+    Kopien a 4 Runs. Hier stand frueher
+
+        je_bpc = max(1, int(obpc_runs.get(tid, 0) or 0) or noetig)
+
+    - ohne getippte "Runs/BPC" wurde also die GESAMTE Run-Zahl als EINE
+    Kopie angenommen. Eine Kopie heisst EIN gleichzeitiger Job, ein Job
+    heisst EIN Slot, also EIN Charakter und alles hintereinander: aus
+    3,97 Tagen wurden 51,63. Dabei wusste der Blaupausen-Cache die Wahrheit
+    laengst - der Runs-Deckel des Runplaners kam bereits von dort (die
+    Jobs liefen mit 4 Runs), nur die KOPIENZAHL wurde daneben geraten und
+    ueberschrieb die echte.
+
+    DIE REGEL DAHINTER (Sitzung 21.09.2026): eine geratene Zahl darf die
+    Anzeige steuern, nie die Rechnung. Hier wird nichts mehr geraten:
+      1. was der Nutzer getippt hat, gilt (`user_runs`);
+      2. sonst die kleinste eigene Kopie aus dem ESI-Cache (`esi_runs`,
+         dieselbe Quelle, aus der `_bpc_runs_by_tid` schon den Runs-Deckel
+         nimmt - EINE Wahrheit);
+      3. sonst None: unbekannt heisst unbegrenzt (wie bei T1/BPO), NICHT
+         "eine Riesenkopie".
+    Die Kopienzahl ist, was der Plan braucht (`ceil`), gedeckelt auf die
+    Stueckzahl, die wirklich im Hangar liegt (`esi_kopien`) - mehr Jobs
+    als Blaupausen kann niemand fahren.
+    """
+    def _i(v):
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError):
+            return 0
+    n = max(1, _i(noetig))
+    je = _i(user_runs)
+    if je < 1:
+        je = _i(esi_runs)
+    if je < 1:
+        return None
+    kop = -(-n // je)                     # ceil
+    hab = _i(esi_kopien)
+    if hab >= 1:
+        kop = min(kop, hab)
+    return {"copies": max(1, kop), "runs": je}
+
+
+def sell_preis_ziel_modus(ziel_preis, undercut_preis):
+    """Welcher Preis gilt im ZIEL-PREIS-MODUS fuer EINE Zeile - und wie
+    heisst diese Zahl ehrlich?
+
+    NUTZER-WUNSCH (22.09.2026): "Also wenn der Zielpreis unter dem
+    aktuellen Undercut-Preis liegen wuerde, sollten wir vielleicht den
+    Undercut-Preis fuer diese spezifischen Einzelfaelle nehmen."
+
+    Er hat recht, und der Grund ist reine Arithmetik: der Ziel-Preis aus
+    `_optimal_sell_price` kennt den Markt gar nicht, er rechnet nur
+    Einkauf + Ziel-Marge + Gebuehren. Liegt der billigste Sell am Hub
+    HOEHER als dieser Ziel-Preis, dann verschenkt die Ziel-Rechnung
+    genau die Differenz: die Order verkauft trotzdem sofort (sie ist ja
+    die billigste), nur eben unnoetig billig. Sein Beispiel: Triglavian
+    Encryption Methods, Ziel 196'745 gegen Markt 234'700 - rund 38'000
+    ISK je Stueck verschenkt, bei 12 % Ziel-Marge.
+
+    Der hoehere der beiden Preise ist deshalb IMMER mindestens so gut:
+      * Ziel >= Undercut  -> Ziel-Preis (der Markt ist billiger als noetig,
+        die Ziel-Marge ist die Untergrenze, unter die nicht gegangen wird);
+      * Undercut >  Ziel  -> Undercut-Preis (mehr Marge als das Ziel, und
+        trotzdem die billigste Order am Hub).
+
+    Rueckgabe `(preis, quelle)` mit quelle "ziel" oder "markt_statt_ziel".
+    Die QUELLE ist kein Schmuck: dieselbe Spalte traegt dann zwei
+    verschiedene Zahlen-Arten, und genau daraus entsteht die Fehlerklasse
+    aus Sitzung 9 (eine Zahl traegt einen Namen, der etwas anderes
+    meint). Anzeige, Tooltip und Zwischenablage-Meldung nehmen ihre
+    Formulierung aus dieser Quelle - eine Wahrheit, kein zweites Urteil.
+    """
+    def _f(v):
+        try:
+            return float(v or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    z = _f(ziel_preis)
+    u = _f(undercut_preis)
+    if u > z:
+        return u, "markt_statt_ziel"
+    return z, "ziel"

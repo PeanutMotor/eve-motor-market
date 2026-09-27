@@ -168,8 +168,23 @@ def main():
     app.installEventFilter(app._dialog_clamp)
     app._hand_cursor = _HandCursor()        # pointing-hand cursor on every button
     app.installEventFilter(app._hand_cursor)
+    from . import ladezeit as _lz
+    _lz.ui_zwischenzeit("Qt, language, fonts, style ready")
     win = MainWindow()
+    _lz.ui_zwischenzeit("main window built")
     win.show()
+    _lz.ui_zwischenzeit("window shown")
+    if _lz.AN and _lz.ui_laeuft():
+        # STARTMESSUNG ENDET, wenn das Fenster zum ersten Mal gezeichnet ist
+        # und die Ereignisschleife laeuft - das ist die Wartezeit, die der
+        # Nutzer beim Oeffnen spuert. Was danach im Hintergrund nachlaedt,
+        # messen die Job-Berichte einzeln.
+        from PySide6.QtCore import QTimer as _QT_lz
+
+        def _start_fertig():
+            _lz.ui_zwischenzeit("first screen drawn")
+            _lz.ui_stop()
+        _QT_lz.singleShot(0, _start_fertig)
     sys.exit(app.exec())
 
 

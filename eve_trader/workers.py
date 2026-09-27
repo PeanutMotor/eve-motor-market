@@ -1,6 +1,8 @@
 """Run a blocking function on a background thread and emit the result."""
 from PySide6.QtCore import QThread, Signal
 
+from . import ladezeit
+
 
 class Worker(QThread):
     done = Signal(object)
@@ -36,6 +38,10 @@ class Worker(QThread):
 
     def run(self):
         try:
-            self.done.emit(self._fn(*self._args, **self._kwargs))
+            # LADEZEIT-MESSUNG (nur mit EMM_LADEZEIT=1, sonst ohne Wirkung):
+            # jeder Hintergrund-Job mit Wandzeit und teuersten Funktionen.
+            with ladezeit.messen("Job " + str(getattr(self._fn, "__qualname__", self._fn))):
+                ergebnis = self._fn(*self._args, **self._kwargs)
+            self.done.emit(ergebnis)
         except Exception as e:  # surfaced to the UI as a friendly message
             self.failed.emit(str(e))

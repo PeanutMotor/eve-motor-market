@@ -277,6 +277,23 @@ DEFAULT_SETTINGS = {
     # Preisverlauf: zuletzt angesehenes Item [type_id, Name] - beim Oeffnen
     # des Tabs steht sofort ein Graph (18.09.2026).
     "mk_last_item": None,
+    # VERKAUFSLISTE: Items mit offener eigener Kauf-Order ausblenden.
+    # Standard AUS (Nutzer-Befund 22.09.2026): bis dahin filterte die
+    # Liste das IMMER und still - bei ihm fielen 13 von 14 verkaufs-
+    # bereiten Positionen heraus, waehrend die Kachel "Ready to sell"
+    # weiter 14 zeigte. Wer filtern will, schaltet es im Tools-Menue ein.
+    "sell_hide_active_orders": False,
+    # Die Karte "Endprodukte dieses Buendels" im Multi-Bauplan laesst sich
+    # einklappen (Nutzer 23.09.2026) - standardmaessig OFFEN, weil dort die
+    # Mengen und ME/TE jedes Endes geschraubt werden.
+    "bau_multi_enden_offen": True,
+    # ZIELZEIT JE STUFE IM RUNPLANER (Nutzer 24.09.2026: "abends
+    # einloggen, Runs starten auf 23 h, am naechsten Tag Components").
+    # {stage: Stunden}; 0 oder fehlend = automatisch (nur straffen, die
+    # Stufe wird nicht laenger als noetig). `..._std` gilt fuer jede
+    # Stufe ohne eigenen Wert.
+    "bau_runplan_ziel": {},
+    "bau_runplan_ziel_std": 0,
     # GANZE GRUPPEN nie bauen und nie kaufen (Nutzer, Sitzung 20).
     # Werte = die Gruppen des Materialien-Reiters, s. _MATERIAL_GRUPPEN.
     "bau_blacklist_gruppen": [],
@@ -295,6 +312,14 @@ DEFAULT_SETTINGS = {
     # Update ersetzt nur die .exe und laesst die Datei stehen.
     "bau_plan_manuell": False,      # Handsortierung an/aus
     "bau_plan_reihenfolge": [],     # Plan-IDs in der Reihenfolge des Nutzers
+    # ZUGEKLAPPTE Multi-Baupläne in "Meine Baupläne" (Ordnerstruktur).
+    # LEER = alle offen (Nutzer 26.09.2026: "Multiplans standard ausgeklappt,
+    # es sei denn man schliesst das Dropdown"). Ersetzt `bau_multi_offen`
+    # (Standard zu, 20.09.2026); der alte Schlüssel wird nicht mehr gelesen.
+    "bau_multi_zu": [],
+    # Zugeklappte Karten im Invention-Reiter (Blaupausen-IDs), Standard
+    # offen (Nutzer 26.09.2026: "kompakter, verbraucht zu viel Platz").
+    "bau_inv_zu": [],
     # GILT SEINE REIHENFOLGE? (Nutzer, 15.09.2026: "die Reihenfolge bleibt,
     # aber dann fuehren wir einen Knopf ein 'Nach Fortschritt sortieren'").
     # BEWUSST GETRENNT von `bau_plan_manuell`: der sagt nur, ob man gerade
@@ -383,6 +408,14 @@ def app_data_dir() -> str:
     else:
         base = os.path.join(os.path.expanduser("~"), ".local", "share")
     neu = os.path.join(base, DATENORDNER_NAME)
+    # SCHNELLWEG (Ladezeit-Messung des Nutzers, 27.09.2026): jede
+    # Datenbank-Verbindung fragt hier nach dem Ordner - 27'000 Mal beim
+    # Start, jedes Mal exists + isdir + isdir + makedirs (unter Windows ein
+    # echter mkdir-Versuch). Steht der NEUE Ordner schon da, ist die Antwort
+    # immer dieselbe: EIN isdir genuegt. Fehlt er (erster Start, Umzug,
+    # von Hand geloescht), laeuft der volle Weg darunter wie bisher.
+    if _DATENORDNER_BEKANNT.get(neu) and os.path.isdir(neu):
+        return neu
     alt = os.path.join(base, _ALTER_DATENORDNER_NAME)
     if not os.path.exists(neu) and os.path.isdir(alt):
         try:
@@ -403,7 +436,11 @@ def app_data_dir() -> str:
         # von Hand geloescht wurde.
         return alt
     os.makedirs(neu, exist_ok=True)
+    _DATENORDNER_BEKANNT[neu] = True
     return neu
+
+
+_DATENORDNER_BEKANNT = {}
 
 
 def db_path() -> str:
@@ -461,6 +498,53 @@ _PLAN_NAME_SCHMUTZ = "\U0001F9EA\u2697\ufe0f \t"
 def plan_name_bereinigen(name: str) -> str:
     """Emoji-Vorsatz (Reagenzglas u.ae.) und Leerraum vom Plan-Namen."""
     return (name or "").strip(_PLAN_NAME_SCHMUTZ).strip()
+
+
+def buendel_quellen_freigeben(plans, quellen_ids):
+    """Quellen eines Buendels auftauen und ihre Reservierung loesen.
+    Rueckgabe (freigegeben, aufgetaut) als Listen von Plan-Namen.
+
+    EINE Stelle fuer beide Speicherwege (26.09.2026). Bis dahin tat das nur
+    "In Meine Bauplaene speichern" im frueheren Multi-Buildplaner-Dialog
+    (`_multi_plan_speichern`, ausgebaut 26.09.2026); wer stattdessen "Bauplan
+    oeffnen" waehlte und das Buendel aus dem Bauplan-Dialog speicherte
+    (`_save_plan`), liess seine Quellen eingefroren zurueck - mit
+    Einkaufs-Schnappschuessen von frueher.
+    Nutzer-Befund (karten_bericht): Ametat II / Flycatcher / Stork standen
+    weiter mit ihren Einzel-Einkaeufen vom 10./11.09. da, obwohl alles ueber
+    das Buendel vom 23.09. gekauft war. Ein eingefrorener Einzelplan rechnet
+    nicht mehr; ab dem Buendeln rechnet das Buendel fuer ihn - also weg mit
+    Schnappschuss und Schloss (Entscheid C, Korrektur 20.09.2026)."""
+    frei, aufgetaut = [], []
+    _q = set(quellen_ids or [])
+    for x in plans or []:
+        if x.get("id") not in _q:
+            continue
+        if x.get("reserve"):
+            x["reserve"] = False
+            frei.append(str(x.get("label") or ""))
+        if x.get("frozen"):
+            x["frozen"] = None
+            aufgetaut.append(str(x.get("label") or ""))
+    return frei, aufgetaut
+
+
+def buendel_quellen_nachziehen(plans):
+    """Alle Quellen aller OFFENEN Buendel freigeben (Migration fuer Plaene,
+    die ueber den Bauplan-Dialog gespeichert wurden, s. oben). -1 ist
+    industry.BUENDEL_ID; config darf industry nicht importieren.
+    Abgeschlossene Buendel (done_manual) lassen ihre Quellen in Ruhe.
+    Rueckgabe: Namen der veraenderten Quellen."""
+    aus = []
+    for p in plans or []:
+        try:
+            if int(p.get("type_id", 0) or 0) != -1 or p.get("done_manual"):
+                continue
+        except (TypeError, ValueError):
+            continue
+        frei, auf = buendel_quellen_freigeben(plans, p.get("quellen") or [])
+        aus += [n for n in frei + auf if n not in aus]
+    return aus
 
 
 def _nach_migrationen(data: dict) -> dict:
@@ -541,6 +625,11 @@ def _nach_migrationen(data: dict) -> dict:
             if isinstance(_v, str) and plan_name_bereinigen(_v) != _v:
                 _p[_k] = plan_name_bereinigen(_v)
                 _migrated = True
+    # QUELLEN OFFENER BUENDEL SIND NIE EINGEFROREN (26.09.2026, s.
+    # buendel_quellen_freigeben). Idempotent: beim zweiten Lauf gibt es
+    # nichts mehr zu aendern.
+    if buendel_quellen_nachziehen(data.get("bau_saved_plans") or []):
+        _migrated = True
     if _migrated:
         try:
             save_settings(data)   # Marker muss ueberleben, sonst Endlos-Lauf

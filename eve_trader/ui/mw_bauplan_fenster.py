@@ -32,8 +32,8 @@ from . import icons
 from ..sprache import t
 from . import theme
 from .mw_basis import (IskGroupedSpin, IskMillionSpin, MinimizableDialog,
-                       ROLLE_KOPIERNAME, isk, kopier_text_rect, tab_icon,
-                       tab_icon_at)
+                       ROLLE_KOPIERNAME, combos_ohne_mausrad, isk,
+                       kopier_text_rect, tab_icon, tab_icon_at)
 
 
 class BauplanFenster:
@@ -257,6 +257,14 @@ class BauplanFenster:
             except Exception as _je:
                 self._log_exception(f"Corp: Jobs {cname}", str(_je))
                 out["failed"].append(t("Corp jobs: {name}").format(name=cname))
+        # Corp-Blaupausen, die gerade in einem Corp-Job stecken (Research,
+        # Kopie, Fertigung), sind im Spiel nicht greifbar - wie bei den
+        # persoenlichen (esi.fetch_blueprints, 26.09.2026). Ohne Job-Abruf
+        # (keine Rolle / Fehler) bleibt die Liste wie sie ist.
+        _alle_jobs = [j for _js in out["jobs"].values() for j in (_js or [])]
+        if _alle_jobs and out["blueprints"]:
+            out["blueprints"], _belegt = esi.blaupausen_in_jobs(
+                out["blueprints"], _alle_jobs)
         return out
 
     # ---- Reprocessing im Bauplan (1.0.9, Weg B) ----------------------------
@@ -587,6 +595,109 @@ class BauplanFenster:
             neu["reprocess"]["unrefined_on"] = True
         return neu
 
+    def _jobfrage_knopf_auffrischen(self):
+        """Die Zeile im Runplaner: "n Jobs nicht zugeordnet - zuordnen".
+
+        Gibt es nichts zu fragen, ist der Knopf WEG - nicht ausgegraut. Ein
+        grauer Knopf sagt "hier koennte etwas sein"; hier ist aber wirklich
+        nichts, und das ist der Normalfall.
+        """
+        from ..sprache import t as _txt   # `t` kann hier lokal belegt sein
+        _btn = getattr(self, "_bd_jobfrage_btn", None)
+        if _btn is None:
+            return
+        _offen = getattr(self, "_bd_job_offen", None) or []
+        if not _offen:
+            _btn.hide()
+            return
+        _btn.setText(_txt("{n} job(s) not assigned – assign").format(
+            n=len(_offen)))
+        _btn.setToolTip(_txt(
+            "ESI does not say which build plan a job belongs to. For these "
+            "jobs more than one saved plan builds the same item, so the tool "
+            "does not guess: they currently count for no plan at all, which "
+            "makes your shopping list too big. Answer once – the answer "
+            "is stored with the job and you will not be asked again."))
+        _btn.show()
+
+    def _job_frage_dialog(self):
+        """Einmal fragen, wem diese Jobs gehoeren - und die Antwort merken."""
+        from ..sprache import t as _txt   # `t` ist hier lokal belegt
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                       QLabel, QPushButton, QComboBox,
+                                       QTableWidget, QTableWidgetItem,
+                                       QHeaderView, QAbstractItemView)
+        import time as _t_jf
+        _offen = list(getattr(self, "_bd_job_offen", None) or [])
+        if not _offen:
+            return 0
+        d = QDialog(self)
+        d.setWindowTitle(_txt("Which build plan do these jobs belong to?"))
+        d.setMinimumWidth(720)
+        v = QVBoxLayout(d)
+        _erkl = QLabel(_txt(
+            "More than one of your saved build plans builds these items, so "
+            "the tool cannot tell whose job it was. Until you answer, they "
+            "count for no plan – your shopping list stays bigger than "
+            "it needs to be."))
+        _erkl.setWordWrap(True)
+        _erkl.setObjectName("Muted")
+        v.addWidget(_erkl)
+        tbl = QTableWidget(len(_offen), 4)
+        tbl.setHorizontalHeaderLabels([_txt("Item"), _txt("Runs"),
+                                       _txt("Delivered"),
+                                       _txt("Belongs to")])
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tbl.setSelectionMode(QAbstractItemView.NoSelection)
+        _boxen = {}
+        for _r, _f in enumerate(_offen):
+            tbl.setItem(_r, 0, QTableWidgetItem(str(_f.get("name")
+                                                    or _f["type_id"])))
+            tbl.setItem(_r, 1, QTableWidgetItem(
+                f"{int(_f['runs']):,}".replace(",", "'")))
+            try:
+                _wann = _t_jf.strftime("%Y-%m-%d %H:%M",
+                                       _t_jf.localtime(float(_f["fertig_ts"])))
+            except (TypeError, ValueError, OSError):
+                _wann = "?"
+            tbl.setItem(_r, 2, QTableWidgetItem(_wann))
+            _cb = QComboBox()
+            for _pid, _nm in (_f.get("kandidaten") or []):
+                _cb.addItem(str(_nm), _pid)
+            # "Keiner" ist eine vollwertige Antwort und wird genauso
+            # gemerkt - sonst kaeme dieselbe Frage bei jedem Aufbau wieder.
+            _cb.addItem(_txt("None of these"), None)
+            tbl.setCellWidget(_r, 3, _cb)
+            _boxen[int(_f["job_id"])] = _cb
+        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for _c in (1, 2, 3):
+            tbl.resizeColumnToContents(_c)
+        tbl.setColumnWidth(3, max(tbl.columnWidth(3), 220))
+        v.addWidget(tbl, 1)
+        _zeile = QHBoxLayout()
+        _zeile.addStretch()
+        _ab = QPushButton(_txt("Cancel"))
+        _ab.clicked.connect(lambda: d.reject())
+        _zeile.addWidget(_ab)
+        _ok = QPushButton(_txt("Save assignment"))
+        _ok.setDefault(True)
+        _ok.clicked.connect(lambda: d.accept())
+        _zeile.addWidget(_ok)
+        v.addLayout(_zeile)
+        self._bd_jobfrage_dialog = d       # fuer die Pruefung greifbar
+        if d.exec() != QDialog.Accepted:
+            return 0
+        _n = self._job_frage_antworten(
+            {_jid: _cb.currentData() for _jid, _cb in _boxen.items()})
+        self._flash_tip(_txt("{n} job(s) assigned.").format(n=_n))
+        # Der Runplaner rechnet mit der neuen Zuordnung - also neu aufbauen.
+        try:
+            self._bd_full_rebuild()
+        except Exception as _re_jf:
+            self._log_exception("Job-Frage: Neuaufbau", str(_re_jf))
+        return _n
+
     def _show_build_detail(self, type_id, name, res):
         from ..sprache import t as _txt   # `t` ist hier lokal belegt
         from PySide6.QtWidgets import (QDialog, QTreeWidget, QTreeWidgetItem,
@@ -864,7 +975,22 @@ class BauplanFenster:
         _is_invented = bool(
             _bp0 and _bd_rec
             and _bp0[0] in (getattr(_bd_rec, "invention_for_bpc", None) or {}))
-        _me_te_in_header = bool(_bp0) and not _is_invented and not _is_reaction_product
+        # BUENDEL (Befund 26.09.2026, Nutzer: "mir fehlt ein Invention-Tab
+        # im Multibauplan"): `_bp0` ist hier die Pseudo-Blaupause des
+        # Buendels (-2), die nie in invention_for_bpc steht - der Tab flog
+        # damit fuer JEDES Buendel raus, auch mit lauter T2-Enden. Erfunden
+        # wird, sobald EIN Ende erfindbar ist; der Tab zeigt dann je Ende
+        # seinen Decryptor (mw_bauplan_tabs).
+        if type_id == industry.BUENDEL_ID and _bd_rec:
+            _is_invented = bool(self._multi_enden_erfindbar(
+                _bd_rec, self._bd_enden(type_id, _bd_rec)))
+        # MULTI-BAUPLAN (Schritt 4): ein Buendel hat MEHRERE Endprodukte, jedes
+        # mit eigener ME/TE. EIN Feld oben koennte nur eines davon meinen - es
+        # waere eine Stellschraube, die das Falsche verstellt. Die Werte stehen
+        # stattdessen je Zeile in der Karte "Endprodukte" (_multi_enden_karte).
+        _ist_buendel = (type_id == industry.BUENDEL_ID)
+        _me_te_in_header = (bool(_bp0) and not _is_invented
+                            and not _is_reaction_product and not _ist_buendel)
         # ME/TE DES ENDPRODUKTS AUS DER EIGENEN BLAUPAUSE (Nutzer-Fund,
         # Sitzung 20, Ametat I): fuer ZWISCHENSTUFEN holt das Werkzeug ME/TE
         # laengst per ESI aus der schlechtesten eigenen Kopie - beim
@@ -926,6 +1052,12 @@ class BauplanFenster:
               "product (no invention cost) – e.g. when you already own "
               "the BPC or want to buy it instead of inventing it."))
         own_bpc_cb.setChecked(bool(getattr(self, "_bd_own_bpc", False)))
+        # NUR VERSTECKEN, NIE ZEIGEN (b8, 20.09.2026): `setVisible(True)` auf
+        # einem Widget, das noch in KEINEM Layout haengt, macht daraus ein
+        # eigenes Fenster - die b-Suite fand drei streunende QCheckBoxen.
+        # Sichtbar wird es ohnehin, sobald `ctrl` es aufnimmt.
+        if _ist_buendel:
+            own_bpc_cb.hide()                    # s. _me_te_in_header
         own_bpc_runs_lbl = QLabel(_txt("Runs/BPC:"))
         own_bpc_runs_spin = QSpinBox(); own_bpc_runs_spin.setRange(1, 9999)
         own_bpc_runs_spin.setMinimumWidth(70)
@@ -946,8 +1078,9 @@ class BauplanFenster:
                 # loescht die Karte, in der dieser Spinner sitzt.
                 QTimer.singleShot(0, cb)
         own_bpc_runs_spin.valueChanged.connect(_on_own_bpc_runs_change)
-        own_bpc_runs_lbl.setVisible(own_bpc_cb.isChecked())
-        own_bpc_runs_spin.setVisible(own_bpc_cb.isChecked())
+        if _ist_buendel or not own_bpc_cb.isChecked():
+            own_bpc_runs_lbl.hide()
+            own_bpc_runs_spin.hide()
 
         def _on_own_bpc_toggle(v):
             self._bd_own_bpc = bool(v)
@@ -1361,13 +1494,62 @@ class BauplanFenster:
                 refz_btn.toolTip() if _has_live else
                 _txt("The live state is not there yet \u2013 please enable "
                      "\u201e Subtract assets\u201c first and wait for the fetch."))
+            # CONTRACT-PREISE GIBT ES JE ITEM, NICHT JE BUENDEL (Pruefung
+            # der Werkzeuge 26.09.2026): der Eintrag haette die Buendel-ID
+            # (-1) in die New-Eden-Contract-Suche geschickt - minutenlang
+            # nach einem Typ gesucht, den es nicht gibt, und dann "kein
+            # Contract gefunden". Sichtbar gesperrt, mit Grund.
+            _ist_b = (type_id == industry.BUENDEL_ID)
+            _ct_act.setEnabled(not _ist_b)
+            _ct_act.setText(_txt("Load contract prices (New Eden)")
+                            + (_txt("  \u2013 not for bundles") if _ist_b else ""))
+            _ct_act.setToolTip(_txt(
+                "A bundle sells its end products one by one at their own hub "
+                "prices; a contract price per end product is not supported "
+                "yet. Open the single build plan of that product for it.")
+                if _ist_b else "")
         _tools_menu.aboutToShow.connect(_sync_tools_menu)
         _sync_tools_menu()
+        # Fuer die b-Suite: Menue und Eintraege erreichbar (b114 prueft die
+        # Werkzeuge am Buendel).
+        self._bd_tools_menu = _tools_menu
+        self._bd_tools_actions = {"refz": _refz_act, "esi": _esi_act,
+                                  "opt": _opt_act, "ladder": _lad_act,
+                                  "fehl": _fehl_act, "nach": _nach_act,
+                                  "contract": _ct_act}
         # Holder-Muster wie gehabt: der Einfrier-Handler ruft _refz_sync["fn"],
         # egal wann er das erste Mal laeuft.
         _refz_sync["fn"] = _sync_tools_menu
         tools_btn.setMenu(_tools_menu)
         ctrl.addWidget(tools_btn)
+        # "+ ENDPRODUKT" (Nutzer-Entscheid 26.09.2026: "direkt aus einem
+        # Bauplan ein Multibauplan erstellen"): haengt ein weiteres Ende an
+        # den offenen Plan - ein Einzelplan wird dabei zum Buendel.
+        # NAME (Nutzer 26.09.2026: "'Add end product' zeigt nicht direkt, um
+        # was es geht - evtl. 'Add build plan'"): der Knopf haengt einen
+        # weiteren Bauplan (Item oder gespeicherten Plan) an - so heisst er.
+        ende_btn = QPushButton(" " + _txt("Add build plan"))
+        ende_btn.setIcon(icons.icon("plus"))
+        ende_btn.setMinimumHeight(34)
+        # AMBER-RAHMEN (Nutzer 27.09.2026: "Add build plan ein wenig
+        # ersichtlicher, Amber-Rahmen, auch beim normalen Bauplan - optisch
+        # gleich und an derselben Position"): derselbe Stil wie "Create
+        # shopping list" und "Buy Missing Blueprints".
+        ende_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        ende_btn.setToolTip(_txt(
+            "Add another build plan (an item or a saved plan) to this one \u2013 a "
+            "single plan becomes a bundle, shared intermediates are built once. "
+            "A saved plan that is frozen, reserved or completed stays as it is "
+            "\u2013 the addition goes into a new copy."))
+        ende_btn.clicked.connect(lambda _c=False: self._multi_ende_hinzufuegen_offen())
+        # LAGE (Nutzer 26.09.2026: "lieber dort, wo die Endprodukte auch
+        # aufgelistet sind - direkt unter 'Bundle', in der Endprodukt-Box"):
+        # beim Buendel steht der Knopf in der Kopfzeile der Karte
+        # "Endprodukte" (_multi_enden_karte holt ihn sich). SEIT 27.09.2026
+        # AUCH BEIM EINZELPLAN dort (Nutzer: "an derselben Position"): eine
+        # schmale Karte "End product of this plan" mit demselben Kopf -
+        # nicht mehr in der Leiste oben.
+        self._bd_ende_btn = ende_btn         # b-Suite drueckt ihn
         # CONTRACT-PREISE SICHTBAR STATT IM MENUE (Nutzer, 15.09.2026: "der
         # Load-Contract-Prices-Knopf soll ersichtlicher werden, nicht
         # versteckt in Dropdowns"). Er erscheint GENAU DANN, wenn es keinen
@@ -1673,6 +1855,19 @@ class BauplanFenster:
         self._bd_pbtn_sperre = _pbtn_sperre
         endp_v.addLayout(ctrl)
         v.addWidget(endp_card)
+        # MULTI-BAUPLAN (1.0.9): die Menge ist IMMER 1 Buendel - die Stueck-
+        # zahlen je Endprodukt stehen im Multi Buildplaner. Der Spinner
+        # bleibt sichtbar (Layout), aber gesperrt und erklaert sich.
+        if type_id == industry.BUENDEL_ID:
+            qty_spin.setValue(1)
+            qty_spin.setEnabled(False)
+            qty_spin.setToolTip(_txt(
+                "A multi build plan is always ONE bundle. Change the quantity "
+                "per end product in the multi build plan."))
+            _qty_lbl.setText(_txt("Bundle:"))
+        # Karte "Endprodukte" (nur Buendel): Kosten/Verkauf/Gewinn je Stueck
+        # und Ende; rebuild() frischt sie ueber self._bd_multi_refresh auf.
+        self._multi_enden_karte(type_id, names, v)
 
         # --- "Andere Blaupausen" (ME/TE-Einstellungen) - wird weiter unten in
         # den Blueprints-Tab eingehängt (nicht mehr in einer eigenen Seiten-
@@ -1914,7 +2109,14 @@ class BauplanFenster:
             val.sub_lbl = sub
             stats_row.addWidget(chip)
             return val
-        st_cost = _box(_txt("Build cost / unit"), theme.CYAN)
+        # BEIM BUENDEL HEISST DIE ZAHL, WAS SIE IST (Nutzer 26.09.2026: "wie
+        # ist hier Build Cost/unit gerechnet? ... wie machen wir das bei
+        # mehreren Endprodukten?"): das Buendel hat Menge 1, die Karte zeigt
+        # also die GESAMTEN Baukosten aller Enden. Ein Durchschnitt ueber
+        # verschiedene Produkte waere eine Zahl ohne Bedeutung; die Kosten je
+        # Stueck stehen je Ende in der Karte "Endprodukte".
+        st_cost = _box(_txt("Build cost, bundle total") if _ist_buendel
+                       else _txt("Build cost / unit"), theme.CYAN)
         st_total = _box(_txt("Total"))
         st_sell = _box(_txt("Sell / unit"))
         st_target = _box(_txt("Min. sell price / unit"), theme.AMBER)
@@ -2070,7 +2272,66 @@ class BauplanFenster:
                         ("= Gewinn", "= Profit"), ("Gewinn / Stk", "Profit / unit"),
                         ("Marge", "Margin"),
                         ("Verlustschwelle / Stk", "Break-even / unit")]
+        # KURZERKLAERUNG AN JEDER ZEILE (Nutzer 25.09.2026: "waere nett im
+        # Dropdown Details auf allen Zeilen eine Mouseover-Info fuer alle
+        # ISK-Eintraege, nur kurze Woerter oder Saetze die erklaeren was was
+        # ist und kostet"). Bewusst EIN Satz je Zeile: wer hier hovert, will
+        # wissen, was die Zahl bedeutet, nicht die Herleitung.
+        # Zeilen mit einer EIGENEN, genaueren Erklaerung (Invention,
+        # Ruecklaeufer, Frachtdienst, Job-Kosten, Bestand) behalten sie - die
+        # wird weiter unten gesetzt und ueberschreibt diese hier.
+        # de_scan2: aus  (Schluessel wie in _detail_rows, nie sichtbar)
+        # de_scan4: aus  (dito - nur die WERTE laufen durch den Katalog)
+        _DETAIL_TIPS = {
+            "Material":
+                "Value of all materials in the plan – bought plus taken "
+                "from stock, without the freight markup.",
+            "Frachtdienst":
+                "Freight for the shopping list, at your ISK/m³ rate.",
+            "Job-Kosten":
+                "Installation fees for all jobs: system cost index, "
+                "structure tax and SCC surcharge.",
+            "Bestand (Ersatzkosten)":
+                "Material from your own hangar, valued at what replacing it "
+                "would cost.",
+            "= Baukosten gesamt":
+                "Everything above added up – what this build costs you.",
+            "÷ Stück":
+                "Total build cost divided by the quantity.",
+            "Einkaufsliste (Jita Sell)":
+                "What you still have to BUY, at Jita sell prices – your "
+                "stock is not in here.",
+            "Einkaufsliste / Stück":
+                "The shopping list divided by the quantity.",
+            "Verkaufspreis / Stk":
+                "Price per unit at your sell hub – the basis of this "
+                "whole calculation.",
+            "Verkaufserlös brutto":
+                "Sale price × quantity, before any fees.",
+            "− Steuer + Broker":
+                "Sales tax and broker fee of the selling character at that "
+                "hub.",
+            "− Baukosten":
+                "The total build cost from the left column.",
+            "− Eigene Fahrt":
+                "Flat fee for hauling it yourself, times the number of "
+                "trips.",
+            "− Zusatzkosten":
+                "Your own flat extra – contracts, courier, whatever you "
+                "enter.",
+            "= Gewinn":
+                "What is left after fees, build cost, trip and extras.",
+            "Gewinn / Stk":
+                "Profit divided by the quantity.",
+            "Marge":
+                "Profit as a percentage of the gross sale proceeds.",
+            "Verlustschwelle / Stk":
+                "Below this sale price per unit you make a loss – fees, "
+                "trip and extras included.",
+        }
+        # de_scan4: an
         # de_scan2: an
+        self._bd_detail_tips = _DETAIL_TIPS
         _detail_val_lbls = {}
         self._bd_detail_val_lbls = _detail_val_lbls   # fuer die Waechter (b7v)
         _detail_caps = {}     # Beschriftungen, damit eine Zeile als GANZES
@@ -2083,6 +2344,9 @@ class BauplanFenster:
             _val.setMinimumWidth(120)
             st_details_grid.addWidget(_cap, _ri, 0)
             st_details_grid.addWidget(_val, _ri, 1)
+            _tip0 = _DETAIL_TIPS.get(_rlabel)
+            if _tip0:
+                _cap.setToolTip(_txt(_tip0)); _val.setToolTip(_txt(_tip0))
             if _rlabel.startswith("Invention"):
                 # ERKLAERT DIE ABWEICHUNG zum Invention-Tab (Nutzer-Befund
                 # Sitzung 9). Beide Zahlen sind richtig, meinen aber
@@ -2119,6 +2383,9 @@ class BauplanFenster:
             _val.setMinimumWidth(120)
             st_details_grid.addWidget(_cap, _ri, 2)
             st_details_grid.addWidget(_val, _ri, 3)
+            _tip1 = _DETAIL_TIPS.get(_rlabel)
+            if _tip1:
+                _cap.setToolTip(_txt(_tip1)); _val.setToolTip(_txt(_tip1))
             _profit_val_lbls[_rlabel] = _val
         st_details_grid.setColumnStretch(2, 1)
         # DRITTE SPALTE statt Zeile darunter (Nutzer: "nimm die einfach nach
@@ -2592,9 +2859,11 @@ class BauplanFenster:
         self._bd_reprocess_lbl = rp_lbl
         _rcv.addWidget(self._collapsible(
             _txt("Reprocessing"), _rp_panel,
-            expanded=False, accent=theme.AMBER))   # Nutzer: zugeklappt
+            expanded=True, accent=theme.AMBER))   # Nutzer 27.09.2026: offen
         # DIREKT UNTER PRODUCTION DEPTH (Nutzer 18.09.2026: "schieb das
-        # bitte hoeher, da wo man es sieht"), zugeklappt als Standard.
+        # bitte hoeher, da wo man es sieht"). STANDARD JETZT OFFEN (Nutzer
+        # 27.09.2026: "im Bauplan den Reprocessing ausklappen als Standard" -
+        # frueher, 26.09., hatte er es zu gewuenscht).
         # BLACKLIST DIREKT UNTER DIE FERTIGUNGSTIEFE (Nutzer, Sitzung 20).
         # Beide beantworten "was soll gar nicht erst im Plan auftauchen" -
         # die Fertigungstiefe grob nach Stufe, die Blacklist nach Gruppe und
@@ -2843,6 +3112,12 @@ class BauplanFenster:
                     p["checked_runplan_ts"] = {str(k): float(v)
                                                for k, v in _tsm.items()
                                                if k in cset}
+                    # ... und die erledigten Runs je Item, die eine
+                    # Umverteilung ueberleben (s. `_runplan_erledigt_pflegen`).
+                    _erl = getattr(self, "_bd_runplan_erledigt", None) or {}
+                    p["checked_runplan_runs"] = {str(k): int(v)
+                                                 for k, v in _erl.items()
+                                                 if int(v or 0) > 0}
                     config.save_settings(self.settings)
                     break
         _sched_save_timer.timeout.connect(_sched_save_now)
@@ -2897,6 +3172,15 @@ class BauplanFenster:
                 else:
                     cset.discard(key)
                     _tsmap.pop(key, None)
+                # ERLEDIGTE RUNS JE ITEM MITFUEHREN (Nutzer-Befund
+                # 24.09.2026: "ich habe mit Peanut Motor Runs gemacht und
+                # abgehakt, danach Charaktere ausgewechselt und Apply
+                # gedrueckt - nun sind die abgehakten Runs verschwunden").
+                # Der Haken-Schluessel traegt die Charakter-ID; nach einer
+                # Umverteilung zeigt er ins Leere. Was er wirklich gemeint
+                # hat, ist "so viele Runs dieses Items habe ich gestartet" -
+                # und das gilt unabhaengig davon, wer sie faehrt.
+                self._runplan_erledigt_pflegen(key, struck)
                 _sched_save_timer.start()   # entprellt: einmal am Ende
             # KINDER MITZIEHEN (Nutzer: "hake ich Peanut Motor ab, soll
             # Titanium Carbide darunter automatisch mit abgehakt werden"):
@@ -2920,6 +3204,31 @@ class BauplanFenster:
                         and _ch.checkState(0) != _want):
                     _ch.setCheckState(0, _want)
         sched_tree.itemChanged.connect(_on_sched_check)
+
+        def _sched_klapp_merken(item, offen):
+            """Welche Charakterzeilen offen sind - AM FENSTER gemerkt, nicht
+            am Baum (Nutzer 24.09.2026: "dann laedt es auch keine Runs" - der
+            Neuaufbau klappte alles wieder zu, und die Runs stehen darunter.
+            Beim Neuaufbau ist der alte Baum schon leer, also muss der Stand
+            woanders liegen).
+
+            Gemerkt wird NUR, was der Nutzer selbst getan hat: waehrend des
+            Neuaufbaus sind die Signale des Baums abgeschaltet
+            (`tbl.blockSignals`), die Vorgaben landen also nicht hier. Es ist
+            ein Woerterbuch und keine Menge, weil beide Richtungen zaehlen -
+            eine fertige Stufe klappt ihre Charakterzeilen von sich aus AUF,
+            und wer sie zuklappt, will sie zu haben."""
+            _k = item.data(0, Qt.UserRole + 6)
+            if not _k:
+                return
+            _m = getattr(self, "_bd_sched_klapp", None)
+            if _m is None:
+                _m = {}; self._bd_sched_klapp = _m
+            _m[str(_k)] = bool(offen)
+        sched_tree.itemExpanded.connect(
+            lambda _it: _sched_klapp_merken(_it, True))
+        sched_tree.itemCollapsed.connect(
+            lambda _it: _sched_klapp_merken(_it, False))
         self._sched_tree_ref = sched_tree
 
         # --- Blueprint-Namen kopieren (CTRL+C / Rechtsklick) ---------------------
@@ -3020,7 +3329,49 @@ class BauplanFenster:
             (sched_tree.expandAll if checked else sched_tree.collapseAll)()
         sched_expcol_btn.toggled.connect(_sched_toggle_expand)
         sched_toolbar.addWidget(sched_expcol_btn)
+        # ZIELZEIT FUER ALLE STUFEN (Nutzer 24.09.2026: "abends einloggen,
+        # Runs starten auf 23 h, am naechsten Tag Components"). Hier steht die
+        # VORGABE; jede Stufenzeile darf davon abweichen (eigenes Feld in der
+        # Runs-Spalte). Diese Auswahl setzt die Vorgabe und nimmt die
+        # Ausnahmen weg - sonst waehlte man oben etwas, und unten bliebe eine
+        # Stufe stumm bei ihrem alten Wert stehen.
+        sched_toolbar.addSpacing(18)
+        _zl_lbl = QLabel(_txt("Target per stage:"))
+        _zl_lbl.setObjectName("Muted")
+        sched_toolbar.addWidget(_zl_lbl)
+        _zl_cb = QComboBox()
+        _zl_cb.setToolTip(_txt(
+            "How long may a stage run? The planner then uses as few "
+            "blueprints and slots as fit into that time – a stage is "
+            "finished only when its longest job is, so the shorter ones may "
+            "be stretched for free. Each stage can be set separately in its "
+            "own row below."))
+        for _hz in (0, 8, 12, 16, 20, 23, 24, 36, 48, 72, 168, -1):
+            _zl_cb.addItem(self._runplan_ziel_text(_hz), _hz)
+        _iz = _zl_cb.findData(int(self.settings.get("bau_runplan_ziel_std", 0) or 0))
+        _zl_cb.setCurrentIndex(max(0, _iz))
+        _zl_cb.currentIndexChanged.connect(
+            lambda *_a, _c=_zl_cb: self._runplan_ziel_alle_gewaehlt(_c.currentData()))
+        sched_toolbar.addWidget(_zl_cb)
+        self._bd_ziel_box = _zl_cb
         sched_toolbar.addStretch()
+        # OFFENE ZUORDNUNGEN (Stufe C, Teil 2, Nutzer-Entscheid 24.09.2026:
+        # "einmal fragen, gesammelt im Runplaner"). Bewusst KEIN Dialog beim
+        # Oeffnen: die Frage ist wichtig, aber nie so dringend, dass sie
+        # einem den Bauplan vor die Nase stellen darf. Der Knopf ist weg,
+        # solange es nichts zu fragen gibt.
+        _jf_btn = QPushButton("")
+        _jf_btn.setCursor(Qt.PointingHandCursor)
+        _jf_btn.setStyleSheet(
+            f"QPushButton{{background:{theme.PANEL2}; "
+            f"border:1px solid {theme.AMBER_DIM}; color:{theme.AMBER}; "
+            f"border-radius:5px; padding:3px 12px; font-weight:700;}}"
+            f"QPushButton:hover{{border-color:{theme.AMBER}; "
+            f"background:{theme.PANEL};}}")
+        _jf_btn.clicked.connect(lambda: self._job_frage_dialog())
+        _jf_btn.hide()
+        sched_toolbar.addWidget(_jf_btn)
+        self._bd_jobfrage_btn = _jf_btn
         sched_v.addLayout(sched_toolbar)
         sched_v.addWidget(sched_tree, 1)
         sched_main_w = QWidget()
@@ -3131,6 +3482,30 @@ class BauplanFenster:
         bp_tab_side_inner = QWidget()
         bp_tab_side_inner_v = QVBoxLayout(bp_tab_side_inner)
         bp_tab_side_inner_v.setContentsMargins(0, 0, 0, 0); bp_tab_side_inner_v.setSpacing(8)
+        # "BUY MISSING BLUEPRINTS" (Nutzer 26.09.2026: "in der rechten
+        # Sidebar einen funktionablen Button -> Buy Missing Blueprints, dann
+        # werden die fehlenden Blueprints ins Clipboard kopiert, so dass man
+        # sie ingame ins Multibuy-Fenster einfuegen kann. Dazu zaehlen nicht
+        # die T2-Blueprint-Copys, die man erforschen muss").
+        _bp_kauf_btn = QPushButton(_txt("Buy Missing Blueprints"))
+        _bp_kauf_btn.setIcon(icons.icon("cart"))
+        _bp_kauf_btn.setMinimumHeight(34)
+        _bp_kauf_btn.setToolTip(_txt(
+            "Copies every blueprint of this plan that you own neither as an "
+            "original nor as a copy \u2013 one original each, in EVE multibuy "
+            "format. Make copies from it yourself for parallel jobs. Invented T2 "
+            "copies are left out (they cannot be bought)."))
+        # WIE "CREATE SHOPPING LIST" (Nutzer 26.09.2026): nur Rahmen und
+        # Text amber, Flaeche des Themas.
+        _bp_kauf_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        _bp_kauf_btn.clicked.connect(lambda: self._bp_fehlende_kopieren())
+        self._bd_bp_kauf_btn = _bp_kauf_btn          # b-Suite
+        _bp_kauf_lbl = QLabel("")
+        _bp_kauf_lbl.setWordWrap(True)
+        self._bd_bp_kauf_lbl = _bp_kauf_lbl
+        bp_tab_side_inner_v.addWidget(_bp_kauf_btn)
+        bp_tab_side_inner_v.addWidget(_bp_kauf_lbl)
+        _bp_kauf_lbl.hide()
         bp_tab_side_inner_v.addWidget(_bp_stage_collapsible)
         bp_tab_side_inner_v.addWidget(andere_bp_card)
         bp_tab_side_inner_v.addStretch()
@@ -3276,13 +3651,12 @@ class BauplanFenster:
               "deliberately removed from the plan). The „# category“ "
               "lines are only for orientation – leave them out before "
               "pasting into EVE's multibuy if needed."))
-        # Gleicher Aktions-Knopf-Stil wie "Uebernehmen" im Einfuege-Panel -
-        # beide sind Aktionen im Materialien-Tab und sahen vorher gleich aus.
-        # Bleiben sie auch, nur eben in Amber.
-        mat_copy_btn.setStyleSheet(
-            f"QPushButton{{border:1.5px solid {theme.AMBER}; border-radius:6px; "
-            f"padding:5px 12px; color:{theme.AMBER}; font-weight:700;}}"
-            f"QPushButton:hover{{background:rgba(242,162,60,0.16);}}")
+        # Amber umrandet, ohne eigene Flaeche. ETWAS GROESSER (Nutzer
+        # 26.09.2026) - 14 px Schrift, mehr Polster; derselbe Stil gilt fuer
+        # "Buy Missing Blueprints" und beide "Best Decryptor"-Knoepfe
+        # (theme.amber_rahmen_knopf, EINE Stelle).
+        mat_copy_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        mat_copy_btn.setMinimumHeight(34)
 
         def _collect_materials():
             """Alle Materialien des Plans mit den ECHTEN Zahlen aus
@@ -3463,7 +3837,8 @@ class BauplanFenster:
                 self._flash_tip(
                     _txt("Nothing left to buy \u2013 the remaining runs are covered.")
                     if _rest else
-                    _txt("Nothing to copy - the materials tab is empty."))
+                    _txt("Nothing to copy - the materials tab is empty."),
+                    ms=self.FLASH_LESEN_MS)     # lesbar lange (Nutzer 26.09.2026)
                 return
             _needed = {int(r["tid"]): _menge(r) for r in _rows}
             # Zu kopierende Mengen kommen aus DEM PLAN (Materialien-Tab), nicht
@@ -3601,11 +3976,8 @@ class BauplanFenster:
             f"border-radius:8px;}}")
         pp = QVBoxLayout(paste_panel)
         pp.setContentsMargins(12, 10, 12, 10); pp.setSpacing(7)
-        pp_title = QLabel(" " + _txt("PASTE STOCK"))
-        pp_title.setStyleSheet(
-            f"font-size:19px; font-weight:900; color:{theme.AMBER}; "
-            f"border:none; letter-spacing:0.5px;")
-        pp.addWidget(pp_title)
+        # KEIN EIGENER TITEL MEHR (26.09.2026): das Panel sitzt jetzt in der
+        # Klappe "Paste stock" der Seitenleiste - deren Kopf ist der Titel.
         # WOF\u00dcR das gut ist - stand bisher nirgends. Ohne diesen Satz wirkt
         # das Panel wie eine Doppelung des ESI-Bestands (Nutzer-Wunsch).
         pp_why = QLabel(_txt("Paste here if ESI is not fast enough."))
@@ -3662,10 +4034,9 @@ class BauplanFenster:
         pp_btns = QHBoxLayout(); pp_btns.setContentsMargins(0, 0, 0, 0)
         paste_apply_btn = QPushButton(_txt("Apply"))
         paste_apply_btn.setIcon(icons.icon("check"))
-        paste_apply_btn.setStyleSheet(
-            f"QPushButton{{border:1.5px solid {theme.AMBER}; border-radius:6px; "
-            f"padding:5px 12px; color:{theme.AMBER}; font-weight:700;}}"
-            f"QPushButton:hover{{background:rgba(242,162,60,0.16);}}")
+        # Derselbe Stil wie "Create shopping list" (aa78: die beiden
+        # Aktions-Knoepfe des Reiters sehen gleich aus) - EINE Stelle.
+        paste_apply_btn.setStyleSheet(theme.amber_rahmen_knopf())
         paste_clear_btn = QPushButton(_txt("Clear"))
         paste_clear_btn.setIcon(icons.icon("trash"))
         paste_clear_btn.setStyleSheet(
@@ -3816,7 +4187,68 @@ class BauplanFenster:
         paste_perm_cb.toggled.connect(_paste_flags)
         paste_only_cb.toggled.connect(_paste_flags)
 
-        mat_split.addWidget(paste_panel)
+        # IN EINE KLAPPE RECHTS, STANDARD ZU (Nutzer 26.09.2026: "Paste
+        # Stock ist gut und nuetzlich, aber wenn alles richtig eingestellt
+        # ist, braucht man das ja nicht. Packen wir das in ein Dropdown als
+        # rechte Sidebar und machen es standardmaessig zu. Mit der Info, wenn
+        # man es aufklappt: 'Du brauchst keine Stocks zu pasten, da dieses
+        # Tool eigentlich mit ESI funktioniert. Es sei denn, du moechtest es
+        # nicht.' und dann weiter -> Dropdown geht auf. Schliessen kann man
+        # wieder ohne Kommentar").
+        # Ablauf: Klappe auf -> NUR der Hinweis mit "Continue"; "Continue"
+        # -> Hinweis weg, Panel da. Klappe zu -> einfach zu; beim naechsten
+        # Aufklappen kommt der Hinweis wieder (jedes Oeffnen ist eine neue
+        # Entscheidung gegen ESI).
+        pp_side = QWidget()
+        pp_side_v = QVBoxLayout(pp_side)
+        pp_side_v.setContentsMargins(4, 6, 0, 4); pp_side_v.setSpacing(0)
+        pp_inner = QWidget()
+        pp_inner_v = QVBoxLayout(pp_inner)
+        pp_inner_v.setContentsMargins(0, 0, 0, 0); pp_inner_v.setSpacing(6)
+        pp_hint = QFrame()
+        pp_hint.setStyleSheet(
+            f"QFrame{{background:{theme.PANEL2}; border:1px solid {theme.AMBER}; "
+            f"border-radius:8px;}}")
+        pp_hint_v = QVBoxLayout(pp_hint)
+        pp_hint_v.setContentsMargins(12, 10, 12, 10); pp_hint_v.setSpacing(8)
+        pp_hint_lbl = QLabel(_txt(
+            "You do not need to paste stock \u2013 this tool works with ESI. "
+            "Only if you do not want that."))
+        pp_hint_lbl.setWordWrap(True)
+        pp_hint_lbl.setStyleSheet(
+            f"font-size:13px; color:{theme.TEXT}; border:none;")
+        pp_hint_v.addWidget(pp_hint_lbl)
+        pp_weiter_btn = QPushButton(_txt("Continue"))
+        pp_weiter_btn.setIcon(icons.icon("check"))
+        pp_weiter_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        _pp_wr = QHBoxLayout(); _pp_wr.setContentsMargins(0, 0, 0, 0)
+        _pp_wr.addWidget(pp_weiter_btn); _pp_wr.addStretch()
+        pp_hint_v.addLayout(_pp_wr)
+        pp_inner_v.addWidget(pp_hint)
+        pp_inner_v.addWidget(paste_panel, 1)
+        paste_panel.hide()
+        pp_side_v.addWidget(self._collapsible(
+            _txt("Paste stock"), pp_inner, expanded=False,
+            header_attr="_bd_paste_hdr",
+            tip=_txt("Paste here if ESI is not fast enough.")))
+        pp_side_v.addStretch(1)
+
+        def _pp_zeigen(panel_da):
+            """Hinweis ODER Panel; mit Panel bekommt die Klappe die Hoehe."""
+            pp_hint.setVisible(not panel_da)
+            paste_panel.setVisible(panel_da)
+            pp_side_v.setStretch(0, 1 if panel_da else 0)
+            pp_side_v.setStretch(1, 0 if panel_da else 1)
+
+        def _pp_klappe(offen):
+            if offen:
+                _pp_zeigen(False)       # jedes Aufklappen: erst der Hinweis
+        self._bd_paste_hdr.toggled.connect(_pp_klappe)
+        pp_weiter_btn.clicked.connect(lambda _c=False: _pp_zeigen(True))
+        self._bd_paste_hint = pp_hint            # b-Suite
+        self._bd_paste_weiter = pp_weiter_btn    # b-Suite
+        self._bd_paste_panel = paste_panel       # b-Suite
+        mat_split.addWidget(pp_side)
         mat_split.setStretchFactor(0, 1)
         mat_split.setStretchFactor(1, 0)
         # Nutzer: das Panel darf gr\u00f6\u00dfer sein - in der Tabelle stand rechts
@@ -3888,6 +4320,36 @@ class BauplanFenster:
         self._bd_inv_side_v = QVBoxLayout(_inv_side_box)
         self._bd_inv_side_v.setContentsMargins(0, 0, 0, 0)
         self._bd_inv_side_v.setSpacing(6)
+        # "BUY OR NOT?" GANZ OBEN, STANDARD OFFEN (Nutzer 26.09.2026: "Buy
+        # Datacores und Buy Decryptors nimm das rechts in die Sidebar mit neuer
+        # Kategorie 'Buy or not?' (standard ausgeklappt), ganz oben als erste
+        # Position ueber Invention Settings"). Die zwei Haken sind globale
+        # Einstellungen - einmal je Fenster, nicht je Karte.
+        _inv_side_v.addWidget(self._collapsible(
+            _txt("Buy or not?"), self._build_invention_purchase_panel(),
+            expanded=True,
+            tip=_txt("Whether the datacores and decryptors worked out in the "
+                     "Invention tab go into the shopping list.")))
+        # "BEST DECRYPTOR FOR ALL BLUEPRINTS" (Nutzer, gleiche Nachricht:
+        # "damit man nicht jeden Blueprint separat ansteuern muss").
+        _alle_best = QPushButton(_txt("Best Decryptor for all Blueprints"))
+        _alle_best.setIcon(icons.icon("trophy"))
+        _alle_best.setMinimumHeight(34)
+        _alle_best.setToolTip(_txt(
+            "Picks the best decryptor for every blueprint in this tab, one after "
+            "the other, with the same calculation as each card's \u201eBest "
+            "Decryptor\u201c button. Cards with \u201eOwn BPC\u201c are left out."))
+        # WIE "CREATE SHOPPING LIST" (Nutzer 26.09.2026).
+        _alle_best.setStyleSheet(theme.amber_rahmen_knopf())
+        _alle_best.clicked.connect(lambda: self._inv_alle_besten())
+        self._bd_inv_alle_btn = _alle_best          # b-Suite
+        _inv_side_v.addWidget(_alle_best)
+        _alle_lbl = QLabel("")
+        _alle_lbl.setWordWrap(True)
+        _alle_lbl.setStyleSheet(f"color:{theme.GREEN};")
+        self._bd_inv_alle_lbl = _alle_lbl
+        _inv_side_v.addWidget(_alle_lbl)
+        _alle_lbl.hide()
         _inv_side_v.addWidget(self._collapsible(
             # Standard ZU (Nutzer): die Seitenleiste soll nicht dauerhaft
             # Platz kosten - man stellt Struktur, Sicherheit und Charakter
@@ -4247,6 +4709,19 @@ class BauplanFenster:
             # damit Runs und Stueck je Run zu den eingefrorenen Zahlen passen.
             _fz_fuer_uo = self._frozen_snapshot_plan()
             _rec_basis = getattr(self, "_bd_recipes_basis", None) or self._bd_recipes
+            # BUENDEL: DIE MENGEN DER ENDEN KOMMEN AUS DEM ZUSTAND, NICHT AUS
+            # DEM OEFFNEN (Nutzer-Befund 26.09.2026: "warum hat die Prowler, von
+            # der ich 10 Stk bauen will, gleich viel wie die Sacrilege, von der
+            # ich nur 1 bauen will?"). Nachgestellt (b85): Menge in der
+            # Endprodukte-Karte 10 -> 25, `_bd_buendel_enden` sagte 25, der
+            # Plan rechnete weiter mit 10 - die Rezept-Kopie mit den Bündel-
+            # Mengen entstand nur beim Oeffnen (`_bd_recipes_basis`). Folge:
+            # Einkaufsliste, Invention-Versuche, Runplaner fuer die ALTE Menge,
+            # also ZU WENIG (Regel 3). Jetzt jedes Mal neu aus dem Zustand.
+            # `buendel_rezepte` ueberschreibt die Buendel-Eintraege der Kopie.
+            if int(type_id) == industry.BUENDEL_ID and getattr(self, "_bd_buendel_enden", None):
+                _rec_basis = industry.buendel_rezepte(_rec_basis, self._bd_buendel_enden)
+                self._bd_recipes_basis = _rec_basis
             _uw_vorher = set((getattr(self, "_bd_unrefined", None) or {}).keys())
             self._bd_recipes, _uw = self._unrefined_overlay(
                 type_id, _rec_basis, _pfn, self._bd_opts,
@@ -4317,6 +4792,12 @@ class BauplanFenster:
                 _rp_karte_nachziehen(plan)
             except Exception as _rk:
                 self._log_exception("Reprocessing: Karte nachziehen", str(_rk))
+            _mr = getattr(self, "_bd_multi_refresh", None)
+            if _mr is not None:
+                try:
+                    _mr(plan)
+                except Exception as _mre:
+                    self._log_exception("Multi-Bauplan: Enden-Karte", str(_mre))
             # Fuer den Rezept-Baum: WAS baut der Plan wirklich, und was deckt
             # der Bestand? Der Baum kennt nur die Entscheidung bauen/kaufen -
             # ohne diese beiden Mengen zeigt er "BAUEN" fuer Dinge, die der
@@ -4421,7 +4902,7 @@ class BauplanFenster:
             try:
                 _bp0 = self._bd_recipes.product_to_bp.get(type_id)
                 _inv0 = _bp0 and self._bd_recipes.invention_for_bpc.get(_bp0[0])
-                if getattr(self, "_bd_own_bpc", False):
+                if getattr(self, "_bd_own_bpc", False) and type_id != industry.BUENDEL_ID:
                     # Nutzer hat "Eigene BPC" angehakt: ME/TE oben bleiben frei
                     # editierbar, Invention wird für DIESES Item komplett
                     # ignoriert (kein Invention-Kosten-Posten, ME/TE kommen
@@ -4908,7 +5389,21 @@ class BauplanFenster:
                         # ungueltig (Nutzer-Meldung) - dabei ist genau das das
                         # Item, das man bauen WILL. Dort nur einfaerben und im
                         # Tooltip sagen, was los ist.
-                        _is_root = int(t) == int(type_id)
+                        # BUENDEL: JEDES ENDE IST EIN ENDPRODUKT (Nutzer-
+                        # Befund 21.09.2026, Screenshot "warum ist Flycatcher
+                        # violett?"). `== type_id` trifft beim Multi-Bauplan
+                        # NIE zu - dort ist `type_id` die Buendel-ID (-1).
+                        # Folge: ein Ende, fuer das gerade ein Job laeuft,
+                        # wurde wie eine ZWISCHENSTUFE behandelt -
+                        # durchgestrichen ("laeuft schon, nicht nochmal
+                        # einplanen") und mit dem falschen Tooltip. Bei dem
+                        # Item, das man bauen WILL, ist das die falsche
+                        # Aussage - genau deshalb gibt es die Unterscheidung.
+                        # In Schritt 2 (19.09.2026) wurde diese Frage ueberall
+                        # auf `_bd_enden` umgestellt; diese eine Stelle wurde
+                        # dabei uebersehen.
+                        _is_root = (int(t) == int(type_id)
+                                    or int(t) in self._bd_enden(type_id))
                         if not _is_root:
                             f = item.font(0); f.setStrikeOut(True)
                             for cc in range(tw.columnCount()):
@@ -4997,8 +5492,10 @@ class BauplanFenster:
                     stage_map = {}
                 self._bd_reaction_stages = stage_map
 
+            _enden_kat = self._bd_enden(type_id)   # Buendel: jedes Ende
+
             def categorize(tid):
-                if tid == type_id:
+                if tid in _enden_kat:
                     return (6, _txt("End product"))
                 if tid in rp:
                     st = stage_map.get(tid, 2)
@@ -5212,6 +5709,16 @@ class BauplanFenster:
             # aber nicht erkannt - Pruefung dort nachgeruestet.
             _hp = getattr(self, "_bd_hub_sell_price", None)
             _sell_eff = float(_hp) if _hp else sell
+            # BUENDEL: Verkaufswert = Summe Preis x AKTUELLE Menge je Ende.
+            # `sell` und `_bd_hub_sell_price` entstanden beim Oeffnen bzw. beim
+            # Hub-Wechsel mit den DAMALIGEN Mengen (Befund 26.09.2026, s. o.:
+            # Prowler 10 statt 1 aenderte den Gewinn oben nicht). Preise je
+            # Ende: vom gewaehlten Hub, sonst aus dem Scan.
+            if int(type_id) == industry.BUENDEL_ID and getattr(self, "_bd_buendel_enden", None):
+                _je_sell = ((getattr(self, "_bd_hub_sell_je_ende", None) or {})
+                            if _hp else (getattr(self, "_bd_pricemap", None) or {}))
+                _sell_eff = float(self._multi_buendel_verkauf(
+                    _je_sell, self._bd_buendel_enden) or 0.0)
             # CONTRACT-PREIS ALS QUELLE (Nutzer, Sitzung 9: "Gewinn ist
             # absoluter Quatsch" - Capitals haben in Jita praktisch keine
             # echten Sell-Orders, ein einzelner Hoffnungspreis stand als
@@ -5351,6 +5858,7 @@ class BauplanFenster:
                 # Sell-Order zahlst du Sales Tax + Broker Fee (Materialeinkauf per
                 # Multibuy aus Sell-Orders ist gebührenfrei -> nur Verkaufsseite).
                 gross = _sell_eff * qty
+                self._bd_brutto_stand = gross     # b-Suite: Verkaufswert folgt der Menge
                 fees = gross * (tax + broker)
                 prof = gross - fees - total - transport_cost - extra_cost
                 prof_raw = gross - total - transport_cost - extra_cost  # OHNE Sales Tax/Broker Fee -
@@ -5358,6 +5866,29 @@ class BauplanFenster:
                                                                 # wo der Markt umgangen wird.
                 total_all = total + transport_cost + extra_cost
                 marge = (prof / total_all * 100.0) if total_all else 0.0
+                # GEWINN JE ENDPRODUKT ERST HIER (Nutzer-Befund 20.09.2026:
+                # "im Profit wirkt es falsch, es muesste mehr Profit sein").
+                # Die Karte "Endprodukte" wird weiter oben gefuellt - da sind
+                # Verkaufsgebuehren, Fracht und Extrakosten noch gar nicht
+                # gerechnet. Ihre Gewinn-Spalte stand deshalb BRUTTO da,
+                # waehrend der grosse Gewinn NETTO ist: bei seinem Buendel
+                # 287 Mio gegen 164 Mio, die Differenz war genau
+                # Steuer+Broker. Zwei Gewinnbegriffe nebeneinander - deshalb
+                # traegt die Spalte die Zahlen jetzt von HIER.
+                # KEIN ZWISCHENNAME: aa355 verlangt, dass jeder im
+                # Gewinn-Block gelesene Name VOR dem Zweig vorbelegt ist -
+                # zu Recht (zwei echte Abstuerze, siehe CLAUDE.md). Also
+                # direkt ueber self, ohne lokale Variable.
+                if getattr(self, "_multi_gewinn_nachziehen", None) is not None:
+                    try:
+                        self._multi_gewinn_nachziehen(
+                            satz=(tax + broker),
+                            fracht=float(transport_cost or 0.0),
+                            extra=float(extra_cost or 0.0),
+                            gesamt=float(total or 0.0))
+                    except Exception as _mge:
+                        self._log_exception("Multi-Bauplan: Gewinn je Ende",
+                                            str(_mge))
                 st_profit.setText(isk(prof))
                 st_profit.setStyleSheet("font-size:19px; font-weight:700; color:"
                                         + (theme.GREEN if prof >= 0 else theme.RED))
@@ -5800,7 +6331,15 @@ class BauplanFenster:
                                  "{v}.").format(v=isk(stock_value)))
                     _sv.setToolTip("\n".join(_svtip))
                 else:
-                    _sv.setToolTip("")
+                    # OHNE Bestand bleibt die KURZERKLAERUNG stehen - ein
+                    # leerer Tooltip waere ein Rueckschritt gegenueber der
+                    # Zeile daneben (Nutzer 25.09.2026: Erklaerung auf jeder
+                    # Zeile).
+                    # de_scan4: aus - interner Dict-Schluessel
+                    _sv.setToolTip(_txt((getattr(self, "_bd_detail_tips", None)
+                                         or {}).get("Bestand (Ersatzkosten)")
+                                        or ""))
+                    # de_scan4: an
                 # "Eigene Fahrt" und "Zusatzkosten" stehen jetzt in der
                 # RECHTEN Spalte (Gewinnrechnung) - sie sind keine
                 # Herstellkosten. Hier nichts mehr zu setzen.
@@ -6115,8 +6654,13 @@ class BauplanFenster:
                 bp_fetch_ok = True
                 for ch in chars:
                     try:
+                        # jobs= : die oben schon geholte Liste, damit die
+                        # Blaupausen in Jobs ohne zweiten Abruf wegfallen
+                        # (esi.blaupausen_in_jobs, 26.09.2026). Charaktere
+                        # ohne Job-Abruf holen sie sich selbst (None).
                         for _b in esi.fetch_blueprints(
-                                client_id, ch["character_id"]):
+                                client_id, ch["character_id"],
+                                jobs=jobs_by_char.get(ch["character_id"])):
                             owned_bp_fresh.append(_b)
                     except Exception as _bp_err:
                         # Ein gescheiterter Charakter darf den ALTEN Cache
@@ -6155,6 +6699,15 @@ class BauplanFenster:
                             "activity_id": _j.get("activity_id"),
                             "runs": _j.get("runs"),
                             "completed_date": _j.get("completed_date"),
+                            # JOB-ID UND START (Stufe B, 21.09.2026): ohne
+                            # beide laesst sich ein Job weder dauerhaft einem
+                            # Plan zuordnen noch gegen einen Klick halten -
+                            # der Klick gilt nur fuer Jobs, die NACH ihm
+                            # gestartet wurden. ESI liefert beides schon
+                            # (s. esi.fetch_active_jobs), es wurde hier nur
+                            # weggeworfen.
+                            "job_id": _j.get("job_id"),
+                            "start_date": _j.get("start_date"),
                         })
 
                 def _virtual_stock():
@@ -6408,6 +6961,10 @@ class BauplanFenster:
                 # Blaupausen-Deckel damit im selben Durchlauf an.
                 if result.get("owned_bp") is not None:
                     self._bd_owned_bp_cache = result["owned_bp"]
+                # Rohschichten fuer planer_diagnose.txt (26.09.2026): Hangar
+                # ohne Pipeline und die Pipeline allein - nur zum Aufschreiben.
+                self._bd_hangar_only = dict(_assets)
+                self._bd_pipeline_live = dict(_virt_map)
                 self._bd_active_jobs_map = result.get("active") or {}
                 # Gelieferte Jobs fuer die Fortschritts-Erkennung eingefrorener
                 # Plaene merken - VOR rebuild(), damit der Runplaner-Aufbau
@@ -6691,6 +7248,10 @@ class BauplanFenster:
                 qty_spin.setToolTip(_txt(
                     "Plan frozen \u2013 the quantity belongs to the frozen plan. "
                     "To change it, unfreeze first ( button)."))
+            elif type_id == industry.BUENDEL_ID:
+                # MULTI-BAUPLAN: die Menge bleibt IMMER gesperrt (1 Buendel),
+                # der Tooltip von oben erklaert es - nicht wieder freigeben.
+                qty_spin.setEnabled(False)
             else:
                 qty_spin.setEnabled(True)
                 qty_spin.setToolTip("")
@@ -6939,6 +7500,13 @@ class BauplanFenster:
 
         def _qty_uebernehmen():
             _qty_timer.stop()
+            # NUR DAS OFFENE FENSTER (26.09.2026, in der b-Suite nachgestellt):
+            # der 450-ms-Timer eines FRUEHEREN Bauplan-Fensters lief nach dem
+            # Oeffnen des naechsten noch ab und schrieb dessen Menge (10) in
+            # den gemeinsamen Zustand `_bd_qty` - samt rebuild() mit den
+            # Widgets des alten Fensters. Ein anderes Fenster ist dran: nichts tun.
+            if getattr(self, "_bd_dialog", None) is not dlg:
+                return
             if int(getattr(self, "_bd_qty", 0) or 0) == qty_spin.value():
                 return                     # nichts geaendert -> nicht rechnen
             self._bd_qty = qty_spin.value()
@@ -7815,6 +8383,21 @@ class BauplanFenster:
                               (getattr(self, "_bd_runplan_ts", None) or {}).items()
                               if _k in (getattr(self, "_bd_runplan_checked", None)
                                         or set())}}
+            # MULTI-BAUPLAN (1.0.9): Enden, Quellen und ME/TE je Ende gehoeren
+            # zum Eintrag - sonst waere der gespeicherte Plan ein Buendel ohne
+            # Inhalt (Format: mw_multi_bauplan, Kopf).
+            if type_id == industry.BUENDEL_ID:
+                new_entry.update(self._multi_eintrag_felder(existing))
+                # QUELLEN FREIGEBEN - auch auf DIESEM Speicherweg (Nutzer-
+                # Befund 26.09.2026: die drei Einzelplaene des Buendels
+                # standen weiter eingefroren mit alten Einkaeufen da).
+                _frei_q, _auf_q = config.buendel_quellen_freigeben(
+                    plans, new_entry.get("quellen") or [])
+                if _frei_q or _auf_q:
+                    self._flash_tip(_txt(
+                        "{n} single plan(s) unfrozen / released \u2013 build "
+                        "and buy through the multi build plan from now on."
+                    ).format(n=len(set(_frei_q + _auf_q))))
             if overwrite_id is not None:
                 for i, p in enumerate(plans):
                     if p.get("id") == overwrite_id:
@@ -7833,8 +8416,23 @@ class BauplanFenster:
             # Schloss; wer die Funktion nicht kannte, merkte es erst beim
             # Materialmangel. Gefragt wird NUR, wenn es wirklich etwas zu
             # schuetzen gibt und der Plan noch nicht reserviert.
+            # GEHOERT DER PLAN SCHON ZU EINEM MULTI-BAUPLAN, wird GAR NICHT
+            # gefragt (Nutzer-Frage 20.09.2026: "wie soll ich da antworten?").
+            # Dort reserviert das Buendel gemeinsam; ein "Ja" hier wuerde
+            # denselben Bestand ein zweites Mal blockieren - genau das, wogegen
+            # die Reservierung gebaut ist. Auf der Karte ist das Schloss aus
+            # demselben Grund gesperrt (Entscheid C); ohne diese Stelle haette
+            # der Speicherdialog es hintenrum doch eingeschaltet.
+            _multi_von9 = self._multi_gehoert_zu(plans).get(new_entry["id"]) or []
+            if _multi_von9:
+                new_entry["reserve"] = False
+                self._flash_tip(_txt(
+                    "No separate reservation: this plan belongs to the multi "
+                    "build plan \u201e{name}\u201c and is reserved there."
+                ).format(name=_multi_von9[0]))
             _neu_res = (not new_entry.get("reserve")
-                        and bool(new_entry.get("reserve_map")))
+                        and bool(new_entry.get("reserve_map"))
+                        and not _multi_von9)
             if _neu_res:
                 from PySide6.QtWidgets import QMessageBox as _QMB9
                 _rm9 = new_entry.get("reserve_map") or {}
@@ -7854,11 +8452,32 @@ class BauplanFenster:
                              "plans see this material as free and plan with it \u2013 "
                              "then it is missing in the middle of the build.").format(
                     name=label, n=len(_rm9))
+                # DEN DRUCK AUS DER FRAGE NEHMEN: sie kommt beim Speichern,
+                # also bevor man weiss, ob der Plan spaeter in ein Buendel
+                # wandert. Das ist nicht schlimm - die Antwort laesst sich auf
+                # der Karte jederzeit aendern, und beim Buendeln wird sie
+                # automatisch richtiggestellt. Wer das weiss, muss hier nicht
+                # ueberlegen.
+                _txt9 += "\n\n" + _txt(
+                    "You can change this any time with the lock on the plan's "
+                    "card. And if you later put this plan into a multi build "
+                    "plan, its own reservation is released automatically \u2013 "
+                    "the bundle reserves for all its plans together.")
                 if _koll9:
                     _txt9 += (_txt("\n\n\u26a0 These plans need the same materials:\n"
                                    "\u2022 ")
                               + "\n\u2022 ".join(_koll9[:6])
                               + ("\n\u2022 \u2026" if len(_koll9) > 6 else ""))
+                # KEIN DRITTER KNOPF (Nutzer-Idee 20.09.2026 und sein eigener
+                # Einwand dagegen, dem ich folge): "Nein, ich will einen
+                # Multiplan daraus machen" kaeme zum falschen Zeitpunkt - man
+                # muss erst mehrere Plaene anlegen, bevor man buendeln kann.
+                # Und er waere gar nicht noetig: die Antwort hier ist NICHT
+                # bindend. Nimmt man den Plan spaeter in ein Buendel, hebt
+                # `config.buendel_quellen_freigeben` (aus `_save_plan`) seine
+                # Reservierung ohnehin auf. Das
+                # stand nur nirgends - deshalb sagt es der Text jetzt, statt
+                # eine dritte Wahl anzubieten.
                 _ans9 = _QMB9.question(
                     self, _txt("Reserve material?"), _txt9,
                     _QMB9.Yes | _QMB9.No, _QMB9.Yes if _koll9 else _QMB9.No)
@@ -7895,8 +8514,17 @@ class BauplanFenster:
             (st_cost.toolTip() + "\n\n" if st_cost.toolTip() else "")
             + _txt("Accounts for batch rounding and surplus for your quantity "
                    "\u2013 small quantities cost more per unit, large ones less."))
-        tw.setToolTip(_txt("Blue = will be built, grey = will be bought. "
-                           "Right-click \u2192 in-game market."))
+        # NUR AUF DER KOPFZEILE (Nutzer 27.09.2026: "wenn ich mit der Maus
+        # herumfahre, kommt ab und zu so ein random Infotext" - er hing an
+        # der GANZEN Baumflaeche, auch an leeren Stellen; "Variante 1").
+        tw.header().setToolTip(_txt("Blue = will be built, grey = will be bought. "
+                                    "Right-click \u2192 in-game market."))
+        # MAUSRAD NUR ZUM SCROLLEN (Nutzer 27.09.2026: "scrollt das Dropdown
+        # und nicht die rechte Sidebar - Dropdown bitte nur klickbar";
+        # "dasselbe in den Invention-Settings, 75 % laesst sich scrollen"):
+        # im ganzen Bauplan-Fenster aendern Dropdowns, Zahlenfelder und
+        # Regler ihren Wert nie per Rad - auch spaeter entstehende.
+        combos_ohne_mausrad(dlg)
         self._persist_window(dlg, "bauplan",
                              {"tree": tw.header(), "order": bo_tree.header(),
                               "sched": sched_tree.header()})

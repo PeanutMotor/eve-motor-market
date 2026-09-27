@@ -51,7 +51,9 @@ def schritte(zweig):
                "can you add it as a hub with \u201e+ Structure\u201c above."),
              "characters", None),
             ("nav:portfolio", t("Portfolio"),
-             t("What you own and what it is worth, across all characters."),
+             t("Shows you when to sell an item and when to hold it a "
+               "little longer until the margin is right \u2013 you read "
+               "that off the \u201eStatus\u201c column."),
              "portfolio", None),
             ("nav:profit", t("Profits"),
              t("Real profit per item after your sales tax and broker fees."),

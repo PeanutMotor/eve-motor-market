@@ -55,15 +55,15 @@ Where to look:
 | `werkzeuge/` | small helper scripts used during development |
 | `docs/` | the screenshots in this README |
 
-`python main.py` needs Python 3.12 or newer and `pip install -r requirements.txt`.
+Running from source needs Python 3.12 or newer; `run.bat` sets everything up.
 
 ## Checks
 
 Numbers are what the tool is for, so the calculations are guarded rather than
 trusted. The repository ships the check tooling alongside the program:
 
-- two test suites, 3'941 and 1'307 checks, run with `python pruefe.py`
-- a mutation harness (`tests/rotprobe.py`) that breaks the code on purpose, 1006
+- two test suites, 4'604 and 1'814 checks, run with `python pruefe.py`
+- a mutation harness (`tests/rotprobe.py`) that breaks the code on purpose, 1'486
   mutations, to prove the checks actually catch a regression
 - source-order lint, `pyflakes`, and six scanners that keep the English and
   German texts in step

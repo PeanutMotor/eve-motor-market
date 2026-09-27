@@ -36,10 +36,22 @@ os.makedirs(_HOME, exist_ok=True)
 for _k in ("HOME", "APPDATA", "USERPROFILE"):
     os.environ[_k] = _HOME
 
+# (b107) EINE LIEGENGEBLIEBENE PLANER-DIAGNOSE eines frueheren Laufs wuerde
+# "die Datei entsteht" bestaetigen, obwohl DIESER Lauf sie nie geschrieben
+# hat - die Rotprobe waere blind. Deshalb vorher weg damit; wo config sie
+# ablegt, steht erst nach dem Import fest, darum ueber config selbst.
+try:
+    from eve_trader import config as _cfg107v
+    _alt107 = os.path.join(_cfg107v.app_data_dir(), "planer_diagnose.txt")
+    if os.path.exists(_alt107):
+        os.remove(_alt107)
+except Exception:                                        # pragma: no cover
+    pass
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QTabWidget, QApplication, QComboBox, QPushButton, QLabel,
                                QTableWidget, QTreeWidget, QCheckBox,
-                               QPlainTextEdit, QWidget)
+                               QPlainTextEdit, QWidget, QFrame)
 
 _app = QApplication.instance() or QApplication([])
 
@@ -53,6 +65,21 @@ try:
     _FLOG_START = os.path.getsize(_FLOG)
 except OSError:
     _FLOG_START = 0
+
+# KEIN NETZ IM TESTLAUF (27.09.2026, Nutzer: "deine Antworten dauern sehr
+# lange"). GEMESSEN: von 46 s b-Suite warteten 23 s auf ESI-Antworten -
+# ~200 echte Abrufe aus Hintergrund-Jobs (Bilder, Preise, Systemnamen), die
+# keine Pruefung braucht; im Container abgelehnt, beim Nutzer sogar echt
+# ausgefuehrt. Jetzt scheitert jeder Abruf SOFORT - derselbe Weg wie ohne
+# Internet, den das Programm ohnehin abfangen muss. EMM_TEST_NETZ=1 schaltet
+# das Netz fuer einen Sonderlauf wieder ein.
+if os.environ.get("EMM_TEST_NETZ") != "1":
+    import requests.adapters as _ra_netz
+
+    def _kein_netz(self, request, *a, **k):
+        raise __import__("requests").exceptions.ConnectionError(
+            "Testlauf ohne Netz: " + str(getattr(request, "url", ""))[:80])
+    _ra_netz.HTTPAdapter.send = _kein_netz
 
 from eve_trader.ui.main_window import MainWindow          # noqa: E402
 from eve_trader import industry as I                      # noqa: E402
@@ -243,8 +270,15 @@ class _Recipes:
 try:
     from eve_trader import config as _cfg0
     _s0 = _cfg0.load_settings()
-    if "ui_filter" in _s0:
-        _s0.pop("ui_filter", None)
+    _weg0 = [_k for _k in ("ui_filter", "bau_runplan_ziel",
+                           "bau_runplan_ziel_std") if _k in _s0]
+    # ZIELZEITEN DER STUFEN AUCH WEG (24.09.2026): b102 prueft die VORGABE
+    # der beiden Felder. Ein Wert, den ein frueherer Lauf in .smoke_home
+    # geschrieben hat, machte die Pruefung beim zweiten Durchgang rot -
+    # dieselbe Falle wie ui_filter oben und die Klicks in aa383.
+    if _weg0:
+        for _k in _weg0:
+            _s0.pop(_k, None)
         _cfg0.save_settings(_s0)
 except Exception as _e0:                                 # pragma: no cover
     print(f"(Hinweis) ui_filter nicht geloescht: {type(_e0).__name__}: {_e0}")
@@ -275,7 +309,11 @@ eq("b1b vier Navigations-Knoepfe", len(win._bau_page_btns), 4)
 _pages_ok = True
 for _i in range(win.b_stack.count()):
     try:
-        win.b_stack.setCurrentIndex(_i)
+        # UEBER DEN ECHTEN WEG (_bau_nav wie Leiste/Tutorial): seit die
+        # Plan-Karten erst beim ersten Oeffnen gebaut werden (27.09.2026),
+        # entstehen sie nur dort - ein nacktes setCurrentIndex tut das
+        # im Programm nirgends.
+        win._bau_nav(_i)
         _app.processEvents()
     except Exception:
         _pages_ok = False
@@ -416,6 +454,83 @@ finally:
     except Exception:
         pass
 
+# ---------------------------------------------------------------- (b93)
+# SEITENLEISTE IM INDUSTRIE-REITER (Nutzer 22.09.2026): die Leiste bleibt,
+# aber die reinen HANDELS-Werkzeuge verschwinden - "der ganze Rest geht nur
+# Trading etwas an und hat nullkommagarnichts mit Building und Industry zu
+# tun". Sichtbar bleiben nur Price history, Characters, Settings.
+# AM ECHTEN FENSTER: `isVisible()` waere hier blind (das Fenster wird nie
+# gezeigt), deshalb wird `isVisibleTo(parent)` gefragt - das beantwortet
+# genau "waere es sichtbar, wenn das Fenster offen ist".
+try:
+    _tw93 = getattr(win, "_tab_widget", {}) or {}
+    _nb93 = getattr(win, "_nav_buttons", {}) or {}
+    check("b93 Seitenleiste und Industrie-Reiter sind ueberhaupt da",
+          bool(_nb93) and _tw93.get("build") is not None)
+    # DEN ECHTEN WEG GEHEN, nicht die Methode direkt rufen: eine Rotprobe
+    # meldete sonst "blind", als die Verdrahtung im Tab-Wechsel entfernt
+    # wurde (dieselbe Lehre wie b87/b88 - die Pruefung muss den Weg gehen,
+    # den der Nutzer geht).
+    win.tabs.setCurrentWidget(_tw93.get("build"))
+    _sicht93 = {k for k, b in _nb93.items()
+                if b is not None and b.isVisibleTo(b.parentWidget())}
+    _links93 = sorted(k for k in _sicht93
+                      if k in (getattr(win, "_common_keys", None) or []))
+    eq("b93 im Industrie-Reiter bleiben genau drei Werkzeuge",
+       _links93, ["characters", "market", "settings"])
+    # DER RUECKWEG (Nutzer-Befund 22.09.2026: "wenn man auf Industry
+    # wechselt, verschwinden auch Daytrade, Swingtrade, Regional Trade,
+    # somit ist es unmoeglich zurueckzukehren"). `_nav_buttons` traegt die
+    # vier Reiter OBEN im selben Woerterbuch wie die Werkzeuge links - wer
+    # ueber alles laeuft, versteckt den Rueckweg mit. Diese Pruefung haelt
+    # sie fest: im Industrie-Reiter bleibt JEDER Reiter oben sichtbar.
+    _oben93 = [k for k in (getattr(win, "_paid_keys", None) or [])
+               if _nb93.get(k) is not None]
+    eq("b93 die vier Reiter oben bleiben im Industrie-Reiter sichtbar",
+       sorted(k for k in _oben93 if k in _sicht93), sorted(_oben93))
+    # GEGENPROBE: in jedem anderen Reiter ist wieder alles da. Ohne die
+    # waere die Pruefung mit einer Leiste zufrieden, die IMMER leer ist.
+    win.tabs.setCurrentWidget(_tw93.get("portfolio"))
+    _sicht93b = {k for k, b in _nb93.items()
+                 if b is not None and b.isVisibleTo(b.parentWidget())}
+    eq("b93 ... und im Portfolio ist wieder alles da",
+       len(_sicht93b), len(_nb93))
+    check("b93 die Knoepfe werden nur versteckt, nicht entfernt",
+          all(b is not None and b.parentWidget() is not None
+              for b in _nb93.values()))
+except Exception as e:
+    check(f"b93 Seitenleiste im Industrie-Reiter: {type(e).__name__}: {e}", False)
+
+# ---------------------------------------------------------------- (b94)
+# DIE BAU-RAIL IST BREIT GENUG FUER IHRE EIGENEN KNOEPFE (Nutzer-Befund
+# 22.09.2026: "rechte Sidebar teils Button-Woerter abgeschnitten"). Die
+# feste Breite von 210 px reichte auf seinem Windows nicht - dieselben
+# Widgets sind dort rund 1,85x breiter als offscreen hier (Lehre b66).
+# GEMESSEN STATT GERATEN: die Pruefung vergleicht die Rail mit dem, was
+# Qt selbst als Platzbedarf des breitesten Knopfes angibt. Eine wieder
+# eingebaute feste Zahl faellt damit auf, sobald sie zu klein ist -
+# unabhaengig von Sprache, Schriftgroesse und Rechner.
+try:
+    _rail94 = win._bau_newplan_btn.parentWidget()
+    _btns94 = list(getattr(win, "_bau_page_btns", None) or []) + [
+        win._bau_newplan_btn]
+    _max94 = max(b.sizeHint().width() for b in _btns94)
+    check("b94 die Bau-Rail ist ueberhaupt auf eine Breite festgelegt",
+          _rail94 is not None and _rail94.minimumWidth() > 0
+          and _rail94.minimumWidth() == _rail94.maximumWidth())
+    # +24 px sind die Raender des Rail-Layouts (12 links, 12 rechts) - ohne
+    # sie waere die Pruefung mit einer Leiste zufrieden, in der das Wort
+    # genau bis an die Kante stoesst.
+    check("b94 die Rail fasst ihren breitesten Knopf samt Raendern "
+          f"(Rail {_rail94.minimumWidth()} px, Knopf {_max94} px)",
+          _rail94.minimumWidth() >= _max94 + 24)
+    # UNTERGRENZE: darunter wird die Leiste optisch zum Streifen, auch
+    # wenn die Knopfwoerter zufaellig kurz sind.
+    check("b94 ... und bleibt mindestens 210 px breit",
+          _rail94.minimumWidth() >= 210)
+except Exception as e:
+    check(f"b94 Breite der Bau-Rail: {type(e).__name__}: {e}", False)
+
 # ---------------------------------------------------------------- (b2i)
 # EINKAUFSWAGEN-WERKZEUGE (Layout-Programm, Sitzung 8): sieben Knoepfe
 # wurden zu Hauptaktion + Werkzeuge-Menue (Bauplan-Muster). Der Test
@@ -424,8 +539,12 @@ finally:
 # die beim Umbau am ehesten reisst.
 try:
     _pairs2i = getattr(win, "_sh_tool_pairs", None)
-    check("b2i das Werkzeuge-Menue hat vier Eintraege (load/check/sugg/clear)",
-          _pairs2i is not None and len(_pairs2i) == 4)
+    # DREI statt vier seit 22.09.2026: "In buy order?" ist weg. Der Knopf
+    # holte nur Daten, die die Liste ohnehin braucht, und schaltete eine
+    # Warnung ein, die man nie ausschalten will (Nutzer: "stattdessen
+    # dauerhafte Warnungen an den Items").
+    check("b2i das Werkzeuge-Menue hat drei Eintraege (load/sugg/clear)",
+          _pairs2i is not None and len(_pairs2i) == 3)
     _rufe2i = []
     _orig_load2i = win.shopping_load_prices
     win.shopping_load_prices = lambda *a, **k: _rufe2i.append("load")
@@ -1002,8 +1121,9 @@ finally:
 try:
     _rufe2j = []
     _pairs2j = getattr(win, "_sl_tool_pairs", None)
-    check("b2j Werkzeuge-Menue hat drei Eintraege (laden/check/leeren)",
-          _pairs2j is not None and len(_pairs2j) == 3)
+    # ZWEI statt drei seit 22.09.2026: "In sell order?" ist weg (siehe b2i).
+    check("b2j Werkzeuge-Menue hat zwei Eintraege (laden/leeren)",
+          _pairs2j is not None and len(_pairs2j) == 2)
     _orig2j = (win._sell_load_prices, win._sell_check_orders, win._sell_clear,
                win._sell_copy_list, win._render_sell_list)
     win._sell_load_prices = lambda *a, **k: _rufe2j.append("laden")
@@ -1013,9 +1133,13 @@ try:
     win._render_sell_list = lambda *a, **k: _rufe2j.append("render")
     for _a2j, _b2j in _pairs2j:
         _a2j.trigger()
-    check("b2j alle drei Menue-Aktionen rufen ihre Handler",
-          _rufe2j[:3] == ["laden", "check", "leeren"])
-    check("b2j die drei Knoepfe sind unsichtbar, aber am Leben",
+    check("b2j beide Menue-Aktionen rufen ihre Handler",
+          _rufe2j[:2] == ["laden", "leeren"])
+    # DIE WARNUNG IST JETZT DAUERHAFT AN, nicht mehr ein Knopfdruck.
+    check("b2j die rote Markierung ist ab Werk eingeschaltet",
+          getattr(win, "_sell_mark_orders", False) is True
+          and getattr(win, "_sh_mark_orders", False) is True)
+    check("b2j die Knoepfe sind unsichtbar, aber am Leben",
           all(not _b.isVisible() for _a, _b in _pairs2j))
     # Hauptaktion + Ziel-Preis-Zustand
     for _w2j in win._shopping_w.findChildren(type(win._sh_copy_btn)):
@@ -1512,8 +1636,33 @@ if _dlg is not None:
     if _pte:
         check("b5 Textfeld ist gross genug", _pte[0].minimumHeight() >= 240)
     _plabels = [l.text() for l in _dlg.findChildren(QLabel)]
-    check("b5 Panel-Titel vorhanden",
-          any(_t4("PASTE STOCK") in x for x in _plabels))
+    # SEIT 26.09.2026 IN DER KLAPPE "Paste stock" RECHTS, STANDARD ZU; beim
+    # Aufklappen zuerst der ESI-Hinweis mit "Continue", dann das Panel;
+    # Zuklappen ohne Kommentar, erneutes Aufklappen zeigt wieder den Hinweis.
+    _ph5 = getattr(win, "_bd_paste_hdr", None)
+    _hi5 = getattr(win, "_bd_paste_hint", None)
+    _pa5 = getattr(win, "_bd_paste_panel", None)
+    _we5 = getattr(win, "_bd_paste_weiter", None)
+    check("b5 Klappe 'Paste stock' da und standardmaessig ZU",
+          _ph5 is not None and _t4("Paste stock") in _ph5.text()
+          and not _ph5.isChecked()
+          and _pa5 is not None and _pa5.parentWidget().isHidden())
+    if _ph5 is not None and _hi5 is not None and _pa5 is not None and _we5 is not None:
+        _ph5.setChecked(True); _app.processEvents()
+        check("b5 aufgeklappt: erst der ESI-Hinweis, das Panel noch nicht",
+              (not _hi5.isHidden()) and _pa5.isHidden()
+              and any("works with ESI" in _l.text() or "arbeitet mit ESI" in _l.text()
+                      for _l in _hi5.findChildren(QLabel)))
+        _we5.click(); _app.processEvents()
+        check("b5 'Continue': Hinweis weg, Panel da",
+              _hi5.isHidden() and (not _pa5.isHidden()))
+        _ph5.setChecked(False); _app.processEvents()
+        check("b5 zuklappen ohne Kommentar (keine Rueckfrage, alles weg)",
+              _pa5.parentWidget().isHidden())
+        _ph5.setChecked(True); _app.processEvents()
+        check("b5 erneut aufklappen: wieder zuerst der Hinweis",
+              (not _hi5.isHidden()) and _pa5.isHidden())
+        _ph5.setChecked(False); _app.processEvents()
     check("b5 Panel erklaert WOFUER es gut ist",
           any(_t4("Paste here if ESI is not fast enough.") in x
               for x in _plabels))
@@ -1823,10 +1972,17 @@ if _dlg is not None:
     from PySide6.QtWidgets import QRadioButton as _QRB
     _rbs = [r for r in _dlg.findChildren(_QRB)
             if r.text() in ("Nur das Endprodukt", "Ab Komponenten",
-                            "Ab Composite-Reaktionen", "Alles selbst",
+                            "Ab Composite-Reaktionen", "Ab Intermediate-Reaktionen",
                             "End product only", "From components",
-                            "From composite reactions", "Everything yourself")]
+                            "From composite reactions", "From intermediate reactions")]
     eq("b5i vier Tiefenstufen sichtbar", len(_rbs), 4)
+    # NAME DER VIERTEN STUFE (Nutzer 26.09.2026): "From intermediate
+    # reactions" statt "Everything yourself" - gleiche Kategorien (alle).
+    check("b5i die vierte Stufe heisst 'From intermediate reactions', nicht 'Everything yourself'",
+          [r.text() for r in _rbs][-1:] in (["From intermediate reactions"],
+                                            ["Ab Intermediate-Reaktionen"])
+          and not [r for r in _dlg.findChildren(_QRB)
+                   if r.text() in ("Everything yourself", "Alles selbst")])
     check("b5i genau eine ist gewaehlt",
           sum(1 for r in _rbs if r.isChecked()) == 1)
     _by_txt = {r.text(): r for r in _rbs}
@@ -1836,7 +1992,7 @@ if _dlg is not None:
         _boxes = getattr(win, "_bp_own_boxes", {}) or {}
         check("b5i Stufe 1 hakt ALLE Kategorien ab",
               all(not c.isChecked() for c in _boxes.values()) if _boxes else True)
-        _by_txt["Alles selbst"].setChecked(True)
+        _by_txt["Ab Intermediate-Reaktionen"].setChecked(True)
         _app.processEvents()
         check("b5i Stufe 4 hakt alle wieder an",
               all(c.isChecked() for c in _boxes.values()) if _boxes else True)
@@ -2288,9 +2444,12 @@ check("b7g ohne Fortschritt sagt der Knopf Bescheid",
 check("b7g ausgeschaltet ist der Knopf normal",
       win.bp_order_btn.objectName() != "Primary")
 win._plan_order_btn_stil(True)
-check("b7g eingeschaltet leuchtet er wie \u201eRefresh all\u201c",
-      win.bp_order_btn.objectName() == "Primary"
-      and win.global_refresh_btn.objectName() == "Primary")
+# SEIT 23.09.2026 traegt "Alles aktualisieren" die Primaer-Optik NICHT
+# mehr (Nutzer: "bitte die Cyan-Hintergrundfarbe entfernen, damit der Knopf
+# aussieht wie alle anderen"). #Primary bleibt die HERVORHEBUNGS-Regel des
+# Themas - genau die soll dieser Knopf im eingeschalteten Zustand tragen.
+check("b7g eingeschaltet leuchtet er in der Hervorhebungs-Optik",
+      win.bp_order_btn.objectName() == "Primary")
 win._plan_order_btn_stil(False)
 eq("b7g die Handfolge bleibt trotzdem gespeichert",
    win.settings.get("bau_plan_reihenfolge"), ["7", "3", "9"])
@@ -3243,8 +3402,12 @@ except Exception as e:                                   # pragma: no cover
 # Regler, und die Aufteilungs-Zeile traegt die Ingame-Uebersetzung.
 try:
     from PySide6.QtWidgets import QSlider as _QSl2w
-    _sl2w = getattr(win, "_inv_zeit", None)
-    _ko2w = getattr(win, "_inv_kopien", None)
+    # SEIT 26.09.2026 JE KARTE (Nutzer: "jede Karte ihren eigenen Regler";
+    # vorher lagen Regler/Kopien-Feld auf `self._inv_*` und die LETZTE Karte
+    # gewann). Ein Regler je Karte, das Slot-Feld EINMAL oben.
+    _sw2w_all = dict(getattr(win, "_bd_inv_split_w", None) or {})
+    _sw2w = next(iter(_sw2w_all.values()), None)
+    _sl2w = _sw2w["slider"] if _sw2w else None
     _st2w = getattr(win, "_inv_slots", None)
     # DAS OFFENE FENSTER, KEINE RESTE (Sitzung 17, Nutzer-Screenshot Windows:
     # "QSpinBox already deleted"). Gemessen: an der alten Stelle gehoerten die
@@ -3256,42 +3419,46 @@ try:
     check("b2w prueft die Felder des OFFENEN Bauplans, keine Reste",
           _w2w is not None and _w2w is getattr(win, "_bd_dialog", None)
           and _w2w.isVisible())
-    check("b2w der Zeit-Regler existiert im Invention-Panel",
-          isinstance(_sl2w, _QSl2w) and _ko2w is not None)
-    if _sl2w is not None and _ko2w is not None and _st2w is not None:
-        _st2w.setValue(10)
+    check("b2w der Regler existiert in der Invention-Karte",
+          isinstance(_sl2w, _QSl2w) and _sl2w.window() is _w2w)
+    if _sl2w is not None and _st2w is not None:
+        _st2w.setValue(10); _app.processEvents()
         # NUTZSTUFEN-SCHNAPPEN (Nutzer, Sitzung 9: "ich kann ihn hoeher
         # ziehen als er einen Nutzen hat"): nutzlose Positionen schnappen
-        # auf die kleinste Kopienzahl derselben Zeitstufe. Getestet MIT der
-        # Versuchszahl der Mock-Rezepte (4 - jede Interaktion schreibt sie
-        # ueber _fuelle_aufteilung zurueck; ein von Hand gesetzter Wert
-        # ueberlebt genau einen Klick, erster Fehlversuch dieses Tests).
-        # Nutzstufen fuer 4 Versuche: {1, 2, 4}.
+        # auf die kleinste Kopienzahl derselben Zeitstufe. Versuchszahl der
+        # Mock-Rezepte: 4 -> Nutzstufen {1, 2, 4}.
         _sl2w.setValue(4); _app.processEvents()
-        eq("b2w Regler ziehen stellt die Kopienzahl", _ko2w.value(), 4)
+        eq("b2w Regler auf 4 -> 4 Kopien", _sl2w.value(), 4)
         _sl2w.setValue(10); _app.processEvents()
         eq("b2w Regler ueber der Versuchszahl schnappt zurueck (10 -> 4)",
-           _ko2w.value(), 4)
-        _ko2w.setValue(3); _app.processEvents()
-        eq("b2w getippte Plateau-Kopien schnappen (3 -> 2)",
-           _ko2w.value(), 2)
-        eq("b2w und der Regler folgt der geschnappten Zahl",
-           _sl2w.value(), 2)
-        _ko2w.setValue(4); _app.processEvents()
-        eq("b2w nuetzliche Positionen bleiben unangetastet (4 = 4)",
            _sl2w.value(), 4)
+        _sl2w.setValue(3); _app.processEvents()
+        eq("b2w Plateau-Stufe schnappt (3 -> 2)", _sl2w.value(), 2)
+        # GANZE BREITE (Nutzer 26.09.2026: "warum kann ich die Regler nicht
+        # ganz bis rechts ziehen?"): rechts = min(freie Slots, Versuche).
+        eq("b2w rechter Anschlag = Versuche (4), nicht die 10 freien Slots",
+           _sl2w.maximum(), 4)
+        _st2w.setValue(3); _app.processEvents()
+        eq("b2w weniger freie Slots als Versuche deckeln den Regler (3)",
+           _sl2w.maximum(), 3)
         _st2w.setValue(5); _app.processEvents()
-        eq("b2w weniger freie Slots deckeln den Regler",
-           _sl2w.maximum(), 5)
-        _txt2w = win._inv_split_lbl.text()
-        check("b2w die Zeile uebersetzt in Ingame-Felder",
-              "Job Runs" in _txt2w and "Runs per Copy" in _txt2w)
-        # KEINE Wandzeit-Pruefung hier: die erscheint nur, wenn die Rezepte
-        # eine Invention-Versuchszeit hergeben - die Mock-Daten der Suite
-        # tun das nicht. Das waere ein Test der Testdaten, nicht der Zusage.
-        check("b2w und zeigt die Aufteilung selbst",
-              "T1-Kopie" in _txt2w or "T1 copy" in _txt2w)
-        _st2w.setValue(10); _ko2w.setValue(1); _app.processEvents()
+        _kopf2w = _sw2w["kopf"].text()
+        # GROSSE KOPIERANLEITUNG (Nutzer: "Copy your T1 original like this ->
+        # Job Runs / Runs per Copy"): bei 2 Kopien und 4 Versuchen 2 x 2.
+        check("b2w die Kopieranleitung nennt die Ingame-Felder mit den Zahlen",
+              "Job Runs: <span" in _kopf2w and "Runs per Copy: <span" in _kopf2w
+              and ">2</span>" in _kopf2w
+              and ("Copy your T1 original" in _kopf2w or "Kopiere dein T1-Original" in _kopf2w))
+        _lbl2w = _sw2w["lbl"].text()
+        # WEISS, 15px FETT, ZAHL GROSS UND AMBER (Nutzer 26.09.2026: "gleiche
+        # Groesse wie oben Job Runs, Zahlen auch gleich gross und Amber").
+        check("b2w daneben: belegte Science-Slots - Text weiss/15px, Zahl gross + amber",
+              ("science slot" in _lbl2w or "Science-Slot" in _lbl2w)
+              and "font-size:15px" in _lbl2w and "font-weight:700" in _lbl2w
+              and f"color:{_th7.TEXT}" in _lbl2w
+              and f"font-size:{_th7.FS_KPI}; font-weight:800; color:{_th7.AMBER}" in _lbl2w
+              and ">2</span>" in _lbl2w)
+        _st2w.setValue(10); _sl2w.setValue(1); _app.processEvents()
 except Exception as _e2w:                                # pragma: no cover
     _fail.append(f"b2w Block geplatzt: {_e2w!r}")
     # WO GENAU? (Sitzung 17): auf Windows bricht der Block ab, im Container
@@ -3402,6 +3569,21 @@ try:
             _app.processEvents()
             eq("b10 Enter im Runs-Feld -> der Plan rechnet mit 1'400",
                int(getattr(win, "_bd_qty", 0) or 0), 1400)
+            # FREMDES FENSTER (26.09.2026 nachgestellt): der 450-ms-Mengen-
+            # Timer eines Fensters, das nicht mehr das offene ist, schrieb
+            # seine Menge in den gemeinsamen Zustand. Hier: Menge tippen,
+            # ein anderes Fenster ist "dran", Timer ablaufen lassen.
+            from PySide6.QtTest import QTest as _QT10
+            _dlg_alt10 = win._bd_dialog
+            _qs.setValue(1600)
+            win._bd_dialog = None
+            try:
+                _QT10.qWait(650)
+                eq("b10 der Mengen-Timer eines nicht mehr offenen Fensters rechnet nicht",
+                   int(getattr(win, "_bd_qty", 0) or 0), 1400)
+            finally:
+                win._bd_dialog = _dlg_alt10
+            _qs.setValue(1400); _app.processEvents()
             _qs.setValue(1000)
             eq("b10 1'000 Stueck -> 5 Runs", _r.value(), 5)
             # Umschalten zeigt nur das eine Feld und merkt sich die Wahl.
@@ -4008,8 +4190,21 @@ try:
     # GEWINN-UEBERSICHT (18.09.2026): der Name wird mit "..." gekuerzt statt
     # hart abgeschnitten, der Betrag steht in Festbreitenschrift.
     from eve_trader.ui.main_window import ElideLabel as _EL2t
+    # NUR DIE UEBERSICHT, NICHT DIE KARTE: die Untertitel-Zeile der Plan-
+    # Karte ist seit 23.09.2026 auch ein ElideLabel mit demselben Text -
+    # ohne diesen Filter fand die Pruefung sie und war blind fuer die
+    # Uebersicht (Rotprobe 26.09.2026).
+    _karten2t = set(id(_c) for _c in (getattr(win, "_plan_karte", {}) or {}).values())
+
+    def _in_karte2t(_l):
+        _a = _l.parentWidget()
+        while _a is not None:
+            if id(_a) in _karten2t:
+                return True
+            _a = _a.parentWidget()
+        return False
     _el2t = [l for l in (_hold2t.findChildren(_EL2t) if _hold2t else [])
-             if "Projectile Collision" in (l.text() or "")]
+             if "Projectile Collision" in (l.text() or "") and not _in_karte2t(l)]
     check("b2t in der Gewinn-Uebersicht ist der lange Name ein ElideLabel",
           bool(_el2t) and "Projectile Collision" in (_el2t[0].toolTip() or "")
           and _el2t[0].minimumSizeHint().width() == 0)
@@ -4037,6 +4232,390 @@ try:
     win.settings["bau_saved_plans"] = _alt2t
 except Exception as _e2t:                                # pragma: no cover
     _fail.append(f"b2t Block geplatzt: {_e2t!r}")
+
+
+# ---------------------------------------------------------------- (b97)
+# KOPFZEILE: LINKS WO DU BIST, RECHTS WAS DU AUSLOEST (Nutzer 23.09.2026:
+# "der obere Teil des Tools hat zu viele Knoepfe auf einem Haufen"; dazu
+# "market scan ganz links" und "koennten wir alle Knoepfe auf der rechten
+# Seite in ein horizontal aufklappbares Dropdown stecken?").
+#
+# GEPRUEFT WIRD DIE REIHENFOLGE IN DER LEISTE, nicht eine Pixelspalte: in
+# einer QToolBar ist die Reihenfolge der Aktionen genau die, die man sieht -
+# und sie steht auch ohne angezeigtes Fenster fest (isVisible waere hier
+# blind, siehe CLAUDE.md).
+try:
+    _acts97 = [a.defaultWidget() for a in win._toolbar.actions()
+               if hasattr(a, "defaultWidget") and a.defaultWidget() is not None]
+
+    def _pos97(w):
+        """Platz eines Widgets in der Leiste - auch wenn es in einem
+        Behaelter steckt (Markt-Scan-Platz, Klappe): dann zaehlt der Platz
+        des Behaelters, denn der bestimmt, wo es steht."""
+        _p = w
+        while _p is not None:
+            if _p in _acts97:
+                return _acts97.index(_p)
+            _p = _p.parentWidget()
+        return -1
+
+    _scan97 = _pos97(win.g_scan_btn)
+    _hub97 = _pos97(win.g_hub)
+    _char97 = _pos97(win.g_char)
+    _ref97 = _pos97(win.global_refresh_btn)
+    _sde97 = _pos97(win.g_sde_btn)
+    _lang97 = _pos97(win.lang_box)
+    check("b97 alle Kopf-Elemente sind in der Leiste auffindbar",
+          min(_scan97, _hub97, _char97, _ref97, _sde97, _lang97) >= 0)
+    check(f"b97 der Markt-Scan steht ganz links ({_scan97} vor Hub {_hub97})",
+          0 <= _scan97 < _hub97)
+    check(f"b97 der Zustand steht links (Hub {_hub97}, Charakter {_char97} "
+          f"vor Aktualisieren {_ref97})",
+          0 <= _hub97 < _ref97 and 0 <= _char97 < _ref97)
+    check(f"b97 die Handlungen stehen rechts, in dieser Folge "
+          f"({_ref97} < {_sde97} < {_lang97})",
+          _ref97 < _sde97 < _lang97)
+    # KEIN KNOPF ZWEIMAL: waere er versehentlich links UND rechts
+    # eingehaengt, stuende er doppelt in der Reihe.
+    for _n97, _w97 in (("Alles aktualisieren", win.global_refresh_btn),
+                       ("Markt-Scan", win.g_scan_btn),
+                       ("Baurezepte laden", win.g_sde_btn)):
+        eq(f"b97 {_n97} haengt an genau einer Stelle",
+           sum(1 for _a in _acts97 if _a is _w97 or _w97.isAncestorOf(_a)
+               or (_a is not None and _a.isAncestorOf(_w97))), 1)
+
+    # DIE DREI SELTENEN STEHEN OFFEN DANEBEN (der Zwischenstand mit Klappe
+    # ist auf Nutzer-Wunsch wieder raus: "ja, wir lassen es immer
+    # ausgeklappt bitte"). Am echten Fenster heisst das: sie haengen direkt
+    # in der Leiste, und ihre Aktionen sind sichtbar.
+    _unsichtbar97 = []
+    for _n97, _w97 in (("Baurezepte laden", win.g_sde_btn),
+                       ("EVE-Daten", win.update_btn),
+                       ("Programm-Updates", win.ver_btn)):
+        _a97 = next((_a for _a in win._toolbar.actions()
+                     if getattr(_a, "defaultWidget", lambda: None)() is _w97), None)
+        if _a97 is None or not _a97.isVisible():
+            _unsichtbar97.append(_n97)
+    eq("b97 die drei Daten-Knoepfe stehen offen in der Leiste", _unsichtbar97, [])
+    check("b97 von der Klappe ist am Fenster nichts mehr uebrig",
+          getattr(win, "_kopf_extras", None) is None
+          and getattr(win, "_kopf_extras_btn", None) is None)
+
+    # NUR NOCH EIN PLUS (Nutzer: "dachte ich wird nur noch ein +").
+    eq("b97 der Struktur-Knopf hat keinen Text mehr",
+       win.g_struct_btn.text(), "")
+    check("b97 ... traegt aber Symbol und Erklaerung",
+          not win.g_struct_btn.icon().isNull()
+          and len(win.g_struct_btn.toolTip() or "") > 30)
+
+    # DIE REITER-LEISTE: zwischen dem letzten Handels-Reiter und "Industry"
+    # steht ein Trennstrich (Nutzer: "koennen wir Trading und Produktion
+    # besser trennen?").
+    _tb97 = win._nav_buttons["region"].parentWidget()
+    _lay97 = _tb97.layout() if _tb97 is not None else None
+    _idx97 = {}
+    _striche97 = []
+    for _i97 in range(_lay97.count() if _lay97 is not None else 0):
+        _w = _lay97.itemAt(_i97).widget()
+        if _w is None:
+            continue
+        for _k97 in ("region", "build"):
+            if _w is win._nav_buttons.get(_k97):
+                _idx97[_k97] = _i97
+        if isinstance(_w, QFrame) and _w.maximumWidth() == 1:
+            _striche97.append(_i97)
+    check("b97 beide Reiter sind in der Leiste auffindbar",
+          "region" in _idx97 and "build" in _idx97)
+    check(f"b97 zwischen Handel und Industry steht ein Trennstrich "
+          f"(Reiter {_idx97.get('region')} / {_idx97.get('build')}, "
+          f"Striche {_striche97})",
+          any(_idx97.get("region", -1) < _p < _idx97.get("build", -1)
+              for _p in _striche97))
+    # JEDER AUFRUF BAUT EINEN NEUEN: ein Widget kann nur in EINEM Layout
+    # haengen - ein zwischengespeicherter Strich waere beim zweiten
+    # Einhaengen aus dem ersten Layout verschwunden.
+    # MIT ELTERN, NICHT FREI SCHWEBEND: zwei Widgets ohne Besitzer raeumt
+    # Python irgendwann ab, waehrend Qt sie noch kennt - in einem Lauf
+    # stuerzte die Suite genau daran ab ("free(): invalid pointer").
+    _t1_97 = win._kopf_trenner(); _t1_97.setParent(win)
+    _t2_97 = win._kopf_trenner(); _t2_97.setParent(win)
+    check("b97 der Trenner ist bei jedem Aufruf ein eigenes Widget",
+          _t1_97 is not _t2_97)
+    _t1_97.deleteLater(); _t2_97.deleteLater()
+except Exception as _e97:                                # pragma: no cover
+    _fail.append(f"b97 Block geplatzt: {_e97!r}")
+
+
+# ---------------------------------------------------------------- (b99)
+# FARBE JE BAUPLAN (Nutzer 23.09.2026: "ich moechte in My build plans den
+# Bauplaenen und Multibuildplaenen eine Hintergrundfarbe geben koennen.
+# Sicherlich die Farben von Caldari, Gallente, Amarr und Minmatar. Einfach
+# links neben dem Endprodukt-Bild eine Farbpalette zum Ausklappen jeweils,
+# wenn man auf eine Farbe klickt, dann faerbt sich der Bauplan ein").
+#
+# DAS MENUE SELBST WIRD HIER NICHT AUFGEKLAPPT: `QMenu.exec` ist modal und
+# wuerde die Suite anhalten. Geprueft wird, was man danach SIEHT - der
+# Knopf sitzt links vom Bild, die Farbe landet im Plan und die neu
+# aufgebaute Karte traegt sie.
+try:
+    from PySide6.QtWidgets import QPushButton as _QPB99
+    from eve_trader.ui import theme as _th99
+    _alt99 = win.settings.get("bau_saved_plans")
+    win.settings["bau_saved_plans"] = [
+        {"id": 9901, "label": "b99 Plan A", "item_name": "A99", "qty": 1,
+         "type_id": 31000, "checked": []},
+        {"id": 9902, "label": "b99 Plan B", "item_name": "B99", "qty": 1,
+         "type_id": 31001, "checked": [], "farbe": "amarr"},
+    ]
+    win._reload_saved_plans()
+    _hold99 = win._plans_layout.itemAt(0).widget()
+    _karten99 = [w for w in _hold99.findChildren(_QF2t)
+                 if w.objectName() == "Card" and w.minimumWidth() >= 520]
+    eq("b99 zwei Plaene ergeben zwei Karten", len(_karten99), 2)
+
+    def _reihe99(karte):
+        """Die Widgets der Kartenzeile in ihrer Reihenfolge."""
+        _l = karte.layout()
+        return [_l.itemAt(_i).widget() for _i in range(_l.count())]
+
+    _ohne99 = []
+    for _k99 in _karten99:
+        _r99 = _reihe99(_k99)
+        _fb99 = next((_w for _w in _r99
+                      if isinstance(_w, _QPB99) and _w.minimumWidth() == 18
+                      and _w.maximumWidth() == 18), None)
+        _ic99 = next((_w for _w in _r99
+                      if isinstance(_w, QLabel) and _w.minimumWidth() == 48
+                      and _w.maximumWidth() == 48), None)
+        if _fb99 is None or _ic99 is None or _r99.index(_fb99) > _r99.index(_ic99):
+            _ohne99.append(_k99)
+    eq("b99 jede Karte hat den Farbknopf LINKS neben dem Bild", _ohne99, [])
+
+    # DIE GESPEICHERTE FARBE LANDET AUF DER KARTE. Welche Karte zu welchem
+    # Plan gehoert, entscheidet der TITEL (Lehre b86: nie ueber eine
+    # Teilzeichenkette in beliebigen Labels zuordnen).
+    def _karte_zu99(name):
+        for _k in _karten99:
+            for _l in _k.findChildren(QLabel):
+                if name in (_l.text() or "") and "font-size:15px" in (_l.text() or ""):
+                    return _k
+        for _k in _karten99:
+            for _l in _k.findChildren(QLabel):
+                if (_l.text() or "").strip().startswith("<b") and name in _l.text():
+                    return _k
+        return None
+    _kB99 = _karte_zu99("b99 Plan B")
+    _kA99 = _karte_zu99("b99 Plan A")
+    check("b99 beide Karten sind zuordenbar", _kA99 is not None and _kB99 is not None)
+    check("b99 der Plan MIT Farbe traegt sie als Flaeche",
+          _kB99 is not None and "background: rgba(" in (_kB99.styleSheet() or ""))
+    check("b99 der Plan OHNE Farbe bleibt ungefaerbt",
+          _kA99 is not None and "background: rgba(" not in (_kA99.styleSheet() or ""))
+
+    # SETZEN UND MERKEN - der Weg, den der Menue-Eintrag geht.
+    _fbA99 = next(_w for _w in _reihe99(_kA99)
+                  if isinstance(_w, _QPB99) and _w.minimumWidth() == 18)
+    win._plan_farbe_setzen(9901, "f1", _kA99, _fbA99, False)
+    check("b99 nach der Wahl ist die Karte gefaerbt",
+          "background: rgba(" in (_kA99.styleSheet() or ""))
+    check("b99 ... der kleine Knopf zeigt dieselbe Farbe",
+          _th99.PLAN_FARBEN["f1"].lower() in (_fbA99.styleSheet() or "").lower())
+    eq("b99 ... und sie steht im Plan",
+       next(p.get("farbe") for p in win.settings["bau_saved_plans"]
+            if p.get("id") == 9901), "f1")
+    win._plan_farbe_setzen(9901, None, _kA99, _fbA99, False)
+    check("b99 'keine Farbe' nimmt sie wieder weg",
+          "background: rgba(" not in (_kA99.styleSheet() or "")
+          and all(p.get("farbe") is None
+                  for p in win.settings["bau_saved_plans"] if p.get("id") == 9901))
+    # DER AMBERNE RAND EINES GEBUNDENEN PLANS BLEIBT - er sagt "gehoert zu
+    # einem Multi-Bauplan" und ist keine Geschmacksfrage.
+    check("b99 mit Farbe UND Multi-Bindung bleibt der amberne Rand",
+          "rgba(242,162,60,0.55)" in win._plan_farb_stil("f1", True)
+          and "background: rgba(76,144,240" in win._plan_farb_stil("f1", True))
+    # ALTBESTAND AM ECHTEN FENSTER: Plan B traegt den Schluessel der ersten
+    # Fassung ("amarr"). Er muss auf der Karte die Farbe von Platz 7 zeigen
+    # - sonst haetten Nutzer nach dem Update farblose Karten.
+    check("b99 ein alter Fraktionsschluessel faerbt die Karte weiterhin",
+          _kB99 is not None
+          and "rgba(217,179,140,0.18)" in (_kB99.styleSheet() or ""))
+    win.settings["bau_saved_plans"] = _alt99
+    win._reload_saved_plans()
+except Exception as _e99:                                # pragma: no cover
+    _fail.append(f"b99 Block geplatzt: {_e99!r}")
+
+
+# ---------------------------------------------------------------- (b100)
+# WARNUNG UND KNOPF GEHOEREN ZUSAMMEN (Nutzer 23.09.2026, Kopfzeilen-Umbau):
+# der Markt-Scan sitzt jetzt ganz links - stuende die amberne Warnung noch
+# beim Charakter-Feld, blinkte der Knopf am einen Ende der Leiste und der
+# Satz dazu am anderen. Am echten Fenster gefragt: gleicher Behaelter.
+try:
+    check("b100 die Scan-Warnung steht im selben Platz wie der Knopf",
+          win.g_scan_warn.parentWidget() is win.g_scan_btn.parentWidget()
+          and win.g_scan_warn.parentWidget() is not None)
+    # SIE IST STILL, SOLANGE NICHTS ZU MELDEN IST (sonst stuende dauerhaft
+    # ein amberner Satz in der Kopfzeile).
+    win._scan_warnung_setzen("")
+    check("b100 ohne Anlass ist sie unsichtbar und der Takt steht",
+          not win.g_scan_warn.isVisibleTo(win.g_scan_warn.parentWidget())
+          and not win._scan_blink_timer.isActive())
+    win._scan_warnung_setzen("b100 Test")
+    check("b100 mit Anlass blinkt der Knopf und der Satz steht da",
+          win.g_scan_warn.isVisibleTo(win.g_scan_warn.parentWidget())
+          and win._scan_blink_timer.isActive())
+    eq("b100 der Blinktakt sind 700 ms",
+       win._scan_blink_timer.interval(), 700)
+    eq("b100 geprueft wird alle 30 Sekunden",
+       win._scan_pruef_timer.interval(), 30000)
+    win._scan_warnung_setzen("")
+except Exception as _e100:                               # pragma: no cover
+    _fail.append(f"b100 Block geplatzt: {_e100!r}")
+
+
+# ---------------------------------------------------------------- (b101)
+# ACHT FARBEN OHNE NAMEN + STANDARDFARBE FUER BUENDEL (Nutzer 23.09.2026:
+# "Fuege weitere 4 Farben hinzu [...] wir muessen gar keine Namen geben [...]
+# faerbe Multiplaene standardmaessig schon anders ein").
+#
+# DAS MENUE WIRD HIER WIRKLICH GEBAUT. Geprueft wird `_plan_farb_palette` -
+# das Bauen ohne das Aufklappen. GEMESSEN (23.09.2026): ein Ersetzen von
+# `QMenu.exec` wirkt in PySide6 NICHT, der C++-Aufruf geht am Python-Eintrag
+# vorbei; die Suite blieb im offenen Menue stehen. Darum baut der Quelltext
+# die Palette in einer eigenen Methode - sonst koennte niemand nachsehen,
+# was darin steht.
+try:
+    from PySide6.QtWidgets import (QPushButton as _QPB101, QMenu as _QM101)
+    from eve_trader import industry as _ind101
+    from eve_trader.ui import theme as _th101
+    _alt101 = win.settings.get("bau_saved_plans")
+    win.settings["bau_saved_plans"] = [
+        {"id": 9911, "label": "b101 Einzel", "item_name": "E101", "qty": 1,
+         "type_id": 31002, "checked": []},
+        {"id": 9912, "label": "b101 Buendel", "item_name": "B101", "qty": 1,
+         "type_id": int(_ind101.BUENDEL_ID), "checked": []},
+    ]
+    win._reload_saved_plans()
+    _hold101 = win._plans_layout.itemAt(0).widget()
+    _karten101 = [w for w in _hold101.findChildren(_QF2t)
+                  if w.objectName() == "Card" and w.minimumWidth() >= 520]
+    eq("b101 zwei Plaene ergeben zwei Karten", len(_karten101), 2)
+
+    def _hat101(karte, text):
+        for _l in karte.findChildren(QLabel):
+            if text in (_l.text() or ""):
+                return True
+        return False
+    _kB101 = next((_k for _k in _karten101 if _hat101(_k, "b101 Buendel")), None)
+    _kE101 = next((_k for _k in _karten101 if _hat101(_k, "b101 Einzel")), None)
+    check("b101 beide Karten sind zuordenbar",
+          _kB101 is not None and _kE101 is not None)
+    # OHNE JEDE WAHL: das Buendel ist schon eingefaerbt, der Einzelplan nicht.
+    check("b101 ein Buendel traegt von sich aus den amberne Hauch",
+          _kB101 is not None
+          and "rgba(242,162,60,0.10)" in (_kB101.styleSheet() or ""))
+    check("b101 ein gewoehnlicher Plan bleibt farblos",
+          _kE101 is not None
+          and "background: rgba(" not in (_kE101.styleSheet() or ""))
+
+    # DAS MENUE: acht Felder, kein Farbname, ein Weg zurueck.
+    _fbB101 = next(_w for _w in
+                   [_kB101.layout().itemAt(_i).widget()
+                    for _i in range(_kB101.layout().count())]
+                   if isinstance(_w, _QPB101) and _w.maximumWidth() == 18)
+    _m101 = win._plan_farb_palette(9912, _kB101, _fbB101, False, True)
+    check("b101 die Palette wird gebaut, ohne aufzuklappen",
+          isinstance(_m101, _QM101))
+    _felder101 = [_b for _b in (_m101.findChildren(_QPB101) if _m101 else [])
+                  if _b.maximumWidth() == 30 and _b.maximumHeight() == 22]
+    eq("b101 die Palette zeigt acht Farbfelder", len(_felder101), 8)
+    _texte101 = [(_a.text() or "") for _a in (_m101.actions() if _m101 else [])]
+    eq("b101 ... und genau einen Eintrag mit Text (der Weg zurueck)",
+       [_x for _x in _texte101 if _x.strip()], [_t4("No colour")])
+    _namen101 = [_x for _x in _texte101
+                 if _x.strip() in ("Caldari", "Gallente", "Amarr", "Minmatar")]
+    eq("b101 kein Fraktionsname im Menue", _namen101, [])
+    # EIN KLICK AUF EIN FELD FAERBT WIRKLICH - und gewinnt ueber den Hauch.
+    _felder101[4].click() if len(_felder101) > 4 else None
+    eq("b101 der Klick merkt die Farbe im Plan",
+       next(p.get("farbe") for p in win.settings["bau_saved_plans"]
+            if p.get("id") == 9912), "f5")
+    check("b101 ... die eigene Wahl gewinnt ueber die Standardfarbe",
+          _th101.PLAN_FARBEN["f5"] is not None
+          and "rgba(217,95,196,0.18)" in (_kB101.styleSheet() or "")
+          and "rgba(242,162,60,0.10)" not in (_kB101.styleSheet() or ""))
+    check("b101 ... und der amberne Rand des Buendels bleibt",
+          "rgba(242,162,60,0.55)" in (_kB101.styleSheet() or ""))
+    if _m101 is not None:
+        _m101.close()
+        _m101.deleteLater()
+    win.settings["bau_saved_plans"] = _alt101
+    win._reload_saved_plans()
+except Exception as _e101:                               # pragma: no cover
+    _fail.append(f"b101 Block geplatzt: {_e101!r}")
+
+
+# ---------------------------------------------------------------- (b96)
+# DIE STATUS-SPALTE WIRD GEMESSEN (Nutzer-Befund 23.09.2026: "bei
+# Multibuildplan 1 kann man den Profit nicht vollstaendig ablesen, weil der
+# Reservations-Button dort ist"). Sie stand auf festen 250 px - hier reicht
+# das, auf seinem Windows sind dieselben Widgets rund 1,85x breiter
+# (derselbe Befund wie b66), und das ISK fiel hinter den Schloss-Knopf.
+#
+# ALLE KARTEN BEKOMMEN DIESELBE BREITE: stuende die Zahl von Karte zu Karte
+# woanders, waere die Liste unlesbar.
+try:
+    _alt96 = win.settings.get("bau_saved_plans")
+    win.settings["bau_saved_plans"] = [
+        {"id": 961, "label": "b96 Plan A", "item_name": "A96", "qty": 1,
+         "type_id": 31000, "checked": []},
+        {"id": 962, "label": "b96 Plan B", "item_name": "B96", "qty": 1,
+         "type_id": 31001, "checked": []},
+    ]
+    win._reload_saved_plans()
+    _st96 = {k: v for k, v in (getattr(win, "_plan_stat_widgets", None) or {}).items()
+             if k in (961, 962)}
+    eq("b96 jede Plan-Karte hat ihre Status-Spalte gemerkt", len(_st96), 2)
+    # KURZER TEXT: die Untergrenze bleibt stehen, sonst wuerde die Spalte bei
+    # einem leeren Plan auf null zusammenfallen.
+    for _pid96 in (961, 962):
+        _l = win._plan_est_labels.get(_pid96)
+        if _l is not None:
+            _l.setText("\u2013")
+    eq("b96 bei kurzem Text bleibt die Untergrenze",
+       win._plan_statusspalte_messen(), 250)
+    # LANGER TEXT: die Spalte waechst mit - und zwar bei ALLEN Karten gleich.
+    # DER TEXT WIRD SO LANGE VERLAENGERT, BIS ER DIE UNTERGRENZE SICHER
+    # UEBERSCHREITET. Eine feste Zeichenkette taugt nicht: wie breit sie
+    # faellt, haengt an der Schrift des Rechners - offscreen hier passte
+    # "Profit +999'999'999'999 ISK" noch in die 250 px, und die Pruefung
+    # war damit BLIND (die Rotprobe hat genau das gemeldet).
+    _l96 = win._plan_est_labels.get(961)
+    _lang96 = "Profit \u2248 +999'999'999'999 ISK"
+    if _l96 is not None:
+        _l96.setText(_lang96)
+        while _l96.sizeHint().width() < 300 and len(_lang96) < 300:
+            _lang96 += "9'"
+            _l96.setText(_lang96)
+    _breit96 = win._plan_statusspalte_messen()
+    check(f"b96 bei langem Text waechst die Spalte ({_breit96} px, Text "
+          f"{_l96.sizeHint().width() if _l96 is not None else 0} px)",
+          _l96 is not None and _breit96 > 250
+          and _breit96 >= _l96.sizeHint().width())
+    eq("b96 ... und alle Karten sind gleich breit",
+       len({w.width() for w in _st96.values()}), 1)
+    eq("b96 ... naemlich genau so breit wie gemessen",
+       sorted({w.width() for w in _st96.values()}), [_breit96])
+    # GEDECKELT: ein einzelner Riesenbetrag darf nicht die halbe Karte
+    # fressen - dann lieber die Zahl kuerzen als den Namen verdraengen.
+    if _l96 is not None:
+        _l96.setText("Profit \u2248 +" + "9'" * 40 + "999 ISK")
+    check("b96 die Spalte ist nach oben gedeckelt",
+          win._plan_statusspalte_messen() <= 460)
+    win.settings["bau_saved_plans"] = _alt96
+    win._reload_saved_plans()
+except Exception as _e96:                                # pragma: no cover
+    _fail.append(f"b96 Block geplatzt: {_e96!r}")
 
 
 # ---------------------------------------------------------------- (b2u)
@@ -4130,7 +4709,14 @@ try:
           and "60/100" in _bar2v.format())
     check("b2v Farben kommen aus theme, kein Hex im Balken-Stil noetig",
           "#" not in _bar2v.styleSheet().replace(_th.BORDER, "").replace(
-              _th.MUTED, "").replace(_th.CYAN, "").replace(_th.GREEN, ""))
+              _th.CYAN_ON_FILL, "").replace(_th.CYAN_FILL, "").replace(
+              _th.GREEN_ON_FILL, "").replace(_th.GREEN_FILL, ""))
+    # LESBAR (Nutzer 26.09.2026): Schrift CYAN_ON_FILL auf Flaeche CYAN_FILL,
+    # nicht mehr MUTED auf leuchtendem CYAN.
+    check("b2v die Schrift auf dem Balken ist die helle Flaechen-Schrift",
+          f"color: {_th.CYAN_ON_FILL}" in _bar2v.styleSheet()
+          and f"background: {_th.CYAN_FILL}" in _bar2v.styleSheet()
+          and _th.MUTED not in _bar2v.styleSheet())
     win.settings["bau_saved_plans"] = _alt2v
 except Exception as _e2v:                                # pragma: no cover
     _fail.append(f"b2v Block geplatzt: {_e2v!r}")
@@ -4398,8 +4984,12 @@ def _im_rollbereich19(widget):
 # in der Mitte scrollen muessen".
 check("b19 die Sidebar rollt nicht mit dem Inhalt weg",
       not any(win._sidebar_widget is _r.widget() for _r in _rolls19))
+# AN DER MARKE, NICHT AN DER BREITE (23.09.2026): beide Leisten messen
+# ihre Breite jetzt selbst, 210 px ist nur noch die Untergrenze und steht
+# nicht mehr in `maximumWidth()`. Eine Pruefung, die an einem Nebeneffekt
+# haengt, wird beim naechsten Umbau still blind.
 _rails19 = [f for f in win.tabs.findChildren(_QF19)
-            if f.objectName() == "Card" and f.maximumWidth() == 210]
+            if f.property("rolle") == "rail"]
 check(f"b19 die Werkzeugleisten sind auffindbar ({len(_rails19)})",
       len(_rails19) >= 3)
 eq("b19 keine Werkzeugleiste rollt mit dem Inhalt weg",
@@ -4588,8 +5178,11 @@ try:
     _app.processEvents()
     eq("b23 auf Englisch heisst der Reiter 'Industry'",
        _w_en._tab_labels["build"], "Industry")
-    eq("b23 auf Englisch heisst der Knopf 'Refresh all'",
-       _w_en.global_refresh_btn.text(), "Refresh all")
+    # SEIT 27.09.2026 "Refresh portfolio" (Nutzer: "waere Refresh portfolio
+    # nicht ein besserer Name?").
+    # 27.09.2026 zweimal umbenannt, endgueltig "Refresh" (Nutzer: "ganz schlicht").
+    eq("b23 auf Englisch heisst der Knopf 'Refresh'",
+       _w_en.global_refresh_btn.text(), "Refresh")
     check("b23 auf Englisch steht kein deutscher Umlaut in der Kopfzeile",
           not any(_z in _w_en.g_sde_btn.text() for _z in "äöüÄÖÜß"))
     # DIE SPRACHWAHL IST SICHTBAR, nicht hinter einem Dialog versteckt.
@@ -4661,8 +5254,8 @@ try:
     _app.processEvents()
     eq("b23 auf Deutsch heisst derselbe Reiter 'Bauen'",
        _w_de._tab_labels["build"], "Bauen")
-    eq("b23 auf Deutsch heisst der Knopf 'Alles aktualisieren'",
-       _w_de.global_refresh_btn.text(), "Alles aktualisieren")
+    eq("b23 auf Deutsch heisst der Knopf 'Aktualisieren'",
+       _w_de.global_refresh_btn.text(), "Aktualisieren")
     # DER EVE-DATEN-KNOPF wird nach jeder Pruefung neu beschriftet - er muss
     # dabei uebersetzt BLEIBEN. In Sitzung 11 hiess er nach dem ersten Klick
     # wieder anders, weil die Beschriftung an drei Stellen stand.
@@ -4735,9 +5328,14 @@ try:
     #  * ein fest eingetippter DEUTSCHER Text faellt nur auf ENGLISCH auf,
     #  * ein vergessenes t() (Schluessel = englischer Text) nur auf DEUTSCH.
     # Wer nur eine Seite prueft, laesst die halbe Fehlerklasse durch.
+    # GOLD-SUCHE ALS PROBE ERSETZT (22.09.2026): der Knopf ist auf
+    # Nutzer-Wunsch aus beiden Leisten verschwunden. Als zweite Probe dient
+    # jetzt der Einkaufswagen-Knopf derselben Rail-Familie - er hat wie die
+    # Gold-Suche einen echten deutschen Eintrag, taugt also fuer beide
+    # Fehlerklassen (fester deutscher Text / vergessenes t()).
     eq("b23 die Werkzeugleiste rechts ist uebersetzt",
-       [_w_de.deals_btn.text(), _w_de.gold_btn.text()],
-       ["Deals laden", "Gold-Suche"])
+       [_w_de.deals_btn.text(), _w_de._sh_copy_btn.text()],
+       ["Deals laden", "Multibuy kopieren"])
     # DIE UNTERREITER (Etappe 13): Einkaufswagen, Verkaufsliste,
     # Order-Update, Charaktere - ganze Bildschirme, die der Nutzer auf
     # Englisch noch komplett deutsch vorgefunden hat.
@@ -4796,8 +5394,8 @@ try:
        [_w_en._sh_step_toggle.text(), _w_en._sh_copy_btn.text()],
        ["\u25b6 Work-through mode", "Copy multibuy"])
     eq("b23 ... und auf Englisch englisch",
-       [_w_en.deals_btn.text(), _w_en.gold_btn.text()],
-       ["Load deals", "Gold search"])
+       [_w_en.deals_btn.text(), _w_en._sh_copy_btn.text()],
+       ["Load deals", "Copy multibuy"])
     # (Sitzung 17: Akkumulationsplan-Knopf entfernt - Pruefung entfaellt)
     # NICHT AM EINGABEFELD MESSEN: `_install_tip` verschiebt den Tooltip
     # absichtlich vom Feld auf die BESCHRIFTUNG darueber (damit er beim
@@ -4849,6 +5447,76 @@ if _ctx24 and _ctx24.get("info") is not None:
     _ctx24["info"].setText("Testtext")
     check("b24 auch nach dem Beschreiben bleibt es unsichtbar",
           not _ctx24["info"].isVisible())
+
+
+# ---------------------------------------------------------------- (b95)
+# DER EINKAUFSWAGEN SITZT IN DER RECHTEN LEISTE (Nutzer 23.09.2026: "die
+# Einkaufsliste ist eine sehr wichtige Option, Hervorhebung" - und zur
+# Leiste selbst: "bei den Trade Tabs ist diese bisher scheinbar etwas
+# unnoetig ... wenn wir sie nicht sinnvoll befuellen koennen, sollte man
+# sie weglassen"). Sie wird befuellt statt weggelassen.
+#
+# AM ECHTEN FENSTER: eine Quelltextsuche saehe nicht, WO ein Widget
+# wirklich haengt - genau das ist hier die Zusage.
+try:
+    from PySide6.QtWidgets import QFrame as _QF95
+
+    def _rail_von95(w):
+        """Die Leiste ueber einem Widget - oder None."""
+        p = w.parentWidget() if w is not None else None
+        while p is not None:
+            if isinstance(p, _QF95) and p.property("rolle") == "rail":
+                return p
+            p = p.parentWidget()
+        return None
+
+    _ohne95 = []
+    _schmal95 = []
+    for _k95 in ("day", "swing", "region"):
+        _c95 = (getattr(win, "_ladder_ctx", None) or {}).get(_k95) or {}
+        _b95 = _c95.get("addb")
+        _r95 = _rail_von95(_b95)
+        if _r95 is None:
+            _ohne95.append(_k95)
+            continue
+        # BREITE GEMESSEN (Lehre b66): "In den Einkaufswagen" ist der
+        # laengste Knopf im Programm; auf seinem Windows sind dieselben
+        # Widgets rund 1,85x breiter als offscreen hier.
+        if _r95.minimumWidth() < _b95.sizeHint().width() + 24:
+            _schmal95.append(f"{_k95}: Leiste {_r95.minimumWidth()} px, "
+                             f"Knopf {_b95.sizeHint().width()} px")
+    eq("b95 in allen drei Handels-Reitern haengt der Wagen in der Leiste",
+       _ohne95, [])
+    eq("b95 ... und die Leiste fasst den Wagen-Knopf samt Raendern",
+       _schmal95, [])
+    # HERVORHEBUNG: der Knopf ist hoeher als ein gewoehnlicher Knopf und
+    # traegt die Primaer-Optik. Ohne das geht er in der Leiste unter.
+    _ab95 = ((getattr(win, "_ladder_ctx", None) or {}).get("day") or {}).get("addb")
+    check("b95 der Wagen-Knopf ist hervorgehoben (hoch + Primaer-Optik)",
+          _ab95 is not None and _ab95.minimumHeight() >= 36
+          and _ab95.objectName() == "Primary")
+    # DER ALTE KASTEN OBEN RECHTS IST IM DAYTRADE GANZ WEG - dort ist die
+    # Leiter unbrauchbar (fremde Kauf-Orders) und der Wagen umgezogen; ein
+    # leerer Kasten wuerde die Strategie-Karte grundlos auf 60 % druecken.
+    # Auf der Verkaufsseite bleibt er, dort steht das Orderbuch drin.
+    def _box_von95(k):
+        _c = (getattr(win, "_ladder_ctx", None) or {}).get(k) or {}
+        _t = _c.get("table")
+        return _t.parentWidget() if _t is not None else None
+    _bd95 = _box_von95("day")
+    _bs95 = _box_von95("swing")
+    check("b95 im Daytrade ist der Leiter-Kasten ganz versteckt",
+          _bd95 is not None and not _bd95.isVisibleTo(_bd95.parentWidget()))
+    check("b95 ... im Swing Trade steht er weiter da",
+          _bs95 is not None and _bs95.isVisibleTo(_bs95.parentWidget()))
+    # DIE ZEILE SAGT OHNE RICHTUNGSANGABE, WAS GEWAEHLT IST - "unten in der
+    # Liste" stimmte nicht mehr, seit der Wagen rechts sitzt.
+    _sel95 = ((getattr(win, "_ladder_ctx", None) or {}).get("day") or {}).get("sel")
+    check("b95 der Platzhalter nennt keine Richtung mehr",
+          _sel95 is not None and "below" not in _sel95.text()
+          and "unten" not in _sel95.text())
+except Exception as e:
+    check(f"b95 Einkaufswagen in der Leiste: {type(e).__name__}: {e}", False)
 
 
 # ---------------------------------------------------------------- (b25)
@@ -5215,8 +5883,13 @@ try:
           _hat_kaestchen41(_p_tei41.get("KompB")))
     check("b41 teilweise: die offene Position bleibt ungedimmt",
           not _ist_gedimmt41(_p_tei41.get("KompB")))
-    check("b41 teilweise: die laufende Position hat KEIN Kaestchen mehr",
-          not _hat_kaestchen41(_p_tei41.get("KompA")))
+    # UMGEKEHRT AM 21.09.2026 (s. aa384): das Kaestchen BLEIBT. Der
+    # Hand-Haken ist die einzige Quelle, aus der die Reservierung die Zutaten
+    # einer Zeile abbucht - ohne Kaestchen blieb ihr Material fuer immer
+    # gesperrt. Punkt und Haken sagen Verschiedenes: der Punkt "ESI sieht das
+    # als gebaut", der Haken "ich bin durch, das Material darf weg".
+    check("b41 teilweise: die laufende Position behaelt ihr Kaestchen",
+          _hat_kaestchen41(_p_tei41.get("KompA")))
     check("b41 teilweise: die Stufe bleibt aufgeklappt",
           _s_tei41 is not None and _s_tei41.isExpanded())
     # GEGENPROBE ZUM MITZIEHEN: solange EINE Position offen ist, behaelt der
@@ -5246,8 +5919,8 @@ try:
     # ihrer eigenen Kinder.
     _cz_lau41 = (_s_lau41.child(0)
                  if _s_lau41 is not None and _s_lau41.childCount() else None)
-    check("b41 in Bau: die Charakter-Zeile hat KEIN Kaestchen mehr",
-          not _hat_kaestchen41(_cz_lau41))
+    check("b41 in Bau: die Charakter-Zeile behaelt ihr Kaestchen",
+          _hat_kaestchen41(_cz_lau41))
     check("b41 in Bau: die Charakter-Zeile ist gedimmt",
           _ist_gedimmt41(_cz_lau41))
     check("b41 in Bau: auf der Charakter-Zeile steht der LAUF-Punkt",
@@ -5255,8 +5928,13 @@ try:
           and _cz_lau41.icon(0).cacheKey() == _icons41.lauf_punkt().cacheKey())
     check("b41 in Bau: die Zeile ist gedimmt",
           _ist_gedimmt41(_p_lau41.get("KompA")))
-    check("b41 in Bau: KEIN Kaestchen mehr",
-          not _hat_kaestchen41(_p_lau41.get("KompA")))
+    check("b41 in Bau: die Zeile behaelt ihr Kaestchen",
+          _hat_kaestchen41(_p_lau41.get("KompA")))
+    # ... und es ist LEER, nicht vorgehakt: ein Haken, den der Nutzer nicht
+    # gesetzt hat, waere genau die Falle aus Sitzung 22.
+    check("b41 in Bau: das Kaestchen ist LEER, nicht vorgehakt",
+          _p_lau41.get("KompA") is not None
+          and _p_lau41["KompA"].checkState(0) != Qt.Checked)
     # DER PUNKT MUSS DER RICHTIGE SEIN. Nur "irgendein Icon" zu pruefen
     # waere blind gegen die Verwechslung der beiden Zustaende - und genau
     # die ist die Aussage, die der Nutzer sehen will.
@@ -5333,8 +6011,15 @@ try:
           _p_ger41.get("KompA") is not None
           and _p_ger41["KompA"].icon(0).cacheKey()
           == _icons41.gruener_punkt().cacheKey())
-    check("b41 geliefert: kein Kaestchen mehr",
-          not _hat_kaestchen41(_p_ger41.get("KompA")))
+    check("b41 geliefert: das Kaestchen bleibt (umgekehrt 21.09.2026)",
+          _hat_kaestchen41(_p_ger41.get("KompA")))
+    # DIE ZUSAGE DAHINTER: genau ueber diesen Haken gibt der Nutzer das
+    # Material frei, das die Zeile noch reserviert. Steht er nicht zur
+    # Verfuegung, kann ein fertiger Plan sich nie entlasten (aa384).
+    check("b41 geliefert: der Tooltip sagt, was das Abhaken bewirkt",
+          _p_ger41.get("KompA") is not None
+          and ("releases the material" in (_p_ger41["KompA"].toolTip(0) or "")
+               or "gibt das Material" in (_p_ger41["KompA"].toolTip(0) or "")))
     check("b41 geliefert: gedimmt",
           _ist_gedimmt41(_p_ger41.get("KompA")))
     check("b41 geliefert: die Stufe ist zugeklappt",
@@ -6269,18 +6954,32 @@ check("b53 bei einem einzelnen Charakter wird NICHT gepaart",
 _srcm54 = open(os.path.join(_ROOT,
                             "eve_trader", "ui", "mw_bauplan_tabs.py"),
                encoding="utf-8").read()
-check("b54 der Fehlbedarf-Banner nennt ALLE Namen (kein [:3] mehr)",
-      "for _t, *_ in _fehl_auto)" in _srcm54
-      and "for _t, *_ in _fehl_auto[:3])" not in _srcm54)
+# SEIT 26.09.2026 KEIN BANNER MEHR (Nutzer: "den liest sowieso keiner,
+# was fehlt sieht man unten in der Liste") - Zusage (1) wird: kein Banner.
+check("b54 kein Fehlbedarf-Banner mit Namensliste mehr (Zeilen tragen es)",
+      "materials will be missing for the" not in _srcm54
+      and "for _t, *_ in _fehl_auto" not in _srcm54)
 # AUF DIE BEDINGUNG PRUEFEN, NICHT AUF DEN TEXT: eine Mutation, die den
 # Zweig mit `if False and ...` totlegt, laesst den Text stehen - die erste
 # Fassung dieser Pruefung blieb dabei GRUEN. Die Lehre aus Sitzung 15.
+# ANKER OHNE ZEILENUMBRUCH: der Text steht im Quelltext ueber zwei Zeilen,
+# und ein split() auf die ganze Zusage kracht statt rot zu werden (dieselbe
+# Lehre wie aa393: eine Pruefung muss ROT werden, nicht abbrechen).
+_ank54 = "{fehlt} missing "
 check("b54 die Zeile traegt den Live-Fehlbedarf",
       "_bd_fehl_live" in _srcm54
-      and 'LIVE: only {da} on hand' in _srcm54
+      and _ank54 in _srcm54
       and "            if _fl and _fl[0] > 0:" in _srcm54)
 check("b54 und faerbt sich rot",
-      "status_col = theme.RED" in _srcm54.split("LIVE: only {da} on hand")[1][:400])
+      "status_col = theme.RED" in _srcm54.split(_ank54)[-1][:900])
+# DIE ZAHL HEISST NICHT MEHR "LIVE" (Nutzer 25.09.2026: die Zeile sagte
+# "LIVE: only 9'913 on hand", im Hangar lagen 198 - sie kommt aus
+# max(eingefroren, live) und war nie der Live-Stand).
+check("b54 die gerechnete Zahl heisst nicht mehr 'LIVE'",
+      "LIVE: only {da} on hand" not in _srcm54)
+check("b54 ... und der echte Hangar-Stand steht daneben, wenn er abweicht",
+      '_echt = int((getattr(self, "_bd_live_stock", None) or {})' in _srcm54
+      and "really in the hangar: {n}" in _srcm54)
 
 # RESERVIERUNG IN BEIDE RICHTUNGEN - funktional, an der geteilten Funktion.
 # Das ist der eigentliche Grund des Verlusts: der aeltere Plan sah den
@@ -8304,7 +9003,8 @@ try:
     eq("b7u die Karte steht direkt unter Production depth",
        _karten7u, ["Build or buy?", "Production depth", "Reprocessing", "Blacklist",
                    "Do I have the blueprints?"])
-    eq("b7u ... und ist zugeklappt, auch mit Schalter an", _zu7u.get("Reprocessing"), False)
+    # Seit 27.09.2026 OFFEN (Nutzer: "Reprocessing ausklappen als Standard").
+    eq("b7u ... und ist offen, auch mit Schalter an", _zu7u.get("Reprocessing"), True)
     _sc7u = getattr(win, "_bd_reprocess_struct_cb", None)
     check("b7u die Struktur-Auswahl steht auf der Tatara",
           _sc7u is not None and _sc7u.currentData() == "s7u")
@@ -8785,6 +9485,248 @@ try:
           and "R&R Yard" not in _tops7w[_ix_ub7w])
     check("b7w ... und keine Stufe 'Reactions - Intermediate' (X laeuft nur unrefined)",
           not any(_t4("Reactions \u2013 Intermediate") in x for x in _tops7w))
+    # ------------------------------------------------------------ (b102)
+    # ZIELZEIT JE STUFE (Nutzer 24.09.2026) - am echten Runplaner-Baum.
+    # Hier steht ein GEFUELLTER Baum mit mehreren Stufen; darum haengt die
+    # Pruefung hier und baut sich keinen zweiten Plan.
+    try:
+        from PySide6.QtWidgets import QComboBox as _QCb102
+        _alt102 = (dict(win.settings.get("bau_runplan_ziel") or {}),
+                   win.settings.get("bau_runplan_ziel_std", 0))
+        # DER NEUAUFBAU WIRD FUER DIESEN BLOCK STILLGELEGT: eine Auswahl
+        # stoesst ihn an, und er loescht genau die Felder, die hier geprueft
+        # werden ("Internal C++ object already deleted", gemessen 24.09.2026).
+        # Geprueft wird, was die Auswahl EINSTELLT - der Neuaufbau selbst
+        # haengt an derselben Methode wie ueberall sonst.
+        _altfr102 = getattr(win, "_bd_full_rebuild", None)
+        win._bd_full_rebuild = lambda *_a, **_k: None
+        _ohne102 = []
+        for _i102 in range(_tr7w.topLevelItemCount()):
+            _it102 = _tr7w.topLevelItem(_i102)
+            _w102 = _tr7w.itemWidget(_it102, 2)
+            # NUR ECHTE PLANER-STUFEN (Rolle 8) - die Reprocessing-Bloecke
+            # daneben sind keine und duerfen keine Felder haben. Eine FERTIGE
+            # Stufe auch nicht: dort steht die Fertig-Meldung.
+            _ist102 = (_it102.data(1, Qt.UserRole + 8) is not None
+                       and not (_it102.text(2) or "").strip())
+            _hat102 = _w102 is not None and len(_w102.findChildren(_QCb102)) == 2
+            if _ist102 != _hat102:
+                _ohne102.append(_it102.text(0)[:30])
+        eq("b102 genau die offenen Stufenzeilen tragen Tage- und Stunden-Feld",
+           _ohne102, [])
+        _cbs102 = []
+        for _i in range(_tr7w.topLevelItemCount()):
+            _wx = _tr7w.itemWidget(_tr7w.topLevelItem(_i), 2)
+            _cx = _wx.findChildren(_QCb102) if _wx is not None else []
+            if len(_cx) == 2:
+                _cbs102 = _cx
+                break
+        check("b102 es gibt eine Stufe mit den beiden Feldern", len(_cbs102) == 2)
+        _cd102 = _cbs102[0] if _cbs102 else None
+        _ch102 = _cbs102[1] if _cbs102 else None
+        # JEDE STUNDE IST WAEHLBAR (Nutzer 24.09.2026: "es springt von 23 h
+        # auf 1 T 1 h, bei Composite geht das nicht, zu kleine Abstaende") -
+        # ABER NUR, WAS AUCH MOEGLICH IST ("das Dropdown erlaubt
+        # Einstellungen, die nicht moeglich sind, 0 d und 1 h geht nicht").
+        _std102 = [_ch102.itemData(_i) for _i in range(_ch102.count())] \
+            if _ch102 is not None else []
+        # OHNE ZIEL STEHT EIN STRICH VORN (Nutzer 25.09.2026: "da steht 7 h,
+        # sind aber eigentlich 5 h 36 m" - die 7 war die aufgerundete
+        # Mindestdauer und sah aus wie eine Vorgabe). Dahinter folgt die
+        # luecklose Reihe bis 23.
+        eq("b102 ohne Ziel steht vorn ein Strich statt einer Stundenzahl",
+           (_std102[0] if _std102 else None), -999)
+        check("b102 die Stunden sind eine luecklose Reihe bis 23",
+              _std102[1:] == list(range(_std102[1], 24)) if len(_std102) > 1
+              else False)
+        eq("b102 der erste Eintrag der Tage ist 'so schnell wie moeglich'",
+           _cd102.itemData(0) if _cd102 is not None else "x", 0)
+        eq("b102 der letzte ist 'so lange wie noetig'",
+           _cd102.itemData(_cd102.count() - 1) if _cd102 is not None else "x", -1)
+        eq("b102 ohne Einstellung steht die Wahl auf 'so schnell wie moeglich'",
+           _cd102.currentData() if _cd102 is not None else "x", 0)
+        # ... UND DAS FELD BLEIBT BEDIENBAR. Frueher war es gesperrt; dann
+        # kam man ohne Umweg ueber die Tage nicht mehr auf eine Stundenzahl
+        # (Nutzer 25.09.2026: "dann kann man nicht mehr umstellen").
+        check("b102 ... und das Stunden-Feld bleibt trotzdem waehlbar",
+              _ch102 is not None and _ch102.isEnabled())
+        # 23 STUNDEN SIND EINE WAHL, KEIN ZIELEN.
+        _st102 = _tr7w.topLevelItem(
+            next(_i for _i in range(_tr7w.topLevelItemCount())
+                 if _tr7w.itemWidget(_tr7w.topLevelItem(_i), 2) is not None
+                 and len(_tr7w.itemWidget(
+                     _tr7w.topLevelItem(_i), 2).findChildren(_QCb102)) == 2)
+        ).data(1, Qt.UserRole + 8)
+        # 0 TAGE waehlen, dann die Stunden: die Reihe beginnt beim kleinsten
+        # moeglichen Wert, und 23 h ist ein Eintrag, kein Zielen.
+        # DIE TAGE BEGINNEN BEI DEN VOLLEN TAGEN DER MINDESTDAUER - eine
+        # Stufe, die 36 h braucht, bietet "0 Tage" gar nicht erst an.
+        _minh102 = int((float((getattr(win, "_bd_last_stage_times", None) or {})
+                              .get(_st102) or 0.0) + 3599) // 3600)
+        eq("b102 der erste Tages-Eintrag sind die vollen Tage der Mindestdauer",
+           _cd102.itemData(1) if _cd102 is not None and _cd102.count() > 2 else "x",
+           1000 + _minh102 // 24)
+        _i0d = _cd102.findData(1000 + _minh102 // 24)
+        if _i0d >= 0:
+            _cd102.setCurrentIndex(_i0d)
+            _i23 = _ch102.findData(23)
+            check("b102 23 h stehen im ersten Tages-Eintrag zur Wahl", _i23 >= 0)
+            if _i23 >= 0:
+                _ch102.setCurrentIndex(_i23)
+                eq("b102 23 h lassen sich genau so einstellen",
+                   win._runplan_ziel_stunden(_st102),
+                   (_minh102 // 24) * 24 + 23)
+        _i1d = _cd102.findData(1000 + _minh102 // 24 + 1)
+        if _i1d >= 0:
+            _cd102.setCurrentIndex(_i1d)
+            _i23b = _ch102.findData(23)
+            if _i23b >= 0:
+                _ch102.setCurrentIndex(_i23b)
+            eq("b102 Tage und Stunden addieren sich",
+               win._runplan_ziel_stunden(_st102),
+               (_minh102 // 24 + 1) * 24 + int(_ch102.currentData() or 0))
+        _cd102.setCurrentIndex(_cd102.count() - 1)
+        eq("b102 'so lange wie noetig' kommt ohne Grenze beim Planer an",
+           win._runplan_ziel_sekunden().get(_st102), float("inf"))
+        check("b102 ... und sperrt das Stunden-Feld", not _ch102.isEnabled())
+        # UNMOEGLICHES STEHT NICHT ZUR WAHL: die Stufe im Test braucht laenger
+        # als eine Stunde, also gibt es bei 0 Tagen kein "1 h".
+        _min102 = float((getattr(win, "_bd_last_stage_times", None) or {}).get(
+            _st102) or 0.0)
+        if _i0d >= 0 and _min102 > 2 * 3600.0:
+            _cd102.setCurrentIndex(_i0d)
+            eq("b102 eine Stunde steht bei 0 Tagen gar nicht erst zur Wahl",
+               _ch102.findData(1), -1)
+        # AUFGEKLAPPT BLEIBT AUFGEKLAPPT (Nutzer 24.09.2026: "dann laedt es
+        # auch keine Runs" - der Neuaufbau klappte jede Charakterzeile wieder
+        # zu, und die Runs stehen darunter).
+        _st_o102 = next((_tr7w.topLevelItem(_i)
+                         for _i in range(_tr7w.topLevelItemCount())
+                         if _tr7w.topLevelItem(_i).childCount()), None)
+        check("b102 es gibt eine Stufe mit Charakterzeilen", _st_o102 is not None)
+        if _st_o102 is not None and _altfr102 is not None:
+            _c_o102 = _st_o102.child(0)
+            _c_o102.setExpanded(True)
+            _k_o102 = _c_o102.data(0, Qt.UserRole + 6)
+            win._bd_full_rebuild = _altfr102
+            win._bd_full_rebuild()
+            _app.processEvents()
+            def _czeilen102():
+                _tr_x = getattr(win, "_sched_tree_ref", None)
+                _out = []
+                for _i in range(_tr_x.topLevelItemCount()
+                                if _tr_x is not None else 0):
+                    _st_x = _tr_x.topLevelItem(_i)
+                    for _j in range(_st_x.childCount()):
+                        _c_x = _st_x.child(_j)
+                        if _c_x.data(0, Qt.UserRole + 6):
+                            _out.append(_c_x)
+                return _out
+            _zeilen102 = _czeilen102()
+            _wieder = any(str(_c.data(0, Qt.UserRole + 6)) == str(_k_o102)
+                          and _c.isExpanded() for _c in _zeilen102)
+            check("b102 eine aufgeklappte Charakterzeile bleibt nach dem "
+                  "Neuaufbau offen", _wieder)
+            # GEGENPROBE: eine Zeile, die der Nutzer nie angefasst hat, folgt
+            # weiter der Vorgabe (offene Stufe -> zu). Ohne sie wuerde eine
+            # Prueffassung, die einfach ALLES aufklappt, gruen sein.
+            _unberuehrt = [_c for _c in _zeilen102
+                           if str(_c.data(0, Qt.UserRole + 6)) != str(_k_o102)]
+            check("b102 eine nie angefasste Charakterzeile bleibt zu",
+                  bool(_unberuehrt) and not any(_c.isExpanded()
+                                                for _c in _unberuehrt))
+            # UND ZUGEKLAPPT BLEIBT ZUGEKLAPPT - beide Richtungen zaehlen.
+            for _c in _zeilen102:
+                if str(_c.data(0, Qt.UserRole + 6)) == str(_k_o102):
+                    _c.setExpanded(False)
+            win._bd_full_rebuild()
+            _app.processEvents()
+            check("b102 ... und eine wieder zugeklappte bleibt zu",
+                  not any(str(_c.data(0, Qt.UserRole + 6)) == str(_k_o102)
+                          and _c.isExpanded() for _c in _czeilen102()))
+        win.settings["bau_runplan_ziel"] = _alt102[0]
+        win.settings["bau_runplan_ziel_std"] = _alt102[1]
+        if _altfr102 is not None:
+            win._bd_full_rebuild = _altfr102
+
+        # ------------------------------------------------------- (b103)
+        # HAKEN UEBERLEBEN EINEN CHARAKTER-WECHSEL (Nutzer-Befund
+        # 24.09.2026: "ich habe mit Peanut Motor Runs gemacht und abgehakt,
+        # danach Charaktere ausgewechselt und Apply gedrueckt - nun sind die
+        # abgehakten Runs verschwunden"). Geprueft wird die Rechnung, nicht
+        # die Zeile: derselbe Haken unter einer ANDEREN Charakter-ID.
+        _rk103 = dict(getattr(win, "_bd_runplan_runs_by_key", None) or {})
+        # DIE ECHTE ZEILE ABHAKEN, nicht die Methode aufrufen (Lehre b87/b88:
+        # eine Pruefung, die den Handler umgeht, sieht eine abgerissene
+        # Verdrahtung nie).
+        def _suche103(_par):
+            """Erste offene Zeile mit Runs - ohne QTreeWidgetItemIterator, der
+            in PySide6 beim Aufraeumen abstuerzte (gemessen 24.09.2026)."""
+            for _i in range(_par.childCount() if hasattr(_par, "childCount")
+                            else _par.topLevelItemCount()):
+                _c = (_par.child(_i) if hasattr(_par, "childCount")
+                      else _par.topLevelItem(_i))
+                _k = _c.data(0, Qt.UserRole + 6)
+                if (_k in _rk103 and int((_rk103.get(_k) or (0, 0))[1] or 0) > 0
+                        and _c.data(0, Qt.CheckStateRole) is not None
+                        and _c.checkState(0) != Qt.Checked):
+                    return _c
+                _tief = _suche103(_c)
+                if _tief is not None:
+                    return _tief
+            return None
+        _it103 = _suche103(_tr7w)
+        check("b103 es gibt eine offene Zeile mit Runs zum Abhaken", _it103 is not None)
+        if _it103 is not None:
+            _key103 = _it103.data(0, Qt.UserRole + 6)
+            _tid103, _runs103 = _rk103[_key103]
+            _stufe103 = _key103.split("|")[0]
+            _erl103 = dict(getattr(win, "_bd_runplan_erledigt", None) or {})
+            win._bd_runplan_erledigt = {}
+            _it103.setCheckState(0, Qt.Checked)
+            _app.processEvents()
+            eq("b103 ein Haken merkt die Runs je Item, ohne Charakter",
+               int((getattr(win, "_bd_runplan_erledigt", None) or {}).get(
+                   f"{_stufe103}|{int(_tid103)}", 0)), int(_runs103))
+            _it103.setCheckState(0, Qt.Unchecked)
+            _app.processEvents()
+            eq("b103 ... und das Loesen nimmt sie wieder weg",
+               int((getattr(win, "_bd_runplan_erledigt", None) or {}).get(
+                   f"{_stufe103}|{int(_tid103)}", 0)), 0)
+            # DER SCHLUESSEL DARF SICH AENDERN: nach der Umverteilung heisst
+            # dieselbe Arbeit anders, die erledigten Runs bleiben dieselben.
+            win._runplan_erledigt_pflegen(_key103, True)
+            _neu103 = f"{_stufe103}|999999|{int(_tid103)}"
+            win._bd_runplan_runs_by_key[_neu103] = (int(_tid103), int(_runs103))
+            win._runplan_erledigt_pflegen(_neu103, False)
+            eq("b103 derselbe Haken unter einer anderen Charakter-ID zaehlt dasselbe Item",
+               int((getattr(win, "_bd_runplan_erledigt", None) or {}).get(
+                   f"{_stufe103}|{int(_tid103)}", 0)), 0)
+            win._bd_runplan_erledigt = _erl103
+        # EINE STUFE EINSTELLEN: die Zahl landet in den Einstellungen, und
+        # der Planer bekommt Sekunden - nicht Stunden.
+        win._runplan_ziel_setzen("reaction_2", 23)
+        eq("b102 die Zielzeit einer Stufe wird gemerkt",
+           win._runplan_ziel_stunden("reaction_2"), 23)
+        eq("b102 ... und kommt als Sekunden beim Planer an",
+           win._runplan_ziel_sekunden().get("reaction_2"), 23 * 3600.0)
+        eq("b102 ... eine andere Stufe bleibt frei",
+           win._runplan_ziel_sekunden().get("component"), None)
+        # DIE VORGABE OBEN GILT FUER ALLE - und nimmt die Ausnahme zurueck,
+        # sonst waehlt man oben etwas und unten bleibt eine Stufe stumm.
+        win._runplan_ziel_alle_gewaehlt(8)
+        eq("b102 die Vorgabe gilt fuer jede Stufe",
+           sorted(win._runplan_ziel_sekunden().items()),
+           sorted({_st: 8 * 3600.0 for _st in win._RUNPLAN_STUFEN}.items()))
+        eq("b102 ... und die Ausnahme der Stufe ist weg",
+           dict(win.settings.get("bau_runplan_ziel") or {}), {})
+        win._runplan_ziel_alle_gewaehlt(0)
+        eq("b102 'so schnell wie moeglich' laesst den Planer wieder frei",
+           win._runplan_ziel_sekunden(), {})
+        win.settings["bau_runplan_ziel"] = _alt102[0]
+        win.settings["bau_runplan_ziel_std"] = _alt102[1]
+    except Exception as _e102:                           # pragma: no cover
+        _fail.append(f"b102 Block geplatzt: {_e102!r}")
     _st7w_times = getattr(win, "_bd_last_stage_times", None) or {}
     check("b7w ... die Stufenzeit 'unrefined' ist gesetzt (6 Runs a 6 h auf 1 Slot = 36 h)",
           float(_st7w_times.get("unrefined", 0) or 0) > 0)
@@ -9072,6 +10014,26 @@ try:
     eq("b7v Gesamt-Baukosten ENTHALTEN die Fracht",
        _lb7v["= Baukosten gesamt"].text(),
        _isk7v(6000.0 + 267.0 + _jc7v + _sc7v + _iv7v, suffix=False))
+    # JEDE ZEILE ERKLAERT SICH (Nutzer 25.09.2026: "auf allen Zeilen eine
+    # Mouseover-Info fuer alle ISK-Eintraege"). Geprueft wird die WERT-Zelle
+    # jeder Zeile der linken Spalte - ohne Ausnahme, sonst faellt beim
+    # naechsten Umbau still eine heraus.
+    _ohne7v = sorted(k for k, _l in _lb7v.items()
+                     if not (_l.toolTip() or "").strip())
+    check("b7v jede Detail-Zeile hat eine Kurzerklaerung"
+          + (" - ohne: " + ", ".join(_ohne7v) if _ohne7v else ""),
+          not _ohne7v)
+    _tips7v = getattr(win, "_bd_detail_tips", None) or {}
+    check("b7v die Erklaerungen kommen aus EINER Stelle", len(_tips7v) >= 18)
+    # GEGENPROBE: die Erklaerung steht auch an der BESCHRIFTUNG, nicht nur
+    # an der Zahl - man zeigt beim Lesen auf das Wort, nicht auf den Betrag.
+    # Die Tooltips werden fuers Anzeigen in ein <div> gewickelt (tooltips.py),
+    # also auf ENTHALTEN pruefen statt auf Gleichheit - sonst prueft man die
+    # Verpackung statt die Zusage.
+    _erw7v = {_t4(_x) for _x in _tips7v.values()}
+    _caps7v = [w for w in (_dlg7v.findChildren(QLabel) if _dlg7v else [])
+               if any(_e in (w.toolTip() or "") for _e in _erw7v)]
+    check("b7v ... und ebenso an den Beschriftungen", len(_caps7v) >= 18)
     # AUSVERKAUFT (Nutzer 18.09.2026: "was macht der Bauplan, wenn in Jita
     # etwas nicht da ist?"): der Materialien-Tab nennt das Material mit
     # "da / gebraucht" - nicht nur eine Zahl im Tooltip.
@@ -9196,6 +10158,4093 @@ try:
 except Exception as _e81:                                # pragma: no cover
     _fail.append(f"b81 Ladeschirm -1: {type(_e81).__name__}: {_e81}")
 
+
+# ---------------------------------------------------------------- (b82)
+# STRUKTUR AUS DER HUB-BOX ENTFERNEN (Nutzer 19.09.2026). Am Fenster: eine
+# Struktur merken, Box neu aufbauen, entfernen, Box neu aufbauen - der
+# Eintrag muss weg sein und die Auswahl darf nicht auf ihr haengen bleiben.
+try:
+    from eve_trader import store as _st82
+    _sid82 = 990082001
+    for _f82 in _st82.list_favorites():
+        if _f82.get("structure_id") == _sid82:
+            _st82.remove_favorite(_f82["id"])
+    _cache82 = dict(win.settings.get("struct_market_cache") or {})
+    win.settings.setdefault("struct_market_cache", {})[str(_sid82)] = True
+    _st82.add_favorite({"kind": "structure", "name": "Probe-Keepstar 82",
+                        "structure_id": _sid82, "character_id": 1,
+                        "region_id": 10000002, "station_id": None})
+    win._reload_hub_structures()
+    _idx82 = next((i for i in range(win.g_hub.count())
+                   if isinstance(win.g_hub.itemData(i), dict)
+                   and win.g_hub.itemData(i).get("structure_id") == _sid82), -1)
+    check("b82 die gemerkte Struktur steht in der Hub-Box", _idx82 >= 0)
+    win.g_hub.setCurrentIndex(_idx82)
+    check("b82 die Hub-Box bietet ein eigenes Kontextmenue",
+          win.g_hub.contextMenuPolicy() == Qt.CustomContextMenu)
+    win._hub_entfernen(_sid82)
+    _app.processEvents()
+    check("b82 nach dem Entfernen ist sie aus der Box verschwunden",
+          all(not (isinstance(win.g_hub.itemData(i), dict)
+                   and win.g_hub.itemData(i).get("structure_id") == _sid82)
+              for i in range(win.g_hub.count())))
+    check("b82 ... und aus der Datenbank",
+          not any(f.get("structure_id") == _sid82 for f in _st82.list_favorites()))
+    check("b82 die Auswahl haengt nicht auf dem geloeschten Eintrag",
+          not (isinstance(win.g_hub.currentData(), dict)
+               and win.g_hub.currentData().get("structure_id") == _sid82))
+    check("b82 NPC-Hubs bekommen KEINEN Entfernen-Eintrag (nur dict-Daten)",
+          'if not isinstance(data, dict) or not data.get("structure_id"):' in
+          __import__("inspect").getsource(type(win)._hub_kontextmenue))
+    win.settings["struct_market_cache"] = _cache82
+except Exception as _e82:                                # pragma: no cover
+    _fail.append(f"b82 Hub entfernen: {type(_e82).__name__}: {_e82}")
+
+
+# ---------------------------------------------------------------- (b83)
+# MULTI-BAUPLAN SCHRITT 2 (1.0.9): die Oberflaeche fragt nicht mehr
+# "tid == type_id", sondern "tid in Enden". Am Fenster mit einem Mini-
+# Rezept (A x20, B x10 teilen X): Stufe, Kategorie-ME, ME je Ende,
+# Schnellschaetzung der Plan-Karte fuer einen gespeicherten Multi-Plan.
+try:
+    _A83, _B83, _X83, _M83 = 970001, 970002, 970003, 970004
+    _BPA83, _BPB83, _BPX83 = 980001, 980002, 980003
+
+    class _Rec83:
+        product_to_bp = {_A83: (_BPA83, I.MANUFACTURING, 1),
+                         _B83: (_BPB83, I.MANUFACTURING, 1),
+                         _X83: (_BPX83, I.REACTION, 100)}
+        bp_materials = {(_BPA83, I.MANUFACTURING): [(_X83, 2), (_M83, 10)],
+                        (_BPB83, I.MANUFACTURING): [(_X83, 5), (_M83, 20)],
+                        (_BPX83, I.REACTION): [(_M83, 50)]}
+        activity_time = {(_BPA83, I.MANUFACTURING): 3600, (_BPB83, I.MANUFACTURING): 7200,
+                         (_BPX83, I.REACTION): 1800}
+        activity_max_runs = {}
+        reaction_products = {_X83}
+        invention_for_bpc = {}
+        bp_products = {}
+        item_cat = {}
+
+    _rb83 = I.buendel_rezepte(_Rec83(), [(_A83, 20), (_B83, 10)])
+    eq("b83 _bd_enden: Einzelplan -> {type_id}", win._bd_enden(_A83, _Rec83()), {_A83})
+    eq("b83 _bd_enden: Buendel -> seine Enden", win._bd_enden(I.BUENDEL_ID, _rb83),
+       {_A83, _B83})
+    eq("b83 _bd_enden: Buendel ohne Rezepte -> leer, nie das Buendel selbst",
+       win._bd_enden(I.BUENDEL_ID, None) if getattr(win, "_bd_recipes", None) is None
+       else set(), set())
+    _alt83 = getattr(win, "_bd_recipes", None)
+    win._bd_recipes = _rb83
+    try:
+        eq("b83 Stufe: beide Enden sind 'endproduct' (endprodukt = Buendel-ID)",
+           (win._bau_stufe_fuer_item(_A83, {_X83}, {}, I.BUENDEL_ID),
+            win._bau_stufe_fuer_item(_B83, {_X83}, {}, I.BUENDEL_ID),
+            win._bau_stufe_fuer_item(_M83, {_X83}, {}, I.BUENDEL_ID),
+            win._bau_stufe_fuer_item(_X83, {_X83}, {_X83: 2}, I.BUENDEL_ID)),
+           ("endproduct", "endproduct", "components", "reaction_2"))
+        eq("b83 Stufe: eine Enden-MENGE geht ebenfalls",
+           win._bau_stufe_fuer_item(_B83, set(), {}, {_A83, _B83}), "endproduct")
+        _ids83 = [_A83, _B83, _X83, _M83]
+        _grp83 = {t83: "" for t83 in _ids83}
+        _cat83 = win._bau_category_me_map(_ids83, _grp83, {_X83}, I.BUENDEL_ID,
+                                          recipes=_rb83)
+        check("b83 Kategorie-ME: KEIN Ende bekommt Kategorie-ME (wie das Endprodukt)",
+              _A83 not in _cat83 and _B83 not in _cat83 and _M83 in _cat83)
+        _me_alt83 = getattr(win, "_bd_me", None)
+        _je_alt83 = getattr(win, "_bd_me_je_ende", None)
+        win._bd_me = 3.0
+        win._bd_me_je_ende = {_A83: 7.0}
+        _mm83 = win._bau_me_maps(_ids83, _grp83, {_X83}, _cat83, I.BUENDEL_ID,
+                                 recipes=_rb83)[0]
+        check("b83 ME je Ende: A nimmt seine eigene ME (7), B faellt auf die Eingabe (3)",
+              abs(_mm83.get(_A83, -1) - 7.0) < 1e-9 and abs(_mm83.get(_B83, -1) - 3.0) < 1e-9)
+        win._bd_me = _me_alt83
+        if _je_alt83 is None:
+            del win._bd_me_je_ende
+        else:
+            win._bd_me_je_ende = _je_alt83
+    finally:
+        win._bd_recipes = _alt83
+    # Plan-Karte ("Meine Bauplaene"): ein gespeicherter Multi-Plan traegt
+    # type_id = Buendel und `enden`; die Schnellschaetzung plant das Buendel
+    # und verkauft alle Enden.
+    _pm83 = {_M83: 100.0, _X83: 1e9, _A83: 50000.0, _B83: 90000.0}
+    _p83 = {"id": 992, "type_id": I.BUENDEL_ID, "qty": 1, "label": "b83 Multi",
+            "item_name": "b83", "checked": [], "enden": [[_A83, 20], [_B83, 10]],
+            "me": 10}
+    _est83 = win._bau_saved_plan_quick_estimate(_p83, _Rec83(), _pm83, dict(_pm83))
+    check("b83 Schnellschaetzung eines Multi-Plans liefert ein Ergebnis", _est83 is not None)
+    _pl83 = I.production_plan(I.BUENDEL_ID, 1, _pm83.get, _rb83,
+                              {"me": 10, "job_pct": 3, "build_reactions": True,
+                               "adjusted_prices": dict(_pm83), "invention": False})
+    check("b83 ... mit dem Verkauf ALLER Enden (20 x 50k + 10 x 90k = 1,9 Mio brutto)",
+          _est83 is not None and abs((_est83.get("sell") or 0)
+                                     - 1900000.0 * (1 - _est83.get("fee_pct", 0) / 100.0)) < 1.0)
+    check("b83 ... und Kosten in der Groessenordnung des Buendel-Plans (ein X-Batch)",
+          _est83 is not None and 0.5 * _pl83["total_cost"] < _est83["cost"] < 2.0 * _pl83["total_cost"]
+          and _pl83["build_runs"].get(_X83) == 1)
+    _p83f = dict(_p83, enden=[[_A83, 0]])
+    check("b83 Multi-Plan ohne gueltige Enden: keine Schaetzung, kein Absturz",
+          win._bau_saved_plan_quick_estimate(_p83f, _Rec83(), _pm83, dict(_pm83)) is None)
+    check("b83 Multi-Plan, ein Ende ohne Preis: keine Schaetzung (wie beim Einzelplan)",
+          win._bau_saved_plan_quick_estimate(_p83, _Rec83(), {_M83: 100.0, _A83: 50000.0},
+                                             {}) is None)
+except Exception as _e83:                                # pragma: no cover
+    _fail.append(f"b83 Multi-Bauplan Schritt 2: {type(_e83).__name__}: {_e83}")
+
+
+# ---------------------------------------------------------------- (b84)
+# MULTI-BAUPLAN (1.0.9): der Buendel-Eintrag aus Quellplaenen (Entscheid A),
+# Buendel-Karte "Endprodukte" im Bauplan-Dialog, Pending-Uebergabe an
+# open_build_detail, Hinweis bei geaenderten Einzelplaenen.
+# AUSGEBAUT 26.09.2026 (Aufraeumen nach dem Umbau "ein Bauplan ist ein
+# Buendel mit N Enden"): der eigene Multi-Buildplaner-Dialog (Rail-Knopf,
+# Plan-Wahl mit Haken, Vorschau "einzeln vs. gebuendelt", Gewinnzeile,
+# Speichern, Bearbeiten). Was er konnte, lebt woanders: Ende dazu per
+# Rechtsklick/"+ Add end product" (b87), Vergleich in der Karte (b87),
+# Gewinn je Ende in der Karte (Spalte "Profit/unit, net"), Gesamtgewinn in
+# der Kopfzeile des Fensters. Hier bleibt, was NICHT am Dialog hing.
+try:
+    import eve_trader.ui.mw_multi_bauplan as _mmb84
+    _alt_plans84 = win.settings.get("bau_saved_plans")
+    _alt_rc84 = I.recipes_cached
+    from eve_trader import store as _st84
+    _alt_snap84 = _st84.get_snapshot
+    _alt_sde84 = I.sde_ready
+    _pm84 = {_M83: 100.0, _X83: 1e9, _A83: 50000.0, _B83: 90000.0}
+    I.recipes_cached = lambda *a, **k: _Rec83()
+    _st84.get_snapshot = lambda *a, **k: [
+        {"type_id": t84, "sell_min": p84} for t84, p84 in _pm84.items()]
+    I.sde_ready = lambda: True
+    win.settings["bau_saved_plans"] = [
+        {"id": 8401, "label": "b84 Plan A", "type_id": _A83, "item_name": "A84",
+         "qty": 20, "me": 7, "te": 14, "checked": [], "invention": False},
+        {"id": 8402, "label": "b84 Plan B", "type_id": _B83, "item_name": "B84",
+         "qty": 10, "me": 3, "te": 2, "checked": [], "invention": True,
+         "blacklist_names": ["Foo"]},
+    ]
+    # 26.09.2026: der Rail-Knopf ist WEG - ein Buendel entsteht aus jedem
+    # Bauplan heraus. Und der Dialog dahinter ist ausgebaut: keine Methode,
+    # kein Katalogtext (ein Ruecklaeufer waere eine zweite Wahrheit).
+    check("b84 der Rail-Knopf zum Multi Buildplaner existiert NICHT mehr",
+          getattr(win, "_bau_multi_btn", None) is None)
+    _spr84 = open(os.path.join(_ROOT, "eve_trader", "sprache.py"),
+                  encoding="utf-8").read()
+    check("b84 der Multi-Dialog ist ausgebaut (keine Methode, kein Katalogtext)",
+          not hasattr(win, "_open_multi_bauplan_dialog")
+          and not hasattr(win, "_multi_plan_speichern")
+          and not hasattr(win, "_multi_einzelplaene")
+          and '"Tick at least two build plans."' not in _spr84
+          and '"WHAT THE BUNDLE BRINGS"' not in _spr84)
+    # DER BUENDEL-EINTRAG AUS QUELLPLAENEN (Entscheid A: so, wie sie
+    # gespeichert sind). Der Weg lebt weiter: _open_multi_saved_plan baut
+    # damit den Eintrag neu, wenn der Nutzer "neu uebernehmen" sagt.
+    _q84 = [p for p in win.settings["bau_saved_plans"] if p.get("id") in (8401, 8402)]
+    _e84 = win._multi_plan_aus_quellen(_q84, {8401: 20, 8402: 10})
+    eq("b84 Eintrag: Buendel-ID, Enden sortiert mit Mengen",
+       (_e84["type_id"], _e84["enden"], _e84["qty"]),
+       (I.BUENDEL_ID, [[_A83, 20], [_B83, 10]], 1))
+    eq("b84 Eintrag: ME/TE je Ende aus den Einzelplaenen (Entscheid A)",
+       (_e84["me_je_ende"], _e84["te_je_ende"]),
+       ({str(_A83): 7, str(_B83): 3}, {str(_A83): 14, str(_B83): 2}))
+    check("b84 Eintrag: Invention (irgendein Plan) und Blacklist (Vereinigung) kommen mit",
+          _e84["invention"] is True and _e84["blacklist_names"] == ["Foo"]
+          and _e84["quellen"] == [8401, 8402])
+    check("b84 Eintrag: Name automatisch 'Multi: A84 + B84'",
+          _e84["label"].startswith("Multi") and "A84" in _e84["label"]
+          and "B84" in _e84["label"])
+    _e84b = win._multi_plan_aus_quellen(_q84, {8401: 40, 8402: 10})
+    eq("b84 Menge je Quelle", _e84b["enden"], [[_A83, 40], [_B83, 10]])
+    eq("b84 ... und sie steht als mengen_je_quelle im Eintrag",
+       _e84b["mengen_je_quelle"], {"8401": 40, "8402": 10})
+    _pid84 = 8499
+    _gesp84 = dict(_e84b, id=_pid84)
+    win.settings["bau_saved_plans"].append(_gesp84)
+    win.b_stack.setCurrentIndex(2); win._reload_saved_plans(); _app.processEvents()
+    eq("b84 Karte: Fortschrittsbalken zaehlt bis Summe der Enden (40 + 10)",
+       win._plan_progress[_pid84].maximum(), 50)
+    # Buendel im Bauplan-Dialog: Karte "Endprodukte", Menge gesperrt.
+    _rb84 = I.buendel_rezepte(_Rec83(), [(_A83, 40), (_B83, 10)])
+    _o84 = {"me": 0, "te": 0, "job_pct": 0, "build_reactions": True,
+            "tree_depth": 4, "adjusted_prices": dict(_pm84)}
+    win._bd_pricemap = {**_pm84, I.BUENDEL_ID: 40 * 50000.0 + 10 * 90000.0}
+    win._bd_recipes = _rb84; win._bd_recipes_basis = _rb84
+    win._bd_opts = dict(_o84); win._bd_type = I.BUENDEL_ID; win._bd_qty = 1
+    win._bd_buendel_enden = [(_A83, 40), (_B83, 10)]
+    win._bd_me_je_ende = {_A83: 7.0, _B83: 3.0}; win._bd_te_je_ende = {}
+    _plan84 = I.production_plan(I.BUENDEL_ID, 1, _pm84.get, _rb84, dict(_o84))
+    _tree84 = I.build_tree(I.BUENDEL_ID, _pm84.get, _rb84, dict(_o84))
+    _res84 = {"tree": _tree84, "names": {_A83: "A84", _B83: "B84", _X83: "X84",
+                                         _M83: "M84", I.BUENDEL_ID: "Multi 84"},
+              "sell": 40 * 50000.0 + 10 * 90000.0, "sell_is_contract": False,
+              "plan": _plan84}
+    # DEN GEMERKTEN KLAPP-ZUSTAND VORHER WEGNEHMEN (b98 weiter unten prueft
+    # die VORGABE "offen"): der Umschalter speichert in `.smoke_home`, und
+    # dieser Zustand ueberlebt den Lauf - mit einem gespeicherten Wert waere
+    # die Vorgabe nie gefragt und die Pruefung blind (Lehre b46/aa383).
+    win.settings.pop("bau_multi_enden_offen", None)
+    win._show_build_detail(I.BUENDEL_ID, "Multi 84", _res84)
+    _app.processEvents()
+    _d84 = getattr(win, "_bd_dialog", None)
+    check("b84 der Bauplan-Dialog baut sich mit dem Buendel", _d84 is not None)
+    check("b84 der Knopf 'Add build plan' sitzt auch beim T1-Buendel in der Endprodukte-Karte",
+          getattr(win, "_bd_ende_btn", None) is not None
+          and getattr(win, "_bd_multi_tbl", None) is not None
+          and win._bd_ende_btn.parentWidget() is not None
+          and win._bd_ende_btn.parentWidget().isAncestorOf(win._bd_multi_tbl)
+          and not any("save" in (b.text() or "").lower() or "speichern" in (b.text() or "").lower()
+                      for b in win._bd_ende_btn.parentWidget().findChildren(QPushButton)))
+    import eve_trader.ui.theme as _th84
+    check("b84 ... und ist amber umrandet wie beim Einzelplan (Nutzer 27.09.2026)",
+          win._bd_ende_btn.styleSheet() == _th84.amber_rahmen_knopf())
+    check("b84 ein T1-Buendel hat KEINEN Invention-Tab (Gegenprobe zu b113)",
+          not any("Invention" in _tw.tabText(_i)
+                  for _tw in _d84.findChildren(QTabWidget)
+                  for _i in range(_tw.count())))
+    _tbl84 = getattr(win, "_bd_multi_tbl", None)
+    eq("b84 Karte 'Endprodukte': eine Zeile je Ende",
+       _tbl84.rowCount() if _tbl84 is not None else -1, 2)
+    # Menge steht seit Schritt 4 als BEDIEN-Element in Spalte 1, die
+    # Kosten/Stk in Spalte 6 (vorher 1 und 2).
+    _sum_k84 = 0.0
+    for _r84 in range(_tbl84.rowCount() if _tbl84 is not None else 0):
+        _nm84 = _tbl84.item(_r84, 0).text()
+        _tid84 = _A83 if _nm84 == "A84" else _B83
+        _sum_k84 += (win._bd_multi_zeilen[_tid84]["menge"].value()
+                     * _tbl84.item(_r84, 7)._value)
+    _plan_jetzt84 = (getattr(win, "_bd_plan_ref", None) or {}).get("plan") or _plan84
+    check(f"b84 Karte: Kosten/Stk x Menge summiert sich zu den Gesamtkosten "
+          f"({_sum_k84:.0f} vs {_plan_jetzt84['total_cost']:.0f})",
+          abs(_sum_k84 - float(_plan_jetzt84["total_cost"])) < 1.0)
+    _qs84 = [s for s in _d84.findChildren(QSpinBox) if not s.isEnabled()
+             and s.value() == 1 and "multi" in s.toolTip().lower()]
+    check("b84 die Menge ist beim Buendel gesperrt und erklaert sich", len(_qs84) == 1)
+    # ---- (b98) BILDER + EINKLAPPEN der Endprodukt-Karte (23.09.2026) ----
+    # Nutzer: "danach fehlen mir in einem Multibuildplan immer noch die Icons
+    # der Endprodukte ganz oben" und "ich moechte, dass man 'Endprodukte
+    # dieses Buendels' einklappen kann wie der Details auch, standardmaessig
+    # aber offen".
+    _ico98 = [_tbl84.item(_r, 0).icon().isNull()
+              for _r in range(_tbl84.rowCount())]
+    # KEIN BILD ERZWINGEN: in der Pruefumgebung gibt es keinen Bilder-Cache
+    # und kein Netz, also darf das Symbol leer sein. Geprueft wird, dass die
+    # Zeile ueberhaupt eine Symbol-Ablage hat und die Tabelle eine
+    # Symbolgroesse kennt - ohne die waere ein geladenes Bild unsichtbar.
+    check("b98 die Endprodukt-Tabelle zeigt Symbole in der Namensspalte",
+          _tbl84.iconSize().width() >= 16 and len(_ico98) == 2)
+    _body98 = getattr(win, "_bd_multi_body", None)
+    _kl98 = getattr(win, "_bd_multi_klapp", None)
+    check("b98 die Karte hat einen Klapp-Knopf und einen Kasten",
+          _body98 is not None and _kl98 is not None)
+    check("b98 standardmaessig ist sie OFFEN (Nutzer-Vorgabe)",
+          bool(_kl98.isChecked())
+          and _body98.isVisibleTo(_body98.parentWidget()))
+    # DEN ECHTEN WEG GEHEN: den Knopf druecken (Lehre b87/b88).
+    _kl98.click(); _app.processEvents()
+    check("b98 ein Klick klappt sie zu",
+          not _body98.isVisibleTo(_body98.parentWidget()))
+    eq("b98 ... und der Zustand wird gemerkt",
+       win.settings.get("bau_multi_enden_offen"), False)
+    check("b98 die Tabelle selbst bleibt erhalten (nur versteckt)",
+          getattr(win, "_bd_multi_tbl", None) is _tbl84)
+    _kl98.click(); _app.processEvents()
+    check("b98 noch ein Klick klappt sie wieder auf",
+          _body98.isVisibleTo(_body98.parentWidget()))
+    # ZUSTAND ZURUECKGEBEN (Lehre b46/aa383: `.smoke_home` ueberlebt Laeufe).
+    # WEGNEHMEN statt auf True setzen - sonst prueft der naechste Lauf den
+    # gespeicherten Wert statt der Vorgabe.
+    win.settings.pop("bau_multi_enden_offen", None)
+    _d84.close(); _app.processEvents()
+    # DAS PENDING WIRD WIRKLICH VERBRAUCHT (ausgefuehrt, Rotprobe fand die
+    # Attrappe unten blind): echtes open_build_detail, aber ohne Markt-Scan
+    # -> es bricht nach dem Zuruecksetz-Zweig mit der Meldung "Markt-Scan
+    # zuerst" ab (Meldung stummgeschaltet). Bis dahin muss das Buendel in
+    # den Feldern stehen; ein normaler Plan danach findet sie geleert vor.
+    import eve_trader.ui.main_window as _mwm84
+    _snap_leer84 = _st84.get_snapshot
+    _st84.get_snapshot = lambda *a, **k: []
+    _info_alt84 = _mwm84.QMessageBox.information
+    _infos84 = []
+    _mwm84.QMessageBox.information = lambda *a, **k: _infos84.append(a[1] if len(a) > 1 else "")
+    try:
+        win._bd_buendel_pending = {"enden": [(_A83, 40), (_B83, 10)], "quellen": [8401],
+                                   "me": {_A83: 7.0}, "te": {_B83: 2.0}}
+        win._bd_bp_type = None
+        win._bd_qty = 99
+        win.open_build_detail(I.BUENDEL_ID, "Multi 84", fresh=True)
+        check("b84 open_build_detail: das Pending ist verbraucht und die Felder stehen",
+              getattr(win, "_bd_buendel_pending", None) is None
+              and win._bd_buendel_enden == [(_A83, 40), (_B83, 10)]
+              and win._bd_me_je_ende == {_A83: 7.0} and win._bd_te_je_ende == {_B83: 2.0}
+              and win._bd_buendel_quellen == [8401] and win._bd_qty == 1)
+        check("b84 ... und der Lauf endete erst an der fehlenden Markt-Preisliste",
+              len(_infos84) == 1)
+        win.open_build_detail(100, "Testship", fresh=True)
+        check("b84 ein normaler Plan danach erbt keine Buendel-Felder",
+              win._bd_buendel_enden is None and win._bd_me_je_ende == {}
+              and win._bd_te_je_ende == {})
+        win._bd_bp_type = None
+        win.open_build_detail(I.BUENDEL_ID, "Multi leer", fresh=True)
+        check("b84 Buendel ohne Enden und ohne Pending: Hinweis statt Absturz",
+              len(_infos84) == 3 and getattr(win, "_bd_buendel_enden", None) is None)
+    finally:
+        _mwm84.QMessageBox.information = _info_alt84
+        _st84.get_snapshot = _snap_leer84
+    # Pending-Uebergabe: _multi_plan_oeffnen legt das Buendel fuer
+    # open_build_detail bereit (dort NACH dem Zuruecksetz-Zweig verbraucht).
+    _obd_alt84 = win.open_build_detail
+    _obd_calls84 = []
+    win.open_build_detail = lambda tid, name, fresh=False: _obd_calls84.append((tid, name, fresh))
+    try:
+        win._multi_plan_oeffnen(_gesp84, plan_id=_pid84)
+        _pend84 = getattr(win, "_bd_buendel_pending", None) or {}
+        check("b84 Oeffnen: open_build_detail bekommt die Buendel-ID und den Namen",
+              _obd_calls84 and _obd_calls84[-1][0] == I.BUENDEL_ID
+              and _obd_calls84[-1][1] == _gesp84["label"] and _obd_calls84[-1][2] is False)
+        eq("b84 Oeffnen: Pending traegt Enden, ME/TE je Ende und Quellen",
+           (_pend84.get("enden"), _pend84.get("me"), _pend84.get("quellen")),
+           ([(_A83, 40), (_B83, 10)], {_A83: 7.0, _B83: 3.0}, [8401, 8402]))
+        check("b84 Oeffnen: ein gespeicherter Multi-Plan laedt als gespeichert (Haken, Reservierung)",
+              getattr(win, "_bd_loading_saved", False) is True
+              and getattr(win, "_bd_open_plan_id", None) == _pid84)
+        _src84 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+                      encoding="utf-8").read()
+        check("b84 open_build_detail verbraucht das Pending NACH dem Zuruecksetz-Zweig",
+              _src84.find("self._bd_buendel_pending = None") >
+              _src84.find("self._bd_bp_type = type_id\n") > 0)
+        # ENTSCHEID A: Einzelplan geaendert -> Hinweis; JA uebernimmt.
+        win.settings["bau_saved_plans"][0]["me"] = 9
+        _qalt84 = _mmb84.QMessageBox.question
+        _fragen84 = []
+        _mmb84.QMessageBox.question = (
+            lambda *a, **k: (_fragen84.append(a[2]), _mmb84.QMessageBox.Yes)[1])
+        try:
+            win._open_saved_plan(_pid84)
+        finally:
+            _mmb84.QMessageBox.question = _qalt84
+        check("b84 Entscheid A: geaenderter Einzelplan wird beim Oeffnen gemeldet",
+              len(_fragen84) == 1 and "b84 Plan A" in _fragen84[0])
+        _gesp84b = next(p for p in win.settings["bau_saved_plans"] if p.get("id") == _pid84)
+        eq("b84 Entscheid A: JA uebernimmt die neue ME (9) in den Multi-Plan",
+           _gesp84b["me_je_ende"].get(str(_A83)), 9)
+        check("b84 ... und oeffnet ueber den Multi-Weg (Buendel-ID)",
+              _obd_calls84[-1][0] == I.BUENDEL_ID)
+        _fragen84b = []
+        _mmb84.QMessageBox.question = (
+            lambda *a, **k: (_fragen84b.append(1), _mmb84.QMessageBox.Yes)[1])
+        try:
+            win._open_saved_plan(_pid84)
+        finally:
+            _mmb84.QMessageBox.question = _qalt84
+        check("b84 Entscheid A: unveraendert -> keine Frage mehr", not _fragen84b)
+    finally:
+        win.open_build_detail = _obd_alt84
+    # Aufraeumen: ein normaler Plan darf die Buendel-Felder nicht erben.
+    win._bd_buendel_pending = None
+    win._bd_buendel_enden = None; win._bd_me_je_ende = {}; win._bd_te_je_ende = {}
+    win._bd_type = 100; win._bd_recipes = _Recipes(); win._bd_recipes_basis = None
+    win._bd_multi_refresh = None
+    check("b84 Buendel-Verkauf = Summe Preis x Menge, Ende ohne Preis zaehlt 0",
+          abs(win._multi_buendel_verkauf({_A83: 2.0}, [(_A83, 3), (_B83, 5)]) - 6.0) < 1e-9)
+    check("b84 resolve_names schickt die Buendel-ID nie an ESI",
+          "for t in type_ids if int(t) > 0))" in open(os.path.join(_ROOT, "eve_trader", "esi.py"),
+                                   encoding="utf-8").read())
+    check("b84 _item_pixmap: das Buendel hat kein Bild (kein Abruf)",
+          win._item_pixmap(I.BUENDEL_ID) is None)
+except Exception as _e84:                                # pragma: no cover
+    import traceback as _tb84
+    _fail.append(f"b84 Multi-Bauplan: {type(_e84).__name__}: {_e84} | "
+                 + _tb84.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        I.recipes_cached = _alt_rc84
+        _st84.get_snapshot = _alt_snap84
+        I.sde_ready = _alt_sde84
+        win.settings["bau_saved_plans"] = _alt_plans84
+        win._reload_saved_plans()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b85)
+# MULTI BUILDPLANER, SCHRITT 4: ME/TE und "Eigene BPC" JE ENDPRODUKT.
+# Am echten Fenster, mit zwei ERFINDBAREN Enden: ohne Haken regiert die
+# Invention (ME-Feld gesperrt, zeigt die Invention-ME), mit Haken gilt die
+# eigene Kopie - und der Materialbedarf dieses EINEN Endes sinkt.
+try:
+    _A85, _B85, _M85 = 971001, 971002, 971004
+    _BPA85, _BPB85 = 981001, 981002
+
+    class _Rec85:
+        product_to_bp = {_A85: (_BPA85, I.MANUFACTURING, 1),
+                         _B85: (_BPB85, I.MANUFACTURING, 1)}
+        bp_materials = {(_BPA85, I.MANUFACTURING): [(_M85, 100)],
+                        (_BPB85, I.MANUFACTURING): [(_M85, 100)]}
+        activity_time = {(_BPA85, I.MANUFACTURING): 60,
+                         (_BPB85, I.MANUFACTURING): 60}
+        activity_max_runs = {}
+        reaction_products = set()
+        invention_for_bpc = {_BPA85: (961001, 10, 0.5, []),
+                             _BPB85: (961002, 10, 0.5, [])}
+        bp_products = {}
+        item_cat = {}
+
+    _pm85 = {_M85: 100.0, _A85: 9e9, _B85: 9e9}
+    _rb85 = I.buendel_rezepte(_Rec85(), [(_A85, 10), (_B85, 10)])
+    _o85 = {"invention": True, "job_pct": 0, "build_reactions": True, "me": 0,
+            "me_map": {}, "adjusted_prices": dict(_pm85), "tree_depth": 4,
+            "inv_datacore_free": True}
+    win._bd_pricemap = {**_pm85, I.BUENDEL_ID: 9e9 * 20}
+    win._bd_recipes = _rb85; win._bd_recipes_basis = _rb85
+    win._bd_opts = dict(_o85); win._bd_type = I.BUENDEL_ID; win._bd_qty = 1
+    win._bd_buendel_enden = [(_A85, 10), (_B85, 10)]
+    win._bd_buendel_quellen = []
+    win._bd_me_je_ende = {}; win._bd_te_je_ende = {}
+    win._bd_own_bpc_je_ende = {}; win._bd_own_bpc_runs_je_ende = {}
+    _plan85 = I.production_plan(I.BUENDEL_ID, 1, _pm85.get, _rb85, dict(_o85))
+    _tree85 = I.build_tree(I.BUENDEL_ID, _pm85.get, _rb85, dict(_o85))
+    _res85 = {"tree": _tree85, "sell": 9e9 * 20, "sell_is_contract": False,
+              "plan": _plan85,
+              "names": {_A85: "A85", _B85: "B85", _M85: "M85",
+                        I.BUENDEL_ID: "Multi 85"}}
+    win._show_build_detail(I.BUENDEL_ID, "Multi 85", _res85)
+    _app.processEvents()
+    _d85 = getattr(win, "_bd_dialog", None)
+    check("b85 der Buendel-Dialog baut sich mit erfindbaren Enden", _d85 is not None)
+    # ------------------------------------------------------------ (b113)
+    # INVENTION-TAB IM BUENDEL (Nutzer 26.09.2026: "mir fehlt ein Invention
+    # Tab im Multibauplan"). Befund: `_is_invented` fragte die Pseudo-
+    # Blaupause des Buendels (-2), die nie erfindbar ist - der Tab flog fuer
+    # JEDES Buendel raus. Jetzt: da, sobald EIN Ende erfindbar ist (b84
+    # prueft die Gegenprobe: T1-Buendel ohne Tab).
+    _tabs113 = [_tw for _tw in _d85.findChildren(QTabWidget)]
+    _titel113 = [_tw.tabText(_i) for _tw in _tabs113 for _i in range(_tw.count())]
+    check("b113 der Buendel-Dialog mit T2-Enden HAT den Invention-Tab",
+          any("Invention" in _t for _t in _titel113))
+    # KEINE KARTE FUER DAS BUENDEL SELBST im Invention-Tab (Nutzer
+    # 26.09.2026: "wirklich nur, was invented werden muss" - sein Screenshot
+    # zeigte "End product ME/TE (Sacrilege x1) - needs no invention").
+    check("b113 im Invention-Tab steht keine 'needs no invention'-Karte fuer das Buendel",
+          not [l for l in _d85.findChildren(QLabel)
+               if "needs no invention" in (l.text() or "")
+               or "braucht keine Invention" in (l.text() or "")])
+    # DER KNOPF "+ ADD BUILD PLAN" SITZT BEIM BUENDEL IN DER ENDPRODUKTE-
+    # KARTE (Nutzer 26.09.2026), beim Einzelplan in der Leiste (b84 unten).
+    _eb113 = getattr(win, "_bd_ende_btn", None)
+    _card113 = getattr(win, "_bd_multi_tbl", None).parentWidget() if getattr(win, "_bd_multi_tbl", None) else None
+    check("b113 der Knopf 'Add build plan' sitzt in der Endprodukte-Karte",
+          _eb113 is not None and _card113 is not None
+          and ("build plan" in _eb113.text().lower() or "bauplan" in _eb113.text().lower())
+          and _eb113.parentWidget() is not None
+          and _eb113.parentWidget().isAncestorOf(win._bd_multi_tbl))
+    eq("b113 rein: die erfindbaren Enden des Buendels",
+       sorted(win._multi_enden_erfindbar(_rb85, [_A85, _B85, _M85])), sorted([_A85, _B85]))
+    # INVENTION IST IM BUENDEL IMMER AN (Nutzer: "Decryptorwahl ueberschreibt
+    # immer haendisch eingegebene ME/TE, es sei denn man waehlt eigene BPC"):
+    # der globale Schalter AUS wird fuer ein Buendel mit T2-Ende uebergangen.
+    _o113 = {"invention": False, "inv_manual_override": {}}
+    win._multi_opts_je_ende(_o113, _rb85)
+    check("b113 Invention AUS wird fuer ein Buendel mit T2-Enden auf AN gesetzt",
+          _o113.get("invention") is True)
+    _o113b = {"invention": False, "inv_manual_override": {}}
+    _rb113 = I.buendel_rezepte(_Rec83(), [(_A83, 10), (_B83, 10)])
+    _enden_alt113 = win._bd_buendel_enden
+    win._bd_buendel_enden = [(_A83, 10), (_B83, 10)]
+    try:
+        win._multi_opts_je_ende(_o113b, _rb113)
+    finally:
+        win._bd_buendel_enden = _enden_alt113
+    check("b113 ... ein T1-Buendel laesst den Schalter, wie er ist",
+          _o113b.get("invention") is False
+          and not win._multi_enden_erfindbar(_rb113, [_A83, _B83]))
+    # WARNUNG BEI UNKLARER LAGE: eigene Kopien im Cache, Haken "Eigene BPC"
+    # nicht gesetzt -> der Plan erfindet, obwohl Kopien im Hangar liegen.
+    _cache_alt113 = getattr(win, "_bd_owned_bp_cache", None)
+    win._bd_owned_bp_cache = [{"type_id": _BPA85, "quantity": 3, "runs": 10}]
+    # Die Decryptor-Warnung (26.09.2026) gehoert nicht zu diesem Fall: beide
+    # Decryptoren gelten hier als gewaehlt.
+    _best_alt113 = set(getattr(win, "_bd_dec_bestaetigt", None) or ())
+    win._bd_dec_bestaetigt = _best_alt113 | {_BPA85, _BPB85}
+    try:
+        eq("b113 rein: unklare Enden = T2 ohne Haken, mit eigenen Kopien im Cache",
+           win._multi_unklare_enden(_plan85), [(_A85, 3)])
+        win._bd_own_bpc_je_ende = {_A85: True}
+        eq("b113 rein: mit Haken 'Eigene BPC' ist nichts mehr unklar",
+           win._multi_unklare_enden(_plan85), [])
+        win._bd_own_bpc_je_ende = {}
+        _rf113 = getattr(win, "_bd_multi_refresh", None)
+        _rf113(_plan85); _app.processEvents()
+        _wl113 = getattr(win, "_bd_multi_warn_lbl", None)
+        check("b113 die Karte zeigt die Warnung mit Name und Kopienzahl",
+              _wl113 is not None and not _wl113.isHidden()
+              and "A85" in _wl113.text() and "3" in _wl113.text())
+        win._bd_own_bpc_je_ende = {_A85: True}
+        _rf113(_plan85); _app.processEvents()
+        check("b113 ... und mit Haken ist sie wieder weg", _wl113.isHidden())
+    finally:
+        win._bd_dec_bestaetigt = _best_alt113
+        win._bd_own_bpc_je_ende = {}
+        win._bd_owned_bp_cache = _cache_alt113
+        _rf113 = getattr(win, "_bd_multi_refresh", None)
+        if _rf113:
+            _rf113(_plan85); _app.processEvents()
+    # ------------------------------------------------------------ (b114)
+    # DIE WERKZEUGE (Tools-Menue) AM BUENDEL (Nutzer 26.09.2026: "ueberpruefe,
+    # ob die Tools-Dropdowns das richtige Ergebnis erzielen; 'optimale
+    # Menge' funktioniert bisher nur auf 1 Endprodukt"). Gemessen am
+    # offenen Buendel-Fenster (_d85), nicht am Quelltext.
+    _ta114 = getattr(win, "_bd_tools_actions", None) or {}
+    check("b114 das Tools-Menue ist am Buendel-Fenster erreichbar",
+          bool(_ta114) and set(_ta114) >= {"opt", "ladder", "contract", "fehl", "nach", "esi"})
+    check("b114 'Contract-Preise' ist beim Buendel gesperrt und sagt warum",
+          not _ta114["contract"].isEnabled()
+          and ("bundle" in _ta114["contract"].text().lower()
+               or "bündel" in _ta114["contract"].text().lower())
+          and _ta114["contract"].toolTip() != "")
+    check("b114 die uebrigen Werkzeuge bleiben beim Buendel bedienbar",
+          all(_ta114[k].isEnabled() for k in ("opt", "fehl", "nach", "esi")))
+    # OPTIMALE MENGE: je Endprodukt (Auswahl oben), gerechnet wird das
+    # gewaehlte Ende - nie die Buendel-ID.
+    import eve_trader.ui.mw_optimizer as _mo114
+    _pp_alt114 = I.production_plan
+    _tids114 = []
+
+    def _pp114(tid, qty, *a, **k):
+        _tids114.append(int(tid))
+        return _pp_alt114(tid, qty, *a, **k)
+    _run_alt114 = win._run
+    _ho_alt114 = win._hub_orders
+    _mh_alt114 = _mo114.esi.fetch_market_history
+    # KEIN Stub fuer ladder_cost_curve: ohne Orderbuch rechnet sie mit dem
+    # Flachpreis - offline, aber echt. Nur die Markthistorie (Netz) bleibt weg.
+    win._run = lambda worker, done_cb, fail_cb=None, **kw: done_cb(
+        worker._fn(*worker._args, **worker._kwargs))
+    win._hub_orders = lambda *a, **k: {"sell": [], "buy": []}
+    _mo114.esi.fetch_market_history = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline"))
+    I.production_plan = _pp114
+    try:
+        win.open_optimizer(); _app.processEvents()
+        _cb114 = getattr(win, "_opt_ende_cb", None)
+        check("b114 Optimierer am Buendel: Auswahl der Endprodukte, beide Enden drin",
+              _cb114 is not None and _cb114.count() == 2
+              and sorted(_cb114.itemData(i) for i in range(2)) == sorted([_A85, _B85]))
+        _dlg114 = _cb114.window() if _cb114 is not None else None
+        _cb114.setCurrentIndex(1); _app.processEvents()
+        _gew114 = int(_cb114.currentData())
+        check("b114 ... der Titel folgt dem gewaehlten Ende",
+              _dlg114 is not None and _cb114.currentText() in _dlg114.windowTitle())
+        _btn114 = next((b for b in _dlg114.findChildren(QPushButton)
+                        if (b.text() or "").strip() in ("Calculate", "Berechnen")), None)
+        _tids114.clear()
+        if _btn114 is not None:
+            _btn114.click(); _app.processEvents()
+        check("b114 ... 'Berechnen' rechnet das gewaehlte Ende, nie die Buendel-ID",
+              _btn114 is not None and _tids114
+              and set(_tids114) == {_gew114})
+        if _dlg114 is not None:
+            _dlg114.close(); _app.processEvents()
+    finally:
+        I.production_plan = _pp_alt114
+        win._run = _run_alt114
+        win._hub_orders = _ho_alt114
+        _mo114.esi.fetch_market_history = _mh_alt114
+    # ORDERBUCH-GENAU: rechnet das Buendel x1, eine Zeile je Kaufmaterial.
+    win._run = lambda worker, done_cb, fail_cb=None, **kw: done_cb(
+        worker._fn(*worker._args, **worker._kwargs))
+    win._hub_orders = lambda *a, **k: {"sell": [(100.0, 10 ** 9)], "buy": []}
+    _rn_alt114 = _mo114.esi.resolve_names
+    _mo114.esi.resolve_names = lambda ids, *a, **k: {int(i): f"M{i}" for i in ids}
+    try:
+        win.open_ladder_check(); _app.processEvents()
+        _ld114 = [w for w in _app.topLevelWidgets()
+                  if isinstance(w, _mw61.MinimizableDialog)
+                  and ("Order-book" in w.windowTitle() or "Orderbuch" in w.windowTitle())
+                  and w.isVisible()]
+        _ldlg114 = _ld114[-1] if _ld114 else None
+        _lbtn114 = next((b for b in _ldlg114.findChildren(QPushButton)
+                         if (b.text() or "").strip() in ("Calculate", "Berechnen")), None) \
+            if _ldlg114 is not None else None
+        if _lbtn114 is not None:
+            _lbtn114.click(); _app.processEvents()
+        _ltbl114 = _ldlg114.findChildren(QTableWidget)[0] if _ldlg114 is not None else None
+        _kopf114 = [l for l in _ldlg114.findChildren(QLabel)
+                    if "\u00d71" in (l.text() or "")] if _ldlg114 is not None else []
+        check("b114 Orderbuch-genau am Buendel: Kopf 'x1', eine Zeile je Kaufmaterial",
+              _ldlg114 is not None and bool(_kopf114)
+              and _ltbl114 is not None and _ltbl114.rowCount()
+              == len(_plan85.get("buy") or {}) > 0)
+        if _ldlg114 is not None:
+            _ldlg114.close(); _app.processEvents()
+    finally:
+        win._run = _run_alt114
+        win._hub_orders = _ho_alt114
+        _mo114.esi.resolve_names = _rn_alt114
+    # FEHLBEDARF PRUEFEN / FEHLENDES NACHKAUFEN: laufen am Buendel ohne
+    # Absturz und ohne die Buendel-ID als Material.
+    import eve_trader.ui.main_window as _mwm114
+    _inf_alt114 = _mwm114.QMessageBox.information
+    _infos114 = []
+    _mwm114.QMessageBox.information = lambda *a, **k: _infos114.append(str(a[2]) if len(a) > 2 else "")
+    _exec_alt114 = _mwm114.QMessageBox.exec
+    _mwm114.QMessageBox.exec = lambda self_, *a, **k: _infos114.append(self_.text())
+    try:
+        win._check_shortfall(); _app.processEvents()
+        win._bd_verlust = {}
+        win._buy_missing_again(); _app.processEvents()
+        check("b114 'Fehlbedarf pruefen' und 'Fehlendes nachkaufen' laufen am Buendel durch",
+              len(_infos114) == 2 and all(str(I.BUENDEL_ID) not in x for x in _infos114))
+    finally:
+        _mwm114.QMessageBox.information = _inf_alt114
+        _mwm114.QMessageBox.exec = _exec_alt114
+    # ALLES AUS ESI LADEN: die Invention-Runde nimmt die Enden (echte
+    # T2-Blaupausen), nie die Pseudo-Blaupause des Buendels (-2).
+    import eve_trader.store as _st114
+    _lc_alt114 = _st114.list_characters
+    _fb_alt114 = win._bd_fetch_all_owned_blueprints
+    _ls_alt114 = win._load_stage_bp_from_esi
+    _li_alt114 = win._load_all_invention_bpc_from_esi
+    _cid_alt114 = win.settings.get("client_id")
+    _inv_items114 = []
+    _st114.list_characters = lambda: [{"character_id": 1, "name": "b114"}]
+    win.settings["client_id"] = "b114"
+    win._bd_fetch_all_owned_blueprints = lambda force=False: []
+    win._load_stage_bp_from_esi = lambda *a, **k: (0, 0)
+    win._load_all_invention_bpc_from_esi = lambda items, *a, **k: (_inv_items114.extend(items), 0)[1]
+    try:
+        _sum114, _err114, _own114 = win._load_all_esi_for_plan_core(I.BUENDEL_ID)
+        check("b114 'Alles aus ESI laden' am Buendel: kein Fehler, Invention nur fuer die Enden",
+              _err114 is None
+              and sorted(_bp for _t, _bp, _r, _i in _inv_items114) == sorted([_BPA85, _BPB85])
+              and I.BUENDEL_BP not in [_bp for _t, _bp, _r, _i in _inv_items114])
+    finally:
+        _st114.list_characters = _lc_alt114
+        win._bd_fetch_all_owned_blueprints = _fb_alt114
+        win._load_stage_bp_from_esi = _ls_alt114
+        win._load_all_invention_bpc_from_esi = _li_alt114
+        if _cid_alt114 is None:
+            win.settings.pop("client_id", None)
+        else:
+            win.settings["client_id"] = _cid_alt114
+    # ------------------------------------------------------------ (b115)
+    # MAUSRAD UND BEST-CHOICE-KNOPF IM INVENTION-REITER (Nutzer 26.09.2026:
+    # "wenn man scrollen will und mit der Maus per Zufall auf einem Decryptor-
+    # Dropdown ist, scrollt das Dropdown und dann faengt der Plan an zu
+    # rechnen und alles laggt. Dropdowns nur ueber Klicken bedienen" und
+    # "der Best-Choice-Knopf ist so bloed ueber das ganze Fenster gezogen,
+    # dass man ihn gar nicht sieht - kompakter links ueber dem Blueprint-
+    # Namen, ersichtlicher"). Das Rad wird WIRKLICH geschickt (QWheelEvent),
+    # nicht nur die Fokus-Regel gelesen: Wahl bleibt, keine Rechnung laeuft
+    # an, die Bildlaufflaeche des Reiters bekommt das Rad.
+    from PySide6.QtCore import QPoint as _QP115, QPointF as _QPF115
+    from PySide6.QtGui import QWheelEvent as _QWE115
+    from PySide6.QtWidgets import (QAbstractScrollArea as _QASA115,
+                                   QSizePolicy as _QSP115)
+    from eve_trader.ui import theme as _th115
+    _ic115 = dict(getattr(win, "_bd_inv_combos", None) or {})
+    _cb115 = _ic115.get(_BPA85)
+    check("b115 Invention-Reiter: die Decryptor-Wahl von A steht bereit",
+          _cb115 is not None and _cb115.count() >= 2 and _cb115.isEnabled())
+    if _cb115 is not None:
+        _reb115 = []
+        _fr_alt115 = getattr(win, "_bd_full_rebuild", None)
+        win._bd_full_rebuild = lambda *a, **k: _reb115.append(1)
+        try:
+            _idx115 = _cb115.currentIndex()
+            _sa115 = _cb115.parentWidget()
+            while _sa115 is not None and not isinstance(_sa115, _QASA115):
+                _sa115 = _sa115.parentWidget()
+            # OFFSCREEN HAT DIE BILDLAUFFLAECHE KEINEN WEG (Maximum 0) - also
+            # nicht den Bildlauf messen, sondern ob das Rad am Viewport ANKOMMT:
+            # ein Zaehl-Filter am Viewport waehrend des einen Ereignisses.
+            from PySide6.QtCore import QEvent as _QEV115, QObject as _QOB115
+
+            class _Zaehler115(_QOB115):
+                n = 0
+
+                def eventFilter(self, _o, _e):
+                    if _e.type() == _QEV115.Wheel:
+                        self.n += 1
+                    return False
+            _z115 = _Zaehler115()
+            if _sa115 is not None:
+                _sa115.viewport().installEventFilter(_z115)
+            # RAD NACH UNTEN (-120): ohne Sperre springt die Wahl auf den
+            # NAECHSTEN Eintrag. Nach oben bliebe Index 0 auch ohne Sperre
+            # stehen - die Pruefung waere blind (Rotprobe hat es gemeldet).
+            _ev115 = _QWE115(_QPF115(5, 5), _cb115.mapToGlobal(_QP115(5, 5)),
+                             _QP115(0, -120), _QP115(0, -120), Qt.NoButton,
+                             Qt.NoModifier, Qt.NoScrollPhase, False)
+            _app.sendEvent(_cb115, _ev115); _app.processEvents()
+            check("b115 Mausrad ueber dem Decryptor-Dropdown aendert die Wahl NICHT",
+                  _cb115.currentIndex() == _idx115)
+            check("b115 ... und loest KEINE Rechnung aus",
+                  not _reb115)
+            if _sa115 is not None:
+                _sa115.viewport().removeEventFilter(_z115)
+            check("b115 ... das Rad geht stattdessen an die Bildlaufflaeche des Reiters",
+                  _sa115 is not None and _z115.n == 1)
+            check("b115 Dropdown ist per Klick/Tastatur weiter bedienbar (StrongFocus, nicht WheelFocus)",
+                  _cb115.focusPolicy() == Qt.StrongFocus)
+            _sp115 = getattr(win, "_inv_slots", None)
+            if _sp115 is not None:
+                _val115 = _sp115.value()
+                _ev115b = _QWE115(_QPF115(5, 5), _sp115.mapToGlobal(_QP115(5, 5)),
+                                  _QP115(0, 120), _QP115(0, 120), Qt.NoButton,
+                                  Qt.NoModifier, Qt.NoScrollPhase, False)
+                _app.sendEvent(_sp115, _ev115b); _app.processEvents()
+                check("b115 auch das Slot-Feld nimmt das Rad nicht",
+                      _sp115.value() == _val115)
+        finally:
+            win._bd_full_rebuild = _fr_alt115
+    _bb115 = dict(getattr(win, "_bd_inv_best_btns", None) or {})
+    _btn115 = _bb115.get(_BPA85)
+    check("b115 'Best choice for profit' gibt es je erfundenem Ende",
+          sorted(_bb115.keys()) == sorted(_ic115.keys()) and _btn115 is not None)
+    if _btn115 is not None:
+        _css115 = _btn115.styleSheet()
+        _ruhe115 = _css115.split("QPushButton:hover")[0]
+        # SEIT 26.09.2026 WIE "CREATE SHOPPING LIST" (Nutzer: "Hintergrund
+        # normale Tool-Farbe, nur Umrandung und Text Amber") - vorher eine
+        # amberne Flaeche mit dunkler Schrift.
+        check("b115 der Knopf: Rahmen und Schrift amber, keine eigene Flaeche (Ruhe-Regel)",
+              f"color:{_th115.AMBER}" in _ruhe115
+              and f"solid {_th115.AMBER}" in _ruhe115
+              and "background" not in _ruhe115)
+        check("b115 ... kompakt: feste Groesse statt ueber die ganze Spalte gezogen",
+              _btn115.sizePolicy().horizontalPolicy() == _QSP115.Fixed
+              and 0 < _btn115.sizeHint().width() < 320)
+        # LAGE: der Knopf steht in der Karte VOR dem Ergebnis-Block mit dem
+        # Blaupausen-Namen, in einer Zeile mit Stretch (links).
+        _karte115 = _btn115.parentWidget()
+        _lay115 = _karte115.layout() if _karte115 is not None else None
+        _reihe115 = None
+        _kopf_i115 = _name_i115 = None
+        if _lay115 is not None:
+            for _i in range(_lay115.count()):
+                _it115 = _lay115.itemAt(_i)
+                _l = _it115.layout()
+                if _l is not None and _l.indexOf(_btn115) >= 0:
+                    _reihe115 = _l; _kopf_i115 = _i
+                _w = _it115.widget()
+                if _w is not None and _name_i115 is None and any(
+                        isinstance(_c, QLabel) and "Blueprint" in _c.text()
+                        and _c.styleSheet().find(_th115.CYAN) >= 0
+                        for _c in _w.findChildren(QLabel)):
+                    _name_i115 = _i
+        check("b115 ... links in einer eigenen Zeile (Stretch rechts vom Knopf)",
+              _reihe115 is not None and _reihe115.indexOf(_btn115) == 0
+              and _reihe115.count() == 2
+              and _reihe115.itemAt(1).spacerItem() is not None)
+        check("b115 ... und die Zeile steht direkt ueber dem Blaupausen-Namen",
+              _kopf_i115 is not None and _name_i115 is not None
+              and _name_i115 == _kopf_i115 + 1)
+    # ------------------------------------------------------------ (b116)
+    # ZUKLAPPBARE INVENTION-KARTEN + DATACORES/SKILL IN EINER ZEILE (Nutzer
+    # 26.09.2026: "alle Eintraege der verschiedenen erforschbaren T2-Copys
+    # kompakter und uebersichtlicher, es verbraucht zu viel Platz"; Rueckfrage:
+    # Karten zuklappbar + Datacores/Skill-Bonus in eine Zeile). Der Pfeil
+    # wird WIRKLICH gedrueckt, der Zustand ueberlebt den echten Rebuild
+    # (`bau_inv_zu`), die Kopfzeile traegt die Kurzfassung. Suiten-Zustand
+    # in .smoke_home ueberlebt Laeufe - im finally zuruecksetzen.
+    from PySide6.QtWidgets import QHBoxLayout as _QHB116
+    _ik116 = dict(getattr(win, "_bd_inv_karten", None) or {})
+    _k116 = _ik116.get(_BPA85)
+    check("b116 je erfundenem Ende eine Karte mit Pfeil, Rumpf und Kurzfassung",
+          sorted(_ik116.keys()) == sorted(_ic115.keys()) and _k116 is not None
+          and all(_k and _k.get("pfeil") is not None and _k.get("body") is not None
+                  and _k.get("kurz") is not None for _k in _ik116.values()))
+    _zu_alt116 = list(win.settings.get("bau_inv_zu") or [])
+    try:
+        if _k116 is not None:
+            check("b116 Standard: Karte OFFEN, Pfeil gedrueckt, nichts in bau_inv_zu",
+                  _k116["pfeil"].isChecked()
+                  and not _k116["body"].isHidden()
+                  and _BPA85 not in [int(x) for x in (win.settings.get("bau_inv_zu") or [])])
+            _kz116 = _k116["kurz"].text()
+            check("b116 Kurzfassung in der Kopfzeile: Versuche und Invention-Kosten",
+                  ("attempts" in _kz116 or "Versuche" in _kz116) and "ISK" in _kz116)
+            # DATACORES UND SKILL-BONUS IN EINER ZEILE: das Skill-Label ist
+            # kurz (kein Band mehr), der lange Text steckt im Tooltip, und es
+            # liegt in einer Zeile (QHBoxLayout) mit Stretch.
+            _sk116 = [_l for _l in _k116["body"].findChildren(QLabel)
+                      if "skill" in _l.text().lower()
+                      and ("\u00d7" in _l.text() or "bonus" in _l.text().lower())]
+            check("b116 Skill-Bonus ist eine kurze Zeile mit dem langen Text im Tooltip",
+                  len(_sk116) == 1 and len(_sk116[0].text()) < 200
+                  and "Skill bonus active" not in _sk116[0].text()
+                  and "No skill bonus included" not in _sk116[0].text()
+                  and len(_sk116[0].toolTip()) > 40)
+            _lay_sk116 = None
+            for _l116 in _k116["body"].findChildren(_QHB116):
+                if _sk116 and _l116.indexOf(_sk116[0]) >= 0:
+                    _lay_sk116 = _l116
+            check("b116 ... und steht in der Datacore-Zeile (waagerecht, mit Stretch)",
+                  _lay_sk116 is not None
+                  and any(_lay_sk116.itemAt(_i).spacerItem() is not None
+                          for _i in range(_lay_sk116.count())))
+            # PFEIL DRUECKEN: Rumpf weg, Zustand gemerkt.
+            _k116["pfeil"].click(); _app.processEvents()
+            check("b116 Pfeil zu: der Rumpf ist versteckt, die Kopfzeile bleibt",
+                  _k116["body"].isHidden() and not _k116["kurz"].isHidden())
+            check("b116 ... und bau_inv_zu merkt sich die Blaupause",
+                  _BPA85 in [int(x) for x in (win.settings.get("bau_inv_zu") or [])])
+            # ECHTER REBUILD: die neue Karte kommt ZU auf die Welt.
+            win._bd_full_rebuild(); _app.processEvents()
+            _ik116b = dict(getattr(win, "_bd_inv_karten", None) or {})
+            _k116b = _ik116b.get(_BPA85)
+            check("b116 nach dem Rebuild bleibt die Karte zu (Zustand ueberlebt)",
+                  _k116b is not None and _k116b is not _k116
+                  and _k116b["body"].isHidden() and not _k116b["pfeil"].isChecked())
+            _k116c = _ik116b.get(_BPB85)
+            check("b116 ... die andere Karte bleibt offen",
+                  _k116c is not None and not _k116c["body"].isHidden())
+            _k116b["pfeil"].click(); _app.processEvents()
+            check("b116 Pfeil wieder auf: Rumpf sichtbar, bau_inv_zu ohne die Blaupause",
+                  not _k116b["body"].isHidden()
+                  and _BPA85 not in [int(x) for x in (win.settings.get("bau_inv_zu") or [])])
+    finally:
+        win.settings["bau_inv_zu"] = _zu_alt116
+        config.save_settings(win.settings)
+    # ------------------------------------------------------------ (b117)
+    # INVENTION-KARTE NEU (Nutzer 26.09.2026): (1) "Buy datacores/decryptors"
+    # EINMAL oben statt je Karte, (2) Knopf heisst "Best Decryptor", (3) die
+    # Zusatzzeilen "for runs / on average it would take / invention cost"
+    # sind weg, (4) gross: "Copy your T1 original like this -> Job Runs /
+    # Runs per Copy", (5) JEDE KARTE IHR EIGENER REGLER - bis heute bediente
+    # der Regler der ersten Karte die LETZTE (nachgestellt: A auf 2 -> B
+    # sprang auf 2, A blieb stehen).
+    from PySide6.QtWidgets import QCheckBox as _QCB117
+    _dlg117 = getattr(win, "_bd_dialog", None)
+    _sw117 = dict(getattr(win, "_bd_inv_split_w", None) or {})
+    _ik117 = dict(getattr(win, "_bd_inv_karten", None) or {})
+    # SEIT 26.09.2026 (zweite Nachricht): in der SEITENLEISTE, Karte "Buy or
+    # not?" ganz oben (offen), nicht im Kopf und in keiner Karte. Gezaehlt im
+    # AKTUELLEN Kopf (`_bd_inv_top`) und in den Karten - die Widgets frueherer
+    # Aufbauten haengen bis deleteLater noch am Fenster.
+    _top117 = getattr(win, "_bd_inv_top", None)
+    _kauf_top117 = [_c for _c in (_top117.findChildren(_QCB117) if _top117 else [])
+                    if _c.text() in ("Buy datacores", "Datacores kaufen")]
+    _kauf_karten117 = [_c for _k in _ik117.values()
+                       for _c in _k["body"].findChildren(_QCB117)
+                       if _c.text() in ("Buy datacores", "Datacores kaufen")]
+    _alle117 = getattr(win, "_bd_inv_alle_btn", None)
+    _side117 = _alle117.parentWidget() if _alle117 is not None else None
+    _kauf_side117 = [_c for _c in (_side117.findChildren(_QCB117) if _side117 else [])
+                     if _c.text() in ("Buy datacores", "Datacores kaufen")]
+    check("b117 'Buy datacores' steht in der Seitenleiste, nicht im Kopf, in keiner Karte",
+          len(_kauf_side117) == 1 and not _kauf_top117 and not _kauf_karten117
+          and len(_ik117) >= 2
+          and _top117 is not None and _top117.findChild(QSpinBox) is win._inv_slots)
+    # Reihenfolge der Seitenleiste: "Buy or not?" (offen) -> Alle-Knopf ->
+    # "Invention settings".
+    _sl117 = _side117.layout() if _side117 is not None else None
+    _reihe117 = []
+    if _sl117 is not None:
+        for _i in range(_sl117.count()):
+            _w = _sl117.itemAt(_i).widget()
+            if _w is None:
+                continue
+            if _w is _alle117:
+                _reihe117.append("alle")
+            elif any(_c.text() in ("Buy datacores", "Datacores kaufen")
+                     for _c in _w.findChildren(_QCB117)):
+                # OFFEN = der Haken ist innerhalb der Seitenleiste sichtbar
+                # (die Klappkarte versteckt ihren Inhalt, nicht den Haken selbst).
+                _reihe117.append("kauf" if _kauf_side117[0].isVisibleTo(_side117)
+                                 else "kauf_zu")
+            elif _w.findChildren(QLabel) or _w.findChildren(QPushButton):
+                _reihe117.append("rest")
+    check(f"b117 Seitenleiste: 'Buy or not?' offen ganz oben, dann der Alle-Knopf ({_reihe117})",
+          _reihe117[:2] == ["kauf", "alle"] and len(_reihe117) >= 3)
+    _bb117 = dict(getattr(win, "_bd_inv_best_btns", None) or {})
+    check("b117 der Knopf heisst 'Best Decryptor'",
+          bool(_bb117) and all(_b.text() in ("Best Decryptor", "Bester Decryptor")
+                               for _b in _bb117.values()))
+    _txt117 = " ".join(_l.text() for _k in _ik117.values()
+                       for _l in _k["body"].findChildren(QLabel))
+    check("b117 die Zusatzzeilen (on average / for n runs / Invention cost) sind weg",
+          "on average it would take" not in _txt117
+          and "im Schnitt" not in _txt117
+          and "Invention cost" not in _txt117
+          and "Enter in game" not in _txt117)
+    _swA117, _swB117 = _sw117.get(_BPA85), _sw117.get(_BPB85)
+    check("b117 jede erfundene Karte hat ihren EIGENEN Regler",
+          _swA117 is not None and _swB117 is not None
+          and _swA117["slider"] is not _swB117["slider"]
+          and _ik117[_BPA85]["body"].isAncestorOf(_swA117["slider"])
+          and _ik117[_BPB85]["body"].isAncestorOf(_swB117["slider"]))
+    if _swA117 is not None and _swB117 is not None:
+        _slots_alt117 = win._inv_slots.value()
+        _split_alt117 = dict(getattr(win, "_bd_inv_split", None) or {})
+        try:
+            win._inv_slots.setValue(10); _app.processEvents()
+            _swA117["slider"].setValue(1); _swB117["slider"].setValue(1)
+            _app.processEvents()
+            _kopfB117 = _swB117["kopf"].text()
+            _kopfA117 = _swA117["kopf"].text()
+            _swA117["slider"].setValue(2); _app.processEvents()
+            check("b117 Regler A auf 2: A bleibt auf 2, B bleibt auf 1",
+                  _swA117["slider"].value() == 2 and _swB117["slider"].value() == 1)
+            check("b117 ... A's Kopieranleitung aendert sich, B's nicht",
+                  _swA117["kopf"].text() != _kopfA117
+                  and _swB117["kopf"].text() == _kopfB117)
+            check("b117 ... gemerkt wird je Blaupause",
+                  (win._bd_inv_split or {}).get(_BPA85) == 2
+                  and (win._bd_inv_split or {}).get(_BPB85, 1) == 1)
+            win._bd_full_rebuild(); _app.processEvents()
+            _sw117b = dict(getattr(win, "_bd_inv_split_w", None) or {})
+            check("b117 nach dem Rebuild: A wieder auf 2, B auf 1 (neue Regler)",
+                  _sw117b.get(_BPA85) is not None
+                  and _sw117b[_BPA85]["slider"] is not _swA117["slider"]
+                  and _sw117b[_BPA85]["slider"].value() == 2
+                  and _sw117b[_BPB85]["slider"].value() == 1)
+            # DAS SLOT-FELD OBEN deckelt ALLE Regler.
+            win._inv_slots.setValue(1); _app.processEvents()
+            check("b117 1 freier Slot oben deckelt jeden Regler auf 1",
+                  all(_w["slider"].maximum() == 1 and _w["slider"].value() == 1
+                      for _w in _sw117b.values()))
+        finally:
+            win._inv_slots.setValue(_slots_alt117)
+            win._bd_inv_split = _split_alt117
+            _app.processEvents()
+    # ------------------------------------------------------------ (b118)
+    # (1) "BEST DECRYPTOR FOR ALL BLUEPRINTS" (Nutzer 26.09.2026): EIN Klick
+    #     waehlt fuer jede Karte das, was ihr eigener Knopf waehlen wuerde, und
+    #     rechnet EINMAL neu. Erwartung ueber die Rang-Funktionen der Karten
+    #     (dieselbe Rechnung), mit Decryptoren vorher auf "No decryptor".
+    # (2) "ATTEMPTS MANUALLY" allein rechnet nicht neu ("ich kann draufklicken,
+    #     dann laedt irgendwas, danach passiert nichts").
+    # (3) OWN BPC + ME/TE IN DER INVENTION-KARTE, gekoppelt mit der Zeile der
+    #     Endprodukte-Karte - in beide Richtungen.
+    from PySide6.QtTest import QTest as _QT118
+    _alle118 = getattr(win, "_bd_inv_alle_btn", None)
+    _rang118 = dict(getattr(win, "_bd_inv_rang", None) or {})
+    check("b118 der Alle-Knopf steht in der Seitenleiste, Rang-Funktionen je Karte",
+          _alle118 is not None and set(_rang118) >= {_BPA85, _BPB85})
+    _dm_alt118 = dict(win._bd_decryptor_map)
+    _idm_alt118 = dict(win._bd_opts.get("inv_decryptor_map") or {})
+    _rb_alt118 = win._bd_full_rebuild
+    _zaehl118 = []
+    try:
+        _erw118 = {}
+        _dm_t = dict(win._bd_opts.get("inv_decryptor_map") or {})
+        for _bp, (_fn, _dl) in _rang118.items():
+            _r = _fn()
+            _erw118[_bp] = _r[0]["name"] if _r else None
+            if _r:
+                _dm_t[_bp] = next(v for n, v in _dl if n == _r[0]["name"])
+                win._bd_opts["inv_decryptor_map"] = _dm_t
+        win._bd_opts["inv_decryptor_map"] = dict(_idm_alt118)
+        win._bd_full_rebuild = lambda *a, **k: (_zaehl118.append(1), _rb_alt118())
+        _alle118.click(); _app.processEvents()
+        check(f"b118 Alle-Knopf: jede Karte bekommt ihren besten Decryptor ({_erw118})",
+              all(win._bd_decryptor_map.get(_bp) == _n for _bp, _n in _erw118.items()
+                  if _n is not None) and any(_n for _n in _erw118.values()))
+        check(f"b118 ... und rechnet genau EINMAL neu ({len(_zaehl118)})",
+              len(_zaehl118) == 1)
+        _warn_nach118 = [_l for _k in (getattr(win, "_bd_inv_karten", None) or {}).values()
+                         for _l in _k["body"].findChildren(QLabel)
+                         if "\u26a0" in _l.text() and "decryptor" in _l.text().lower()
+                         and not _l.isHidden()]
+        check("b118 ... und danach warnt keine Karte mehr (alle gelten als gewaehlt)",
+              not _warn_nach118
+              and set(_rang118) <= set(getattr(win, "_bd_dec_bestaetigt", None) or ()))
+        _al118 = getattr(win, "_bd_inv_alle_lbl", None)
+        check(f"b118 ... und die Seitenleiste sagt, was geschah "
+              f"({_al118.text() if _al118 else None})",
+              _al118 is not None and not _al118.isHidden()
+              and str(len(_rang118)) in _al118.text())
+    finally:
+        win._bd_full_rebuild = _rb_alt118
+        win._bd_decryptor_map = _dm_alt118
+        win._bd_opts["inv_decryptor_map"] = _idm_alt118
+        _rb_alt118(); _app.processEvents()
+    # (2) "Attempts manually" ist AUSGEBAUT (Nutzer 26.09.2026: "nehmen wir
+    #     raus, ist nur verwirrend"), ebenso die Zeile "Total for n attempts".
+    _karteA118 = (getattr(win, "_bd_inv_karten", None) or {}).get(_BPA85)
+    _txt118 = " ".join(_l.text() for _l in
+                       (_karteA118["body"].findChildren(QLabel) if _karteA118 else []))
+    _man118 = [_c for _c in (_karteA118["body"].findChildren(_QCB117) if _karteA118 else [])
+               if "manual" in _c.text().lower() or "manuell" in _c.text().lower()]
+    check("b118 'Attempts manually' und 'Total for n attempts' sind weg",
+          _karteA118 is not None and not _man118
+          and "Total for" not in _txt118 and "Summe f" not in _txt118)
+    # (3) Own BPC in der Invention-Karte <-> Endprodukte-Karte.
+    _own118 = (getattr(win, "_bd_inv_own", None) or {}).get(_A85)
+    _z118 = (getattr(win, "_bd_multi_zeilen", None) or {}).get(_A85)
+    _karteA118 = (getattr(win, "_bd_inv_karten", None) or {}).get(_BPA85)   # nach dem Neuaufbau
+    check("b118 Invention-Karte des Buendel-Endes hat 'Own BPC' + ME/TE",
+          _own118 is not None and _z118 is not None
+          and _karteA118 is not None
+          and _karteA118["body"].isAncestorOf(_own118["cb"]))
+    _obpc_alt118 = dict(getattr(win, "_bd_own_bpc_je_ende", None) or {})
+    _me_alt118 = dict(getattr(win, "_bd_me_je_ende", None) or {})
+    try:
+        if _own118 is not None and _z118 is not None:
+            _z118["obpc"].setChecked(False); _QT118.qWait(400); _app.processEvents()
+            _own118 = win._bd_inv_own.get(_A85)
+            _own118["cb"].setChecked(True); _app.processEvents()
+            check("b118 Haken in der Invention-Karte -> 'Own' in der Endprodukte-Karte",
+                  _z118["obpc"].isChecked()
+                  and bool(win._bd_own_bpc_je_ende.get(_A85)))
+            _QT118.qWait(400); _app.processEvents()
+            _own118 = win._bd_inv_own.get(_A85)
+            check("b118 ... nach dem Neuaufbau: Haken gesetzt, ME/TE sichtbar",
+                  _own118["cb"].isChecked() and not _own118["me"].isHidden())
+            _swO118 = (getattr(win, "_bd_inv_split_w", None) or {}).get(_BPA85)
+            check("b118 ... und KEINE Kopieranleitung (eigene Kopie = nichts zu erfinden)",
+                  _swO118 is not None and _swO118["kopf"].parentWidget().isHidden())
+            _own118["me"].setValue(7); _app.processEvents()
+            check("b118 ME in der Invention-Karte -> ME der Endprodukte-Zeile und Zustand",
+                  _z118["me"].value() == 7 and int(win._bd_me_je_ende.get(_A85, 0)) == 7)
+            _QT118.qWait(400); _app.processEvents()
+            _z118["me"].setValue(4); _QT118.qWait(400); _app.processEvents()
+            _own118 = win._bd_inv_own.get(_A85)
+            check("b118 ... und umgekehrt: ME in der Endprodukte-Zeile -> Invention-Karte",
+                  _own118["me"].value() == 4)
+            _z118["obpc"].setChecked(False); _QT118.qWait(400); _app.processEvents()
+            _own118 = win._bd_inv_own.get(_A85)
+            check("b118 'Own' in der Endprodukte-Karte aus -> Invention-Karte ohne Haken, ME/TE weg",
+                  not _own118["cb"].isChecked() and _own118["me"].isHidden())
+    finally:
+        win._bd_own_bpc_je_ende = _obpc_alt118
+        win._bd_me_je_ende = _me_alt118
+        try:
+            win._multi_opts_je_ende(win._bd_opts, win._bd_recipes)
+        except Exception:
+            pass
+        win._bd_full_rebuild(); _app.processEvents()
+    # ------------------------------------------------------------ (b119)
+    # (1) WARNUNG OHNE DECRYPTOR (Nutzer 26.09.2026: "vielleicht irgendwo eine
+    #     Warnung, wenn man noch keinen Decryptor gewaehlt hat oder noch keine
+    #     eigene BPC ME/TE eingegeben"): Karte + Endprodukte-Karte, weg nach
+    #     eigener Wahl (auch "No decryptor" bewusst gewaehlt) und bei Own BPC.
+    # (2) BLUEPRINTS-REITER: erfundene T2-Kopie = "will be invented", amber,
+    #     nicht rot; "Buy Missing Blueprints" kopiert nur Kaufbares.
+    from eve_trader.config import KEIN_DECRYPTOR as _KD119
+    _best_alt119 = set(getattr(win, "_bd_dec_bestaetigt", None) or ())
+    _dm_alt119 = dict(win._bd_decryptor_map)
+    _idm_alt119 = dict(win._bd_opts.get("inv_decryptor_map") or {})
+    _obpc_alt119 = dict(getattr(win, "_bd_own_bpc_je_ende", None) or {})
+    try:
+        win._bd_dec_bestaetigt = set()
+        win._bd_decryptor_map = {_BPA85: _KD119, _BPB85: _KD119}
+        win._bd_opts["inv_decryptor_map"] = {}
+        win._bd_own_bpc_je_ende = {}
+        win._multi_opts_je_ende(win._bd_opts, win._bd_recipes)
+        win._bd_full_rebuild(); _app.processEvents()
+        _ik119 = dict(getattr(win, "_bd_inv_karten", None) or {})
+        _warn119 = [_l for _l in _ik119[_BPA85]["body"].findChildren(QLabel)
+                    if "\u26a0" in _l.text() and ("decryptor" in _l.text().lower())]
+        check("b119 Karte ohne gewaehlten Decryptor zeigt die Warnung (amber)",
+              len(_warn119) == 1 and not _warn119[0].isHidden()
+              and _th115.AMBER in _warn119[0].styleSheet())
+        check("b119 ... und die Kurzfassung der Kopfzeile traegt das \u26a0",
+              "\u26a0" in _ik119[_BPA85]["kurz"].text())
+        _wl119 = getattr(win, "_bd_multi_warn_lbl", None)
+        check("b119 die Endprodukte-Karte nennt beide Enden ohne Decryptor",
+              _wl119 is not None and not _wl119.isHidden()
+              and "A85" in _wl119.text() and "B85" in _wl119.text())
+        # Bewusst "No decryptor" waehlen (Combo-Wechsel hin und zurueck) ->
+        # Warnung fuer A weg, B bleibt.
+        _cbA119 = win._bd_inv_combos[_BPA85]
+        _idx_kein = _cbA119.findData(_KD119)
+        _cbA119.setCurrentIndex(1 if _idx_kein != 1 else 0); _app.processEvents()
+        _cbA119 = win._bd_inv_combos[_BPA85]
+        _cbA119.setCurrentIndex(_cbA119.findData(_KD119)); _app.processEvents()
+        _ik119 = dict(getattr(win, "_bd_inv_karten", None) or {})
+        _warnA119 = [_l for _l in _ik119[_BPA85]["body"].findChildren(QLabel)
+                     if "\u26a0" in _l.text() and "decryptor" in _l.text().lower()]
+        _warnB119 = [_l for _l in _ik119[_BPB85]["body"].findChildren(QLabel)
+                     if "\u26a0" in _l.text() and "decryptor" in _l.text().lower()]
+        check("b119 bewusst 'No decryptor' gewaehlt: A ohne Warnung, B weiter mit",
+              not _warnA119 and len(_warnB119) == 1
+              and "A85" not in win._bd_multi_warn_lbl.text()
+              and "B85" in win._bd_multi_warn_lbl.text())
+        # "Best Decryptor" der Karte B nimmt B's Warnung weg - auch wenn der
+        # beste SCHON eingestellt ist (dann aendert sich die Combo nicht und
+        # kein Combo-Signal nimmt die Warnung mit). Dafuer ist "No decryptor"
+        # hier der beste (Rangliste vorgetaeuscht).
+        _rk_alt119 = I.invention_best_decryptor_by_real_cost
+        I.invention_best_decryptor_by_real_cost = (
+            lambda *a, **k: [{"name": _KD119, "total_cost": 1.0}])
+        try:
+            _bbB119 = win._bd_inv_best_btns[_BPB85]
+            _bbB119.click(); _app.processEvents()
+        finally:
+            I.invention_best_decryptor_by_real_cost = _rk_alt119
+        _ik119 = dict(getattr(win, "_bd_inv_karten", None) or {})
+        _warnB119b = [_l for _l in _ik119[_BPB85]["body"].findChildren(QLabel)
+                      if "\u26a0" in _l.text() and "decryptor" in _l.text().lower()]
+        check("b119 'Best Decryptor' der Karte nimmt die Warnung weg",
+              not _warnB119b and "B85" not in win._bd_multi_warn_lbl.text())
+        win._bd_dec_bestaetigt.discard(_BPB85)
+        win._bd_decryptor_map[_BPB85] = _KD119
+        win._bd_opts.setdefault("inv_decryptor_map", {}).pop(_BPB85, None)
+        win._bd_full_rebuild(); _app.processEvents()
+        # Own BPC fuer B -> keine Warnung mehr fuer B.
+        _z119 = win._bd_multi_zeilen[_B85]
+        _z119["obpc"].setChecked(True)
+        from PySide6.QtTest import QTest as _QT119
+        _QT119.qWait(400); _app.processEvents()
+        check("b119 Own BPC fuer B: die Endprodukte-Karte warnt nicht mehr",
+              "B85" not in win._bd_multi_warn_lbl.text())
+        _bbB119c = (getattr(win, "_bd_inv_best_btns", None) or {}).get(_BPB85)
+        check("b118 ... der Knopf 'Best Decryptor' einer Own-BPC-Karte ist gesperrt",
+              _bbB119c is not None and not _bbB119c.isEnabled()
+              and _BPB85 not in (getattr(win, "_bd_inv_rang", None) or {}))
+    finally:
+        win._bd_dec_bestaetigt = _best_alt119
+        win._bd_decryptor_map = _dm_alt119
+        win._bd_opts["inv_decryptor_map"] = _idm_alt119
+        win._bd_own_bpc_je_ende = _obpc_alt119
+        try:
+            win._multi_opts_je_ende(win._bd_opts, win._bd_recipes)
+        except Exception:
+            pass
+        win._bd_full_rebuild(); _app.processEvents()
+    # (2) Blueprints-Reiter: Status und Kaufliste - am echten Fuellweg mit
+    #     vorgetaeuschtem Besitz (alles 0 = nichts im Hangar).
+    _own_alt119 = getattr(win, "_bd_bp_owned_counts", None)
+    _bpc_alt119 = getattr(win, "_bd_bp_owned_bpc_runs", None)
+    try:
+        win._bd_bp_owned_counts = {}
+        win._bd_bp_owned_bpc_runs = {}
+        _bpj119 = [{"tid": _A85, "name": "A85", "bp_id": _BPA85,
+                    "activity": I.MANUFACTURING, "runs": 10, "is_end": True},
+                   {"tid": _M85, "name": "M85", "bp_id": 975555,
+                    "activity": I.MANUFACTURING, "runs": 3, "is_end": False}]
+        _tbl119 = win._bd_bp_tab_tbl
+        win._fill_blueprint_tab(_bpj119, [], win._bd_recipes, _tbl119)
+        _stat119 = {}
+        for _r in range(_tbl119.rowCount()):
+            _nm = _tbl119.item(_r, 0).text()
+            _pw = _tbl119.cellWidget(_r, 6)
+            _pl = _pw.findChild(QLabel) if _pw is not None else None
+            _stat119[_nm] = (_pl.text() if _pl else "", _pl.styleSheet() if _pl else "")
+        _a119 = next((v for k, v in _stat119.items() if k.startswith("A85")), ("", ""))
+        _m119 = next((v for k, v in _stat119.items() if k.startswith("M85")), ("", ""))
+        check(f"b119 Blueprints: erfundene T2-Kopie = 'will be invented', amber ({_a119[0]})",
+              ("invented" in _a119[0] or "erfunden" in _a119[0])
+              and _th115.AMBER in _a119[1] and _th7.RED not in _a119[1])
+        check(f"b119 ... die T1-Blaupause fehlt weiter rot ({_m119[0]})",
+              ("missing" in _m119[0] or "fehlt" in _m119[0]) and _th7.RED in _m119[1])
+        _QA119 = QApplication.instance()
+        _QA119.clipboard().setText("vorher")
+        win._bd_bp_kauf_btn.click(); _app.processEvents()
+        _cb119 = _QA119.clipboard().text()
+        check(f"b119 'Buy Missing Blueprints' kopiert nur die kaufbare ({_cb119!r})",
+              _cb119.startswith("M85") and "\t1" in _cb119
+              and "A85" not in _cb119 and len(_cb119.splitlines()) == 1)
+        win._bd_bp_owned_counts = None
+        win._fill_blueprint_tab(_bpj119, [], win._bd_recipes, _tbl119)
+        _QA119.clipboard().setText("vorher")
+        win._bd_bp_kauf_btn.click(); _app.processEvents()
+        check("b119 ... ohne geladenen Besitz wird nichts kopiert, der Reiter sagt warum",
+              _QA119.clipboard().text() == "vorher"
+              and not win._bd_bp_kauf_lbl.isHidden()
+              and ("ESI" in win._bd_bp_kauf_lbl.text()))
+        # RECHTSKLICK-MENUE NUR EINMAL VERBUNDEN, obwohl zweimal gefuellt -
+        # und eine frische Tabelle meldet kein "Failed to disconnect (None)"
+        # (Nutzer-Konsole 27.09.2026).
+        from PySide6.QtCore import SIGNAL as _SIG119
+        _rc119 = _tbl119.receivers(_SIG119("customContextMenuRequested(QPoint)"))
+        import warnings as _wa119
+        from PySide6.QtWidgets import QTableWidget as _QTW119
+        _neu119 = _QTW119(0, _tbl119.columnCount())
+        with _wa119.catch_warnings(record=True) as _w119:
+            _wa119.simplefilter("always")
+            win._fill_blueprint_tab(_bpj119, [], win._bd_recipes, _neu119)
+        _dis119 = [str(_x.message) for _x in _w119 if "disconnect" in str(_x.message)]
+        check(f"b119 Blueprints-Menue einmal verbunden ({_rc119}), frisch ohne Warnung ({_dis119})",
+              _rc119 == 1 and not _dis119
+              and _neu119.receivers(_SIG119("customContextMenuRequested(QPoint)")) == 1)
+        _neu119.deleteLater()
+    finally:
+        win._bd_bp_owned_counts = _own_alt119
+        win._bd_bp_owned_bpc_runs = _bpc_alt119
+    # ------------------------------------------------------------ (b90)
+    # GEWINN JE ENDPRODUKT IST NETTO (Nutzer-Befund 20.09.2026: "ich bin mir
+    # nicht sicher ob hier auch die Rechnung beider Plaene stimmt, im Profit
+    # wirkt es falsch, es muesste mehr Profit sein"). Seine Zahlen: die
+    # Spalte addierte sich zu 286'960'910, oben stand 163'691'239 - die
+    # Differenz war GENAU Steuer+Broker (122'125'000) plus die Rundung der
+    # Stueckkosten. Die Spalte rechnete brutto, das Feld oben netto.
+    # ZUERST: HAT DER DIALOG SIE VON SELBST GEFUELLT? Das ist der echte Weg
+    # (_show_build_detail -> rebuild -> Gewinnblock -> Nachzug). Alle
+    # folgenden Pruefungen rufen den Nachzug direkt auf und haetten einen
+    # fehlenden Aufruf in rebuild() nie bemerkt - genau das meldete die
+    # Rotprobe als "blind" (dieselbe Lehre wie b87/b88).
+    _t90 = getattr(win, "_bd_multi_tbl", None)
+    check("b90 der Dialog fuellt die Gewinn-Spalte selbst (ueber rebuild)",
+          _t90 is not None and _t90.rowCount() > 0
+          and all(_t90.item(_r90, 9) is not None
+                  and (_t90.item(_r90, 9).text() or "").strip()
+                  not in ("", "\u2014")
+                  for _r90 in range(_t90.rowCount())))
+    _satz90 = 0.04885            # wie in seinem Screenshot: 4.885 %
+    _fracht90, _extra90 = 7_000_000.0, 3_000_000.0
+    _mgn90 = getattr(win, "_multi_gewinn_nachziehen", None)
+    check("b90 es gibt einen Nachzug fuer den Gewinn je Endprodukt",
+          _mgn90 is not None)
+    _je90 = getattr(win, "_bd_multi_je", None) or {}
+    check("b90 die Kosten je Ende liegen fuer den Nachzug bereit", bool(_je90))
+    _summe90 = _mgn90(satz=_satz90, fracht=_fracht90, extra=_extra90)
+    # GEGENRECHNUNG - von Hand, nicht aus derselben Funktion:
+    _pm90 = getattr(win, "_bd_pricemap", None) or {}
+    _hub90 = getattr(win, "_bd_hub_sell_je_ende", None) or {}
+    _kges90 = sum(float(k.get("gesamt") or 0.0) for k in _je90.values())
+    _soll90 = 0.0
+    for _tid90, _k90 in _je90.items():
+        _sell90 = _hub90.get(_tid90) or _pm90.get(_tid90)
+        if not _sell90:
+            continue
+        _m90 = max(1, int(_k90.get("menge") or 1))
+        _soll90 += (float(_sell90) * (1.0 - _satz90) * _m90
+                    - float(_k90.get("je_stueck") or 0.0) * _m90
+                    - (_fracht90 + _extra90)
+                    * (float(_k90.get("gesamt") or 0.0) / _kges90))
+    check(f"b90 die Summe der Spalte ist Verkauf minus Gebuehren minus "
+          f"Kosten minus Zuschlaege ({_summe90:.2f} vs {_soll90:.2f})",
+          _summe90 is not None and abs(_summe90 - _soll90) < 1.0)
+    # UND GENAU DAS, WAS OBEN STEHT: gross - fees - total - fracht - extra.
+    _gross90 = sum((_hub90.get(_t90) or _pm90.get(_t90) or 0.0)
+                   * max(1, int(_k90.get("menge") or 1))
+                   for _t90, _k90 in _je90.items())
+    _oben90 = (_gross90 - _gross90 * _satz90 - _kges90 - _fracht90 - _extra90)
+    check(f"b90 ... und trifft den grossen Gesamtgewinn "
+          f"({_summe90:.2f} vs {_oben90:.2f})",
+          abs(_summe90 - _oben90) < 1.0)
+    # OHNE GEBUEHREN waere es die alte, zu hohe Zahl - die Gegenprobe, dass
+    # der Satz wirklich wirkt (ein Test, der nur den Sollfall zeigt, koennte
+    # auch immer dasselbe sagen).
+    _brutto90 = _mgn90(satz=0.0, fracht=0.0, extra=0.0)
+    check(f"b90 Gegenprobe: ohne Gebuehren ist die Summe hoeher "
+          f"({_brutto90:.0f} > {_summe90:.0f})",
+          _brutto90 > _summe90 + 1.0)
+    eq("b90 ... und zwar genau um Gebuehren + Zuschlaege",
+       round(_brutto90 - _summe90, 2),
+       round(_gross90 * _satz90 + _fracht90 + _extra90, 2))
+    # ABGLEICH MIT DER KOPFZEILE (Nutzer-Screenshot 26.09.2026: Spalten-
+    # Summe 2'828'364'637, "Total profit" 2'838'554'463 - die Kopfzeile
+    # rechnet nach "Recalculate" mit dem Orderbuch, die Aufteilung je Ende
+    # mit dem Plan). Mit `gesamt` (= Build cost der Kopfzeile) muessen
+    # Kosten-Spalte x Menge und Gewinn-Summe GENAU dazu passen.
+    _gesamt90 = _kges90 * 0.97          # Orderbuch 3 % guenstiger als der Plan
+    _summe90g = _mgn90(satz=_satz90, fracht=_fracht90, extra=_extra90,
+                       gesamt=_gesamt90)
+    _kosten_spalte90 = 0.0
+    for _r90, _t90 in enumerate(getattr(win, "_bd_multi_reihen", None) or []):
+        _it90 = win._bd_multi_tbl.item(_r90, 7)
+        _m90 = max(1, int((_je90.get(_t90) or {}).get("menge") or 1))
+        _kosten_spalte90 += float(getattr(_it90, "_value", 0.0) or 0.0) * _m90
+    check(f"b90 mit Kopfzeilen-Summe: Kosten/Stk x Menge = Build cost oben "
+          f"({_kosten_spalte90:.0f} = {_gesamt90:.0f})",
+          abs(_kosten_spalte90 - _gesamt90) < 2.0)
+    _oben90g = (_gross90 - _gross90 * _satz90 - _gesamt90 - _fracht90 - _extra90)
+    check(f"b90 ... und die Gewinn-Summe = Total profit oben "
+          f"({_summe90g:.0f} = {_oben90g:.0f})",
+          _summe90g is not None and abs(_summe90g - _oben90g) < 1.0)
+    # DIE SUMMENZEILE STEHT DA (er hatte selbst nachaddiert).
+    _gl90 = getattr(win, "_bd_multi_gewinn_lbl", None)
+    _mgn90(satz=_satz90, fracht=_fracht90, extra=_extra90)
+    check("b90 unter der Tabelle steht die Summe mit Zahl",
+          _gl90 is not None and (_gl90.text() or "").strip() != ""
+          and any(_c90.isdigit() for _c90 in (_gl90.text() or "")))
+    # Die einzelnen Felder oben sind weg - sie koennten nur EINES meinen.
+    _hdr85 = [w for w in _d85.findChildren(QSpinBox)
+              if w.property("bd_role") == "endproduct_me_te"]
+    check("b85 kein einzelnes ME/TE-Feld oben beim Buendel", not _hdr85)
+    _obcs85 = [c for c in _d85.findChildren(QCheckBox)
+               if "Own BPC instead of invention" in (c.text() or "")
+               or "Eigene BPC statt Invention" in (c.text() or "")]
+    check("b85 der einzelne 'Eigene BPC'-Haken oben ist beim Buendel unsichtbar",
+          all(not c.isVisible() for c in _obcs85))
+    # Die Karte hat jetzt neun Spalten und je Zeile Bedien-Elemente.
+    _tbl85 = getattr(win, "_bd_multi_tbl", None)
+    # (b90) DIE SPALTE HEISST, WAS SIE IST - sonst stehen wieder zwei
+    # Gewinnbegriffe nebeneinander und niemand sieht, welcher gemeint ist.
+    if _tbl85 is not None:
+        _kopf90 = [_tbl85.horizontalHeaderItem(_c90).text()
+                   for _c90 in range(_tbl85.columnCount())
+                   if _tbl85.horizontalHeaderItem(_c90) is not None]
+        check("b90 die Spaltenueberschrift sagt, dass der Gewinn netto ist",
+              any(("net" in (_x90 or "").lower()
+                   or "netto" in (_x90 or "").lower())
+                  for _x90 in _kopf90))
+    eq("b85 die Endprodukte-Karte hat Menge/ME/TE/Eigene BPC/Runs/Kopien/Herausnehmen je Zeile",
+       (_tbl85.columnCount() if _tbl85 is not None else -1,
+        _tbl85.rowCount() if _tbl85 is not None else -1), (11, 2))
+    _z85 = win._bd_multi_zeilen
+    eq("b85 je Endprodukt eine Zeile mit eigenen Feldern",
+       sorted(_z85.keys()), sorted([_A85, _B85]))
+    # LAYOUT (Nutzer-Screenshot 20.09.2026: "teils Sachen abgeschnitten"):
+    # bei der echten Startgroesse des Fensters muessen alle zehn Spalten
+    # nebeneinander passen - sonst rutscht der Name unter die Bildlaufleiste.
+    _d85.resize(1400, 820); _app.processEvents()
+    _sum_sp85 = sum(_tbl85.columnWidth(_c) for _c in range(_tbl85.columnCount()))
+    check(f"b85 Layout: alle Spalten passen ins Fenster "
+          f"({_sum_sp85} px in {_tbl85.width()} px)",
+          _sum_sp85 <= _tbl85.width())
+    # DAS LABEL TRAEGT DIE BREITEN: wird es auf einem anderen Rechner rot
+    # (b66: dort sind dieselben Texte breiter), muss es SAGEN, welche Spalte
+    # den Platz frisst - sonst raet man aus der Ferne.
+    _spb85 = [(_tbl85.horizontalHeaderItem(_c).text().replace("\n", " ")[:9],
+               _tbl85.columnWidth(_c)) for _c in range(_tbl85.columnCount())]
+    # DER NAME BEKOMMT DEN REST (nicht eine feste Zahl): frueher hiess es
+    # "> 300 px". Auf dem Windows des Nutzers misst die Offscreen-Umgebung
+    # dieselben Texte rund 1,6x breiter (Lehre b66) - pruefe.py 27.09.2026:
+    # Name 168 px, obwohl die Spalte genau den ganzen Rest bekam; im echten
+    # Fenster (sein Screenshot, 1600 px) hat sie rund 530 px. Geprueft wird
+    # jetzt, WAS die Zusage ist: die Namensspalte dehnt sich und fuellt
+    # exakt, was die Zahlenspalten uebrig lassen - und hier im Container,
+    # wo die Masse stimmen, ist sie weiter breiter als 300 px.
+    from PySide6.QtWidgets import QHeaderView as _HVn85
+    _rest85 = (_tbl85.viewport().width()
+               - sum(_tbl85.columnWidth(_c) for _c in range(1, _tbl85.columnCount())))
+    _win85 = __import__("sys").platform.startswith("win")
+    check(f"b85 Layout: der Name bekommt den freien Platz (nicht die "
+          f"Zahlenfelder) {_spb85}, Rest {_rest85}",
+          _tbl85.horizontalHeader().sectionResizeMode(0) == _HVn85.Stretch
+          and abs(_tbl85.columnWidth(0) - max(_rest85,
+                  _tbl85.horizontalHeader().minimumSectionSize())) <= 2
+          and (_win85 or _tbl85.columnWidth(0) > 300))
+    # NUTZER-BEFUND 23.09.2026 (pruefe.py auf seinem Rechner): "1361 px in
+    # 1334 px". Mit ResizeToContents richtet sich eine Spalte nach dem
+    # BREITESTEN von Kopf und Zelle - und der Kopf war das Breitere. Auf
+    # seinem Windows sind dieselben Texte deutlich breiter, also sprengten
+    # die neun Zahlenspalten das Fenster. Gemessen wird hier, dass jede
+    # Zahlenspalte nur noch so breit ist, wie ihr INHALT braucht.
+    from PySide6.QtWidgets import QHeaderView as _HV85
+    # DIESELBE QUELLE FUERS POLSTER wie im Quelltext - eine zweite Zahl hier
+    # waere eine zweite Wahrheit, die beim naechsten Umbau still veraltet.
+    from eve_trader.ui.mw_multi_bauplan import MultiBauplan as _MB85
+    _hh85 = _tbl85.horizontalHeader()
+    _fm85 = _tbl85.fontMetrics()
+    _zu_breit85 = []
+    for _c85 in range(1, _tbl85.columnCount()):
+        if _hh85.sectionResizeMode(_c85) != _HV85.Fixed:
+            _zu_breit85.append((_c85, "nicht fest"))
+            continue
+        _need85 = _hh85.minimumSectionSize()
+        for _r85 in range(_tbl85.rowCount()):
+            _w85c = _tbl85.cellWidget(_r85, _c85)
+            if _w85c is not None:
+                # DER DECKEL GEWINNT - ein Feld, das breiter sein WILL,
+                # als es darf, blaest seine Spalte nicht auf (Mengenfeld).
+                _wb85 = _w85c.sizeHint().width()
+                if _w85c.maximumWidth() > 0:
+                    _wb85 = min(_wb85, _w85c.maximumWidth())
+                _need85 = max(_need85, _wb85 + _MB85._SP_PAD_WIDGET)
+                continue
+            _i85 = _tbl85.item(_r85, _c85)
+            if _i85 is not None:
+                _need85 = max(_need85,
+                              _fm85.horizontalAdvance(_i85.text() or "")
+                              + _MB85._SP_PAD_TEXT)
+        # REINE ZAHLENSPALTEN bekommen seit 26.09.2026 auch die laengste
+        # Kopfzeile (Nutzer: "Profit/Unit, Cop..., Cost/uni abgeschnitten");
+        # die Bedienfeld-Spalten nicht - sonst waechst die Karte wieder ueber
+        # das Fenster (Befund 23.09.2026).
+        if not any(_tbl85.cellWidget(_r, _c85) is not None
+                   for _r in range(_tbl85.rowCount())):
+            # Gemessen wie das Thema zeichnet: GROSSBUCHSTABEN, fett 12 px,
+            # 0,5 px Abstand, 8 px Polster je Seite (zweiter Nutzer-
+            # Screenshot 26.09.2026: der Kopf war mit der Zellenschrift
+            # gemessen und blieb abgeschnitten).
+            from PySide6.QtGui import QFont as _QF85, QFontMetrics as _QFM85
+            _hf85 = _QF85(_hh85.font())
+            _hf85.setBold(True); _hf85.setPixelSize(12)
+            _hf85.setLetterSpacing(_QF85.AbsoluteSpacing, 0.5)
+            _hi85 = _tbl85.horizontalHeaderItem(_c85)
+            for _kz85 in str(_hi85.text() if _hi85 is not None else "").split("\n"):
+                _need85 = max(_need85, _QFM85(_hf85).horizontalAdvance(_kz85.upper())
+                              + 16 + _MB85._SP_PAD_TEXT)
+        if _tbl85.columnWidth(_c85) != int(_need85):
+            _zu_breit85.append((_c85, _tbl85.columnWidth(_c85), int(_need85)))
+    eq("b85 Layout: jede Zahlenspalte ist so breit wie ihr Inhalt, nicht wie "
+       "ihre Ueberschrift", _zu_breit85, [])
+    check("b85 Layout: die Namensspalte nimmt den Rest (Stretch)",
+          _hh85.sectionResizeMode(0) == _HV85.Stretch)
+    # DER KOPF DARF SCHMALER WERDEN ALS SEIN TEXT - dann muss er kuerzen und
+    # den vollen Text als Tooltip tragen, sonst raet man, was die Spalte meint.
+    check("b85 Layout: der Kopf kuerzt mit ... statt zu draengen",
+          _hh85.textElideMode() == Qt.ElideRight)
+    _ohne_tip85 = [_c85 for _c85 in range(_tbl85.columnCount())
+                   if not (_tbl85.horizontalHeaderItem(_c85)
+                           and _tbl85.horizontalHeaderItem(_c85).toolTip())]
+    eq("b85 Layout: jede Ueberschrift traegt ihren vollen Text als Tooltip",
+       _ohne_tip85, [])
+    # DIE SUMME ALLEIN IST BLIND (Rotprobe): mit einer Stretch-Spalte passt
+    # sie IMMER. Gemessen wird deshalb, dass die Zahlenfelder gedeckelt sind -
+    # sie sind es, die dem Namen die Breite nahmen.
+    # GEDECKELT, ABER NIE UNTER DEM, WAS DIE BOX BRAUCHT (Nutzer-Befund
+    # 20.09.2026: "oben rechts sind die ME/TE abgeschnitten"). Eine feste
+    # Zahl war geraten und auf seinem Windows zu klein - dort sind dieselben
+    # Widgets rund 1,85x breiter (b66). Also gegen den GEMESSENEN sizeHint
+    # pruefen: nie schmaler, und nie breiter als noetig.
+    for _nm85, _br85 in (("me", 58), ("te", 58), ("runs", 74)):
+        _w85 = _z85[_A85][_nm85]
+        eq(f"b85 Layout: '{_nm85}' ist auf max(Deckel, sizeHint) begrenzt "
+           f"({_w85.maximumWidth()} bei sizeHint {_w85.sizeHint().width()})",
+           _w85.maximumWidth(), max(_br85, _w85.sizeHint().width()))
+        check(f"b85 Layout: '{_nm85}' kann seinen Inhalt zeigen "
+              f"({_w85.maximumWidth()} >= {_w85.sizeHint().width()})",
+              _w85.maximumWidth() >= _w85.sizeHint().width())
+    # DIE MENGE IST DIE AUSNAHME (Nutzer-Messung 24.09.2026): ihr sizeHint
+    # richtet sich nach der Obergrenze 100'000'000 - elf Zeichen, die dort
+    # nie stehen, und auf seinem Rechner 194 px Spaltenbreite. Sie muss
+    # ihre EIGENE Zahl zeigen koennen, mit Reserve, nicht die Obergrenze.
+    _wm85 = _z85[_A85]["menge"]
+    _fmm85 = _wm85.fontMetrics()
+    _txt85 = _wm85.textFromValue(_wm85.value())
+    check(f"b85 Layout: 'menge' zeigt ihre Zahl samt zwei Ziffern Reserve "
+          f"({_wm85.maximumWidth()} fuer '{_txt85}')",
+          _wm85.maximumWidth() >= _fmm85.horizontalAdvance(_txt85 + "00"))
+    check(f"b85 Layout: 'menge' nimmt sich NICHT die Breite der Obergrenze "
+          f"({_wm85.maximumWidth()} < {_wm85.sizeHint().width()})",
+          _wm85.maximumWidth() < _wm85.sizeHint().width()
+          or _wm85.sizeHint().width() <= 88)
+    check("b85 Layout: unter der letzten Zeile bleibt kein leerer Streifen",
+          _tbl85.height() <= _tbl85.horizontalHeader().height()
+          + (_tbl85.rowHeight(0) or 30) * _tbl85.rowCount() + 8)
+    # VIELE ENDEN (Nutzer 26.09.2026, elf Enden: "wir koennen nicht
+    # scrollen ... maximal 5 Endprodukte, dafuer eine Scrollleiste rechts"):
+    # dieselbe Karte mit sieben Enden - hoechstens ENDEN_SICHTBAR Zeilen
+    # hoch, der Rest laeuft in der Tabelle.
+    _plan85v = dict(win._bd_plan_ref.get("plan") or {})
+    _plan85v["buendel_enden"] = {_A83: 1, _B83: 1, 9001: 1, 9002: 1,
+                                 9003: 1, 9004: 1, 9005: 1}
+    _plan85v["buy_cost_items"] = {**(_plan85v.get("buy_cost_items") or {}),
+                                  9001: 10.0, 9002: 10.0, 9003: 10.0,
+                                  9004: 10.0, 9005: 10.0}
+    win._bd_multi_refresh(_plan85v); _app.processEvents()
+    check(f"b85 sieben Enden: die Karte zeigt hoechstens {win.ENDEN_SICHTBAR} Zeilen "
+          f"({_tbl85.height()} px bei {_tbl85.rowCount()} Zeilen)",
+          _tbl85.rowCount() == 7 and win.ENDEN_SICHTBAR == 5
+          and _tbl85.height() <= _tbl85.horizontalHeader().height()
+          + (_tbl85.rowHeight(0) or 30) * win.ENDEN_SICHTBAR + 8)
+    check("b85 ... und die restlichen laufen ueber die eigene Bildlaufleiste",
+          _tbl85.verticalScrollBar().maximum() > 0
+          and _tbl85.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded)
+    win._bd_multi_refresh(win._bd_plan_ref.get("plan") or {}); _app.processEvents()
+    eq("b85 ... zurueck auf zwei Enden", _tbl85.rowCount(), 2)
+    # OHNE Haken: ME gesperrt, zeigt die ECHTE Invention-ME (nicht 0).
+    _me_inv85 = I._invention_me_pct(_BPA85, _rb85, win._bd_opts)
+    check(f"b85 ohne 'Eigene BPC' ist ME gesperrt und zeigt die Invention-ME "
+          f"({_z85[_A85]['me'].value()} vs {_me_inv85})",
+          not _z85[_A85]["me"].isEnabled()
+          and _me_inv85 is not None
+          and _z85[_A85]["me"].value() == int(_me_inv85))
+    check("b85 ... und 'Runs/BPC' ist ohne eigene Kopie gesperrt",
+          not _z85[_A85]["runs"].isEnabled())
+    # GESPERRT HEISST NICHT LEER: in den gesperrten Feldern stehen die
+    # Zahlen, mit denen wirklich gerechnet wird - sonst meldet "Runs/BPC" 1,
+    # waehrend die Kopien-Spalte daneben "x 10 Runs" sagt.
+    _o85 = I.invention_outcome(10, 0.5, I.decryptor_fuer_bp(_BPA85, win._bd_opts))
+    eq("b85 die gesperrten Felder zeigen ME, TE und Runs der Invention",
+       (_z85[_A85]["me"].value(), _z85[_A85]["te"].value(),
+        _z85[_A85]["runs"].value()),
+       (int(_o85["me_pct"]), int(_o85["te_pct"]), int(_o85["runs"])))
+    _mat_vorher85 = dict(_plan85["build_mats"].get(_B85) or [])
+    # HAKEN SETZEN fuer B + eigene ME 10 -> NUR B braucht weniger Material.
+    _z85[_B85]["obpc"].setChecked(True)
+    _app.processEvents()
+    check("b85 'Eigene BPC' gibt ME/TE dieses Endes frei",
+          _z85[_B85]["me"].isEnabled() and _z85[_B85]["te"].isEnabled()
+          and _z85[_B85]["runs"].isEnabled())
+    check("b85 ... und NUR dieses Ende - A bleibt unter der Invention gesperrt",
+          not _z85[_A85]["me"].isEnabled())
+    check("b85 der Zustand merkt sich den Haken je Ende",
+          win._bd_own_bpc_je_ende.get(_B85) is True
+          and not win._bd_own_bpc_je_ende.get(_A85))
+    check("b85 ... und uebersetzt ihn in inv_manual_override je Blaupause",
+          (win._bd_opts.get("inv_manual_override") or {}).get(_BPB85) is True
+          and _BPA85 not in (win._bd_opts.get("inv_manual_override") or {}))
+    _z85[_B85]["me"].setValue(10)
+    _app.processEvents()
+    eq("b85 die eigene ME landet je Ende im Zustand",
+       win._bd_me_je_ende.get(_B85), 10.0)
+    win._bd_full_rebuild()
+    _app.processEvents()
+    # INVENTION-TAB JE ENDE (26.09.2026): eine Karte je erfundenem Ende gab
+    # es schon (build_runs x invention_for_bpc); neu: das Ende mit "Eigene
+    # BPC" hat seinen Decryptor ausgegraut, das andere nicht.
+    _ic85 = getattr(win, "_bd_inv_combos", None) or {}
+    check("b85 Invention-Tab: eine Decryptor-Wahl je erfundenem Ende (A und B)",
+          sorted(_ic85.keys()) == sorted([_BPA85, _BPB85]))
+    check("b85 ... B mit 'Eigene BPC' ist ausgegraut, A nicht",
+          _BPB85 in _ic85 and not _ic85[_BPB85].isEnabled()
+          and _BPA85 in _ic85 and _ic85[_BPA85].isEnabled())
+    _plan_neu85 = (getattr(win, "_bd_plan_ref", None) or {}).get("plan") or {}
+    _a_neu85 = dict(_plan_neu85.get("build_mats", {}).get(_A85) or [])
+    _b_neu85 = dict(_plan_neu85.get("build_mats", {}).get(_B85) or [])
+    check(f"b85 GEMESSEN: nur B braucht weniger Material "
+          f"(A {_a_neu85.get(_M85)}, B {_b_neu85.get(_M85)} statt "
+          f"{_mat_vorher85.get(_M85)})",
+          _b_neu85.get(_M85) == 900 and _a_neu85.get(_M85) == 980
+          and _mat_vorher85.get(_M85) == 980)
+    # Abwaehlen nimmt den Override AUSDRUECKLICH wieder raus.
+    _z85[_B85]["obpc"].setChecked(False)
+    _app.processEvents()
+    check("b85 Abwaehlen entfernt den Override wieder (kein Nachwirken)",
+          _BPB85 not in (win._bd_opts.get("inv_manual_override") or {})
+          and not _z85[_B85]["me"].isEnabled())
+    # Menge je Ende laesst sich hier aendern.
+    _z85[_A85]["menge"].setValue(25)
+    _app.processEvents()
+    eq("b85 die Menge je Endprodukt laesst sich in der Karte aendern",
+       dict((int(_a), int(_b)) for _a, _b in win._bd_buendel_enden).get(_A85), 25)
+    # UND DER PLAN FOLGT (Nutzer-Befund 26.09.2026: Prowler x10 rechnete wie
+    # x1 - die Rezept-Kopie mit den Buendel-Mengen entstand nur beim
+    # Oeffnen). Nachgestellt: vorher blieb build_runs A bei 10.
+    from PySide6.QtTest import QTest as _QT85m
+    _QT85m.qWait(400); _app.processEvents()
+    _pl85m = (getattr(win, "_bd_plan_ref", None) or {}).get("plan") or {}
+    eq("b85 ... und der Plan rechnet die neue Menge (build_runs A = 25)",
+       int((_pl85m.get("build_runs") or {}).get(_A85, 0) or 0), 25)
+    eq("b85 ... das Buendel-Rezept traegt die neue Menge",
+       dict(win._bd_recipes.bp_materials.get((I.BUENDEL_BP, I.MANUFACTURING)) or []).get(_A85), 25)
+    # DER VERKAUFSWERT OBEN FOLGT AUCH (vorher: `sell` vom Oeffnen, also die
+    # alte Menge - der Gewinn oben aenderte sich nicht).
+    _pmq85 = getattr(win, "_bd_pricemap", None) or {}
+    _soll85 = sum(float(_pmq85.get(int(_t), 0) or 0) * int(_q)
+                  for _t, _q in win._bd_buendel_enden)
+    check(f"b85 ... der Verkaufswert oben = Preis x NEUE Menge "
+          f"({getattr(win, '_bd_brutto_stand', None)} = {_soll85:.0f})",
+          getattr(win, "_bd_hub_sell_price", None)
+          or (_soll85 > 0 and abs(float(getattr(win, "_bd_brutto_stand", -1) or -1) - _soll85) < 0.5
+              and float(_pmq85.get(_A85, 0) or 0) > 0))
+    # SCHRITT 4b: Blaupausen-Lage JE ENDE. A hat eine eigene 7er-Kopie,
+    # B wird erfunden (Grund-Runs 10) - beide deckeln den Runplaner, aber
+    # mit VERSCHIEDENEN Zahlen. Genau das konnte die eine Stufen-Zahl nicht.
+    win._bd_own_bpc_je_ende = {_A85: True}
+    win._bd_own_bpc_runs_je_ende = {_A85: 7, _B85: 5}
+    _bpj85 = win._multi_bp_je_ende()
+    _runs_inv85 = I.invention_outcome(
+        10, 0.5, I.decryptor_fuer_bp(_BPB85, win._bd_opts))["runs"]
+    check(f"b85 Blaupausen-Lage je Ende: A aus der eigenen Kopie (7), "
+          f"B aus der Invention ({_runs_inv85})",
+          _bpj85[_A85]["runs"] == 7 and _bpj85[_B85]["runs"] == _runs_inv85)
+    check("b85 ... 'Runs/BPC' zaehlt NUR mit Haken (B nimmt die Invention, nicht 5)",
+          _bpj85[_B85]["runs"] != 5)
+    # Seit 26.09.2026 folgt der Plan der Mengen-Aenderung oben (A = 25) -
+    # verglichen wird deshalb mit dem AKTUELLEN Plan des Fensters, nicht mit
+    # dem beim Oeffnen gerechneten `_plan85`.
+    _runs85 = (((getattr(win, "_bd_plan_ref", None) or {}).get("plan") or {})
+               .get("build_runs") or {})
+    check(f"b85 Kopien je Ende = aufgerundete Runs / Runs-je-Kopie "
+          f"(A {_bpj85[_A85]['copies']}, B {_bpj85[_B85]['copies']})",
+          _bpj85[_A85]["copies"] == -(-int(_runs85.get(_A85, 1)) // 7)
+          and _bpj85[_B85]["copies"] == -(-int(_runs85.get(_B85, 1)) // _runs_inv85))
+    check("b85 der kleinere Wert gewinnt (Regel 3)",
+          win._multi_runs_cap_je_ende({_A85: 3}).get(_A85) == 3)
+    # OHNE Invention und ohne eigene Kopie: kein Deckel (BPO-Annahme, wie bisher).
+    win._bd_opts["invention"] = False
+    check("b85 ohne Invention und ohne eigene Kopie bleibt B unbegrenzt",
+          _B85 not in win._multi_bp_je_ende()
+          and win._multi_bp_je_ende().get(_A85, {}).get("runs") == 7)
+    win._bd_opts["invention"] = True
+    # NUTZER-BEFUND 21.09.2026 (51 Tage): "Eigene BPC" angehakt, "Runs/BPC"
+    # NICHT getippt. Frueher wurden dann ALLE Runs als EINE Kopie angenommen
+    # -> ein Job, ein Slot, ein Charakter. Jetzt fragt die Karte denselben
+    # Blaupausen-Cache, aus dem der Runplaner schon seinen Runs-Deckel holt.
+    # Nur ZWEI Kopien im Hangar, gebraucht werden mehr - so beweist die
+    # Pruefung beide Haelften: die GROESSE kommt aus dem Cache, und die
+    # STUECKZAHL deckelt (mehr Jobs als Blaupausen kann niemand fahren).
+    _cache85 = [{"type_id": _BPA85, "runs": 4, "quantity": 1, "is_bpo": False}] * 2
+    win._bd_own_bpc_runs_je_ende = {_B85: 5}          # fuer A NICHTS getippt
+    win._bd_owned_bp_cache = _cache85
+    _bpc85 = win._multi_bp_je_ende()
+    _rA85 = int(_runs85.get(_A85, 1))
+    check(f"b85 ohne getippte 'Runs/BPC' zaehlt die eigene Kopie aus dem Cache "
+          f"(A {_bpc85.get(_A85, {}).get('copies')} x "
+          f"{_bpc85.get(_A85, {}).get('runs')} statt 1 x {_rA85})",
+          _bpc85.get(_A85, {}).get("runs") == 4
+          and _bpc85[_A85]["copies"] == 2
+          # ... und der Deckel greift wirklich (sonst waere die Zeile blind):
+          and -(-_rA85 // 4) > 2)
+    check("b85 ... und das erreicht den Runplaner wirklich",
+          win._resolve_per_item_bp_cap().get(_A85) == _bpc85[_A85]["copies"]
+          and win._resolve_per_item_runs_cap().get(_A85) == 4)
+    win._bd_owned_bp_cache = []
+    win._bd_own_bpc_runs_je_ende = {_B85: 5}
+    # EIGENE KOPIE OHNE CACHE UND OHNE GETIPPTE RUNS (Nutzer 26.09.2026,
+    # Einherji II: "da wird angezeigt, ich haette unendlich T2 Copys? das
+    # geht nicht"): das Feld zeigt seine 1, also gilt 1 Run je Kopie - und
+    # die 1 steht danach im Speicher, damit Feld und Rechnung eins sind.
+    # Bis dahin hiess "unbekannt" hier "unbegrenzt" (kein Eintrag).
+    _bpu85 = win._multi_bp_je_ende()
+    check(f"b85 ohne Cache UND ohne getippte Runs: 1 Run je Kopie, {_rA85} Kopien - nie unendlich",
+          _bpu85.get(_A85, {}).get("runs") == 1
+          and _bpu85[_A85]["copies"] == _rA85
+          and win._bd_own_bpc_runs_je_ende.get(_A85) == 1)
+    win._bd_own_bpc_runs_je_ende = {_A85: 7, _B85: 5}
+    # UEBER DEN ECHTEN WEG, nicht nur die Hilfsfunktion: der Runplaner holt
+    # Deckel und Kopien aus _resolve_per_item_runs_cap / _resolve_per_item_bp_cap.
+    _cap85 = win._resolve_per_item_runs_cap()
+    check(f"b85 der Runplaner-Deckel selbst kennt die Grenze je Ende "
+          f"(A {_cap85.get(_A85)}, B {_cap85.get(_B85)})",
+          _cap85.get(_A85) == 7 and _cap85.get(_B85) == _runs_inv85)
+    _bpcap85 = win._resolve_per_item_bp_cap()
+    check(f"b85 ... und die Kopienzahl je Ende (A {_bpcap85.get(_A85)}, "
+          f"B {_bpcap85.get(_B85)})",
+          _bpcap85.get(_A85) == _bpj85[_A85]["copies"]
+          and _bpcap85.get(_B85) == _bpj85[_B85]["copies"])
+    # Speichern nimmt die neuen Felder mit.
+    _felder85 = win._multi_eintrag_felder()
+    check("b85 der Speicherer sichert 'Eigene BPC' und 'Runs/BPC' je Ende",
+          _felder85["own_bpc_je_ende"] == {str(_A85): True}
+          and _felder85["own_bpc_runs_je_ende"] == {str(_A85): 7, str(_B85): 5})
+    # ------------------------------------------------------------ (b120)
+    # (1) GLEICHER KNOPF-STIL (Nutzer 26.09.2026: "Buy Missing Blueprints und
+    #     Best Decryptor optisch an Create Shopping List anpassen - normale
+    #     Tool-Hintergrundfarbe, nur Umrandung und Text Amber"; "Create
+    #     shopping list etwas groesser").
+    # (2) REPROCESSING IM REZEPT-REITER STANDARDMAESSIG ZU (Nutzer).
+    # (3) EINZELPLAN (Nutzer: "die Aenderung im Invention-Tab soll auch auf
+    #     Einzelbauplaene gelten, Buy Missing Blueprints ebenso"): derselbe
+    #     Pruefsatz an einem Einzelplan eines erfindbaren Endes.
+    import eve_trader.ui.theme as _th120
+    from PySide6.QtWidgets import QPushButton as _QPB120
+    _stil120 = _th120.amber_rahmen_knopf()
+
+    def _pruef120(tag, dlg):
+        _knoepfe = [("Create shopping list", getattr(win, "_bd_mat_copy_btn", None)),
+                    ("Buy Missing Blueprints", getattr(win, "_bd_bp_kauf_btn", None)),
+                    ("Best Decryptor for all", getattr(win, "_bd_inv_alle_btn", None))]
+        _knoepfe += [("Best Decryptor", _b) for _b in
+                     (getattr(win, "_bd_inv_best_btns", None) or {}).values()]
+        check(f"b120 {tag}: alle Aktions-Knoepfe da und im offenen Fenster",
+              len(_knoepfe) >= 4 and all(_b is not None and dlg.isAncestorOf(_b)
+                                         for _n, _b in _knoepfe))
+        check(f"b120 {tag}: Shopping list, Buy Missing Blueprints, beide Best "
+              f"Decryptor im selben Stil (Rahmen + Text amber, keine Flaeche)",
+              all(_b is not None and _b.styleSheet() == _stil120 for _n, _b in _knoepfe)
+              and "background" not in _stil120.split("QPushButton:hover")[0]
+              and f"color:{_th120.AMBER}" in _stil120)
+        _mc = getattr(win, "_bd_mat_copy_btn", None)
+        check(f"b120 {tag}: 'Create shopping list' groesser (15 px, mind. 34 hoch)",
+              _mc is not None and "font-size:15px" in _mc.styleSheet()
+              and _mc.minimumHeight() >= 34)
+        _rp = [_b for _b in dlg.findChildren(_QPB120)
+               if _b.isCheckable() and _b.text().endswith("Reprocessing")]
+        # Seit 27.09.2026 OFFEN als Standard (Nutzer: "Reprocessing
+        # ausklappen als Standard"; am 26.09. wollte er es noch zu).
+        check(f"b120 {tag}: Klappe 'Reprocessing' ist offen ({[_b.text() for _b in _rp]})",
+              len(_rp) == 1 and _rp[0].isChecked())
+        # MAUSRAD NUR ZUM SCROLLEN (Nutzer 27.09.2026: Reprocess-Dropdown
+        # und "75 %" in den Invention-Settings drehten beim Scrollen mit).
+        from PySide6.QtCore import QPoint as _QPt120, QPointF as _QPF120
+        from PySide6.QtGui import QWheelEvent as _QWE120
+        from PySide6.QtWidgets import (QComboBox as _QCB120,
+                                       QAbstractSpinBox as _QAS120)
+
+        def _rad120(w):
+            _ev = _QWE120(_QPF120(5, 5), _QPF120(w.mapToGlobal(_QPt120(5, 5))),
+                          _QPt120(0, 0), _QPt120(0, -120), Qt.NoButton,
+                          Qt.NoModifier, Qt.NoScrollPhase, False)
+            QApplication.sendEvent(w, _ev)
+        # Die Zeit-Auswahl je Stufe im Runplaner ("as fast as possible",
+        # Nutzer: "laesst sich auf Tage wegscrollen") ZUERST pruefen.
+        _cb120 = sorted([c for c in dlg.findChildren(_QCB120)
+                         if c.count() >= 2 and c.isEnabled()],
+                        key=lambda c: 0 if c.itemData(0) == 0 and c.count() > 3 else 1)
+        _zeit120 = [c for c in _cb120 if c.itemData(0) == 0 and c.count() > 3]
+        _sp120 = [x for x in dlg.findChildren(_QAS120)
+                  if x.isEnabled() and not x.isReadOnly()]
+        _vorher120 = ([c.currentIndex() for c in _cb120],
+                      [x.text() for x in _sp120])
+        for _w in _cb120[:6] + _sp120[:6]:
+            _rad120(_w)
+        _app.processEvents()
+        # Hat das Rad doch gedreht, rechnet der Plan neu und baut Widgets neu
+        # - ein geloeschtes gilt dann als "veraendert" (ROT statt Absturz).
+        def _lies120(fn, w):
+            try:
+                return fn(w)
+            except RuntimeError:
+                return "geloescht"
+        _nachher120 = ([_lies120(lambda c: c.currentIndex(), c) for c in _cb120],
+                       [_lies120(lambda x: x.text(), x) for x in _sp120])
+        check(f"b120 {tag}: Mausrad aendert kein Dropdown/Zahlenfeld im Bauplan "
+              f"({len(_cb120)} Dropdowns, davon {len(_zeit120)} Stufen-Zeiten, "
+              f"{len(_sp120)} Felder)",
+              _cb120 and _sp120 and len(_zeit120) >= 1 and _vorher120 == _nachher120
+              and bool(dlg.property("combo_ohne_mausrad")))
+        _tw120 = [tr for tr in dlg.findChildren(QTreeWidget)
+                  if "Blue = will be built" in (tr.header().toolTip() or "")
+                  or "Blau" in (tr.header().toolTip() or "")]
+        check(f"b120 {tag}: Farb-Hinweis nur an der Kopfzeile des Baums, nicht an "
+              f"der Flaeche",
+              len(_tw120) == 1 and not (_tw120[0].toolTip() or ""))
+    _pruef120("Buendel", _d85)
+    _d85.close(); _app.processEvents()
+    win._bd_dialog = None
+    win._bd_buendel_enden = None
+    win._bd_multi_refresh = None
+    win._bd_recipes = _Rec85(); win._bd_recipes_basis = _Rec85()
+    win._bd_opts = dict(_o85); win._bd_type = _A85; win._bd_qty = 10
+    win._bd_inv_best_btns = {}
+    win._bd_inv_alle_btn = None; win._bd_bp_kauf_btn = None
+    win._bd_dec_bestaetigt = set()    # b118/b119 haben A und B schon gewaehlt
+    _plan120 = I.production_plan(_A85, 10, _pm85.get, _Rec85(), dict(_o85))
+    _tree120 = I.build_tree(_A85, _pm85.get, _Rec85(), dict(_o85))
+    win._show_build_detail(_A85, "A85", {
+        "tree": _tree120, "sell": 9e10, "sell_is_contract": False,
+        "plan": _plan120, "names": {_A85: "A85", _M85: "M85"}})
+    _app.processEvents()
+    _d120 = getattr(win, "_bd_dialog", None)
+    check("b120 Einzelplan eines erfindbaren Endes oeffnet (kein Buendel)",
+          _d120 is not None and _d120 is not _d85
+          and not getattr(win, "_bd_buendel_enden", None))
+    if _d120 is not None:
+        _pruef120("Einzelplan", _d120)
+        _lbl120 = " ".join(_l.text() for _l in _d120.findChildren(QLabel))
+        check("b120 Einzelplan: Invention-Karte mit Kopieranleitung, Regler, Decryptor-Warnung",
+              "Copy your T1 original like this" in _lbl120
+              and bool(getattr(win, "_bd_inv_split_w", None))
+              and "No decryptor chosen yet" in _lbl120)
+        # "NICHTS ZU KAUFEN" BLEIBT LESBAR LANGE STEHEN (Nutzer 26.09.2026:
+        # "geht so schnell wieder weg, dass man kaum was lesen kann").
+        _tips120 = []
+        _ft_alt120 = win._flash_tip
+        _rows_alt120 = getattr(win, "_bd_mat_rows", None)
+        try:
+            win._flash_tip = lambda text=None, ms=2000: _tips120.append((text, ms))
+            win._bd_mat_rows = []
+            win._bd_mat_copy_btn.click(); _app.processEvents()
+        finally:
+            win._flash_tip = _ft_alt120
+            win._bd_mat_rows = _rows_alt120
+        # 4 s (Nutzer 26.09.2026: "von 6 Sekunden auf 4 reduzieren").
+        check(f"b120 leere Einkaufsliste: Hinweis bleibt 4 s stehen ({_tips120})",
+              len(_tips120) == 1 and _tips120[0][1] == 4000)
+        _d120.close(); _app.processEvents()
+except Exception as _e85:                                # pragma: no cover
+    import traceback as _tb85
+    _fail.append(f"b85 Schritt 4: {type(_e85).__name__}: {_e85} | "
+                 + _tb85.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        win._bd_buendel_enden = None
+        win._bd_me_je_ende = {}; win._bd_te_je_ende = {}
+        win._bd_own_bpc_je_ende = {}; win._bd_own_bpc_runs_je_ende = {}
+        win._bd_multi_refresh = None
+        win._bd_type = 100; win._bd_recipes = _Recipes()
+        win._bd_recipes_basis = None
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b87)
+# "OPEN BUILD PLAN" MUSS WIRKLICH EIN FENSTER OEFFNEN (Nutzer-Befund
+# 20.09.2026: "kommt man zurueck zum Scanner Tab und es oeffnet sich kein
+# eigenes Fenster"). URSACHE WAR EINE ZEILE: `opts = self._multi_opts_je_ende(
+# opts, recipes)` im Bauplan-Job - damit war `opts` dort lokal und ueberall
+# unbelegt, der Job starb, und man sah nur die Statuszeile.
+#
+# DESHALB GEHT DIESE PRUEFUNG DEN GANZEN WEG: _multi_plan_oeffnen ->
+# open_build_detail -> Job -> _show_build_detail. Alle vorigen b-Pruefungen
+# riefen _show_build_detail direkt und haetten den Fehler NIE gesehen.
+try:
+    _A87, _B87, _M87 = 972001, 972002, 972004
+    _C87, _BPC87 = 972003, 982003        # drittes Ende fuer "herausnehmen"
+    _BPA87, _BPB87 = 982001, 982002
+
+    class _Rec87:
+        product_to_bp = {_A87: (_BPA87, I.MANUFACTURING, 1),
+                         _B87: (_BPB87, I.MANUFACTURING, 1),
+                         _C87: (_BPC87, I.MANUFACTURING, 1)}
+        bp_materials = {(_BPA87, I.MANUFACTURING): [(_M87, 100)],
+                        (_BPB87, I.MANUFACTURING): [(_M87, 100)],
+                        (_BPC87, I.MANUFACTURING): [(_M87, 100)]}
+        activity_time = {(_BPA87, I.MANUFACTURING): 60,
+                         (_BPB87, I.MANUFACTURING): 60,
+                         (_BPC87, I.MANUFACTURING): 60}
+        activity_max_runs = {}
+        reaction_products = set()
+        invention_for_bpc = {_BPA87: (962001, 10, 0.5, [])}
+        bp_products = {}
+        item_cat = {}
+
+        def is_manufactured(self, t):
+            return t in self.product_to_bp
+
+    _PM87 = {_M87: 100.0, _A87: 5e6, _B87: 7e6, _C87: 6e6}
+    from eve_trader import store as _st87, esi as _esi87
+    _alt87 = {"sde": I.sde_ready, "rec": I.recipes_cached,
+              "snap": _st87.get_snapshot, "namen": _esi87.resolve_names,
+              "mp": _esi87.market_prices, "adj": _esi87.adjusted_prices,
+              "idx": _esi87.system_cost_indices, "sys": _esi87.all_system_names,
+              "run": win._run, "pix": win._item_pixmap,
+              "slots": win._load_char_slots, "plans": win.settings.get("bau_saved_plans")}
+    I.sde_ready = lambda: True
+    I.recipes_cached = lambda *a87, **k87: _Rec87()
+    _st87.get_snapshot = lambda *a87, **k87: [
+        {"type_id": _t87, "sell_min": _v87} for _t87, _v87 in _PM87.items()]
+    _esi87.resolve_names = lambda ids: {int(_i): f"Item{_i}" for _i in ids}
+    _esi87.market_prices = lambda *a87, **k87: {"adjusted": dict(_PM87),
+                                                "average": dict(_PM87)}
+    _esi87.adjusted_prices = lambda *a87, **k87: dict(_PM87)
+    _esi87.system_cost_indices = lambda *a87, **k87: {}
+    _esi87.all_system_names = lambda *a87, **k87: {}
+    win._item_pixmap = lambda *a87, **k87: None
+    win._load_char_slots = lambda *a87, **k87: None
+    _fehler87 = []
+
+    def _run87(worker, done_cb, fail_cb=None, **k87):
+        """Den Hintergrund-Job SOFORT laufen lassen - sonst endet die Suite,
+        bevor das Ergebnis da ist, und die Pruefung waere blind."""
+        try:
+            _r87 = worker._fn(*worker._args, **worker._kwargs)
+        except Exception as _e87a:
+            _fehler87.append(f"{type(_e87a).__name__}: {_e87a}")
+            return
+        done_cb(_r87)
+    win._run = _run87
+    win.settings["bau_saved_plans"] = [
+        {"id": 8701, "label": "b87 A", "type_id": _A87, "item_name": "A87",
+         "qty": 20, "me": 0, "te": 0, "checked": []},
+        {"id": 8702, "label": "b87 B", "type_id": _B87, "item_name": "B87",
+         "qty": 10, "me": 0, "te": 0, "checked": []}]
+    _d_alt87 = win._offener_bauplan()
+    if _d_alt87 is not None:
+        _d_alt87.close(); _app.processEvents()
+    win._bd_dialog = None
+    _e87 = win._multi_plan_aus_quellen(win.settings["bau_saved_plans"])
+    win._multi_plan_oeffnen(_e87, plan_id=None)
+    _app.processEvents()
+    check(f"b87 'Bauplan oeffnen' oeffnet wirklich ein Fenster"
+          + (f" - Job starb an: {_fehler87[0][:70]}" if _fehler87 else ""),
+          not _fehler87 and getattr(win, "_bd_dialog", None) is not None)
+    check("b87 ... und die Statuszeile meldet keinen Fehler",
+          "error" not in (win.build_status.text() or "").lower()
+          and "fehler" not in (win.build_status.text() or "").lower())
+    _d87 = getattr(win, "_bd_dialog", None)
+    _kosten_dialog87 = 0.0
+    if _d87 is not None:
+        check("b87 das Fenster traegt den Namen des Multi-Bauplans",
+              _e87["label"] in (_d87.windowTitle() or ""))
+        check("b87 ... und kennt beide Endprodukte",
+              sorted((win._bd_multi_zeilen or {}).keys()) == sorted([_A87, _B87]))
+        _kosten_dialog87 = float(((getattr(win, "_bd_plan_ref", None) or {})
+                                  .get("plan") or {}).get("total_cost") or 0)
+        _d87.close(); _app.processEvents()
+    # GLEICHE ZAHLEN AUF BEIDEN WEGEN (Zusage an den Nutzer 26.09.2026:
+    # "die Rechnung selbst fasse ich nicht an"): dasselbe Buendel, einmal
+    # aus dem Multi-Dialog (_multi_plan_aus_quellen), einmal ueber
+    # "Endprodukt anhaengen" an Plan A - gleiche Gesamtkosten.
+    _pa87, _pb87 = win.settings["bau_saved_plans"][0], win.settings["bau_saved_plans"][1]
+    _e87h = win._multi_ende_anhaengen(_pa87, _pb87["type_id"], _pb87["qty"],
+                                      me=_pb87["me"], te=_pb87["te"])
+    check("b87 anhaengen liefert dieselben Enden/ME/TE wie der Dialog",
+          _e87h["enden"] == _e87["enden"]
+          and _e87h["me_je_ende"] == _e87["me_je_ende"]
+          and _e87h["te_je_ende"] == _e87["te_je_ende"])
+    win._bd_dialog = None
+    win._multi_plan_oeffnen(_e87h, plan_id=None); _app.processEvents()
+    _kosten_anh87 = float(((getattr(win, "_bd_plan_ref", None) or {})
+                           .get("plan") or {}).get("total_cost") or 0)
+    check(f"b87 ... und dieselben Gesamtkosten ({_kosten_anh87:.0f} = {_kosten_dialog87:.0f})",
+          _kosten_dialog87 > 0 and abs(_kosten_anh87 - _kosten_dialog87) < 0.5)
+    # "Compare: alone vs. in bundle" ist AUSGEBAUT (Nutzer 26.09.2026: "ich
+    # moechte, dass der Profit pro Unit oben rechts stimmt, einfach ohne
+    # Button"). Die Spalten stimmen jetzt von selbst mit der Kopfzeile (b90).
+    check("b87 der Knopf 'Compare: alone vs. in bundle' ist weg",
+          getattr(win, "_bd_multi_vgl_btn", None) is None
+          and not hasattr(win, "_multi_vergleich_in_karte"))
+    # DAS X ZUM HERAUSNEHMEN (Nutzer 26.09.2026: "etwas abgeschnitten, rot
+    # soll es sein"): rote Ruhe-Regel, kein Polster, breit genug fuer das X.
+    _x87 = [(_z.get("raus")) for _z in (win._bd_multi_zeilen or {}).values()]
+    _css87 = [(_b.styleSheet().split("QPushButton:hover")[0] if _b else "") for _b in _x87]
+    check("b87 das X ist rot, ohne Polster und breit genug",
+          bool(_x87) and all(_b is not None for _b in _x87)
+          and all(f"color:{_th7.RED}" in _c and "padding:0px" in _c for _c in _css87)
+          and all(_b.width() >= _b.fontMetrics().horizontalAdvance("\u2715") + 8
+                  for _b in _x87))
+    # MIT DEM ECHTEN THEMEN-QSS (Nutzer, Bild: "X noch abgeschnitten"):
+    # ohne QSS ist der Zellrahmen 29 px hoch und alles passte - mit dem
+    # Item-Polster von theme.QSS nur ~18 px, ein 24 px hoher Knopf verlor
+    # dort seinen unteren Rand. Der Knopf muss ganz im Zellrahmen liegen.
+    _tb87 = win._bd_multi_tbl
+    _alt_qss87 = _tb87.styleSheet()
+    _tb87.setStyleSheet(_th7.QSS); _app.processEvents()
+    _ganz87 = []
+    for _r87 in range(_tb87.rowCount()):
+        _wr87 = _tb87.cellWidget(_r87, 10)
+        _bx87 = _wr87.findChild(type(_x87[0])) if _wr87 is not None else None
+        _ganz87.append(_bx87 is not None and _wr87.rect().contains(_bx87.geometry())
+                       and _bx87.height() >= 14)
+    _tb87.setStyleSheet(_alt_qss87); _app.processEvents()
+    check("b87 mit theme.QSS liegt das X ganz in seiner Zelle (nicht abgeschnitten)",
+          bool(_ganz87) and all(_ganz87))
+    _d87i = getattr(win, "_bd_dialog", None)
+    if _d87i is not None:
+        _d87i.close(); _app.processEvents()
+    # HERAUSNEHMEN AUS DEM OFFENEN BUENDEL (Nutzer 26.09.2026: "einige
+    # Endprodukte lohnen sich nicht ... wir brauchen einen Knopf"): drei
+    # Enden oeffnen, C ueber den Knopf der Karte herausnehmen - das Fenster
+    # geht mit A + B neu auf, der Quellplan von C ist weg; unter zwei Enden
+    # und bei eingefrorenem Plan passiert NICHTS (nur ein Hinweis).
+    win.settings["bau_saved_plans"].append(
+        {"id": 8703, "label": "b87 C", "type_id": _C87, "item_name": "C87",
+         "qty": 5, "me": 0, "te": 0, "checked": []})
+    win._bd_dialog = None
+    _e87c = win._multi_plan_aus_quellen(win.settings["bau_saved_plans"])
+    win._multi_plan_oeffnen(_e87c, plan_id=None)
+    _app.processEvents()
+    _d87c = getattr(win, "_bd_dialog", None)
+    check("b87 Buendel mit drei Enden offen, jede Zeile hat den Knopf zum Herausnehmen",
+          _d87c is not None
+          and sorted((win._bd_multi_zeilen or {}).keys()) == sorted([_A87, _B87, _C87])
+          and all("raus" in _z for _z in win._bd_multi_zeilen.values())
+          and win._bd_multi_tbl.columnCount() == 11)
+    import eve_trader.ui.mw_multi_bauplan as _mmb87
+    _q_alt87 = _mmb87.QMessageBox.question
+    _fragen87 = []
+    _mmb87.QMessageBox.question = (
+        lambda *a, **k: (_fragen87.append(a[2]), _mmb87.QMessageBox.Yes)[1])
+    _tips87 = []
+    _tip_alt87 = win._flash_tip
+    win._flash_tip = lambda text=None, *a, **k: _tips87.append(str(text or ""))
+    try:
+        win._bd_multi_zeilen[_C87]["raus"].click()
+        _app.processEvents()
+        _d87d = getattr(win, "_bd_dialog", None)
+        # DAS FENSTER BLEIBT OFFEN (Nutzer 27.09.2026: "besser der bleibt
+        # offen und entfernt einfach einen Plan") - frueher wurde neu geoeffnet.
+        check("b87 Knopf: Rueckfrage nennt das Ende, das Fenster BLEIBT offen",
+              len(_fragen87) == 1 and "Item972003" in _fragen87[0]
+              and _d87d is not None and _d87d is _d87c and _d87c.isVisible())
+        check("b87 ... und der Plan ist ohne C neu gerechnet",
+              _C87 not in I.buendel_enden(getattr(win, "_bd_recipes_basis", None))
+              and sorted(I.buendel_enden(getattr(win, "_bd_recipes_basis", None)))
+              == sorted([_A87, _B87]))
+        check("b87 ... mit A + B, ohne C - und ohne den Quellplan von C",
+              sorted((win._bd_multi_zeilen or {}).keys()) == sorted([_A87, _B87])
+              and [a for a, _b in (win._bd_buendel_enden or [])] == sorted([_A87, _B87])
+              and sorted(win._bd_buendel_quellen or []) == [8701, 8702]
+              and any("removed" in _t or "genommen" in _t for _t in _tips87))
+        _fragen87.clear(); _tips87.clear()
+        win._bd_multi_zeilen[_A87]["raus"].click(); _app.processEvents()
+        check("b87 unter zwei Enden: keine Frage, nur der Hinweis auf 'Edit'",
+              not _fragen87 and getattr(win, "_bd_dialog", None) is _d87d
+              and _tips87 and ("Edit" in _tips87[0] or "Bearbeiten" in _tips87[0]))
+        _tips87.clear()
+        win.settings["bau_saved_plans"].append(
+            {"id": 8704, "label": "b87 D", "type_id": _C87, "item_name": "C87",
+             "qty": 5, "me": 0, "te": 0, "checked": []})
+        win._bd_frozen = {"ts": 1.0}
+        try:
+            win._bd_buendel_enden = [(_A87, 20), (_B87, 10), (_C87, 5)]
+            win._multi_ende_entfernen(_C87); _app.processEvents()
+            check("b87 eingefroren: keine Frage, Hinweis 'erst auftauen', nichts geoeffnet",
+                  not _fragen87 and getattr(win, "_bd_dialog", None) is _d87d
+                  and _tips87 and ("unfreeze" in _tips87[0] or "auftauen" in _tips87[0]))
+        finally:
+            win._bd_frozen = None
+    finally:
+        _mmb87.QMessageBox.question = _q_alt87
+        win._flash_tip = _tip_alt87
+    _d87e = getattr(win, "_bd_dialog", None)
+    if _d87e is not None:
+        _d87e.close(); _app.processEvents()
+    # ENDPRODUKT ANHAENGEN (Nutzer-Entscheid 26.09.2026: "direkt aus einem
+    # Bauplan ein Multibauplan erstellen ... per Rechtsklick in Multiplans
+    # umwandeln und immer weitere hinzufuegen"). EINGEFROREN ZAEHLT NICHT
+    # als Sperre (Nutzer 26.09.2026, zweiter Anlauf: "ich habe Bauplaene,
+    # kann aber keinen Multiplan erstellen" - Speichern friert jeden Plan
+    # ein, der alte Filter schloss also ALLE aus): beim Anhaengen wird
+    # aufgetaut. Nur reserviert und abgeschlossen bleiben draussen.
+    # (a) reine Umwandlung: Einzelplan -> Buendel, Buendel waechst.
+    _p87a = dict(win.settings["bau_saved_plans"][0])      # b87 A, Einzelplan
+    _p87a["frozen"] = {"ts": 1.0}
+    _neu87 = win._multi_ende_anhaengen(_p87a, _C87, 5)
+    check("b87 anhaengen: Einzelplan wird zum Buendel mit altem + neuem Ende, aufgetaut",
+          _neu87["type_id"] == I.BUENDEL_ID and _neu87.get("multi") is True
+          and _neu87["enden"] == [[_A87, 20], [_C87, 5]] and _neu87["qty"] == 1
+          and _neu87["quellen"] == [] and _neu87["me_je_ende"][str(_A87)] == 0
+          and _neu87["own_bpc_je_ende"][str(_A87)] is False
+          and _neu87["me_je_ende"][str(_C87)] == int(win.settings.get("bau_me", 10))
+          and _neu87.get("frozen") is None
+          and _p87a["type_id"] == _A87 and _p87a["frozen"])   # Eingabe unveraendert
+    _neu87b = win._multi_ende_anhaengen(_neu87, _C87, 3)
+    check("b87 anhaengen: dasselbe Ende noch einmal addiert die Menge",
+          _neu87b["enden"] == [[_A87, 20], [_C87, 8]])
+    # (b) wer darf ein Ende bekommen - SEIT 27.09.2026 JEDER Plan (Nutzer:
+    # "gespeicherte, gefrorene, reservierte Plaene auch nehmen, dafuer eine
+    # Kopie davon machen ... somit bleibt der alte Plan bestehen"; "alles,
+    # was in Meine Bauplaene steht, soll zaehlen"). Eingefroren, reserviert
+    # oder abgeschlossen -> das Ende geht in eine KOPIE.
+    check("b87 anhaengbar: jeder Plan; Kopie bei eingefroren/reserviert/abgeschlossen",
+          all(win._multi_ende_anhaengbar(_x) is True for _x in (
+              {"type_id": 5}, {"type_id": 5, "frozen": {"ts": 1}},
+              {"type_id": 5, "reserve": True}, {"type_id": 5, "done_manual": True}))
+          and win._multi_ende_anhaengbar({"type_id": 0}) is False
+          and win._multi_braucht_kopie({"type_id": 5}) is False
+          and all(win._multi_braucht_kopie(_x) is True for _x in (
+              {"type_id": 5, "frozen": {"ts": 1}}, {"type_id": 5, "reserve": True},
+              {"type_id": 5, "done_manual": True})))
+    _orig87k = {"id": 8790, "label": "b87 K", "type_id": _A87, "qty": 3,
+                "frozen": {"ts": 1.0, "prices": {"1": 2}}, "reserve": True,
+                "reserve_map": {"34": 5}, "done_manual": True, "checked": ["x"],
+                "checked_runplan": ["y"], "quellen": [8701], "farbe": 2}
+    _kop87 = win._multi_kopie_von(_orig87k)
+    check("b87 Kopie: neue ID, aufgetaut, nicht reserviert/abgeschlossen, keine Haken/"
+          "Quellen, Name '(copy)', Original unveraendert",
+          _kop87["id"] != 8790 and _kop87.get("frozen") is None
+          and _kop87.get("reserve") is False and _kop87.get("reserve_map") == {}
+          and _kop87.get("done_manual") is False and _kop87.get("checked") == []
+          and _kop87.get("checked_runplan") == [] and _kop87.get("quellen") == []
+          and ("copy" in _kop87["label"] or "Kopie" in _kop87["label"])
+          and "b87 K" in _kop87["label"] and _kop87["qty"] == 3 and _kop87["farbe"] == 2
+          and _orig87k["frozen"] and _orig87k["reserve"] is True
+          and _orig87k["checked"] == ["x"] and _orig87k["quellen"] == [8701])
+    # (c) das Untermenue listet NUR die anhaengbaren.
+    from PySide6.QtWidgets import QMenu as _QMenu87
+    win.settings["bau_saved_plans"] = [
+        {"id": 8701, "label": "b87 A", "type_id": _A87, "item_name": "A87",
+         "qty": 20, "me": 0, "te": 0, "checked": []},
+        {"id": 8702, "label": "b87 B", "type_id": _B87, "item_name": "B87",
+         "qty": 10, "me": 0, "te": 0, "checked": [], "frozen": {"ts": 1.0}},
+        {"id": 8705, "label": "b87 R", "type_id": _B87, "item_name": "B87",
+         "qty": 10, "me": 0, "te": 0, "checked": [], "reserve": True}]
+    _m87 = _QMenu87()
+    _akt87 = win._multi_untermenue(_m87, _C87, "Item972003")
+    check("b87 Rechtsklick-Untermenue: offener, eingefrorener UND reservierter Plan",
+          sorted(_akt87.values()) == [8701, 8702, 8705]
+          and len(_m87.actions()) == 1 and _m87.actions()[0].menu() is not None)
+    # MITGLIED EINES BUENDELS (Nutzer-Screenshot 26.09.2026: Ametat II /
+    # Flycatcher / Stork aus Multiplan 1 standen im Untermenue): raus.
+    win.settings["bau_saved_plans"].append(
+        {"id": 8709, "label": "b87 M", "type_id": I.BUENDEL_ID, "qty": 1, "multi": True,
+         "enden": [[_A87, 20]], "quellen": [8701], "checked": []})
+    _m87b = _QMenu87()
+    _akt87b = win._multi_untermenue(_m87b, _C87, "x")
+    check("b87 Untermenue: ein Buendel-Mitglied steht NICHT drin (nur das Buendel selbst)",
+          sorted(_akt87b.values()) == [8702, 8705, 8709])
+    # MULTIPLAENE ZUERST UND FETT, dann Trennstrich (Nutzer 27.09.2026:
+    # "bestehende Multiplaene hervorheben und ganz oben anzeigen, in Fett").
+    _sub87b = _m87b.actions()[0].menu()
+    _eintr87b = [(("---" if _a.isSeparator() else _akt87b.get(_a)), _a.font().bold())
+                 for _a in _sub87b.actions()]
+    check(f"b87 Untermenue: Multiplaene oben und fett, dann Trennstrich ({_eintr87b})",
+          _eintr87b == [(8709, True), ("---", False), (8702, False), (8705, False)])
+    win.settings["bau_saved_plans"].pop()
+    # OHNE EINEN EINZIGEN OFFENEN PLAN bleibt das Untermenue stehen und sagt,
+    # warum es leer ist (Nutzer 26.09.2026: "Rechtsklick-Funktion ist weg").
+    _alt_pl87 = win.settings["bau_saved_plans"]
+    win.settings["bau_saved_plans"] = []      # gar kein Plan (reservierte zaehlen jetzt)
+    _m87c = _QMenu87()
+    _akt87c = win._multi_untermenue(_m87c, _C87, "x")
+    _sub87c = _m87c.actions()[0].menu() if _m87c.actions() else None
+    check("b87 Untermenue ohne offenen Plan: bleibt sichtbar, ein gesperrter Hinweis",
+          _akt87c == {} and _sub87c is not None
+          and len(_sub87c.actions()) == 1 and not _sub87c.actions()[0].isEnabled())
+    win.settings["bau_saved_plans"] = _alt_pl87
+    # (d) der Rechtsklick-Weg: haengt an, SPEICHERT, wandelt um, oeffnet.
+    win._bd_dialog = None
+    _gesp87 = []
+    import eve_trader.config as _cfg87
+    _save_alt87 = _cfg87.save_settings
+    _cfg87.save_settings = lambda *a, **k: _gesp87.append(1)
+    # SEIT 27.09.2026 FRAGT der Rechtsklick-Weg, ob er oeffnen soll - hier
+    # immer "Ja" (b121 prueft die Frage selbst).
+    _frage_alt87 = win._multi_jetzt_oeffnen_fragen
+    win._multi_jetzt_oeffnen_fragen = lambda *a, **k: True
+    try:
+        # EINGEFRORENER Plan per Rechtsklick: wird Buendel UND aufgetaut, der
+        # Hinweis sagt es. RESERVIERTER Plan: nichts passiert, nur Hinweis.
+        # (Das Fenster-Oeffnen blinkt hier zusaetzlich "No characters" - daher
+        # wird nach Inhalt gesucht, nicht gezaehlt.)
+        _tips87d = []
+        _tip_alt87d = win._flash_tip
+        win._flash_tip = lambda txt, *a, **k: _tips87d.append(str(txt))
+        _ids_vor87 = {p.get("id") for p in win.settings["bau_saved_plans"]}
+        try:
+            win._multi_ende_zu_plan(8702, _C87, "x", qty=1); _app.processEvents()
+            _pl87b = next((p for p in win.settings["bau_saved_plans"]
+                           if p.get("id") == 8702), {})     # fehlt -> ROT, kein Absturz
+            _kop87b = [p for p in win.settings["bau_saved_plans"]
+                       if p.get("id") not in _ids_vor87]
+            check("b87 Rechtsklick auf einen eingefrorenen Plan: Original bleibt, KOPIE als "
+                  "Buendel B + C, aufgetaut, gespeichert, Hinweis",
+                  _pl87b.get("type_id") == _B87 and _pl87b.get("frozen")
+                  and len(_kop87b) == 1 and _kop87b[0]["type_id"] == I.BUENDEL_ID
+                  and _kop87b[0]["enden"] == [[_B87, 10], [_C87, 1]]
+                  and _kop87b[0].get("frozen") is None and _gesp87
+                  and any("copy" in x or "Kopie" in x for x in _tips87d))
+            _ids_vor87 |= {p.get("id") for p in _kop87b}
+            _d87x = getattr(win, "_bd_dialog", None)
+            if _d87x is not None:
+                _d87x.close(); _app.processEvents()
+            win._multi_ende_zu_plan(8705, _C87, "x", qty=1); _app.processEvents()
+            _pl87r = next((p for p in win.settings["bau_saved_plans"]
+                           if p.get("id") == 8705), {})
+            _kop87r = [p for p in win.settings["bau_saved_plans"]
+                       if p.get("id") not in _ids_vor87]
+            check("b87 Rechtsklick auf einen reservierten Plan: Original bleibt reserviert, "
+                  "Kopie ohne Reservierung",
+                  _pl87r.get("type_id") == _B87 and _pl87r.get("reserve") is True
+                  and len(_kop87r) == 1 and _kop87r[0].get("reserve") is False
+                  and _kop87r[0]["enden"] == [[_B87, 10], [_C87, 1]])
+        finally:
+            win._flash_tip = _tip_alt87d
+            # Die Kopien wieder weg - die folgenden Pruefungen rechnen mit
+            # den drei Ausgangsplaenen.
+            win.settings["bau_saved_plans"] = [
+                p for p in win.settings["bau_saved_plans"]
+                if p.get("id") in {8701, 8702, 8705}]
+            _d87x = getattr(win, "_bd_dialog", None)
+            if _d87x is not None:
+                _d87x.close(); _app.processEvents()
+        # GESPEICHERT heisst: config.save_settings VOR dem Karten-Auffrischen
+        # (das Fenster-Oeffnen danach speichert selbst - ein blosses "wurde
+        # irgendwann gespeichert" liesse die Mutation "ohne zu speichern"
+        # durch, Rotprobe 26.09.2026).
+        _reload_alt87 = win._reload_saved_plans
+        _reihe87 = []
+        win._reload_saved_plans = lambda *a, **k: (_reihe87.append(len(_gesp87)),
+                                                   _reload_alt87(*a, **k))[1]
+        try:
+            _gesp87.clear()
+            win._multi_ende_zu_plan(8701, _C87, "Item972003", qty=5)
+            _app.processEvents()
+        finally:
+            win._reload_saved_plans = _reload_alt87
+        _pl87 = next(p for p in win.settings["bau_saved_plans"] if p.get("id") == 8701)
+        check("b87 Rechtsklick: Plan A ist jetzt ein Buendel A + C, gespeichert, Fenster offen",
+              _pl87["type_id"] == I.BUENDEL_ID and _pl87["enden"] == [[_A87, 20], [_C87, 5]]
+              and _reihe87 and _reihe87[0] == 1
+              and getattr(win, "_bd_dialog", None) is not None
+              and sorted((win._bd_multi_zeilen or {}).keys()) == sorted([_A87, _C87]))
+        # (e0) der echte Auswahl-Dialog: die Planliste enthaelt NUR offene
+        # Einzelplaene (8701 und 8702 sind inzwischen Buendel, 8705
+        # reserviert) - hier also nur den Platzhalter.
+        from PySide6.QtCore import QTimer as _QT87
+        win._build_picker_pairs = [("Item972002", _B87)]
+        _liste87 = []
+
+        def _schau87():
+            _pb = getattr(win, "_multi_ende_dialog_plaene", None)
+            _liste87.append([_pb.itemData(i) for i in range(_pb.count())] if _pb else None)
+            win._multi_ende_dialog.reject()
+        _QT87.singleShot(0, _schau87)
+        _w87 = win._multi_ende_waehlen()
+        win.settings["bau_saved_plans"].append(
+            {"id": 8706, "label": "b87 offen", "type_id": _B87, "item_name": "B87",
+             "qty": 7, "me": 1, "te": 1, "checked": []})
+        _liste87b = []
+
+        def _schau87b():
+            _pb = getattr(win, "_multi_ende_dialog_plaene", None)
+            _liste87b.append([_pb.itemData(i) for i in range(_pb.count())] if _pb else None)
+            win._multi_ende_dialog.reject()
+        _QT87.singleShot(0, _schau87b)
+        win._multi_ende_waehlen()
+        # Seit 27.09.2026 stehen auch eingefrorene/reservierte Einzelplaene
+        # drin (8702, 8705) - sie dienen als Vorlage fuer das neue Ende.
+        check(f"b87 Auswahl-Dialog: Einzelplaene in der Liste, Abbruch -> None "
+              f"({_liste87}, {_liste87b})",
+              _w87 is None and _liste87 == [[None, 8702, 8705]]
+              and _liste87b == [[None, 8702, 8705, 8706]])
+        # (e) der Knopf im Fenster: Auswahl gestubbt -> B kommt dazu.
+        _wahl_alt87 = win._multi_ende_waehlen
+        win._multi_ende_waehlen = lambda: {"tid": _B87, "name": "Item972002", "qty": 4,
+                                           "me": 3, "te": 2, "own_bpc": True,
+                                           "own_bpc_runs": 5}
+        try:
+            _d87f = win._bd_dialog
+            win._bd_ende_btn.click(); _app.processEvents()
+            # DAS FENSTER BLEIBT (Nutzer 27.09.2026: "an einem offenen
+            # Multiplan arbeiten und gleichzeitig Endprodukte hinzufuegen und
+            # loeschen, ohne Uebergaenge") - frueher wurde neu geoeffnet.
+            check("b87 Knopf 'Add end product': dasselbe Fenster, jetzt A + C + B",
+                  getattr(win, "_bd_dialog", None) is not None
+                  and win._bd_dialog is _d87f
+                  and sorted((win._bd_multi_zeilen or {}).keys())
+                  == sorted([_A87, _B87, _C87])
+                  and [list(x) for x in win._bd_buendel_enden]
+                  == [[_A87, 20], [_B87, 4], [_C87, 5]])
+            # AUS EINEM GESPEICHERTEN PLAN uebernommen: ME/TE/Eigene BPC/Runs
+            # des Plans gelten fuer das neue Ende (Nutzer: "ja unbedingt").
+            check("b87 ... und ME/TE/Eigene BPC/Runs des gewaehlten Plans gelten fuer B",
+                  win._bd_me_je_ende.get(_B87) == 3 and win._bd_te_je_ende.get(_B87) == 2
+                  and win._bd_own_bpc_je_ende.get(_B87) is True
+                  and win._bd_own_bpc_runs_je_ende.get(_B87) == 5)
+            check("b87 ... und der Plan ist mit B neu gerechnet",
+                  sorted(I.buendel_enden(getattr(win, "_bd_recipes_basis", None)))
+                  == sorted([_A87, _B87, _C87]))
+            # RECHTSKLICK auf genau diesen (offenen) Plan: KEINE Frage "jetzt
+            # oeffnen?", das Ende landet im offenen Fenster (Nutzer: "dabei ist
+            # er ja schon offen - bei No wird nichts hinzugefuegt").
+            _fragen87f = []
+            _frage_vor87f = win._multi_jetzt_oeffnen_fragen
+            win._multi_jetzt_oeffnen_fragen = lambda *a, **k: (
+                _fragen87f.append(1), False)[1]
+            try:
+                win._multi_ende_zu_plan(8701, _B87, "Item972002", qty=1)
+                _app.processEvents()
+            finally:
+                win._multi_jetzt_oeffnen_fragen = _frage_vor87f
+            check(f"b87 Rechtsklick auf den OFFENEN Plan: keine Frage, gleiches Fenster, "
+                  f"B jetzt 5 ({win._bd_buendel_enden})",
+                  not _fragen87f and win._bd_dialog is _d87f
+                  and dict((int(a), int(b)) for a, b in win._bd_buendel_enden).get(_B87) == 5
+                  and sorted((win._bd_multi_zeilen or {}).keys())
+                  == sorted([_A87, _B87, _C87]))
+            # EINGEFRORENES Fenster: der Knopf geht, das neue Fenster ist
+            # aufgetaut, der Hinweis sagt es. RESERVIERTER gespeicherter
+            # Plan: nichts geoeffnet, nur Hinweis.
+            _tips87e = []
+            _tip_alt87e = win._flash_tip
+            win._flash_tip = lambda txt, *a, **k: _tips87e.append(str(txt))
+            win._bd_frozen = {"ts": 1.0}
+            _d87g = win._bd_dialog
+            try:
+                _gesp87a = next(p for p in win.settings["bau_saved_plans"]
+                                if p.get("id") == 8701)
+                _enden87a = [list(x) for x in _gesp87a.get("enden") or []]
+                win._bd_ende_btn.click(); _app.processEvents()
+                # KOPIE STATT UMBAU (Nutzer 27.09.2026): neues, ungespeichertes
+                # Fenster mit der Kopie; der gespeicherte Plan bleibt.
+                check("b87 Knopf bei eingefrorenem Fenster: neues Fenster mit KOPIE, "
+                      "gespeicherter Plan unveraendert, Hinweis",
+                      win._bd_dialog is not _d87g
+                      and getattr(win, "_bd_open_plan_id", None) is None
+                      and not getattr(win, "_bd_frozen", None)
+                      # 9 = 4 (Knopf) + 1 (Rechtsklick oben) + 4 (hier)
+                      and [list(x) for x in win._bd_buendel_enden]
+                      == [[_A87, 20], [_B87, 9], [_C87, 5]]
+                      and [list(x) for x in _gesp87a.get("enden") or []] == _enden87a
+                      and any("copy" in x or "Kopie" in x for x in _tips87e))
+                # RESERVIERTER gespeicherter Plan offen: ebenfalls Kopie.
+                _gesp87a["reserve"] = True
+                win._bd_open_plan_id = 8701
+                _d87i = win._bd_dialog
+                win._bd_ende_btn.click(); _app.processEvents()
+                check("b87 Knopf bei reserviertem Plan: neues Fenster mit Kopie, Plan bleibt "
+                      "reserviert",
+                      win._bd_dialog is not _d87i
+                      and getattr(win, "_bd_open_plan_id", None) is None
+                      and _gesp87a.get("reserve") is True
+                      and any("copy" in x or "Kopie" in x for x in _tips87e[-1:]))
+                _gesp87a["reserve"] = False
+            finally:
+                win._bd_frozen = None
+                win._flash_tip = _tip_alt87e
+        finally:
+            win._multi_ende_waehlen = _wahl_alt87
+    finally:
+        _cfg87.save_settings = _save_alt87
+        win._multi_jetzt_oeffnen_fragen = _frage_alt87
+    _d87h = getattr(win, "_bd_dialog", None)
+    if _d87h is not None:
+        _d87h.close(); _app.processEvents()
+except Exception as _e87x:                               # pragma: no cover
+    import traceback as _tb87
+    _fail.append(f"b87 Open build plan: {type(_e87x).__name__}: {_e87x} | "
+                 + _tb87.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        I.sde_ready = _alt87["sde"]; I.recipes_cached = _alt87["rec"]
+        _st87.get_snapshot = _alt87["snap"]; _esi87.resolve_names = _alt87["namen"]
+        _esi87.market_prices = _alt87["mp"]; _esi87.adjusted_prices = _alt87["adj"]
+        _esi87.system_cost_indices = _alt87["idx"]
+        _esi87.all_system_names = _alt87["sys"]
+        win._run = _alt87["run"]; win._item_pixmap = _alt87["pix"]
+        win._load_char_slots = _alt87["slots"]
+        win.settings["bau_saved_plans"] = _alt87["plans"]
+        win._bd_buendel_enden = None; win._bd_multi_refresh = None
+        win._bd_type = 100; win._bd_recipes = _Recipes()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b121)
+# DIE DREI BEDIENIDEEN (Nutzer 26.09.2026: "Punkt 2 ausfuehren"):
+# (1) Mehrfachauswahl im Scanner -> Rechtsklick -> alle in einen Plan oder
+#     "New multi build plan from selection"; (2) der Mengen-Dialog startet
+#     mit der Stueckzahl, mit der der Scanner gerechnet hat; (3) Rechtsklick
+#     auf eine Karte in "My build plans" -> "Add build plan...".
+_alt121 = {}
+try:
+    import eve_trader.config as _cfg121
+    from PySide6.QtCore import QTimer as _QT121, QPoint as _QP121
+    from PySide6.QtWidgets import QMenu as _QM121
+    _alt121 = {"plans": win.settings.get("bau_saved_plans"),
+               "save": _cfg121.save_settings, "oeffnen": win._multi_plan_oeffnen,
+               "tip": win._flash_tip, "waehlen": win._multi_ende_waehlen,
+               "frage": win._multi_jetzt_oeffnen_fragen}
+    _antwort121 = [True]
+    win._multi_jetzt_oeffnen_fragen = lambda *a, **k: _antwort121[0]
+    _gesp121, _offen121, _tips121 = [], [], []
+    _cfg121.save_settings = lambda *a, **k: _gesp121.append(1)
+    win._multi_plan_oeffnen = lambda e, plan_id=None: _offen121.append((dict(e), plan_id))
+    win._flash_tip = lambda txt=None, ms=2000: _tips121.append((str(txt), ms))
+    _X1, _X2, _X3 = 973001, 973002, 973003
+    win.settings["bau_saved_plans"] = [
+        {"id": 12101, "label": "b121 A", "type_id": _X1, "item_name": "X1",
+         "qty": 3, "me": 0, "te": 0, "checked": []},
+        {"id": 12102, "label": "b121 R", "type_id": _X2, "item_name": "X2",
+         "qty": 2, "me": 0, "te": 0, "checked": [], "reserve": True}]
+    # (2) SCANNER-ZEILE TRAEGT IHRE STUECKZAHL - echter Aufbau ueber
+    #     _render_build, eine Zeile mit, eine ohne Nachrechnung.
+    _deal121 = lambda tid, rq: {
+        "type_id": tid, "build_cost": 100.0, "sell_min": 200.0, "profit_day": 1.0,
+        "daily_vol": 5.0, "volatility": 1.0, "dos": 3.0, "under_pct": 50.0,
+        "profit_unit": 90.0, "isk_per_hour": 0.0, "fallback_pct": 0.0,
+        "inv_saved_unit": 0.0, **({"refined_qty": rq} if rq else {})}
+    win._render_build([_deal121(_X1, 37), _deal121(_X2, 0), _deal121(_X3, 12)])
+    _app.processEvents()
+    _zeilen121 = {}
+    for _r in range(win.b_table.rowCount()):
+        _z = win._build_row_auswahl(win.b_table, _r)
+        if _z:
+            _zeilen121[_z["tid"]] = (_r, _z["vorgabe"])
+    check(f"b121 Scanner-Zeile traegt die Stueckzahl des Scanners ({_zeilen121})",
+          _zeilen121.get(_X1, (0, 0))[1] == 37 and _zeilen121.get(_X2, (0, 0))[1] == 1
+          and _zeilen121.get(_X3, (0, 0))[1] == 12)
+    # Der Mengen-Dialog zeigt die Vorgabe - und nimmt eine Aenderung an.
+    _gesehen121 = []
+
+    def _dlg121():
+        _sp = list(getattr(win, "_multi_mengen_spins", None) or [])
+        _gesehen121.append([_x.value() for _x in _sp])
+        if len(_sp) > 1:
+            _sp[1].setValue(8)
+        win._multi_mengen_dlg.accept()
+    _QT121.singleShot(0, _dlg121)
+    _m121 = win._multi_mengen_dialog(
+        [{"tid": _X1, "name": "X1", "vorgabe": 37}, {"tid": _X3, "name": "X3", "vorgabe": 12}],
+        "b121")
+    check(f"b121 Mengen-Dialog: vorbefuellt (37, 12), Aenderung zaehlt ({_gesehen121}, {_m121})",
+          _gesehen121 == [[37, 12]]
+          and [(x["tid"], x["qty"]) for x in (_m121 or [])] == [(_X1, 37), (_X3, 8)])
+    _QT121.singleShot(0, lambda: win._multi_mengen_dlg.reject())
+    check("b121 Mengen-Dialog: Abbrechen -> None",
+          win._multi_mengen_dialog([{"tid": _X1, "name": "X1", "vorgabe": 2}], "b121") is None)
+    # Einzel-Rechtsklick in einen Plan: der Dialog startet mit 37.
+    _gesehen121b = []
+
+    def _dlg121b():
+        _gesehen121b.append([_x.value() for _x in (win._multi_mengen_spins or [])])
+        win._multi_mengen_dlg.accept()
+    _QT121.singleShot(0, _dlg121b)
+    win._multi_ende_zu_plan(12101, _X3, "X3", vorgabe=37); _app.processEvents()
+    _pa121 = next(p for p in win.settings["bau_saved_plans"] if p["id"] == 12101)
+    check(f"b121 Einzel-Rechtsklick: Menge vorbefuellt ({_gesehen121b}), Plan wird Buendel",
+          _gesehen121b == [[37]] and _pa121["type_id"] == I.BUENDEL_ID
+          and _pa121["enden"] == [[_X1, 3], [_X3, 37]] and _gesp121)
+    # (1) MEHRFACHAUSWAHL: nur wenn die geklickte Zeile dazugehoert, >= 2.
+    win.b_table.clearSelection()
+    win.b_table.setSelectionMode(win.b_table.SelectionMode.ExtendedSelection)
+    from PySide6.QtCore import QItemSelectionModel as _ISM121
+    _sm121 = win.b_table.selectionModel()
+    for _tid in (_X1, _X3):
+        _sm121.select(win.b_table.model().index(_zeilen121[_tid][0], 0),
+                      _ISM121.Select | _ISM121.Rows)
+    _ausw121 = win._multi_auswahl(win.b_table, _zeilen121[_X1][0], win._build_row_auswahl)
+    check(f"b121 Mehrfachauswahl: zwei markierte Zeilen mit Vorgaben ({_ausw121})",
+          sorted((x["tid"], x["vorgabe"]) for x in _ausw121) == [(_X1, 37), (_X3, 12)])
+    check("b121 ... Rechtsklick auf eine NICHT markierte Zeile -> Einzel-Menue",
+          win._multi_auswahl(win.b_table, _zeilen121[_X2][0], win._build_row_auswahl) == [])
+    _mm121 = _QM121()
+    _akt121, _neu121 = win._multi_auswahl_menue(_mm121, _ausw121)
+    _txt121 = [a.text() for a in _mm121.actions()]
+    check(f"b121 ... das Menue bietet 'New ... from selection (2)' und 'Add 2 selected' ({_txt121})",
+          _neu121 is not None and "(2)" in _neu121.text()
+          and any("2" in x and ("selected" in x or "markierte" in x) for x in _txt121)
+          # seit 27.09.2026 auch der reservierte (12102) - er bekommt eine Kopie
+          and sorted(_akt121.values()) == [12101, 12102])
+    # Alle markierten in einen Plan: EIN Dialog mit beiden Vorgaben.
+    _gesehen121c = []
+
+    def _dlg121c():
+        _gesehen121c.append([_x.value() for _x in (win._multi_mengen_spins or [])])
+        win._multi_mengen_dlg.accept()
+    _QT121.singleShot(0, _dlg121c)
+    _gesp121.clear(); _offen121.clear()
+    win._multi_enden_zu_plan(12101, [dict(x, qty=None) for x in _ausw121])
+    _app.processEvents()
+    _pa121 = next(p for p in win.settings["bau_saved_plans"] if p["id"] == 12101)
+    check(f"b121 Auswahl -> Plan: ein Dialog ({_gesehen121c}), beide Enden addiert, gespeichert, offen",
+          len(_gesehen121c) == 1 and sorted(_gesehen121c[0]) == [12, 37]
+          and _pa121["enden"] == [[_X1, 40], [_X3, 49]]
+          and _gesp121 and _offen121 and _offen121[-1][1] == 12101)
+    # Neues Buendel aus der Auswahl: ungespeichert geoeffnet, zwei Enden.
+    _offen121.clear(); _gesp121.clear()
+    _QT121.singleShot(0, lambda: win._multi_mengen_dlg.accept())
+    _e121 = win._multi_neu_aus_auswahl(_ausw121); _app.processEvents()
+    check(f"b121 'New multi build plan from selection': Buendel X1 37 + X3 12, "
+          f"ungespeichert geoeffnet ({(_e121 or {}).get('enden')})",
+          _e121 is not None and _e121["type_id"] == I.BUENDEL_ID
+          and sorted(_e121["enden"]) == [[_X1, 37], [_X3, 12]]
+          and _offen121 and _offen121[-1][1] is None and not _gesp121)
+    _offen121.clear(); _tips121.clear()
+    _dlg_vor121 = getattr(win, "_multi_mengen_dlg", None)
+    # Falls doch ein Dialog aufgeht: nicht haengen bleiben, sondern rot werden.
+    _QT121.singleShot(0, lambda: (getattr(win, "_multi_mengen_dlg", None) is not _dlg_vor121)
+                      and win._multi_mengen_dlg.reject())
+    check("b121 ... unter zwei verschiedenen Items: kein Dialog, kein Buendel, Hinweis",
+          win._multi_neu_aus_auswahl([{"tid": _X1, "name": "X1", "vorgabe": 1},
+                                      {"tid": _X1, "name": "X1", "vorgabe": 2}]) is None
+          and not _offen121
+          and getattr(win, "_multi_mengen_dlg", None) is _dlg_vor121
+          and any("two" in x or "zwei" in x for x, _ms in _tips121))
+    # ERST FRAGEN, DANN OEFFNEN (Nutzer 27.09.2026: "sollte danach die Frage
+    # kommen: moechtest du den Multi-Bauplan jetzt oeffnen? Ja/Nein").
+    _antwort121[0] = False
+    _offen121.clear(); _gesp121.clear()
+    win._multi_ende_zu_plan(12101, _X2, "X2", qty=2); _app.processEvents()
+    _pa121 = next(p for p in win.settings["bau_saved_plans"] if p["id"] == 12101)
+    check("b121 Antwort 'Nein': angehaengt und gespeichert, aber NICHT geoeffnet",
+          [x for x in _pa121["enden"] if x[0] == _X2] == [[_X2, 2]]
+          and _gesp121 and not _offen121)
+    _antwort121[0] = True
+    import eve_trader.ui.mw_multi_bauplan as _mmb121
+    _q_alt121 = _mmb121.QMessageBox.question
+    _frage121 = []
+    _mmb121.QMessageBox.question = lambda *a, **k: (_frage121.append(a),
+                                                    _mmb121.QMessageBox.No)[1]
+    try:
+        _r121 = _alt121["frage"]("Plan X")
+    finally:
+        _mmb121.QMessageBox.question = _q_alt121
+    check(f"b121 die echte Frage nennt den Plan, Standard ist 'Nein' ({_frage121})",
+          _r121 is False and len(_frage121) == 1
+          and "Plan X" in str(_frage121[0][2])
+          and _frage121[0][-1] == _mmb121.QMessageBox.No)
+    # (3) RECHTSKLICK AUF EINE KARTE.
+    win._reload_saved_plans(); _app.processEvents()
+    _k121 = (getattr(win, "_plan_karte", None) or {}).get(12101)
+    _kr121 = (getattr(win, "_plan_karte", None) or {}).get(12102)
+    check("b121 Karte hat ein eigenes Rechtsklick-Menue",
+          _k121 is not None and _k121.contextMenuPolicy() == Qt.CustomContextMenu)
+    _akt121k = {}
+
+    def _menu121(pid):
+        def _f():
+            _m = win._plan_karten_menu
+            _akt121k[pid] = [(a.text(), a.isEnabled()) for a in _m.actions()]
+            _m.close()
+        return _f
+    if _k121 is not None and _kr121 is not None:
+        _QT121.singleShot(0, _menu121(12101))
+        _k121.customContextMenuRequested.emit(_QP121(5, 5)); _app.processEvents()
+        _QT121.singleShot(0, _menu121(12102))
+        _kr121.customContextMenuRequested.emit(_QP121(5, 5)); _app.processEvents()
+    _a121 = [x for x in _akt121k.get(12101, []) if "build plan" in x[0] or "Bauplan" in x[0]]
+    _r121 = [x for x in _akt121k.get(12102, []) if "build plan" in x[0] or "Bauplan" in x[0]]
+    # Seit 27.09.2026 auch beim reservierten aktiv - das Ende geht in eine
+    # Kopie, der reservierte Plan bleibt (Nutzer: "... Kopie davon machen").
+    check(f"b121 Karten-Menue: 'Add build plan...' aktiv, auch beim reservierten "
+          f"({_akt121k})",
+          len(_a121) == 1 and _a121[0][1] is True
+          and len(_r121) == 1 and _r121[0][1] is True)
+    # DER ECHTE SCANNER-RECHTSKLICK mit zwei markierten Zeilen: das Menue
+    # zeigt die Auswahl-Eintraege statt des Einzel-Untermenues.
+    win.b_table.resize(900, 400); win.b_table.show(); _app.processEvents()
+    _mtxt121 = []
+
+    def _bm121():
+        _m = getattr(win, "_build_menu_letztes", None)
+        _mtxt121.append([a.text() for a in _m.actions()] if _m is not None else None)
+        if _m is not None:
+            _m.close()
+    win._build_menu_letztes = None
+    for _tid in (_X1, _X3):
+        _sm121.select(win.b_table.model().index(_zeilen121[_tid][0], 0),
+                      _ISM121.Select | _ISM121.Rows)
+    _QT121.singleShot(0, _bm121)
+    win._build_menu(win.b_table.visualRect(
+        win.b_table.model().index(_zeilen121[_X1][0], 0)).center())
+    _app.processEvents()
+    check(f"b121 echter Scanner-Rechtsklick auf die Auswahl: Auswahl-Eintraege ({_mtxt121})",
+          bool(_mtxt121) and _mtxt121[0] is not None
+          and any("(2)" in x for x in _mtxt121[0])
+          and any("2" in x and ("selected" in x or "markierte" in x) for x in _mtxt121[0]))
+    win.b_table.hide()
+    # Der Auswahl-Dialog der Karte laesst DIESEN Plan aus seiner Planliste.
+    win.settings["bau_saved_plans"].append(
+        {"id": 12103, "label": "b121 E", "type_id": _X2, "item_name": "X2",
+         "qty": 4, "me": 0, "te": 0, "checked": []})
+    win._build_picker_pairs = [("X2", _X2)]
+    _liste121 = []
+
+    def _schau121():
+        _pb = getattr(win, "_multi_ende_dialog_plaene", None)
+        _liste121.append([_pb.itemData(i) for i in range(_pb.count())] if _pb else None)
+        win._multi_ende_dialog.reject()
+    _QT121.singleShot(0, _schau121)
+    win._multi_ende_waehlen(ausser=12103)
+    _QT121.singleShot(0, _schau121)
+    win._multi_ende_waehlen()
+    check(f"b121 Auswahl-Dialog der Karte: der Plan selbst steht nicht drin ({_liste121})",
+          _liste121 == [[None, 12102], [None, 12102, 12103]])
+    win.settings["bau_saved_plans"].pop()
+    # Der Weg dahinter: Auswahl gestubbt -> an DIESEN Plan, ohne ihn selbst
+    # in der Planliste des Dialogs.
+    _ausser121 = []
+    win._multi_ende_waehlen = lambda ausser=None: (
+        _ausser121.append(ausser),
+        {"tid": _X2, "name": "X2", "qty": 6})[1]
+    _offen121.clear(); _gesp121.clear()
+    win._plan_karte_ende_dazu(12101); _app.processEvents()
+    _pa121 = next(p for p in win.settings["bau_saved_plans"] if p["id"] == 12101)
+    check(f"b121 'Add build plan...' der Karte: X2 x 6 haengt am Plan, gespeichert, offen "
+          f"({_pa121.get('enden')})",
+          _ausser121 == [12101]
+          and [x for x in _pa121["enden"] if x[0] == _X2] == [[_X2, 8]]   # 2 von oben + 6
+          and _gesp121 and _offen121 and _offen121[-1][1] == 12101)
+except Exception as _e121:                                # pragma: no cover
+    import traceback as _tb121
+    _fail.append(f"b121 Bedienideen: {type(_e121).__name__}: {_e121} | "
+                 + _tb121.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        win.settings["bau_saved_plans"] = _alt121.get("plans") or []
+        _cfg121.save_settings = _alt121["save"]
+        win._multi_plan_oeffnen = _alt121["oeffnen"]
+        win._flash_tip = _alt121["tip"]
+        win._multi_ende_waehlen = _alt121["waehlen"]
+        win._multi_jetzt_oeffnen_fragen = _alt121["frage"]
+        win.b_table.setRowCount(0)
+        win._reload_saved_plans()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b122)
+# PORTFOLIO-REFRESH MIT LIVE-PREISEN (Nutzer 27.09.2026: "refresh all zieht
+# Marktpreise?" / "ich frage mich, ob die Logik dahinter sinnvoll ist").
+# Vorher kamen ALLE Preise aus dem letzten Markt-Scan (bis 6 h alt), und die
+# Altersanzeige sagte trotzdem "just now". Jetzt: Live-Preise fuer das, was
+# man hat oder in Orders stehen hat; die Anzeige nennt das echte Alter.
+_alt122 = {}
+try:
+    import eve_trader.esi as _esi122
+    import eve_trader.store as _st122
+    _alt122 = {"fto": _esi122.fetch_type_orders, "src": _st122.get_hub_source,
+               "ts": getattr(win, "_prices_ts", 0),
+               "n": getattr(win, "_prices_live_n", 0)}
+    _assets122 = {1: {"hangar": {501: 3, 502: 1},
+                      "containers": [{"item_id": 9001, "type_id": 17366,
+                                      "contents": {503: 5}},
+                                     {"item_id": 9002, "type_id": 17366,
+                                      "contents": {504: 7}}]}}
+    _ids122 = win._portfolio_live_ids(_assets122, {9002}, [],
+                                      {1: {"buy": {505}, "sell": {501}}})
+    check(f"b122 Live-Items: Hangar + Container + Orders, ignorierter Container raus ({sorted(_ids122)})",
+          _ids122 == {501, 502, 503, 505})
+    _tx122 = [{"type_id": 601, "quantity": 5, "is_buy": 1},
+              {"type_id": 601, "quantity": 2, "is_buy": 0},
+              {"type_id": 602, "quantity": 3, "is_buy": 1},
+              {"type_id": 602, "quantity": 3, "is_buy": 0}]
+    _ids122b = win._portfolio_live_ids({}, set(), _tx122, {})
+    check(f"b122 ohne Asset-Daten: Bestand aus den Transaktionen (nur positiv) ({sorted(_ids122b)})",
+          _ids122b == {601})
+    _abrufe122 = []
+
+    def _fto122(tid, station=None, region=None):
+        _abrufe122.append((tid, station, region))
+        if tid == 501:
+            return {"sell": [(110.0, 5)], "buy": [(90.0, 3)]}
+        if tid == 502:
+            return {"sell": [], "buy": [(40.0, 1)]}
+        raise RuntimeError("ESI weg")
+    _esi122.fetch_type_orders = _fto122
+    _st122.get_hub_source = lambda: "hub:10000002"
+    _pr122 = {501: {"buy_max": 80.0, "sell_min": 120.0},
+              502: {"buy_max": 30.0, "sell_min": 55.0},
+              503: {"buy_max": 1.0, "sell_min": 2.0}}
+    _n122 = win._portfolio_live_preise(_pr122, {501, 502, 503})
+    check(f"b122 Live-Preise vom Portfolio-Hub (Jita-Station): {_pr122}, n={_n122}",
+          _n122 == 2
+          and _pr122[501] == {"buy_max": 90.0, "sell_min": 110.0}
+          and _pr122[502] == {"buy_max": 40.0, "sell_min": 55.0}   # leere Sell-Seite: Scan bleibt
+          and _pr122[503] == {"buy_max": 1.0, "sell_min": 2.0}     # Fehler: Scan bleibt
+          and all(_s == 60003760 and _r == 10000002 for _t, _s, _r in _abrufe122))
+    _st122.get_hub_source = lambda: "struct:1234"
+    _abrufe122.clear()
+    check("b122 Portfolio-Quelle ist eine Struktur: kein Einzel-Abruf, alles aus dem Scan",
+          win._portfolio_live_preise(dict(_pr122), {501}) == 0 and not _abrufe122)
+    _st122.get_hub_source = lambda: "hub:10000002"
+    _abrufe122.clear()
+    win._portfolio_live_preise({}, set(range(700000, 700000 + win.PORTFOLIO_LIVE_MAX + 50)))
+    check(f"b122 Deckel: hoechstens {win.PORTFOLIO_LIVE_MAX} Einzel-Abrufe ({len(_abrufe122)})",
+          len(_abrufe122) == win.PORTFOLIO_LIVE_MAX)
+    # DIE ANZEIGE sagt das echte Alter und wie viele Items live sind.
+    import time as _t122
+    win._prices_ts = _t122.time(); win._prices_live_n = 57
+    win.update_ages()
+    _txt122 = win.age_label.text()
+    check(f"b122 Anzeige: live jetzt, mit Anzahl ({_txt122[:80]})",
+          ("57 of your items" in _txt122 or "57 deiner Items" in _txt122)
+          and ("just now" in _txt122 or "gerade" in _txt122))
+    win._prices_ts = _t122.time() - 3 * 3600 - 60; win._prices_live_n = 0
+    win.update_ages()
+    _txt122b = win.age_label.text()
+    _preis122 = _txt122b.split("\u00b7")[0]
+    check(f"b122 Anzeige ohne Live-Preise: Alter des Scans ({_preis122.strip()})",
+          ("3 h" in _preis122 or "3 Std" in _preis122)
+          and "of your items" not in _preis122 and "deiner Items" not in _preis122)
+except Exception as _e122:                                # pragma: no cover
+    import traceback as _tb122
+    _fail.append(f"b122 Portfolio-Refresh: {type(_e122).__name__}: {_e122} | "
+                 + _tb122.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        _esi122.fetch_type_orders = _alt122["fto"]
+        _st122.get_hub_source = _alt122["src"]
+        win._prices_ts = _alt122["ts"]; win._prices_live_n = _alt122["n"]
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b123)
+# ORDER UPDATE SORTIERBAR (Nutzer 27.09.2026: "die Spalten sortieren
+# koennen, damit ich im Work-through mode nur die mit noch genuegend hoher
+# New margin modifizieren kann"). Kopf-Klick sortiert, die Knoepfe bleiben
+# in jeder Zeile, "Next" laeuft in der angezeigten Reihenfolge.
+_alt123 = {}
+try:
+    _alt123 = {"sell": list(getattr(win, "_ordmod_sell", None) or []),
+               "sort": getattr(win, "_ord_sort", None),
+               "open": win.open_ingame_market, "copy": win._copy_order_price,
+               "step": getattr(win, "_step_mode", False)}
+    def _z123(name, mn, flag=True, loss=False):
+        return {"tid": abs(hash(name)) % 900000 + 1000, "name": name, "mine": 100.0,
+                "best": 90.0, "flag": flag, "newp": 89.0, "cost": 50.0,
+                "loss": loss, "marge_new": mn, "cost_known": mn is not None,
+                "order_id": None, "char_id": 0, "mod_count": 0, "cum_fee": 0.0,
+                "vol_remain": 1}
+    win._ord_sort = {}
+    win._ordmod_sell = [_z123("Alpha", 4.9), _z123("Bravo", 130.4), _z123("Charlie", None),
+                        _z123("Delta", 17.3), _z123("Echo", -5.0, loss=True),
+                        _z123("Foxtrot", 35.9)]
+    _tb123 = win.sellord_table
+    win._fill_order_table(_tb123, win._ordmod_sell, False)
+    _namen123 = lambda: [_tb123.item(i, 0).text() for i in range(_tb123.rowCount())]
+    check(f"b123 ohne Wahl: Nachbessern zuerst, Verlust unten, dann Name ({_namen123()})",
+          _namen123() == ["Alpha", "Bravo", "Charlie", "Delta", "Foxtrot", "Echo"])
+    _tb123.horizontalHeader().sectionClicked.emit(4); _app.processEvents()
+    check(f"b123 Klick auf 'New margin': hoechste zuerst, ohne Wert unten ({_namen123()})",
+          _namen123() == ["Bravo", "Foxtrot", "Delta", "Alpha", "Echo", "Charlie"])
+    check("b123 ... jede Zeile hat weiter ihre Knoepfe (Price/Open)",
+          all(_tb123.cellWidget(i, 8) is not None
+              and len(_tb123.cellWidget(i, 8).findChildren(QPushButton)) == 2
+              for i in range(_tb123.rowCount())))
+    check("b123 ... der Pfeil im Kopf zeigt die Spalte",
+          _tb123.horizontalHeader().isSortIndicatorShown()
+          and _tb123.horizontalHeader().sortIndicatorSection() == 4)
+    _tb123.horizontalHeader().sectionClicked.emit(4); _app.processEvents()
+    check(f"b123 zweiter Klick: aufsteigend, ohne Wert weiter unten ({_namen123()})",
+          _namen123() == ["Echo", "Alpha", "Delta", "Foxtrot", "Bravo", "Charlie"])
+    _tb123.horizontalHeader().sectionClicked.emit(8); _app.processEvents()
+    check("b123 die Aktions-Spalte sortiert nicht",
+          _namen123() == ["Echo", "Alpha", "Delta", "Foxtrot", "Bravo", "Charlie"])
+    # "NEXT" IN DER ANGEZEIGTEN REIHENFOLGE: absteigend nach Marge, Verlust nie.
+    _tb123.horizontalHeader().sectionClicked.emit(4); _app.processEvents()
+    _gang123 = []
+    win.open_ingame_market = lambda *a, **k: None
+    win._copy_order_price = lambda pr, nm, **k: _gang123.append(nm)
+    win._toggle_order_step(True)
+    win._orders_inner.setCurrentIndex(1)
+    for _ in range(4):
+        win._ord_step_next()
+    check(f"b123 Work-through 'Next' folgt der Sortierung ({_gang123})",
+          _gang123 == ["Bravo", "Foxtrot", "Delta", "Alpha"])
+    # Neue Sortierung waehrend des Abarbeitens: Next beginnt wieder oben.
+    _tb123.horizontalHeader().sectionClicked.emit(0); _app.processEvents()
+    _gang123.clear()
+    win._ord_step_next()
+    check(f"b123 nach neuer Sortierung (Name) beginnt Next wieder oben ({_gang123})",
+          _gang123 == ["Alpha"])
+except Exception as _e123:                                # pragma: no cover
+    import traceback as _tb123x
+    _fail.append(f"b123 Order-Sortierung: {type(_e123).__name__}: {_e123} | "
+                 + _tb123x.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        win.open_ingame_market = _alt123["open"]
+        win._copy_order_price = _alt123["copy"]
+        win._toggle_order_step(bool(_alt123["step"]))
+        win._ord_sort = _alt123["sort"] or {}
+        win._ordmod_sell = _alt123["sell"]
+        win._fill_order_table(win.sellord_table, win._ordmod_sell, False)
+        win.sellord_table.horizontalHeader().setSortIndicatorShown(False)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b124)
+# LADEZEIT-MESSUNG (Nutzer 27.09.2026: "Multi-Bauplaene zu oeffnen dauert
+# mehrere Minuten, da muessten wir mal messen, was so viel Zeit kostet").
+# Nur mit EMM_LADEZEIT=1 aktiv (werkzeuge\messe_ladezeit.bat); ohne sie
+# darf NICHTS passieren.
+_alt124 = {}
+try:
+    import eve_trader.ladezeit as _lz124
+    import eve_trader.workers as _wk124
+    import tempfile as _tf124
+    _alt124 = {"an": _lz124.AN, "datei": _lz124.DATEI}
+    _d124 = _tf124.mkdtemp()
+    _lz124.DATEI = os.path.join(_d124, "ladezeiten.txt")
+    _lz124.AN = False
+    with _lz124.messen("aus"):
+        sum(range(1000))
+    _w124 = _wk124.Worker(lambda: 42)
+    _w124.run()
+    check("b124 ohne EMM_LADEZEIT: keine Datei, kein Profiler",
+          not os.path.exists(_lz124.DATEI))
+    _lz124.AN = True
+    with _lz124.messen("aussen"):
+        with _lz124.messen("innen"):
+            sum(range(10000))
+    _w124b = _wk124.Worker(lambda: sum(range(5000)))
+    _w124b.run()
+    _txt124 = open(_lz124.DATEI, encoding="utf-8").read()
+    check("b124 mit Messung: Bloecke mit Zeit und Profil, verschachtelt ohne zweites Profil",
+          "  aussen  " in _txt124 and "  innen  " in _txt124
+          and "time only" in _txt124 and "cumulative" in _txt124)
+    check("b124 ... jeder Hintergrund-Job wird gemessen (Worker.run)",
+          "  Job " in _txt124 and "<lambda>" in _txt124)
+    # EIN PROFILER JE PROZESS (Python 3.12, gemessen): laeuft schon einer -
+    # auch ein fremder -, darf ein Job NICHT abstuerzen, sondern misst nur
+    # die Zeit. Vorher warf enable() "Another profiling tool is already
+    # active" und der Job meldete einen Fehler.
+    import cProfile as _cp124
+    _fremd124 = _cp124.Profile()
+    _fremd_an124 = True
+    try:
+        _fremd124.enable()
+    except ValueError:
+        _fremd_an124 = False
+    _erg124 = []
+    try:
+        _w124c = _wk124.Worker(lambda: 5)
+        _w124c.done.connect(lambda v: _erg124.append(v))
+        _w124c.failed.connect(lambda m: _erg124.append("FEHLER " + m))
+        _w124c.run()
+    finally:
+        if _fremd_an124:
+            _fremd124.disable()
+    check(f"b124 fremder Profiler aktiv: der Job laeuft trotzdem durch ({_erg124})",
+          _erg124 == [5])
+    # Oberflaeche: vom Start bis alles ruhig ist (keine Jobs, 2x ruhig).
+    from PySide6.QtTest import QTest as _QT124
+    _lz124.ui_start("b124 Plan")
+    _wk_alt124 = list(getattr(win, "_workers", []) or [])
+    win._workers = []
+    win._ladezeit_warten()
+    _QT124.qWait(3600)
+    win._workers = _wk_alt124
+    _txt124b = open(_lz124.DATEI, encoding="utf-8").read()
+    check("b124 Oberflaechen-Messung endet von selbst, wenn alles ruhig ist",
+          "UI thread: b124 Plan" in _txt124b and not _lz124.ui_laeuft())
+    # BEENDEN VOR DER RUHE (erster Nutzer-Bericht: der Bauplan-Teil fehlte):
+    # die angefangene Messung landet trotzdem im Bericht.
+    _lz124.ui_start("b124 Abbruch")
+    _lz124._beim_beenden()
+    _txt124c = open(_lz124.DATEI, encoding="utf-8").read()
+    check("b124 Schliessen vor der Ruhe: Messung steht trotzdem im Bericht",
+          "b124 Abbruch (closed before idle)" in _txt124c and not _lz124.ui_laeuft())
+    # DIE OBERFLAECHE HAT VORRANG (zweiter Nutzer-Bericht: "open build plan
+    # 12.49 s (time only - another profile was running)"): rechnet gerade ein
+    # Job mit Profil, uebernimmt die Bauplan-Messung den Profiler.
+    import inspect as _in124b
+    _ROOT_b124 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with _lz124.messen("b124 Karten"):
+        sum(range(20000))
+        _lz124.ui_start("b124 Vorrang")
+        sorted(range(20000), key=lambda _x: -_x)
+        _lz124.ui_stop()
+        sum(range(20000))
+    _abschn124 = {}
+    for _teil in open(_lz124.DATEI, encoding="utf-8").read().split("\n== "):
+        for _nm in ("UI thread: b124 Vorrang", "  b124 Karten  "):
+            if _nm in _teil.split("\n", 1)[0]:
+                _abschn124[_nm] = _teil
+    _ui124 = _abschn124.get("UI thread: b124 Vorrang", "")
+    _job124 = _abschn124.get("  b124 Karten  ", "")
+    check("b124 Bauplan-Messung uebernimmt den Profiler eines laufenden Jobs",
+          "cumulative" in _ui124 and "time only" not in _ui124
+          and "<lambda>" in _ui124 and "took it over" in _job124
+          and not _lz124._aktiv[0] and _lz124._laufend["prof"] is None)
+    # Endet der Job, WAEHREND die Bauplan-Messung laeuft, bleibt der
+    # Profiler bei ihr (sonst startete der naechste Job einen zweiten).
+    with _lz124.messen("b124 Karten kurz"):
+        _lz124.ui_start("b124 Vorrang lang")
+    _bleibt124 = (_lz124._aktiv[0] and _lz124._laufend["prof"] is not None
+                  and _lz124._laufend["prof"] is _lz124._ui.get("prof"))
+    _lz124.ui_stop()
+    check("b124 ... endet der Job zuerst, bleibt der Profiler bei der Oberflaeche",
+          _bleibt124 and not _lz124._aktiv[0])
+    # STARTZEIT (Nutzer: "das erste Laden beim Oeffnen dauert"): Zwischen-
+    # zeiten stehen im Kopf des Berichts; main.py startet, __main__ beendet.
+    _lz124.ui_start("b124 Start")
+    _lz124.ui_zwischenzeit("b124 Fenster gebaut")
+    _lz124.ui_stop()
+    _st124 = [t for t in open(_lz124.DATEI, encoding="utf-8").read().split("\n== ")
+              if "UI thread: b124 Start" in t.split("\n", 1)[0]]
+    import eve_trader.__main__ as _hm124
+    _hsrc124 = _in124b.getsource(_hm124.main)
+    _msrc124 = open(os.path.join(_ROOT_b124, "main.py"), encoding="utf-8").read()
+    check("b124 Startzeit: Zwischenzeiten im Bericht, main.py startet, __main__ beendet",
+          bool(_st124) and " s  b124 Fenster gebaut  (UI thread busy " in _st124[0]
+          and '_lz.ui_start("start of Eve MoMa")' in _msrc124
+          and '_lz.ui_zwischenzeit("main window built")' in _hsrc124
+          and '_lzm("MainWindow: build tab")' in _in124b.getsource(type(win).__init__)
+          and "_lz.ui_stop()" in _hsrc124)
+    # SKILL-RECHNUNG FRAGT DIE DATENBANK NICHT MEHR JEDES MAL (Nutzer-Bericht:
+    # 23'000 Aufrufe von list_characters beim Laden der Plan-Karten, 80 s).
+    import eve_trader.ui.main_window as _mwm124
+    _lc_alt124 = _mwm124.store.list_characters
+    _lc124 = []
+    _mwm124.store.list_characters = lambda: (_lc124.append(1), [
+        {"character_id": 77, "character_name": "Zweiundsiebzig"}])[1]
+    try:
+        win._char_namen_cache = None
+        _r124 = [win._bau_invention_skill_modifier_with_char(
+            1, fixed_cid=77, inv_skills_map={1: 1}) for _ in range(200)]
+    finally:
+        _mwm124.store.list_characters = _lc_alt124
+        win._char_namen_cache = None
+    check(f"b124 200 Skill-Rechnungen: Charakterliste EINMAL gelesen ({len(_lc124)})",
+          len(_lc124) == 1 and _r124[-1] == (1.0, "Zweiundsiebzig"))
+    # Der Einstieg sitzt am Anfang von open_build_detail.
+    import inspect as _in124
+    _src124 = _in124.getsource(type(win).open_build_detail)
+    check("b124 open_build_detail startet die Messung (nur wenn an)",
+          "if ladezeit.AN:" in _src124
+          and "ladezeit.ui_start(" in _src124 and "self._ladezeit_warten()" in _src124)
+except Exception as _e124:                                # pragma: no cover
+    import traceback as _tb124
+    _fail.append(f"b124 Ladezeit: {type(_e124).__name__}: {_e124} | "
+                 + _tb124.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        if _lz124.ui_laeuft():
+            _lz124.ui_stop()
+        _lz124.AN = _alt124["an"]; _lz124.DATEI = _alt124["datei"]
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b126)
+# START OHNE GROSSES LADE-FENSTER (Nutzer 27.09.2026: "vor allem das erste
+# Laden beim Oeffnen dauert" - gemessen 25-32 s Portfolio-Abruf hinter dem
+# Overlay). Beim Start: im Hintergrund. Knopf "Refresh": Overlay wie bisher.
+try:
+    import eve_trader.ui.main_window as _mwm126
+    _lc_alt126 = _mwm126.store.list_characters
+    _sa_alt126 = _mwm126.store.snapshot_age_seconds
+    _run_alt126 = win._run
+    _cid_alt126 = win.settings.get("client_id")
+    _laeufe126 = []
+    _mwm126.store.list_characters = lambda: [
+        {"character_id": 1, "character_name": "Eins"}]
+    _mwm126.store.snapshot_age_seconds = lambda *a, **k: 60
+    win.settings["client_id"] = win.settings.get("client_id") or "test126"
+    _wk_vor126 = list(win._workers)
+    # Wie das echte _run: der Job steht danach in _workers.
+    win._run = lambda worker, done_cb, **k: (_laeufe126.append(
+        (k.get("label"), k.get("overlay", True))), win._workers.append(worker))
+    try:
+        win.refresh_everything(beim_start=True)
+        _start_lbl126 = not win.g_lade_lbl.isHidden()
+        win._hintergrund_laden_zeigen(False)
+        win.refresh_everything()
+        win.global_refresh_btn.click()
+        # Der Portfolio-Knopf haengt DIREKT an refresh_all: clicked(False)
+        # darf nicht als overlay=False ankommen (lint_order fand das).
+        win.refresh_btn.setEnabled(True)
+        win.refresh_btn.click()
+    finally:
+        win._workers[:] = _wk_vor126
+        win._run = _run_alt126
+        _mwm126.store.list_characters = _lc_alt126
+        _mwm126.store.snapshot_age_seconds = _sa_alt126
+        if _cid_alt126 is None:
+            win.settings.pop("client_id", None)
+        else:
+            win.settings["client_id"] = _cid_alt126
+        win.refresh_btn.setEnabled(True)
+    # SICHTBAR, DASS GELADEN WIRD (Nutzer-Bildschirm 27.09.2026: "jetzt
+    # kommt am Anfang gar nichts ... die Loading-Anzeige unten rechts sieht
+    # eh keiner"): Anzeige oben + Portfolio-Leerhinweis ohne Scan-Knopf.
+    from PySide6.QtWidgets import QWidget as _QW126
+    _box126 = [b for b in win.pf_table.viewport().findChildren(_QW126)
+               if getattr(b, "_knopf", None) is not None]
+    _zeilen126 = win.pf_table.rowCount()
+    _wk_alt126 = list(win._workers)
+    win._workers.append(object())            # ein laufender Job
+    try:
+        win._hintergrund_laden_zeigen(True)
+        _app.processEvents()
+        _an126 = (not win.g_lade_lbl.isHidden(), win.g_lade_lbl.text(),
+                  _box126[0].findChild(QLabel).text() if _box126 else "",
+                  _box126[0]._knopf.isHidden() if _box126 else None)
+        win._hintergrund_laden_zeigen(False)
+        _app.processEvents()
+        _aus126 = (win.g_lade_lbl.isHidden(),
+                   _box126[0].findChild(QLabel).text() if _box126 else "",
+                   _box126[0]._knopf.isHidden() if _box126 else None)
+        # Sicherung: kein Job mehr -> Anzeige verschwindet von selbst.
+        win._hintergrund_laden_zeigen(True)
+        win._workers[:] = []
+        win._lade_tick()
+        _sich126 = win.g_lade_lbl.isHidden() and not win._portfolio_laedt
+    finally:
+        win._workers[:] = _wk_alt126
+        win._hintergrund_laden_zeigen(False)
+    check(f"b126 ... waehrend des Ladens: oben sichtbar, Portfolio sagt 'wird "
+          f"geladen' ohne Scan-Knopf ({_an126[1]!r}, {_an126[2][:30]!r})",
+          _an126[0] and ("Loading" in _an126[1] or "Lade" in _an126[1])
+          and (_zeilen126 > 0 or (("Loading" in _an126[2] or "geladen" in _an126[2])
+                                  and _an126[3] is True)))
+    check(f"b126 ... danach wieder normal ({_aus126[1][:30]!r}), Sicherung greift",
+          _aus126[0] and _sich126
+          and (_zeilen126 > 0 or ("Loading" not in _aus126[1]
+                                  and "geladen" not in _aus126[1]
+                                  and _aus126[2] is False)))
+    check(f"b126 Start: Portfolio im Hintergrund, Knopf mit Overlay ({_laeufe126})",
+          [o for _l, o in _laeufe126] == [False, True, True, True] and _start_lbl126
+          and all("portfolio" in (_l or "").lower() or "Portfolio" in (_l or "")
+                  for _l, _o in _laeufe126))
+except Exception as _e126:                                # pragma: no cover
+    import traceback as _tb126
+    _fail.append(f"b126 Start im Hintergrund: {type(_e126).__name__}: {_e126} | "
+                 + _tb126.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b128)
+# MARKT-SCAN BEIM START SCHON AB 1 STUNDE, IM HINTERGRUND (Nutzer 27.09.2026:
+# "jetzt blinkt danach Market scan - sind die Preise noch nicht aktuell?" ->
+# "mach das"). Der Knopf "Refresh" bleibt bei 6 h und mit Lade-Fenster.
+try:
+    import eve_trader.ui.main_window as _mwm128
+    _alt128 = (_mwm128.store.list_characters, _mwm128.store.snapshot_age_seconds,
+               win._run, win.settings.get("client_id"), list(win._workers))
+    _laeufe128 = []
+    _mwm128.store.list_characters = lambda: [
+        {"character_id": 1, "character_name": "Eins"}]
+    _mwm128.store.snapshot_age_seconds = lambda *a, **k: 2 * 3600   # 2 h alt
+    win.settings["client_id"] = win.settings.get("client_id") or "test128"
+    win._run = lambda worker, done_cb, **k: (_laeufe128.append(
+        (k.get("label"), k.get("overlay", True))), win._workers.append(worker))
+    try:
+        win.refresh_everything(beim_start=True)
+        _start128 = (win._scan_after_refresh, win._scan_im_hintergrund)
+        win._hintergrund_laden_zeigen(False)
+        win._scan_nach_refresh()
+        _scan128 = (_laeufe128[-1], not win.g_lade_lbl.isHidden(),
+                    win.g_lade_lbl.text(), win._scan_laeuft)
+        win._scan_fertig_melden(True)
+        _ende128 = (win.g_lade_lbl.isHidden(), win._scan_laeuft)
+        win._workers[:] = []
+        win.refresh_everything()                      # Knopf "Refresh"
+        _knopf128 = (win._scan_after_refresh, win._scan_im_hintergrund)
+    finally:
+        (_mwm128.store.list_characters, _mwm128.store.snapshot_age_seconds,
+         win._run) = _alt128[:3]
+        if _alt128[3] is None:
+            win.settings.pop("client_id", None)
+        else:
+            win.settings["client_id"] = _alt128[3]
+        win._workers[:] = _alt128[4]
+        win._scan_after_refresh = False
+        win._hintergrund_laden_zeigen(False)
+        win.refresh_btn.setEnabled(True)
+        win._set_scan_buttons(True)
+    check(f"b128 Start, Scan 2 h alt: Scan folgt im Hintergrund ({_start128})",
+          _start128 == (True, True))
+    check(f"b128 ... ohne Lade-Fenster, oben 'Market scan', Knopf blinkt nicht "
+          f"({_scan128[0][1]}, {_scan128[2]!r})",
+          _scan128[0][1] is False and _scan128[1]
+          and ("Market scan" in _scan128[2] or "Markt-Scan" in _scan128[2])
+          and _scan128[3] is True)
+    check(f"b128 ... danach Anzeige weg, Blink-Sperre geloest ({_ende128})",
+          _ende128 == (True, False))
+    check(f"b128 Knopf 'Refresh': bei 2 h kein Scan, sonst wie bisher ({_knopf128})",
+          _knopf128 == (False, False))
+except Exception as _e128:                                # pragma: no cover
+    import traceback as _tb128
+    _fail.append(f"b128 Start-Scan: {type(_e128).__name__}: {_e128} | "
+                 + _tb128.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b127)
+# PLAN-KARTEN ERST BEIM ERSTEN ZEIGEN (Nutzer 27.09.2026 "ja bitte mach
+# das"; der Build-Reiter kostete beim Start 1,4 s fuer die Karten). An einem
+# FRISCHEN Hauptfenster: nach dem Bau keine Karten, nach dem Oeffnen der
+# Seite "My build plans" sind sie da; eine Schaetzung vorher stuerzt nicht.
+try:
+    import eve_trader.ui.main_window as _MW127
+    _w127 = _MW127.MainWindow()
+    try:
+        _vorher127 = (_w127._plan_karten_gebaut, _w127._plans_layout.count())
+        try:
+            _w127._load_saved_plan_estimates(
+                _w127.settings.get("bau_saved_plans", []) or [{"id": "x"}])
+            _est127 = "ok"
+        except Exception as _ee127:
+            _est127 = f"{type(_ee127).__name__}: {_ee127}"
+        _w127._bau_nav(2)
+        _app.processEvents()
+        _nachher127 = (_w127._plan_karten_gebaut, _w127._plans_layout.count())
+    finally:
+        _w127.close(); _w127.deleteLater()
+    check(f"b127 Plan-Karten erst beim ersten Zeigen ({_vorher127} -> "
+          f"{_nachher127}, Schaetzung vorher: {_est127})",
+          _vorher127 == (False, 0) and _nachher127[0] is True
+          and _nachher127[1] >= 1 and _est127 == "ok")
+except Exception as _e127:                                # pragma: no cover
+    import traceback as _tb127
+    _fail.append(f"b127 Plan-Karten spaeter: {type(_e127).__name__}: {_e127} | "
+                 + _tb127.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b125)
+# INVENTION-SKILLS: NUR DIE GEBRAUCHTEN (zweite Ladezeit-Messung 27.09.2026:
+# 18'000 Aufrufe, 4,7 s reine Rechenzeit - jeder Aufruf wandelte die ganze
+# Skill-Liste jedes Charakters um). Gleiches Ergebnis wie die alte Rechnung,
+# aber die Skill-Liste wird nie mehr ganz durchlaufen.
+try:
+    import eve_trader.ui.main_window as _mwm125
+    _set_alt125 = {k: win.settings.get(k) for k in
+                   ("bau_char_skills", "bau_invention_chars")}
+    _fix_alt125 = getattr(win, "_bd_invention_char", 0)
+    _lc_alt125 = _mwm125.store.list_characters
+
+    class _Zaehl125(dict):
+        """Skill-Liste, die mitzaehlt, ob sie ganz durchlaufen wird."""
+        durchlaeufe = 0
+        def items(self):
+            _Zaehl125.durchlaeufe += 1
+            return dict.items(self)
+        def __iter__(self):
+            _Zaehl125.durchlaeufe += 1
+            return dict.__iter__(self)
+
+    def _alt_rechnung125(bp, skills_je_char, chars, fixed, inv_map):
+        """Die Rechnung VOR der Aenderung, als Vergleich."""
+        if not inv_map:
+            return 1.0
+        if fixed:
+            sk = skills_je_char.get(str(fixed))
+            if not sk:
+                return 1.0
+            try:
+                sk_int = {int(k): v for k, v in dict.items(sk)}
+            except (TypeError, ValueError):
+                return 1.0
+            return I.invention_skill_modifier(bp, sk_int, inv_map)
+        best = 1.0
+        for cid in chars:
+            sk = skills_je_char.get(str(cid))
+            if not sk:
+                continue
+            try:
+                sk_int = {int(k): v for k, v in dict.items(sk)}
+            except (TypeError, ValueError):
+                continue
+            best = max(best, I.invention_skill_modifier(bp, sk_int, inv_map))
+        return best
+
+    _inv125 = {500: {"encryption": 21790, "science": [11442, 11529]},
+               501: {"encryption": None, "science": [11433]},
+               502: {"encryption": 21791, "science": []}}
+    _viel125 = {str(10000 + _i): 5 for _i in range(400)}   # "einige hundert"
+    _skills125 = {
+        "1": _Zaehl125({**_viel125, "21790": 4, "11442": 5, "11529": 3}),
+        "2": _Zaehl125({**_viel125, 21790: 5, 11442: 4, "11433": 5}),
+        "3": _Zaehl125({**_viel125, "21791": 2}),
+        "4": _Zaehl125({}),
+    }
+    _mwm125.store.list_characters = lambda: [
+        {"character_id": 1, "character_name": "Eins"},
+        {"character_id": 2, "character_name": "Zwei"}]
+    win._char_namen_cache = None
+    win.settings["bau_char_skills"] = _skills125
+    win.settings["bau_invention_chars"] = [1, 2, 3, 4]
+    win._bd_invention_char = 0
+    _gleich125 = []
+    _Zaehl125.durchlaeufe = 0
+    for _bp in (500, 501, 502, 999):
+        for _fx in (None, 1, 2, 3, 4, 7):
+            _neu = win._bau_invention_skill_modifier_with_char(
+                _bp, fixed_cid=_fx, inv_skills_map=_inv125)[0]
+            _ref = _alt_rechnung125(_bp, _skills125, [1, 2, 3, 4], _fx, _inv125)
+            _gleich125.append((_bp, _fx, _neu, _ref))
+    _abw125 = [g for g in _gleich125 if abs(g[2] - g[3]) > 1e-12]
+    check(f"b125 Invention-Skills: gleiches Ergebnis wie vorher in "
+          f"{len(_gleich125)} Faellen ({_abw125[:2]})",
+          not _abw125 and any(g[2] > 1.0 for g in _gleich125))
+    check(f"b125 ... und die Skill-Listen werden nie ganz durchlaufen "
+          f"({_Zaehl125.durchlaeufe})", _Zaehl125.durchlaeufe == 0)
+    _n125, _w125 = win._bau_invention_skill_modifier_with_char(
+        500, inv_skills_map=_inv125)
+    check(f"b125 ... der beste Charakter wird weiter genannt ({_w125}, {_n125:.4f})",
+          _w125 == "Eins" and abs(_n125 - (1 + 4 / 40 + 8 / 30)) < 1e-12)
+    win.settings["bau_char_skills"] = {"1": 5, "2": ["kaputt"]}
+    try:                    # ein Absturz soll ROT zeigen, nicht den Block beenden
+        _kaputt125 = (win._bau_invention_skill_modifier_with_char(
+                          500, fixed_cid=1, inv_skills_map=_inv125),
+                      win._bau_invention_skill_modifier_with_char(
+                          500, inv_skills_map=_inv125))
+    except Exception as _ek125:
+        _kaputt125 = f"{type(_ek125).__name__}: {_ek125}"
+    check(f"b125 ... unbrauchbare Skill-Daten: kein Absturz, kein Bonus ({_kaputt125})",
+          _kaputt125 == ((1.0, "Eins"), (1.0, None)))
+except Exception as _e125:                                # pragma: no cover
+    import traceback as _tb125
+    _fail.append(f"b125 Invention-Skills: {type(_e125).__name__}: {_e125} | "
+                 + _tb125.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        for _k125, _v125 in _set_alt125.items():
+            if _v125 is None:
+                win.settings.pop(_k125, None)
+            else:
+                win.settings[_k125] = _v125
+        win._bd_invention_char = _fix_alt125
+        _mwm125.store.list_characters = _lc_alt125
+        win._char_namen_cache = None
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b86)
+# SCHRITT 5, ENTSCHEID C: Einzelplaene, die in einem Multi-Bauplan stecken,
+# werden MARKIERT und ihre Reservierung GESPERRT - sonst blockiert dasselbe
+# Material zweimal. Am echten Fenster, mit einer echten Kartenliste.
+try:
+    _alt_plans86 = win.settings.get("bau_saved_plans")
+    win.settings["bau_saved_plans"] = [
+        {"id": 8601, "label": "b86 Einzel A", "type_id": 971001,
+         "item_name": "A86", "qty": 10, "me": 0, "te": 0, "checked": [],
+         "reserve": True, "reserve_map": {"34": 100}},
+        {"id": 8602, "label": "b86 Einzel B", "type_id": 971002,
+         "item_name": "B86", "qty": 5, "me": 0, "te": 0, "checked": []},
+        {"id": 8603, "label": "b86 Allein", "type_id": 971003,
+         "item_name": "C86", "qty": 3, "me": 0, "te": 0, "checked": []},
+        {"id": 8604, "label": "b86 Multi", "type_id": I.BUENDEL_ID, "qty": 1,
+         "item_name": "b86 Multi", "multi": True, "checked": [],
+         "enden": [[971001, 10], [971002, 5]], "quellen": [8601, 8602]},
+    ]
+    eq("b86 die Zuordnung wird aus den Quellen des Multi-Plans abgeleitet",
+       {k: v for k, v in win._multi_gehoert_zu(
+           win.settings["bau_saved_plans"]).items()},
+       {8601: ["b86 Multi"], 8602: ["b86 Multi"]})
+    check("b86 ein Plan ausserhalb bleibt unmarkiert",
+          8603 not in win._multi_gehoert_zu(win.settings["bau_saved_plans"]))
+    # NICHT GESPEICHERT, SONDERN ABGELEITET: Multi-Plan weg -> Marke weg.
+    _ohne86 = [x for x in win.settings["bau_saved_plans"] if x["id"] != 8604]
+    eq("b86 ohne den Multi-Plan ist keine Marke mehr da (keine zweite Wahrheit)",
+       win._multi_gehoert_zu(_ohne86), {})
+    win.b_stack.setCurrentIndex(2)
+    win._reload_saved_plans(); _app.processEvents()
+    # DIE KARTE, NICHT DIE GEWINN-UEBERSICHT: die Seitenleiste listet JEDEN
+    # Plan-Namen ebenfalls in einer Card. Eine echte Plan-Karte erkennt man
+    # an ihrem Schloss-Knopf (checkable, ohne Text).
+    _karten86 = {}
+    for _fr86 in win.findChildren(QFrame):
+        if _fr86.objectName() != "Card":
+            continue
+        _schloss86 = [b for b in _fr86.findChildren(QPushButton)
+                      if b.isCheckable() and not (b.text() or "").strip()]
+        if not _schloss86:
+            continue
+        # UEBER DEN TITEL, NICHT ueber irgendein Label (Befund 20.09.2026):
+        # die Karte eines gebundenen Einzelplans traegt die Zeile "Belongs to
+        # multi build plan b86 Multi" - ueber "irgendein Label" bekam der
+        # MULTI-Plan deshalb die Karte von "b86 Einzel A" zugeordnet, und
+        # jede Pruefung an ihr lief am falschen Objekt. Der Titel ist das
+        # einzige Label, das fett gesetzt ist.
+        _titel86 = [l.text() for l in _fr86.findChildren(QLabel)
+                    if (l.text() or "").startswith("<b")]
+        for _pid86, _lab86 in ((8601, "b86 Einzel A"), (8602, "b86 Einzel B"),
+                               (8603, "b86 Allein"), (8604, "b86 Multi")):
+            if any(_lab86 in (_x or "") for _x in _titel86):
+                _karten86.setdefault(_pid86, _fr86)
+    eq("b86 alle vier Karten stehen auf der Seite", sorted(_karten86), [8601, 8602, 8603, 8604])
+    _zeile86 = [l.text() for l in _karten86[8601].findChildren(QLabel)]
+    check("b86 die Karte sagt, zu welchem Multi-Bauplan der Plan gehoert",
+          any("b86 Multi" in (_x or "") and _x != "b86 Einzel A"
+              for _x in _zeile86))
+    check("b86 ... und ist farblich markiert (amberner Rand wie der Multi-Plan)",
+          "242,162,60" in (_karten86[8601].styleSheet() or ""))
+    check("b86 ein Plan ausserhalb bekommt weder Zeile noch Rand",
+          not any("b86 Multi" in (_x or "")
+                  for _x in [l.text() for l in _karten86[8603].findChildren(QLabel)])
+          and "242,162,60" not in (_karten86[8603].styleSheet() or ""))
+    _rs86 = {}
+    for _pid86 in (8601, 8603):
+        _rs86[_pid86] = [b for b in _karten86[_pid86].findChildren(QPushButton)
+                         if b.isCheckable() and not (b.text() or "").strip()]
+    check("b86 die Reservierung des Einzelplans ist gesperrt (doppelt blockiert sonst)",
+          _rs86[8601] and all(not b.isEnabled() for b in _rs86[8601]))
+    check("b86 ... beim Plan ausserhalb bleibt sie bedienbar",
+          _rs86[8603] and any(b.isEnabled() for b in _rs86[8603]))
+    # BEFUND 20.09.2026: der Sperrgrund wurde von der allgemeinen Erklaerung
+    # sofort wieder ueberschrieben - grauer Knopf, und der Tooltip sagte,
+    # was er koennen SOLLTE. Genau "warum geht das nicht?" blieb offen.
+    check("b86 ... und der gesperrte Knopf NENNT den Grund (Multi-Bauplan)",
+          any(("multi build plan" in (b.toolTip() or "").lower()
+               or "multi-bauplan" in (b.toolTip() or "").lower())
+              for b in _rs86[8601]))
+    check("b86 ... waehrend der freie Knopf die normale Erklaerung traegt",
+          any(("reserve" in (b.toolTip() or "").lower()
+               or "reservier" in (b.toolTip() or "").lower())
+              and "multi" not in (b.toolTip() or "").lower()
+              for b in _rs86[8603]))
+    # BEARBEITEN-KNOPF: nur auf der Buendel-Karte, sonst nirgends.
+    def _knopf86(pid86, *worte86):
+        for b in _karten86[pid86].findChildren(QPushButton):
+            _tx86 = (b.text() or "").strip().lower()
+            if any(w86 in _tx86 for w86 in worte86):
+                return b
+        return None
+    # 26.09.2026: KEIN Bearbeiten-Knopf mehr - auf keiner Karte. Heraus-
+    # nehmen/Dazunehmen laeuft im Bauplan-Fenster (x je Ende, "+ Add end
+    # product").
+    check("b86 keine Karte hat mehr einen Bearbeiten-Knopf",
+          _knopf86(8604, "edit", "bearbeit") is None
+          and _knopf86(8601, "edit", "bearbeit") is None
+          and _knopf86(8603, "edit", "bearbeit") is None)
+    # SPEICHERN loest eine bestehende Doppel-Reservierung auf und sagt es.
+    # Seit dem Aufraeumen (26.09.2026) ueber die EINE Stelle
+    # config.buendel_quellen_freigeben, die `_save_plan` ruft (aa418).
+    win.settings["bau_saved_plans"][0]["reserve"] = True
+    _e86 = win._multi_plan_aus_quellen(
+        [win.settings["bau_saved_plans"][0], win.settings["bau_saved_plans"][1]],
+        label="b86 Multi")
+    import eve_trader.config as _cfg86
+    _frei86, _auf86 = _cfg86.buendel_quellen_freigeben(
+        win.settings["bau_saved_plans"], _e86["quellen"])
+    _a86 = next(x for x in win.settings["bau_saved_plans"] if x["id"] == 8601)
+    check("b86 Freigeben hebt die Reservierung der Einzelplaene auf",
+          _a86.get("reserve") is False and _frei86 == ["b86 Einzel A"])
+    # Hinweis beim EINZELNEN Oeffnen - nur fuer Plaene in einem Multi-Plan.
+    check("b86 beim Oeffnen eines gebundenen Einzelplans kommt ein Hinweis",
+          win._multi_hinweis_einzelplan(8601) is True)
+    check("b86 ... und bei einem freien Plan nicht",
+          win._multi_hinweis_einzelplan(8603) is False)
+    # UEBER DEN ECHTEN WEG: _open_saved_plan muss den Hinweis auch WIRKLICH
+    # ausloesen (die Rotprobe fand die Pruefung oben blind - sie rief nur
+    # die Hilfsmethode).
+    _gerufen86 = []
+    _hw_alt86 = win._multi_hinweis_einzelplan
+    _obd_alt86 = win.open_build_detail
+    win._multi_hinweis_einzelplan = lambda pid: _gerufen86.append(pid)
+    win.open_build_detail = lambda *_a, **_k: None
+    try:
+        win._open_saved_plan(8601)
+    finally:
+        win._multi_hinweis_einzelplan = _hw_alt86
+        win.open_build_detail = _obd_alt86
+    eq("b86 _open_saved_plan fragt den Hinweis wirklich ab", _gerufen86, [8601])
+except Exception as _e86x:                               # pragma: no cover
+    import traceback as _tb86
+    _fail.append(f"b86 Schritt 5: {type(_e86x).__name__}: {_e86x} | "
+                 + _tb86.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b89)
+# EIGENER BLOCK, NICHT in b86 hineingeschrieben: stuerzt b86 ab, liefen die
+# Ordnerstruktur-Pruefungen sonst gar nicht erst - eine Rotprobe meldete
+# genau das als "blind". Jede Zusage braucht einen Block, der sie auch
+# erreicht.
+try:
+    # ------------------------------------------------------------ (b89)
+    # ORDNERSTRUKTUR (Nutzer 20.09.2026: "waere gut wenn die 2 Bauplaene in
+    # den Multibauplan untergeordnet werden, so dass man die ausklappen kann
+    # wenn man will"). Am echten Fenster, an derselben Kartenliste.
+    eq("b89 die Zuordnung Buendel -> Einzelplaene wird abgeleitet",
+       {k: sorted(x["id"] for x in v) for k, v in
+        win._plan_gruppen(win.settings["bau_saved_plans"])[0].items()},
+       {8604: [8601, 8602]})
+    eq("b89 ... und die Kinder sind genau die beiden Quellen",
+       sorted(win._plan_gruppen(win.settings["bau_saved_plans"])[1]),
+       [8601, 8602])
+    _box89 = (getattr(win, "_plan_gruppe_box", None) or {}).get(8604)
+    check("b89 das Buendel hat einen Kasten fuer seine Kinder", _box89 is not None)
+
+    def _pfeil89(pid89):
+        return (getattr(win, "_plan_multi_pfeil", None) or {}).get(pid89)
+    check("b89 die Kind-Karten sitzen WIRKLICH in diesem Kasten",
+          _box89.isAncestorOf(_karten86[8601])
+          and _box89.isAncestorOf(_karten86[8602]))
+    check("b89 ... und ein freier Plan nicht",
+          not _box89.isAncestorOf(_karten86[8603]))
+    # isHidden(), NICHT isVisible(): offscreen ist ohnehin alles unsichtbar.
+    # SEIT 26.09.2026 STANDARD OFFEN (Nutzer: "Multiplans standard
+    # ausgeklappt, es sei denn man schliesst das Dropdown"); gemerkt wird
+    # das Zuklappen (`bau_multi_zu`).
+    check("b89 standardmaessig ist die Gruppe OFFEN",
+          not _box89.isHidden() and _pfeil89(8604) is not None
+          and _pfeil89(8604).isChecked())
+    check("b89 die Kinder sind EINGERUECKT (das macht die Unterordnung sichtbar)",
+          _box89.layout().contentsMargins().left() >= 20)
+    # SORTIERUNG DARF DIE GRUPPE NICHT ZERREISSEN: die Kind-Karten duerfen
+    # nicht in der Liste stehen, an der Hand- und Fortschritts-Sortierung
+    # ziehen - sonst haengen sie nach dem ersten ESI-Lauf einzeln im
+    # Hauptlayout.
+    check("b89 die Kinder stehen NICHT in der sortierbaren Liste",
+          8601 not in (win._plan_karte_wrap or {})
+          and 8602 not in (win._plan_karte_wrap or {})
+          and 8604 in win._plan_karte_wrap and 8603 in win._plan_karte_wrap)
+    check("b89 ... sondern in der eigenen Kind-Liste",
+          sorted(getattr(win, "_plan_kind_wrap", {}) or {}) == [8601, 8602])
+    # DER PFEIL: nur beim Buendel, und er klappt wirklich zu und auf.
+    check("b89 nur das Buendel hat einen Aufklapp-Pfeil",
+          _pfeil89(8604) is not None and _pfeil89(8601) is None
+          and _pfeil89(8603) is None)
+    _pfeil89(8604).setChecked(False)
+    _app.processEvents()
+    check("b89 ein Klick klappt die Gruppe zu", _box89.isHidden())
+    eq("b89 ... und der Zustand wird gemerkt (ueberlebt den Neustart)",
+       [int(x) for x in (win.settings.get("bau_multi_zu") or [])], [8604])
+    # Neu aufbauen: die Gruppe muss ZU wiederkommen.
+    win._reload_saved_plans(); _app.processEvents()
+    _box89b = (getattr(win, "_plan_gruppe_box", None) or {}).get(8604)
+    check("b89 nach dem Neuaufbau steht die Gruppe wieder zu",
+          _box89b is not None and _box89b.isHidden()
+          and not _pfeil89(8604).isChecked())
+    _pfeil89(8604).setChecked(True)
+    _app.processEvents()
+    check("b89 ein Klick klappt die Gruppe auf", not _box89b.isHidden())
+    check("b89 aufklappen geht auch wieder (Merker leer)",
+          not (win.settings.get("bau_multi_zu") or []))
+    # GEWINN-UEBERSICHT: gebundene Plaene sind dort weder gelistet noch
+    # gezaehlt - sonst stuende ihr Gewinn zweimal im Total (einmal einzeln,
+    # einmal im Buendel).
+    check("b89 die Gewinn-Uebersicht listet gebundene Einzelplaene nicht",
+          8601 not in (win._plan_sum_labels or {})
+          and 8602 not in (win._plan_sum_labels or {}))
+    # JE ENDPRODUKT STATT JE BUENDEL (Nutzer 26.09.2026: "im Profit Overview
+    # separat, nicht als Bauplan"): das Buendel hat keine eigene Zeile,
+    # seine zwei Enden je eine ("<plan_id>:<tid>").
+    check("b89 ... die freien Plaene schon, das Buendel als eine Zeile je Ende",
+          8603 in win._plan_sum_labels and 8604 not in win._plan_sum_labels
+          and "8604:971001" in win._plan_sum_labels
+          and "8604:971002" in win._plan_sum_labels)
+except Exception as _e89:                                # pragma: no cover
+    import traceback as _tb89
+    _fail.append(f"b89 Ordnerstruktur: {type(_e89).__name__}: {_e89} | "
+                 + _tb89.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        win.settings["bau_saved_plans"] = _alt_plans86
+        win._reload_saved_plans()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- (b92)
+# DAS RESERVIERUNGS-SCHLOSS BLEIBT AMBER, AUCH NACH DEM KLICK.
+# Nutzer 22.09.2026: "das Schloss-Symbol eines eingefrorenen und
+# reservierten Buildplans ist zu unuebersichtlich."
+# Der eigentliche Fehler war nicht die Farbstaerke: `_toggle_plan_reserve`
+# zeichnete das Symbol beim Umschalten OHNE `farbe=` neu - nach dem ersten
+# Klick war die amberne Faerbung weg und kam erst nach einem Neuaufbau der
+# Liste zurueck. Deshalb wird hier der ECHTE Weg gefahren (Lehre aus
+# b87/b88: nie nur den Helfer aufrufen, den der Knopf benutzt).
+try:
+    from PySide6.QtWidgets import QPushButton as _QPB92
+    from eve_trader.ui import theme as _th92
+    _btn92 = _QPB92()
+    _btn92.setCheckable(True)
+    # Eine id, die es nicht gibt: die Schleife in _toggle_plan_reserve
+    # aendert dann keinen Plan - geprueft wird hier allein das Aussehen.
+    win._toggle_plan_reserve(-99992, True, _btn92)
+    _an92 = _btn92.styleSheet()
+    # NUR DIE RUHE-REGEL zaehlt: "AMBER kommt vor" ist blind (der Rahmen
+    # ist ohnehin amber), und die :hover-Regel ist es auch - beide waren
+    # die ersten, blinden Fassungen dieser Zeile. Die FLAECHE im
+    # Ruhezustand ist die Zusage.
+    _ruhe92 = _an92.replace(" ", "").split("QPushButton:hover")[0]
+    check(f"b92 eingeschaltet ist der Knopf amber AUSGEFUELLT "
+          f"({_ruhe92[:44]!r})",
+          f"background:{_th92.AMBER}" in _ruhe92)
+    check("b92 ... und traegt ein Symbol (kein leerer Knopf)",
+          not _btn92.icon().isNull() and _btn92.text() == "")
+    win._toggle_plan_reserve(-99992, False, _btn92)
+    _aus92 = _btn92.styleSheet()
+    check(f"b92 ausgeschaltet bleibt er grau wie bisher ({_aus92[:40]!r})",
+          _th92.AMBER not in _aus92)
+    check("b92 ... und die beiden Zustaende sehen wirklich verschieden aus",
+          _an92 != _aus92)
+    # GEGENPROBE gegen den alten Fehler: der Aufbau der Karte und das
+    # Umschalten muessen DASSELBE zeichnen.
+    _btn92b = _QPB92()
+    win._plan_reserve_stil(_btn92b, True)
+    check("b92 Karten-Aufbau und Umschalten zeichnen dasselbe",
+          _btn92b.styleSheet() == _an92)
+except Exception as _e92:                                # pragma: no cover
+    import traceback as _tb92
+    _fail.append(f"b92 Reservierungs-Schloss: {type(_e92).__name__}: {_e92} | "
+                 + _tb92.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b104)
+# STUFE C, TEIL 2: EINMAL FRAGEN, WEM EIN JOB GEHOERT (24.09.2026).
+# Nutzer-Entscheide: "einmal fragen, Antwort merken" und "gesammelt im
+# Runplaner". Geprueft wird am ECHTEN Fenster und gegen die ECHTE Tabelle -
+# eine Zusage, die nur im Quelltext steht, ist keine.
+try:
+    from PySide6.QtWidgets import QDialog as _QD104, QComboBox as _QCB104
+    from eve_trader import store as _st104
+    from eve_trader.ui import mw_helpers as _mwh104
+    _T104, _J104a, _J104b = 42, 9104001, 9104002
+    _P104a, _P104b = 9104101, 9104102
+    _st104.job_zuordnung_loeschen(str(_P104a))       # Zustand ueberlebt Laeufe
+    _st104.job_zuordnung_loeschen(str(_P104b))
+    _st104.job_zuordnung_loeschen(_st104.PLAN_KEINER)
+    _alt_fr104 = getattr(win, "_bd_full_rebuild", None)
+    win._bd_full_rebuild = lambda: None      # der Neuaufbau ist hier nicht Thema
+    win._bd_job_offen = []
+    win._jobfrage_knopf_auffrischen()
+    _btn104 = getattr(win, "_bd_jobfrage_btn", None)
+    check("b104 es gibt die Zeile im Runplaner", _btn104 is not None)
+    # isHidden() statt isVisible(): in einem nie gezeigten Fenster meldet
+    # isVisible() IMMER False und waere damit blind (Falle aus CLAUDE.md).
+    check("b104 ohne offene Frage ist die Zeile weg",
+          _btn104 is not None and _btn104.isHidden())
+    win._bd_job_offen = [
+        {"job_id": _J104a, "type_id": _T104, "runs": 10, "fertig_ts": 1.0,
+         "name": "b104 Item", "kandidaten": [(_P104a, "b104 Plan A"),
+                                             (_P104b, "b104 Plan B")]},
+        {"job_id": _J104b, "type_id": _T104, "runs": 5, "fertig_ts": 2.0,
+         "name": "b104 Item", "kandidaten": [(_P104a, "b104 Plan A"),
+                                             (_P104b, "b104 Plan B")]}]
+    win._jobfrage_knopf_auffrischen()
+    check("b104 mit offenen Fragen erscheint die Zeile", not _btn104.isHidden())
+    check("b104 ... und nennt die Anzahl", "2" in _btn104.text())
+    _gesehen104 = {}
+    _alt_exec104 = _QD104.exec
+
+    def _exec104(dlg):
+        _cbs = [_c for _c in dlg.findChildren(_QCB104)]
+        _gesehen104["boxen"] = len(_cbs)
+        _gesehen104["eintraege"] = _cbs[0].count() if _cbs else 0
+        _gesehen104["letzter"] = _cbs[0].itemData(_cbs[0].count() - 1) \
+            if _cbs else "x"
+        if len(_cbs) >= 2:
+            _cbs[0].setCurrentIndex(1)                       # Plan B
+            _cbs[1].setCurrentIndex(_cbs[1].count() - 1)     # "keiner"
+        return 1                                             # Accepted
+    _QD104.exec = _exec104
+    try:
+        _n104 = win._job_frage_dialog()
+    finally:
+        _QD104.exec = _alt_exec104
+    eq("b104 je offener Job eine Auswahl", _gesehen104.get("boxen"), 2)
+    eq("b104 die Auswahl kennt beide Plaene und 'zu keinem davon'",
+       _gesehen104.get("eintraege"), 3)
+    eq("b104 ... und 'zu keinem davon' traegt keine Plan-Id",
+       _gesehen104.get("letzter"), None)
+    eq("b104 beide Antworten werden verbucht", _n104, 2)
+    _zu104 = _st104.job_zuordnung_alle()
+    eq("b104 die gewaehlte Antwort steht in der Tabelle",
+       _zu104.get(_J104a), str(_P104b))
+    # "KEINER" IST AUCH EINE ANTWORT - sonst kaeme dieselbe Frage bei jedem
+    # Aufbau wieder.
+    eq("b104 ... und 'zu keinem davon' wird genauso gemerkt",
+       _zu104.get(_J104b), _st104.PLAN_KEINER)
+    eq("b104 der Plan selbst bekommt den fremden Job nicht",
+       _st104.job_zuordnung_fuer_plan(str(_P104a)), {})
+    # ... und ab jetzt gilt der Job als vergeben, wird also von keiner
+    # Automatik mehr angefasst.
+    eq("b104 ein beantworteter Job wird nicht mehr automatisch zugeordnet",
+       _mwh104.job_zuordnen_eindeutig(
+           [{"job_id": _J104b, "product_type_id": _T104, "runs": 5,
+             "activity_id": 1, "fertig_ts": 9.0}],
+           {_T104: 100}, {_T104: False}, _zu104, set(), 0.0), {})
+    _st104.job_zuordnung_loeschen(str(_P104a))
+    _st104.job_zuordnung_loeschen(str(_P104b))
+    _st104.job_zuordnung_loeschen(_st104.PLAN_KEINER)
+    win._bd_job_offen = []
+    win._jobfrage_knopf_auffrischen()
+    if _alt_fr104 is not None:
+        win._bd_full_rebuild = _alt_fr104
+except Exception as _e104:                               # pragma: no cover
+    import traceback as _tb104
+    _fail.append(f"b104 Job-Frage: {type(_e104).__name__}: {_e104} | "
+                 + _tb104.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b105)
+# "FEHLT", OBWOHL NICHTS FEHLT (Nutzer 25.09.2026, Silicon Diborite).
+# Sein Entscheid: die RECHNUNG bleibt (lieber zu viel als zu wenig), die
+# ZEILE sagt jetzt warum. Geprueft wird am echten Fenster: laufende Jobs
+# eintragen, neu aufbauen, und die Materialzeile muss es nennen - ohne dass
+# sich eine einzige Zahl aendert.
+try:
+    _plan105 = (getattr(win, "_bd_plan_ref", None) or {}).get("plan") or {}
+    _runs105 = {int(k): int(v or 0)
+                for k, v in (_plan105.get("build_runs") or {}).items()
+                if int(v or 0) > 0}
+    _mats105 = _plan105.get("build_mats") or {}
+    _kand105 = [t for t in _runs105 if (_mats105.get(t) or [])]
+    check("b105 der Testplan baut etwas mit Zutaten", bool(_kand105))
+    if _kand105:
+        _t105 = sorted(_kand105, key=lambda x: -len(_mats105.get(x) or []))[0]
+        _alt_aj105 = getattr(win, "_bd_active_jobs_map", None)
+        _alt_rest105 = dict(win._restbedarf_jetzt() or {})
+        win._bd_active_jobs_map = {_t105: [{"runs": _runs105[_t105]}]}
+        win._bd_full_rebuild()
+        _app.processEvents()
+        # Der Hinweis steht im GRUND der Zeile (Tooltip); gesucht wird ein
+        # Stueck davon, das in beiden Sprachen steht.
+        _mark105 = _t4(
+            "{n} units of this are already used up by jobs that are "
+            "RUNNING right now \u2013 in game the material is gone, "
+            "but their output is not in the hangar yet, so the plan "
+            "keeps counting the need. Nothing is really missing "
+            "here. The number stays as it is on purpose (better to "
+            "buy too much than too little); tick the running rows in "
+            "the run planner to take their material out of the "
+            "list.").split("{n}")[-1].strip()[:40]
+        _treffer105 = [r for r in (getattr(win, "_bd_mat_rows", None) or [])
+                       if _mark105 and _mark105.lower()
+                       in str(r.get("reason") or "").lower()]
+        # DIE ZAHL DARF SICH NICHT BEWEGT HABEN - das ist der Kern seines
+        # Entscheids "nur anzeigen, nicht rechnen".
+        eq("b105 der Restbedarf bleibt unveraendert",
+           dict(win._restbedarf_jetzt() or {}), _alt_rest105)
+        check("b105 mindestens eine Zeile nennt die laufenden Jobs",
+              bool(_treffer105))
+        # GEGENPROBE: ohne laufende Jobs steht der Hinweis nirgends.
+        win._bd_active_jobs_map = {}
+        win._bd_full_rebuild()
+        _app.processEvents()
+        check("b105 ohne laufende Jobs sagt keine Zeile so etwas",
+              not [r for r in (getattr(win, "_bd_mat_rows", None) or [])
+                   if _mark105 and _mark105.lower()
+                   in str(r.get("reason") or "").lower()])
+        win._bd_active_jobs_map = _alt_aj105 or {}
+        win._bd_full_rebuild()
+        _app.processEvents()
+except Exception as _e105:                               # pragma: no cover
+    import traceback as _tb105
+    _fail.append(f"b105 Hinweis laufende Jobs: {type(_e105).__name__}: {_e105} | "
+                 + _tb105.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b106)
+# VERKAUFSPREIS DER PLAN-KARTE IST ANKLICKBAR (Nutzer 25.09.2026: "kann man
+# den recommended sell price fuer meine eingestellte Gewinnmarge anklickbar
+# machen, so wie im Runplanner?"). Geprueft wird der Kopier-Weg selbst - mit
+# echter Zwischenablage.
+try:
+    from PySide6.QtWidgets import QApplication as _QA106
+    _QA106.clipboard().setText("")
+    win._copy_sell_price(5613584.0, "b106 Plan", "bauplan")
+    _app.processEvents()
+    eq("b106 der Preis liegt als reine Zahl in der Zwischenablage",
+       _QA106.clipboard().text(), "5613584")
+    _msg106 = win.statusBar().currentMessage()
+    check("b106 die Meldung nennt den Bauplan, nicht den Einkauf",
+          "b106 Plan" in _msg106
+          and ("build plan" in _msg106.lower() or "bauplan" in _msg106.lower()))
+    # GEGENPROBE: die Verkaufslisten-Quelle sagt weiterhin etwas ANDERES -
+    # sonst traegt eine Zahl zwei Bedeutungen mit einem Satz.
+    win._copy_sell_price(5613584.0, "b106 Plan", "ziel")
+    _app.processEvents()
+    check("b106 die Verkaufsliste behaelt ihren eigenen Satz",
+          win.statusBar().currentMessage() != _msg106)
+    # Nachkommastellen bleiben erhalten (Preise sind nicht ganzzahlig).
+    win._copy_sell_price(4472999.5, "b106 Plan", "bauplan")
+    _app.processEvents()
+    eq("b106 ein Preis mit Nachkommastelle wird nicht gerundet",
+       _QA106.clipboard().text(), "4472999.5")
+except Exception as _e106:                               # pragma: no cover
+    import traceback as _tb106
+    _fail.append(f"b106 Preis kopieren: {type(_e106).__name__}: {_e106} | "
+                 + _tb106.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b107)
+# PLANER-DIAGNOSE (Nutzer 25.09.2026: "19 Blueprints, das Tool nutzt 11" und
+# "23 h eingestellt, Reaktion dauert 15 h 26 m"). Beides ist von aussen nicht
+# nachstellbar, solange die EINGABEN des Planers nicht sichtbar sind. Geprueft
+# wird, dass die Datei beim Aufbau des Runplaners wirklich entsteht - nicht
+# nur, dass es eine Methode dafuer gibt.
+try:
+    from eve_trader import config as _cfg107
+    _p107 = os.path.join(_cfg107.app_data_dir(), "planer_diagnose.txt")
+    _txt107 = ""
+    if os.path.exists(_p107):
+        with open(_p107, encoding="utf-8") as _fh107:
+            _txt107 = _fh107.read()
+    check("b107 der Runplaner-Aufbau schreibt die Planer-Diagnose",
+          bool(_txt107))
+    for _k107 in ("CHARAKTERE (angekreuzt) - Slots:",
+                  "JOBS (Eingabe des Planers):",
+                  "ZIELZEITEN JE STUFE",
+                  "ERGEBNIS - Stufenzeiten",
+                  "ERGEBNIS - Zuteilungen"):
+        check("b107 ... mit dem Abschnitt: " + _k107.split("(")[0].strip(),
+              _k107 in _txt107)
+    # DIE DECKEL GEHOEREN DAZU - ohne sie laesst sich "19 Kopien, 11 Jobs"
+    # nicht beantworten.
+    check("b107 ... und den Spalten KOPIEN und RUNS/KOPIE",
+          "KOPIEN" in _txt107 and "RUNS/KOPIE" in _txt107)
+    # FORTSCHRITTS-ANHANG (26.09.2026, "der Runplaner will trotzdem nochmal
+    # 6'718 nachbauen"): derselbe Aufbau haengt Plan-/geliefert-/laufend-
+    # Runs und die Bestandsschichten an - NACH dem ersten Abschnitt.
+    check("b107 ... und den Anhang FORTSCHRITT UND BESTAND JE ITEM dahinter",
+          _txt107.find("FORTSCHRITT UND BESTAND JE ITEM")
+          > _txt107.find("ERGEBNIS - Zuteilungen") > 0
+          and "ENDE FORTSCHRITT" in _txt107)
+    check("b107 ... mit den Spalten GELIEFERT/LAUFEND/REST und EINGEFR./HANGAR/PIPELINE/WIRKSAM",
+          all(_k in _txt107 for _k in ("GELIEFERT", "LAUFEND", "ERLEDIGT", "REST",
+                                       "EINGEFR.", "HANGAR", "PIPELINE",
+                                       "WIRKSAM", "VERBRAUCHT")))
+except Exception as _e107:                               # pragma: no cover
+    import traceback as _tb107
+    _fail.append(f"b107 Planer-Diagnose: {type(_e107).__name__}: {_e107} | "
+                 + _tb107.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b108)
+# NICHTS MEHR ZU BAUEN (Nutzer 26.09.2026: "ich will, dass diese Runs
+# nicht mehr einfach angezeigt werden, obwohl ich sie gar nicht brauche").
+# Der Materialien-Reiter zeigte "can be built - 13'019 units" (Plan minus
+# Bestand), obwohl der Runplaner 0 Runs offen hatte. Geprueft am echten
+# Fenster: die sichere Liefer-Karte deckt alle Runs eines Eigenbau-Items ->
+# die Zeile sagt "nothing left to build", die MISSING-Spalte zeigt "-".
+# Gegenprobe: mit halber Lieferung steht die halbe Menge da.
+try:
+    _plan108 = (getattr(win, "_bd_plan_ref", None) or {}).get("plan") or {}
+    _runs108 = {int(k): int(v or 0)
+                for k, v in (_plan108.get("build_runs") or {}).items()
+                if int(v or 0) > 0}
+    _mats108 = _plan108.get("build_mats") or {}
+    _kand108 = [t for t in _runs108 if (_mats108.get(t) or [])]
+    check("b108 der Testplan baut etwas mit Zutaten", bool(_kand108))
+    if _kand108:
+        _t108 = sorted(_kand108, key=lambda x: -len(_mats108.get(x) or []))[0]
+        _alt_ds108 = dict(getattr(win, "_bd_runplan_delivered_sicher", None) or {})
+        _alt_aj108 = getattr(win, "_bd_active_jobs_map", None)
+        win._bd_active_jobs_map = {}
+        # OHNE BESTAND sagt jede Zeile "Subtract assets needed" - der
+        # Eigenbau-Zweig wird erst mit einem (auch leeren) geladenen Stand
+        # erreicht. Ein Stueck irgendwo genuegt, damit `stock` wahr ist.
+        _opts108 = getattr(win, "_bd_opts", None)
+        _alt_stock108 = None if _opts108 is None else _opts108.get("stock")
+        if _opts108 is not None:
+            _opts108["stock"] = dict(_alt_stock108 or {}) or {-9108: 1}
+
+        def _zeile108():
+            for r in (getattr(win, "_bd_mat_rows", None) or []):
+                if int(r.get("tid") or 0) == int(_t108):
+                    return r
+            return None
+
+        eq("b108 vorher: offene Runs = Plan-Runs",
+           (win._rest_runs_jetzt() or {}).get(int(_t108)), _runs108[_t108])
+        win._bd_runplan_delivered_sicher = {**_alt_ds108, int(_t108): _runs108[_t108]}
+        win._bd_full_rebuild()
+        _app.processEvents()
+        eq("b108 alle Runs sicher geliefert -> 0 offene Runs",
+           (win._rest_runs_jetzt() or {}).get(int(_t108)), 0)
+        _r108 = _zeile108()
+        _st108 = str((_r108 or {}).get("status") or "").lower()
+        check("b108 die Zeile sagt 'nothing left to build' (beide Sprachen)",
+              _r108 is not None and (
+                  _t4("nothing left to build \u2713").lower() in _st108
+                  or "nothing left to build" in _st108))
+        # Gegenprobe: die Haelfte geliefert -> Rest = halbe Runs x Stueck.
+        _halb108 = _runs108[_t108] // 2
+        if _halb108 > 0:
+            win._bd_runplan_delivered_sicher = {**_alt_ds108, int(_t108): _halb108}
+            win._bd_full_rebuild()
+            _app.processEvents()
+            _r108b = _zeile108()
+            _st108b = str((_r108b or {}).get("status") or "")
+            _offen108 = _runs108[_t108] - _halb108
+            check("b108 halb geliefert: die Zeile nennt die offenen Runs",
+                  _r108b is not None and _t4("{r} of {n} runs open").format(
+                      r=_offen108, n=_runs108[_t108]) in _st108b)
+            # KATEGORIE-BALKEN (Nutzer-Entscheid 26.09.2026, "Punkt 3
+            # einfuehren"): eine Eigenbau-Zeile mit offenen Runs zaehlt im
+            # Balken ihrer Kategorie als GEDECKT (nichts zu kaufen) und
+            # wird getrennt als "im Bau" genannt - vorher stand die
+            # Kategorie mit "0 / n covered" in Rot da.
+            _tbl108 = getattr(win, "_bd_mat_tab_tbl", None)
+            _kat108 = str((_r108b or {}).get("category") or "")
+            _grp108 = None
+            for _gi108 in range(_tbl108.topLevelItemCount()):
+                _g108 = _tbl108.topLevelItem(_gi108)
+                if (_g108.data(1, Qt.UserRole) or _g108.text(0)) == _kat108:
+                    _grp108 = _g108
+                    break
+            _bar108 = (_tbl108.itemWidget(_grp108, 6)
+                       if _grp108 is not None else None)
+            _fmt108 = _bar108.format() if _bar108 is not None else ""
+            import re as _re108
+            _bau108 = _re108.search(r"(\d+) " + _re108.escape(
+                _t4("{n} being built").format(n="").strip()), _fmt108)
+            check(f"b108 der Kategorie-Balken nennt die Eigenbau-Zeile als 'im Bau' "
+                  f"({_fmt108!r})",
+                  _bar108 is not None and _bau108 is not None
+                  and int(_bau108.group(1)) >= 1)
+            _m108 = _re108.search(r"(\d+) / (\d+)", _fmt108)
+            check("b108 ... und zaehlt sie als gedeckt (nichts zu kaufen)",
+                  _m108 is not None and int(_m108.group(1)) >= 1
+                  and int(_m108.group(1)) <= int(_m108.group(2)))
+            check("b108 ... der Tooltip erklaert den Bau-Anteil",
+                  _bar108 is not None
+                  and ("built by this plan" in _bar108.toolTip()
+                       or "baut dieser Plan" in _bar108.toolTip()))
+        win._bd_runplan_delivered_sicher = _alt_ds108
+        win._bd_active_jobs_map = _alt_aj108 or {}
+        if _opts108 is not None:
+            _opts108["stock"] = _alt_stock108
+        win._bd_full_rebuild()
+        _app.processEvents()
+except Exception as _e108:                               # pragma: no cover
+    import traceback as _tb108
+    _fail.append(f"b108 nichts mehr zu bauen: {type(_e108).__name__}: {_e108} | "
+                 + _tb108.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b109)
+# DIE BLAUPAUSEN-SPALTE FASST DAS ZIELZEIT-FELD (Nutzer 26.09.2026: "die
+# Zeitdropdowns bissl abgeschnitten"). Die Spalte ist fest 280 px; auf
+# seinem Windows sind Tage- und Stunden-Feld zusammen breiter, und Qt
+# schneidet das Feld am Spaltenrand ab. Gemessen am echten Baum: erst wird
+# die Spalte auf 60 px gezwungen, dann baut `_runplan_ziel_feld` das Feld
+# an einer Stufenzeile neu - danach muss die Spalte beide Felder samt
+# Abstand und Text fassen. (Ohne das Schmalmachen waere die Pruefung
+# offscreen blind: 280 px reichen hier immer, bei ihm nicht.)
+try:
+    from PySide6.QtWidgets import QComboBox as _QCb109, QLabel as _QLb109
+    _st109 = None
+    for _i109 in range(_tr7w.topLevelItemCount()):
+        _it109 = _tr7w.topLevelItem(_i109)
+        if _it109.data(1, Qt.UserRole + 8) is not None and \
+                _tr7w.itemWidget(_it109, 2) is not None:
+            _st109 = _it109
+            break
+    check("b109 der Testplan hat mindestens eine Stufe mit Zielzeit-Feld",
+          _st109 is not None)
+    if _st109 is not None:
+        _alt_w109 = _tr7w.columnWidth(2)
+        _altfr109 = getattr(win, "_bd_full_rebuild", None)
+        win._bd_full_rebuild = lambda *_a, **_k: None   # s. b102
+        _tr7w.setColumnWidth(2, 60)
+        win._runplan_ziel_feld(_tr7w, _st109, str(_st109.data(1, Qt.UserRole + 8)),
+                               0.0, None)
+        _app.processEvents()
+        _w109 = _tr7w.itemWidget(_st109, 2)
+        _cbs109 = _w109.findChildren(_QCb109) if _w109 is not None else []
+        _lbls109 = _w109.findChildren(_QLb109) if _w109 is not None else []
+        _txtw109 = max([_l.fontMetrics().horizontalAdvance(_l.text())
+                        for _l in _lbls109] or [0])
+        _need109 = (sum(_c.width() for _c in _cbs109)
+                    + 3 * (_w109.layout().spacing() if _w109 is not None else 4)
+                    + _txtw109 + 12)
+        check("b109 die Blaupausen-Spalte ist breit genug fuer beide Felder + Text",
+              len(_cbs109) == 2 and _tr7w.columnWidth(2) >= _need109)
+        check("b109 ... und wurde dafuer wirklich verbreitert (von 60 px aus)",
+              _tr7w.columnWidth(2) > 60)
+        # DAS FELD SELBST fasst seinen laengsten Eintrag (zweiter Screenshot:
+        # "as fast as possibl" war IM Feld abgeschnitten): Textbreite + 44 px
+        # (Polster, Rahmen, Pfeil, Reserve).
+        _zu_eng109 = [(_c.itemText(_i), _c.width()) for _c in _cbs109
+                      for _i in range(_c.count())
+                      if _c.width() < _c.fontMetrics().horizontalAdvance(
+                          _c.itemText(_i)) + 44]
+        eq("b109 jedes Feld fasst seinen laengsten Eintrag samt Pfeil und Polster",
+           _zu_eng109, [])
+        _tr7w.setColumnWidth(2, max(_alt_w109, _tr7w.columnWidth(2)))
+        win._bd_full_rebuild = _altfr109
+except Exception as _e109:                               # pragma: no cover
+    import traceback as _tb109
+    _fail.append(f"b109 Zielzeit-Spalte: {type(_e109).__name__}: {_e109} | "
+                 + _tb109.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b111)
+# DIE KARTE EINES GEBUNDENEN EINZELPLANS (Nutzer 26.09.2026: "in Meine
+# Bauplaene werden die einzelnen Endprodukte nicht sauber getrackt, ich
+# sehe keinen Einzelbaupreis, nur einen geschaetzten Profit ... auch kein
+# Sell-Vorschlag"): statt des Allein-Gewinns steht dort "Im Buendel: Bau
+# X/Stk" plus ein kleiner Amber-Knopf "Verkauf Y", der den Preis kopiert.
+# Die Zahlen kommen aus buendel_kosten_je_ende der Buendel-Schaetzung.
+try:
+    from PySide6.QtWidgets import QApplication as _QA111
+    from eve_trader.ui import theme as _th111
+    _alt_plans111 = win.settings.get("bau_saved_plans")
+    _alt_rc111 = I.recipes_cached
+    _alt_snap111 = _st84.get_snapshot
+    _alt_sde111 = I.sde_ready
+    _alt_run111 = win._run
+    I.recipes_cached = lambda *a, **k: _Rec83()
+    _st84.get_snapshot = lambda *a, **k: [
+        {"type_id": t111, "sell_min": p111} for t111, p111 in _pm84.items()]
+    I.sde_ready = lambda: True
+    win._run = lambda worker, done_cb, fail_cb=None, **kw: done_cb(
+        worker._fn(*worker._args, **worker._kwargs))
+    win.settings["bau_saved_plans"] = [
+        {"id": 11101, "label": "b111 Plan A", "type_id": _A83, "item_name": "A",
+         "qty": 20, "me": 7, "te": 14, "checked": []},
+        {"id": 11102, "label": "b111 Plan B", "type_id": _B83, "item_name": "B",
+         "qty": 10, "me": 3, "te": 2, "checked": []},
+        {"id": 11103, "label": "b111 Frei", "type_id": _A83, "item_name": "A",
+         "qty": 5, "me": 0, "te": 0, "checked": []},
+        {"id": 11109, "label": "b111 Multi", "type_id": I.BUENDEL_ID,
+         "item_name": "b111 Multi", "qty": 1, "multi": True, "checked": [],
+         "enden": [[_A83, 20], [_B83, 10]], "quellen": [11101, 11102],
+         "mengen_je_quelle": {"11101": 20, "11102": 10},
+         "me_je_ende": {str(_A83): 7, str(_B83): 3},
+         "te_je_ende": {str(_A83): 14, str(_B83): 2},
+         "own_bpc_je_ende": {}, "own_bpc_runs_je_ende": {}, "quellen_stand": {}},
+    ]
+    _plans111 = win.settings["bau_saved_plans"]
+    _pm111 = dict(_pm84)
+    # MIT ZUSATZKOSTEN: nur dann gibt es einen Rest zwischen Enden-Summe und
+    # Buendel-Gewinn, den die Verteilung nach Kostenanteil tragen muss
+    # (Rotprobe: ohne Rest war die Verteilung unsichtbar).
+    _extra_alt111 = win.settings.get("bau_extra_cost")
+    win.settings["bau_extra_cost"] = 5_000_000.0
+    _est111 = {p111["id"]: win._bau_saved_plan_quick_estimate(
+        p111, _Rec83(), _pm111, dict(_pm111)) for p111 in _plans111}
+    _mit111 = win._plan_buendel_mitglieder_zahlen(_plans111, _est111, _pm111)
+    eq("b111 rein: genau die beiden Quellen bekommen Buendel-Zahlen",
+       sorted(_mit111.keys()), [11101, 11102])
+    _je111 = I.buendel_kosten_je_ende(_est111[11109]["plan"])
+    check("b111 rein: Kosten/Stk = Anteil aus buendel_kosten_je_ende (keine zweite Rechnung)",
+          abs(_mit111[11101]["cost_unit"] - _je111[_A83]["je_stueck"]) < 1e-6
+          and abs(_mit111[11102]["cost_unit"] - _je111[_B83]["je_stueck"]) < 1e-6)
+    check("b111 rein: der Sell-Vorschlag kommt aus DERSELBEN Formel wie die Fertig-Zeile",
+          abs(_mit111[11101]["rec_sell"]
+              - win._plan_sell_vorschlag(_mit111[11101]["cost_unit"], None)) < 1e-6
+          and _mit111[11101]["rec_sell"] > _mit111[11101]["cost_unit"])
+    check("b111 rein: der Name des Buendels steht dabei",
+          _mit111[11101]["multi"] == "b111 Multi"
+          and _mit111[11101]["name"] == "b111 Plan A")
+    # AM FENSTER: Karten bauen, Schaetzung synchron laufen lassen.
+    win._reload_saved_plans(); _app.processEvents()
+    win._load_saved_plan_estimates(_plans111); _app.processEvents()
+    _l111 = win._plan_est_labels
+    # SEIT 26.09.2026 (Nutzer: "Einzelprofit UND Einzelbaupreis"): die Karte
+    # zeigt den Gewinn IM BUENDEL (nicht den Allein-Gewinn), der Baupreis
+    # je Stueck steht im Tooltip - und die Enden-Gewinne addieren sich
+    # exakt zum Buendel-Gewinn.
+    _pr111 = _mit111[11101]["profit"]
+    check("b111 die Karte der Quelle zeigt den Gewinn im Buendel, Baupreis im Tooltip",
+          "Profit" in _l111[11101].text()
+          and f"{abs(_pr111):,.0f}".replace(",", "'") in _l111[11101].text()
+          and ("bundle" in _l111[11101].toolTip().lower()
+               or "bündel" in _l111[11101].toolTip().lower())
+          and _mw61.isk(_mit111[11101]["cost_unit"]) in _l111[11101].toolTip())
+    _alle111 = win._plan_enden_zahlen(_plans111, _est111, _pm111)
+    check("b111 rein: die Enden-Gewinne addieren sich exakt zum Buendel-Gewinn",
+          abs(sum(z["profit"] for z in _alle111.values())
+              - _est111[11109]["profit"]) < 1e-6
+          and abs(_pr111 - _alle111["11109:" + str(_A83)]["profit"]) < 1e-9)
+    check("b111 rein: Gewinn je Ende = Verkauf x Menge x (1 - Gebuehr) - Kostenanteil (+ Rest nach Anteil)",
+          abs(_alle111["11109:" + str(_A83)]["profit"]
+              + _alle111["11109:" + str(_B83)]["profit"]
+              - (_pm111[_A83] * 20 + _pm111[_B83] * 10)
+              * (1 - _est111[11109]["fee_pct"] / 100.0)
+              + _je111[_A83]["gesamt"] + _je111[_B83]["gesamt"]
+              + float(win.settings.get("bau_extra_cost", 0) or 0)) < 1.0)
+    check("b111 ... der freie Plan und das Buendel zeigen weiter ihren Gewinn",
+          "Profit" in _l111[11103].text() and "Profit" in _l111[11109].text())
+    _sb111 = win._plan_sell_btns
+    check("b111 die Quelle hat einen sichtbaren Verkaufs-Knopf, der freie Plan nicht",
+          not _sb111[11101].isHidden() and not _sb111[11102].isHidden()
+          and _sb111[11103].isHidden() and _sb111[11109].isHidden())
+    check("b111 ... mit Amber-Rahmen (sichtbar anklickbar)",
+          f"border:1px solid {_th111.AMBER}" in _sb111[11101].styleSheet()
+          and _sb111[11101].cursor().shape() == Qt.PointingHandCursor)
+    _QA111.clipboard().setText("")
+    _sb111[11101].click(); _app.processEvents()
+    _ab111 = (_QA111.clipboard().text() or "").strip()
+    check("b111 ein Klick kopiert den Verkaufs-Vorschlag in die Zwischenablage",
+          _ab111 != "" and abs(float(_ab111) - _mit111[11101]["rec_sell"]) < 1.0)
+    check("b111 die Statusspalte ist so breit wie der laengste Eintrag samt Knopf",
+          win._plan_stat_widgets[11101].width()
+          >= _sb111[11101].sizeHint().width() + 10)
+    # DER GEWINN DES BUENDELS DARF NICHT ABGESCHNITTEN SEIN (Nutzer-
+    # Screenshot 26.09.2026: "Profit ≈ +1'141'691'5" endete am Schloss).
+    _app.processEvents()
+    _zu_eng111 = [(pid111, l111.text()) for pid111, l111 in _l111.items()
+                  if win._plan_stat_widgets[pid111].width()
+                  < l111.sizeHint().width()]
+    eq("b111 kein Gewinn-Text ist breiter als seine Statusspalte", _zu_eng111, [])
+    # FERTIG-ZEILE: der Knopf traegt den Verkauf, nicht mehr der Text.
+    win._plan_sell_knopf_zeigen(11103, 123456.0, "b111 Frei")
+    check("b111 die Fertig-Zeile fuellt denselben Knopf",
+          not _sb111[11103].isHidden() and "123" in _sb111[11103].text())
+    win._plan_sell_knopf_zeigen(11103, None, "b111 Frei")
+    check("b111 ... ohne Preis ist er wieder weg", _sb111[11103].isHidden())
+except Exception as _e111:                               # pragma: no cover
+    import traceback as _tb111
+    _fail.append(f"b111 Buendel-Karten: {type(_e111).__name__}: {_e111} | "
+                 + _tb111.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        if _extra_alt111 is None:
+            win.settings.pop("bau_extra_cost", None)
+        else:
+            win.settings["bau_extra_cost"] = _extra_alt111
+        win._run = _alt_run111
+        I.recipes_cached = _alt_rc111
+        _st84.get_snapshot = _alt_snap111
+        I.sde_ready = _alt_sde111
+        win.settings["bau_saved_plans"] = _alt_plans111
+        win._reload_saved_plans()
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------- (b112)
+# BUENDEL OHNE QUELLPLAENE (Anhaengen-Weg; Nutzer 26.09.2026: "Sacrilege x1,
+# einzeln hinzugefuegte Bauplaene, kein Dropdown ersichtlich - ich muss ja
+# wissen, zu wieviel ich die Endprodukte einzeln gebaut habe und zu wieviel
+# ich sie verkaufen kann/soll; im Profit Overview separat, nicht als
+# Bauplan"): je Ende eine Karte unter dem Buendel (Pfeil, Gewinn, Baupreis,
+# Verkaufs-Knopf), in der Gewinn-Uebersicht eine Zeile je Ende und KEINE
+# fuer das Buendel; die Summe bleibt der Buendel-Gewinn. Und ein
+# EINGEFRORENES Buendel liefert die Zahlen je Ende genauso (Multiplan 1
+# auf seinem Bildschirm war eingefroren).
+try:
+    from eve_trader.ui import theme as _th112
+    _alt_plans112 = win.settings.get("bau_saved_plans")
+    _alt_rc112 = I.recipes_cached
+    _alt_snap112 = _st84.get_snapshot
+    _alt_sde112 = I.sde_ready
+    _alt_run112 = win._run
+    I.recipes_cached = lambda *a, **k: _Rec83()
+    _st84.get_snapshot = lambda *a, **k: [
+        {"type_id": t112, "sell_min": p112} for t112, p112 in _pm84.items()]
+    I.sde_ready = lambda: True
+    win._run = lambda worker, done_cb, fail_cb=None, **kw: done_cb(
+        worker._fn(*worker._args, **worker._kwargs))
+    _pm112 = dict(_pm84)
+    _offen112 = {"id": 11201, "label": "b112 Sacrilege", "type_id": I.BUENDEL_ID,
+                 "item_name": "b112 Sacrilege", "qty": 1, "multi": True,
+                 "checked": [], "enden": [[_A83, 20], [_B83, 10]], "quellen": [],
+                 "me_je_ende": {str(_A83): 7, str(_B83): 3},
+                 "te_je_ende": {str(_A83): 14, str(_B83): 2},
+                 "own_bpc_je_ende": {}, "own_bpc_runs_je_ende": {}}
+    _est_o112 = win._bau_saved_plan_quick_estimate(_offen112, _Rec83(), _pm112,
+                                                    dict(_pm112))
+    # Dasselbe Buendel EINGEFROREN, mit dem Plan-Schnappschuss der offenen
+    # Schaetzung (wie es das Einfrieren im Fenster ablegt).
+    _gefr112 = dict(_offen112, id=11202, label="b112 Gefroren",
+                    frozen={"ts": 1.0, "qty": 1,
+                            "prices": {str(k): v for k, v in _pm112.items()},
+                            "plan_snapshot": win._plan_snapshot_pack(_est_o112["plan"])})
+    _frei112 = {"id": 11203, "label": "b112 Frei", "type_id": _A83, "item_name": "A",
+                "qty": 5, "me": 0, "te": 0, "checked": []}
+    win.settings["bau_saved_plans"] = [_offen112, _gefr112, _frei112]
+    _plans112 = win.settings["bau_saved_plans"]
+    _est112 = {p112["id"]: win._bau_saved_plan_quick_estimate(
+        p112, _Rec83(), _pm112, dict(_pm112)) for p112 in _plans112}
+    check("b112 die Schaetzung eines EINGEFRORENEN Buendels traegt den Plan-Schnappschuss",
+          _est112[11202] is not None and _est112[11202].get("frozen_ts") == 1.0
+          and bool(_est112[11202].get("plan"))
+          and abs(_est112[11202]["cost"] - _est_o112["cost"]) < 1e-6)
+    _en112 = win._plan_enden_zahlen(_plans112, _est112, _pm112)
+    eq("b112 rein: je Ende eine Zahl, fuer beide Buendel, ohne Quellplan",
+       sorted(_en112.keys()),
+       sorted([f"11201:{_A83}", f"11201:{_B83}", f"11202:{_A83}", f"11202:{_B83}"]))
+    check("b112 rein: kein Ende hat einen Quellplan, die Summe je Buendel ist der Buendel-Gewinn",
+          all(z["quelle_id"] is None for z in _en112.values())
+          and abs(_en112[f"11201:{_A83}"]["profit"] + _en112[f"11201:{_B83}"]["profit"]
+                  - _est112[11201]["profit"]) < 1e-6
+          and abs(_en112[f"11202:{_A83}"]["profit"] + _en112[f"11202:{_B83}"]["profit"]
+                  - _est112[11202]["profit"]) < 1e-6)
+    eq("b112 rein: die virtuellen Enden des Buendels (mit Namen)",
+       [(a, b) for a, b, _n in win._plan_virtuelle_enden(_offen112, [])],
+       [(_A83, 20), (_B83, 10)])
+    eq("b112 rein: ein Ende MIT Quellplan ist nicht virtuell",
+       [(a, b) for a, b, _n in win._plan_virtuelle_enden(
+           _offen112, [{"id": 1, "type_id": _A83}])],
+       [(_B83, 10)])
+    # AM FENSTER.
+    win.settings.pop("bau_multi_zu", None)
+    win._reload_saved_plans(); _app.processEvents()
+    _kA112 = f"11201:{_A83}"; _kB112 = f"11201:{_B83}"
+    check("b112 das Buendel hat den Pfeil und zwei Enden-Karten darunter",
+          11201 in win._plan_multi_pfeil and 11201 in win._plan_gruppe_box
+          and _kA112 in win._plan_kind_wrap and _kB112 in win._plan_kind_wrap
+          and _kA112 in win._plan_est_labels and _kA112 in win._plan_sell_btns)
+    check("b112 ... offen als Vorgabe (26.09.2026), ein Klick klappt zu",
+          not win._plan_gruppe_box[11201].isHidden()
+          and (win._plan_multi_pfeil[11201].click(), _app.processEvents(),
+               win._plan_gruppe_box[11201].isHidden())[2]
+          and (win._plan_multi_pfeil[11201].click(), _app.processEvents(),
+               not win._plan_gruppe_box[11201].isHidden())[2])
+    check("b112 die Enden-Karte traegt keine Plan-Knoepfe (Oeffnen/Fertig/Loeschen)",
+          not [b for b in win._plan_kind_wrap[_kA112].findChildren(QPushButton)
+               if (b.text() or "").strip().lower() in
+               ("open", "\u00f6ffnen", "done", "fertig", "delete", "l\u00f6schen")])
+    check("b112 Gewinn-Uebersicht: je Ende eine Zeile, keine fuer das Buendel",
+          _kA112 in win._plan_sum_labels and _kB112 in win._plan_sum_labels
+          and 11201 not in win._plan_sum_labels and 11203 in win._plan_sum_labels)
+    win._load_saved_plan_estimates(_plans112); _app.processEvents()
+    _lA112 = win._plan_est_labels[_kA112]
+    check("b112 Enden-Karte: Gewinn im Buendel, Baupreis je Stueck, Verkaufs-Knopf",
+          "Profit" in _lA112.text()
+          and f"{abs(_en112[_kA112]['profit']):,.0f}".replace(",", "'") in _lA112.text()
+          and _mw61.isk(_en112[_kA112]["cost_unit"], suffix=False)
+          in win._plan_ende_sub[_kA112].text()
+          and not win._plan_sell_btns[_kA112].isHidden()
+          and _mw61.isk(_en112[_kA112]["sell_unit"]) in win._plan_ende_verkauf[_kA112].text())
+    _sumA112 = win._plan_sum_labels[_kA112].text().replace("'", "").replace("+", "")
+    check("b112 Gewinn-Uebersicht: die Enden-Zeile traegt den Enden-Gewinn",
+          abs(float(_sumA112.replace("\u2212", "-")) - _en112[_kA112]["profit"]) < 1.0)
+    _tot112 = (win._plan_total_lbl.text().replace("ISK", "").replace("'", "")
+               .replace("+", "").replace("\u2212", "-").strip())
+    check("b112 ... und das Total ist unveraendert die Summe der Buendel + freie Plaene",
+          abs(float(_tot112) - (_est112[11201]["profit"] + _est112[11202]["profit"]
+                                + _est112[11203]["profit"])) < 3.0)
+    # DIE ENDEN-KARTE IST NICHT HOEHER ALS DIE BUENDEL-KARTE (Regel aus b2t:
+    # alle Karten ein Mass).
+    check("b112 die Enden-Karte ist nicht hoeher als die Buendel-Karte",
+          win._plan_kind_wrap[_kA112].sizeHint().height()
+          <= win._plan_karte[11201].sizeHint().height() + 2)
+    # EINZELPLAN (seit 27.09.2026, Nutzer: "Add build plan ein wenig
+    # ersichtlicher, Amber-Rahmen, auch beim normalen Bauplan - optisch
+    # gleich und an derselben Position"): NICHT mehr in der Leiste oben,
+    # sondern im Kopf einer schmalen Karte "End product of this plan" - wie
+    # beim Buendel im Kopf der Endprodukte-Karte. Stil: amber_rahmen_knopf.
+    import eve_trader.ui.theme as _th112
+    win._show_build_detail(100, "b112 Einzel", _res); _app.processEvents()
+    _eb112 = getattr(win, "_bd_ende_btn", None)
+    _k112 = getattr(win, "_bd_ende_karte_einzel", None)
+    check("b112 Einzelplan: 'Add build plan' im Kopf der Karte 'End product of this "
+          "plan', amber umrandet, nicht in der Leiste",
+          _eb112 is not None and _k112 is not None
+          and _eb112.parentWidget() is _k112
+          and not any("save" in (b.text() or "").lower()
+                      or "speichern" in (b.text() or "").lower()
+                      for b in _k112.findChildren(QPushButton))
+          and _eb112.styleSheet() == _th112.amber_rahmen_knopf()
+          and getattr(win, "_bd_multi_tbl", None) is None
+          and not _eb112.isHidden())
+    _dz112 = getattr(win, "_bd_dialog", None)
+    if _dz112 is not None:
+        _dz112.close(); _app.processEvents()
+except Exception as _e112:                               # pragma: no cover
+    import traceback as _tb112
+    _fail.append(f"b112 Enden-Karten: {type(_e112).__name__}: {_e112} | "
+                 + _tb112.format_exc().splitlines()[-3].strip())
+finally:
+    try:
+        win._run = _alt_run112
+        I.recipes_cached = _alt_rc112
+        _st84.get_snapshot = _alt_snap112
+        I.sde_ready = _alt_sde112
+        win.settings.pop("bau_multi_zu", None)
+        win.settings["bau_saved_plans"] = _alt_plans112
+        win._reload_saved_plans()
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------- (b79)
 # FEHLER.LOG-NETZ (siehe Kopf der Datei): alles, was dieser Lauf an

@@ -55,13 +55,23 @@ def backup_db(reason: str = "") -> str | None:
         return None
 
 
+_WAL_GESETZT = set()
+
+
 def _conn():
-    c = sqlite3.connect(config.db_path(), timeout=30)
+    pfad = config.db_path()
+    c = sqlite3.connect(pfad, timeout=30)
     c.row_factory = sqlite3.Row
     # WAL + a busy timeout let many threads read/write the same file safely
     # instead of crashing or raising "database is locked".
+    # journal_mode=WAL steht IN DER DATEI und gilt danach fuer jede
+    # Verbindung - einmal je Datei reicht (Ladezeit-Messung 27.09.2026:
+    # 27'000 Verbindungen beim Start). busy_timeout und synchronous gelten
+    # je Verbindung und bleiben.
     try:
-        c.execute("PRAGMA journal_mode=WAL")
+        if pfad not in _WAL_GESETZT:
+            c.execute("PRAGMA journal_mode=WAL")
+            _WAL_GESETZT.add(pfad)
         c.execute("PRAGMA busy_timeout=30000")
         c.execute("PRAGMA synchronous=NORMAL")
     except Exception:
@@ -920,6 +930,206 @@ def journal_fee_sums(character_id=None, since: str = "") -> dict:
     return out
 
 
+# ---------------------------------------------------------------------------
+# JOB -> BAUPLAN (Stufe B, 21.09.2026)
+#
+# WOZU: ESI sagt NICHT, zu welchem Bauplan ein Industry-Job gehoert - das
+# Feld gibt es in der Antwort schlicht nicht. Bis hierher wurde die Zuordnung
+# bei JEDEM Bestands-Abruf neu erraten (Item + Aktivitaet + Zeitpunkt), und
+# zwar fuer jeden Plan getrennt. Nachgestellt (aa382): EIN Job ueber 2'250
+# Runs wurde zwei Plaenen gleichzeitig angerechnet, obwohl der zweite nur
+# 400 Runs brauchte - und beider Einkaufsliste fiel auf leer.
+#
+# DIE ZUORDNUNG WIRD DESHALB GEMERKT, nicht jedes Mal neu geraten. Einmal
+# entschieden, bleibt ein Job bei seinem Plan; die Runs anderer Plaene
+# bewegen sich nicht mehr mit.
+#
+# WAS HIER STEHT UND WAS NICHT (Abgrenzung aus der Skizze, Punkt 2.4):
+# gespeichert wird NUR die ZUORDNUNG (Job -> Plan). Die TATSACHE, dass
+# gebaut wurde, bleibt die Aussage von ESI - ein Job, den das Spiel
+# abbricht, verschwindet dort und darf hier nicht als gebaut weiterleben.
+# Diese Tabelle ist also ein Adressbuch, kein Fortschrittsspeicher.
+#
+# WARUM IN industry.db UND NICHT IN settings.json: `config.save_settings`
+# schreibt die Einstellungen bei JEDEM Speichern komplett neu (json.dumps
+# der ganzen Struktur, inklusive aller Bauplan-Schnappschuesse). Eine
+# wachsende Liste dort wuerde jedes Speichern verlangsamen und die Datei
+# aufblaehen. Dasselbe Muster wie `favorites` und `wallet_journal`.
+# "eindeutig" kam mit Stufe C dazu (24.09.2026): kein anderer gespeicherter
+# Plan beansprucht das Item, also kann der Job nur von hier stammen. Die
+# Liste ist eine SPERRE - eine Quelle, die hier fehlt, laesst
+# `job_zuordnung_setzen` mit ValueError scheitern, und der Aufrufer faengt
+# das ab. Ergebnis waere: die Zuordnung passiert nie, und niemand sieht es
+# ausser fehler.log. Wer eine neue Quelle einfuehrt, traegt sie HIER ein.
+JOB_QUELLEN = ("klick", "signatur", "reservierung", "nutzer", "eindeutig")
+
+# "Zu keinem meiner Plaene" (Stufe C, Teil 2): auch das ist eine ANTWORT und
+# muss gemerkt werden, sonst fragt das Werkzeug bei jedem Aufbau erneut. Als
+# Plan-Id gespeichert heisst das: der Job gilt als vergeben (keine Automatik
+# fasst ihn mehr an), gehoert aber keinem Plan - `job_zuordnung_fuer_plan`
+# einer echten Plan-Id liefert ihn nie. Ein Minus kann keine echte Plan-Id
+# sein (die sind Zahlen als Text).
+PLAN_KEINER = "-"
+
+
+def init_job_zuordnung():
+    with _conn() as c:
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS job_zuordnung (
+                   job_id    INTEGER PRIMARY KEY,
+                   plan_id   TEXT,
+                   type_id   INTEGER,
+                   runs      INTEGER,
+                   quelle    TEXT,
+                   ts        REAL)""")
+
+
+def job_zuordnung_setzen(job_id, plan_id, type_id, runs, quelle, ts=None):
+    """Einen Job einem Plan zuordnen. Eine bestehende Zuordnung bleibt.
+
+    BEWUSST `INSERT OR IGNORE` STATT `REPLACE`: die erste Entscheidung
+    gewinnt. Genau das ist der Zweck der Tabelle - wuerde jeder Abruf die
+    Zuordnung ueberschreiben duerfen, waere sie wieder so wackelig wie die
+    Raterei vorher. Eine falsche Zuordnung korrigiert der NUTZER
+    (`quelle="nutzer"`, s. `job_zuordnung_umhaengen`), nicht die Automatik.
+    """
+    if job_id is None or plan_id is None:
+        return False
+    if quelle not in JOB_QUELLEN:
+        raise ValueError("unknown origin: %r" % (quelle,))
+    init_job_zuordnung()
+    import time as _t
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT OR IGNORE INTO job_zuordnung "
+            "(job_id, plan_id, type_id, runs, quelle, ts) VALUES (?,?,?,?,?,?)",
+            (int(job_id), str(plan_id), int(type_id or 0), int(runs or 0),
+             str(quelle), float(ts if ts is not None else _t.time())))
+        return cur.rowcount > 0
+
+
+def job_zuordnung_umhaengen(job_id, plan_id):
+    """Zuordnung eines Jobs ERSETZEN - nur fuer eine Nutzer-Korrektur."""
+    if job_id is None:
+        return False
+    init_job_zuordnung()
+    import time as _t
+    with _conn() as c:
+        cur = c.execute(
+            "UPDATE job_zuordnung SET plan_id=?, quelle='nutzer', ts=? "
+            "WHERE job_id=?",
+            (str(plan_id), float(_t.time()), int(job_id)))
+        return cur.rowcount > 0
+
+
+def job_zuordnung_fuer_plan(plan_id) -> dict:
+    """{job_id: {plan_id, type_id, runs, quelle, ts}} dieses Plans."""
+    if plan_id is None:
+        return {}
+    init_job_zuordnung()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT job_id,plan_id,type_id,runs,quelle,ts FROM job_zuordnung "
+            "WHERE plan_id=?", (str(plan_id),)).fetchall()
+    return {int(r["job_id"]): {"plan_id": r["plan_id"], "type_id": r["type_id"],
+                               "runs": r["runs"], "quelle": r["quelle"],
+                               "ts": r["ts"]} for r in rows}
+
+
+def job_zuordnung_alle() -> dict:
+    """{job_id: plan_id} - fuer die Frage \"ist dieser Job schon vergeben?\"."""
+    init_job_zuordnung()
+    with _conn() as c:
+        rows = c.execute("SELECT job_id,plan_id FROM job_zuordnung").fetchall()
+    return {int(r["job_id"]): r["plan_id"] for r in rows}
+
+
+def job_zuordnung_loeschen(plan_id) -> int:
+    """Alle Zuordnungen eines Plans entfernen (Plan geloescht/zurueckgesetzt)."""
+    if plan_id is None:
+        return 0
+    init_job_zuordnung()
+    with _conn() as c:
+        cur = c.execute("DELETE FROM job_zuordnung WHERE plan_id=?",
+                        (str(plan_id),))
+        return cur.rowcount
+
+
+def init_run_klicks():
+    with _conn() as c:
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS run_klicks (
+                   id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                   plan_id  TEXT,
+                   type_id  INTEGER,
+                   runs     INTEGER,
+                   reaktion INTEGER,
+                   ts       REAL)""")
+
+
+def run_klick_merken(plan_id, type_id, runs, reaktion, ts=None):
+    """Einen Klick auf einen Run-Knopf festhalten.
+
+    Der Klick ist KEIN Fortschritt und KEIN Beweis - er sagt nur "diese
+    Zeile, dieser Plan, jetzt". Wirksam wird er erst, wenn ESI danach einen
+    passenden Job meldet (s. `mw_helpers.job_zuordnen`). Ein Fehlklick
+    bleibt deshalb folgenlos.
+
+    Warum hier und nicht in den Einstellungen: dieselbe Begruendung wie bei
+    `job_zuordnung` - `save_settings` schreibt die ganze Datei neu.
+    """
+    if plan_id is None or not type_id:
+        return False
+    init_run_klicks()
+    import time as _t
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO run_klicks (plan_id,type_id,runs,reaktion,ts) "
+            "VALUES (?,?,?,?,?)",
+            (str(plan_id), int(type_id), int(runs or 0),
+             1 if reaktion else 0, float(ts if ts is not None else _t.time())))
+    return True
+
+
+def run_klicks_fuer_plan(plan_id, aelter_als=None) -> list:
+    """[{tid, runs, ts, reaktion}] - das Eingabeformat von `job_zuordnen`."""
+    if plan_id is None:
+        return []
+    init_run_klicks()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT type_id,runs,reaktion,ts FROM run_klicks WHERE plan_id=? "
+            "ORDER BY ts", (str(plan_id),)).fetchall()
+    aus = []
+    for r in rows:
+        if aelter_als is not None and float(r["ts"]) < float(aelter_als):
+            continue
+        aus.append({"tid": int(r["type_id"]), "runs": int(r["runs"] or 0),
+                    "reaktion": bool(r["reaktion"]), "ts": float(r["ts"])})
+    return aus
+
+
+def run_klicks_loeschen(plan_id) -> int:
+    """Alle gemerkten Klicks eines Plans entfernen (Plan geloescht, oder der
+    Plan wird neu aufgesetzt - alte Klicks duerfen dann nichts mehr binden)."""
+    if plan_id is None:
+        return 0
+    init_run_klicks()
+    with _conn() as c:
+        cur = c.execute("DELETE FROM run_klicks WHERE plan_id=?",
+                        (str(plan_id),))
+        return cur.rowcount
+
+
+def run_klicks_aufraeumen(vor_ts) -> int:
+    """Klicks entfernen, die aelter sind als `vor_ts` - sie koennen keinen
+    Job mehr binden (s. KLICK_FENSTER_SEK). Haelt die Tabelle klein."""
+    init_run_klicks()
+    with _conn() as c:
+        cur = c.execute("DELETE FROM run_klicks WHERE ts < ?", (float(vor_ts),))
+        return cur.rowcount
+
+
 def init_favorites():
     with _conn() as c:
         c.execute(
@@ -930,14 +1140,79 @@ def init_favorites():
                    structure_id INTEGER, character_id INTEGER)""")
 
 
-def add_favorite(fav: dict):
+def _favorite_schluessel(fav) -> tuple:
+    """Woran man einen Ort wiedererkennt: Art + Struktur- ODER Stations-ID."""
+    return (fav.get("kind"), fav.get("structure_id") or 0, fav.get("station_id") or 0)
+
+
+def _verlinkte_charaktere() -> set:
+    try:
+        return {int(c["character_id"]) for c in list_characters()}
+    except Exception:
+        return set()
+
+
+def add_favorite(fav: dict) -> bool:
+    """Ort merken. Gibt False zurueck, wenn derselbe Ort (Art + ID) schon
+    drin ist - Nutzer 19.09.2026: "falls man aus Versehen einen Hub doppelt
+    hinzugefuegt hat". Vorher stand er dann zweimal im Dropdown.
+
+    DER CHARAKTER ZAEHLT MIT: bei einer Struktur ruft der gemerkte Charakter
+    das Orderbuch ab (Docking-Zugang). Ist der alte Eintrag an einen NICHT
+    mehr verlinkten Charakter gebunden und der neue an einen verlinkten,
+    wird der Eintrag auf den neuen Charakter umgeschrieben statt abgelehnt."""
     init_favorites()
+    _neu = _favorite_schluessel(fav)
+    if _neu[1] or _neu[2]:
+        _da = _verlinkte_charaktere()
+        for _alt in list_favorites():
+            if _favorite_schluessel(_alt) == _neu:
+                _alt_cid = int(_alt.get("character_id") or 0)
+                _neu_cid = int(fav.get("character_id") or 0)
+                if _alt_cid not in _da and _neu_cid in _da and _neu_cid != _alt_cid:
+                    with _conn() as c:
+                        c.execute("UPDATE favorites SET character_id=?, name=? WHERE id=?",
+                                  (_neu_cid, fav.get("name") or _alt.get("name"), _alt["id"]))
+                return False
     with _conn() as c:
         c.execute(
             "INSERT INTO favorites(kind,name,region_id,station_id,structure_id,character_id)"
             " VALUES (?,?,?,?,?,?)",
             (fav["kind"], fav["name"], fav.get("region_id"), fav.get("station_id"),
              fav.get("structure_id"), fav.get("character_id")))
+    return True
+
+
+def remove_favorite(fav_id: int) -> None:
+    """Gemerkten Ort (Struktur/Station) wieder aus der Liste nehmen."""
+    init_favorites()
+    with _conn() as c:
+        c.execute("DELETE FROM favorites WHERE id=?", (int(fav_id),))
+
+
+def dedupe_favorites() -> int:
+    """Doppelte Orte aus frueheren Fassungen (ohne Doppel-Sperre) einmalig
+    bereinigen. Es BLEIBT der Eintrag, dessen Charakter noch verlinkt ist
+    (er ruft das Orderbuch ab) - bei mehreren der aelteste. Gibt die Zahl
+    der entfernten Eintraege zurueck."""
+    init_favorites()
+    _da = _verlinkte_charaktere()
+    gruppen = {}
+    for f in sorted(list_favorites(), key=lambda r: r["id"]):
+        k = _favorite_schluessel(f)
+        if not (k[1] or k[2]):
+            continue
+        gruppen.setdefault(k, []).append(f)
+    weg = []
+    for k, eintraege in gruppen.items():
+        if len(eintraege) < 2:
+            continue
+        behalten = next((e for e in eintraege
+                         if int(e.get("character_id") or 0) in _da), eintraege[0])
+        weg += [e["id"] for e in eintraege if e["id"] != behalten["id"]]
+    for i in weg:
+        remove_favorite(i)
+    return len(weg)
 
 
 def list_favorites() -> list:

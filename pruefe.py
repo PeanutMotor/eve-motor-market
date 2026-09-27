@@ -59,7 +59,7 @@ _BERICHT = open(os.path.join("berichte", "pruefe_bericht.txt"), "w",
 sys.stdout = _Doppelt(sys.stdout, _BERICHT)
 sys.stderr = _Doppelt(sys.stderr, _BERICHT)
 import datetime as _dt
-print(f"pruefe.py Fassung 3 - {_dt.datetime.now():%Y-%m-%d %H:%M:%S} - "
+print(f"pruefe.py Fassung 4 - {_dt.datetime.now():%Y-%m-%d %H:%M:%S} - "
       f"Python {sys.version.split()[0]}")
 
 
@@ -90,7 +90,11 @@ def lauf(titel, befehl, umgebung=None, muster_ok=None):
     _zeilen = [z for z in aus.splitlines() if z.strip()]
     for z in _zeilen:
         if "FEHLER" in z or "Befund" in z or "gruen" in z or "undefined" in z:
-            print("  " + z.strip()[:110])
+            # FASSUNG 4 (23.09.2026): FEHLER-Zeilen nicht mehr bei 110
+            # Zeichen abschneiden. Eine Pruefung, die ihre Messwerte ins
+            # Label schreibt (b85: die Spaltenbreiten), war damit aus der
+            # Ferne wertlos - genau dann, wenn man sie braucht.
+            print("  " + (z.strip() if "FEHLER" in z else z.strip()[:110]))
     if not _zeilen:
         print("  (keine Ausgabe - lief die Pruefung ueberhaupt?)")
     _ok = muster_ok(aus) if muster_ok is not None else (p.returncode == 0)

@@ -59,6 +59,27 @@ def _parse_gespeichert(quelle, *a, **k):
 
 _ast_speicher.parse = _parse_gespeichert
 
+# AUCH ast.walk WIRD GEMERKT (27.09.2026, Nutzer: "deine Antworten dauern
+# sehr lange"). GEMESSEN: der groesste Posten der Suite war ast.walk ueber
+# dieselben gemerkten Baeume, immer wieder (Millionen Schritte). Dieselbe
+# Regel wie oben: die Suite liest nur. Gemerkt wird nur ab 200 Knoten -
+# kleine Walks sind billig und sollen keine Baeume am Leben halten.
+_WALK_SPEICHER = {}
+_walk_echt = _ast_speicher.walk
+
+
+def _walk_gespeichert(knoten):
+    _e = _WALK_SPEICHER.get(id(knoten))
+    if _e is not None and _e[0] is knoten:
+        return iter(_e[1])
+    _liste = list(_walk_echt(knoten))
+    if len(_liste) >= 200:
+        _WALK_SPEICHER[id(knoten)] = (knoten, _liste)
+    return iter(_liste)
+
+
+_ast_speicher.walk = _walk_gespeichert
+
 # EIGENES ARBEITSVERZEICHNIS (Sitzung 10, nachgezogen von der b-Suite, die
 # das seit Sitzung 7 macht). Ohne diese Zeilen benutzt die Suite unter
 # Windows die ECHTEN Programmdaten des Nutzers - also seine richtige
@@ -883,9 +904,11 @@ eq("aa20 Differenz = nie anfallende Fracht",
 check("aa21 Panel hat einen eigenen Rahmen (faellt auf)",
       'paste_panel = QFrame()' in _src_txt
       and f'border:2px solid' in _src_txt)
-check("aa21 Panel-Ueberschrift gross und fett",
-      't("PASTE STOCK")' in _src_txt
-      and "font-size:15px; font-weight:800" in _src_txt)
+# SEIT 26.09.2026 (Nutzer): das Panel steckt in der Klappe "Paste stock"
+# der Seitenleiste, standardmaessig zu - deren Kopf ist die Ueberschrift.
+check("aa21 Panel-Ueberschrift = Klappe 'Paste stock', standardmaessig zu",
+      't("Paste stock"), pp_inner, expanded=False' in _src_txt   # _txt( -> t( s. oben
+      and 't("PASTE STOCK")' not in _src_txt)
 check("aa21 Panel-Hilfe auf eine Zeile gekuerzt",
       "Select the hangar in game" in _src_txt
       and "L\u00f6st die ESI-Grenzen" not in _src_txt)
@@ -1600,8 +1623,11 @@ check("aa44 Kopfzeile sagt fett, WAS hier steht",
 # violett markiert ("laeuft schon, nicht extra einplanen"). Auf dem
 # ENDPRODUKT las sich das aber wie "Plan ungueltig" - dabei ist genau das
 # das Item, das man bauen WILL.
+# ANKER NACHGEZOGEN 21.09.2026: die Bedingung fragt jetzt zusaetzlich die
+# Enden-Menge, weil beim Multi-Bauplan `type_id` die Buendel-ID ist (aa385).
+# Die ZUSAGE ist unveraendert - das Endprodukt wird nicht durchgestrichen.
 check("aa45 Endprodukt wird von der Durchstreichung ausgenommen",
-      "_is_root = int(t) == int(type_id)" in _src_txt
+      "_is_root = (int(t) == int(type_id)" in _src_txt
       and "if not _is_root:" in _src_txt)
 check("aa45 Einfaerbung bleibt fuer beide Faelle",
       "item.setForeground(cc, QColor(theme.VIOLET))" in _src_txt)
@@ -2013,8 +2039,9 @@ check("aa53 vier Stufen definiert", _src_txt.count('"nur_endprodukt"') >= 1
       and '"alles_selbst"' in _src_txt)
 check("aa53 Stufe 1 baut nichts selbst",
       '"End product only",\n         set(),' in _src_txt)
-check("aa53 Stufe 4 = alle Kategorien (None)",
-      '"Everything yourself",\n         None,' in _src_txt)
+check("aa53 Stufe 4 = alle Kategorien (None), heisst 'From intermediate reactions'",
+      '"From intermediate reactions",\n         None,' in _src_txt
+      and '"Everything yourself"' not in _src_txt)
 check("aa53 Tools enthalten R.A.M. (Nutzer-Vorgabe)",
       '"tools"' in _src_txt and "R.A.M." in _src_txt)
 check("aa53 Fuel Blocks erst ab Composite-Stufe",
@@ -2221,8 +2248,10 @@ check("aa59 Blacklist -> Blaupausen-Frage", _i_bl < _i_kt)
 # SITZUNG 20: die Blacklist startet ebenfalls offen (Nutzer) - sie steht
 # jetzt zwischen Fertigungstiefe und Blaupausen-Frage, also DREI offene bis
 # zur Blaupausen-Karte.
-check("aa59 Build or buy, Production depth und Blacklist starten offen",
-      _src_txt[_i_bk:_i_kt].count("expanded=True") == 3)
+# 27.09.2026 (Nutzer: "im Bauplan den Reprocessing ausklappen als
+# Standard"): Reprocessing zwischen Fertigungstiefe und Blacklist auch offen.
+check("aa59 Build or buy, Production depth, Reprocessing und Blacklist starten offen",
+      _src_txt[_i_bk:_i_kt].count("expanded=True") == 4)
 # SITZUNG 20 (Nutzer-Entscheid): die zwei Invention-Haken stecken jetzt IN
 # der Kategorien-Karte, es gibt also nur noch ZWEI eingeklappte Karten.
 # Die Reihenfolge-Zusagen oben gelten weiter - "Invention" steht als
@@ -2232,12 +2261,19 @@ check("aa59 nur die Blaupausen-Frage bleibt eingeklappt",
 # SITZUNG 20, zweiter Anlauf (Nutzer-Entscheid): die Einkaufs-Haken stehen
 # im INVENTION-REITER, direkt unter der Rechnung, aus der ihre Mengen
 # stammen. Jede Karte beantwortet damit wieder genau eine Frage.
-check("aa59 die Invention-Haken stehen im Invention-Reiter",
-      "self._build_invention_purchase_panel()" in
-      _fn_src("_fill_invention_tab"))
+# SEIT 26.09.2026 (Nutzer: "Buy Datacores und Buy Decryptors nimm das rechts
+# in die Sidebar mit neuer Kategorie 'Buy or not?' (standard ausgeklappt),
+# ganz oben ueber Invention Settings"): EINMAL in der Seitenleiste des
+# Invention-Reiters, nicht mehr je Karte.
 _bpf59 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
-check("aa59 und nicht mehr in der Seitenleiste",
-      "_build_invention_purchase_panel" not in _bpf59)
+_i59b = _bpf59.find('_txt("Buy or not?"), self._build_invention_purchase_panel(),')
+_i59s = _bpf59.find('_txt("Invention settings"), _inv_side_box')
+check("aa59 die Invention-Haken stehen in der Seitenleiste, Karte 'Buy or not?', offen",
+      _i59b >= 0 and "expanded=True" in _bpf59[_i59b:_i59b + 120])
+check("aa59 ... als erste Karte, VOR 'Invention settings'",
+      0 <= _i59b < _i59s)
+check("aa59 ... und nicht mehr in den Invention-Karten",
+      "_build_invention_purchase_panel" not in _fn_src("_fill_invention_tab"))
 # DER TITEL SAGT, WAS DIE HAEKCHEN TUN (Nutzer: "Categories sagt zu wenig
 # ueber die Funktionalitaet aus").
 check("aa59 die Kategorien-Karte heisst nach ihrer Frage",
@@ -2416,7 +2452,9 @@ eq("aa63 _bd_ladder_result wird nur an einer Stelle gelesen",
    _src_txt.count('getattr(self, "_bd_ladder_result", None)'), 1)
 # Auch das Decryptor-Ranking haengt an derselben Quelle, sonst weicht
 # "Beste Wahl" wieder von der Kopfzeile ab.
-_pb63 = _fn_src("_pick_best")
+# Seit 26.09.2026 rechnet `_rangliste` (fuer den Knopf je Karte UND
+# "Best Decryptor for all Blueprints"); `_pick_best` waehlt nur noch.
+_pb63 = _fn_src("_rangliste")
 check("aa63 Decryptor-Ranking nutzt _bd_ladder_ctx",
       "self._bd_ladder_ctx(" in _pb63)
 
@@ -3123,12 +3161,16 @@ for _w76 in ("_rightcol.setFixedWidth(380)",
 import re as _re76
 # Die Sidebar hat keine FESTE Breite mehr (sie wird gemessen) - geprueft
 # wird jetzt ihre MINDESTbreite gegen die 380 der Bauplan-Seitenleisten.
+# SEIT 23.09.2026 GILT DAS AUCH FUER DIE RECHTEN LEISTEN: beide (Bau-Rail
+# und Handels-Rail) messen ihre Breite ueber `_breit`, keine trueg mehr
+# eine feste Zahl. Eine feste Zahl waere hier dieselbe Falle wie b66.
 _sb76 = _re76.search(r"sidebar\.setMinimumWidth\((\d+)\)", _src_txt)
-_ra76 = _re76.search(r"rail\.setFixedWidth\((\d+)\)", _src_txt)
+_ra76 = _re76.findall(r"rail\.setFixedWidth\(([^)]+)\)", _src_txt)
 check("aa76 App-Navigation hat ihre eigene Breite (nicht 380 wie die "
       "Bauplan-Seitenleisten)",
-      _sb76 and _ra76
-      and int(_sb76.group(1)) != 380 and int(_ra76.group(1)) != 380)
+      bool(_sb76) and int(_sb76.group(1)) != 380)
+check("aa76 beide rechten Leisten messen ihre Breite",
+      len(_ra76) >= 2 and all(a.strip() == "_breit" for a in _ra76))
 # UEBERHOLT (Sitzung 8, Nutzer meldete den Beschnitt ZWEIMAL): die Breite
 # ist nicht mehr fest, sie wird zur Laufzeit GEMESSEN - eine feste Zahl
 # konnte es nicht loesen, weil die noetige Breite an der Schrift des
@@ -3238,19 +3280,28 @@ check("aa77 im Gewinn-Tooltip, nur wenn vorhanden",
 _sbd78 = _fn_src("_show_build_detail")
 check("aa78 Panel-Rahmen amber",
       "border:2px solid {theme.AMBER}" in _sbd78)
-check("aa78 Panel-Titel amber",
-      "font-size:19px; font-weight:900; color:{theme.AMBER}" in _sbd78)
+# Der Panel-Titel ist seit 26.09.2026 der Kopf der Klappe "Paste stock"
+# (Klapp-Koepfe sind immer amber, aa76); der ESI-Hinweis darin amber umrandet.
+check("aa78 Panel-Titel amber (Klappe) und Hinweis amber umrandet",
+      'Paste stock"), pp_inner, expanded=False' in _sbd78
+      and "border:1px solid {theme.AMBER}; " in _sbd78)
 check("aa78 kein cyaner Panel-Rahmen mehr im Bauplan",
       "border:2px solid {theme.CYAN}" not in _sbd78)
 # Die beiden Aktions-Knoepfe des Materialien-Tabs sehen weiterhin GLEICH aus
 # - vorher beide cyan, jetzt beide amber. Zwei Knoepfe nebeneinander in
 # verschiedenen Farben waeren die schlechteste aller Varianten.
-eq("aa78 beide Aktions-Knoepfe gleich gestylt",
-   _sbd78.count("border:1.5px solid {theme.AMBER}; border-radius:6px"), 2)
+# SEIT 26.09.2026 AUS EINER STELLE: theme.amber_rahmen_knopf() (Nutzer:
+# "Buy Missing Blueprints und Best Decryptor optisch an Create Shopping
+# List anpassen") - beide Knoepfe rufen sie, keiner hat eigene Regeln.
+check("aa78 beide Aktions-Knoepfe gleich gestylt (theme.amber_rahmen_knopf)",
+      "mat_copy_btn.setStyleSheet(theme.amber_rahmen_knopf())" in _sbd78
+      and "paste_apply_btn.setStyleSheet(theme.amber_rahmen_knopf())" in _sbd78)
 eq("aa78 keiner davon mehr cyan",
    _sbd78.count("border:1.5px solid {theme.CYAN}; border-radius:6px"), 0)
-check("aa78 Hover passt zur neuen Farbe",
-      "rgba(242,162,60,0.16)" in _sbd78
+import eve_trader.ui.theme as _th78
+check("aa78 Rahmen und Hover amber (im Theme)",
+      f"border:1.5px solid {_th78.AMBER}" in _th78.amber_rahmen_knopf()
+      and "rgba(242,162,60,0.16)" in _th78.amber_rahmen_knopf()
       and "rgba(70,224,200,0.14)" not in _sbd78)
 
 # ---------------------------------------------------------------- (aa79)
@@ -3395,8 +3446,15 @@ check("aa82 Fingerabdruck deckt Menge und Optionen",
 # DAS RISIKO: der Fingerabdruck kennt die PREISE nicht. Werden die ersetzt,
 # MUSS der Cache fallen - sonst rechnet der Dialog mit veralteten Zahlen
 # weiter (genau die Fehlerklasse, die hier schon zweimal Zeit gekostet hat).
+# 8 seit Schritt 4 (19.09.2026): die vier alten Stellen plus vier in der
+# Endprodukt-Karte des Multi-Bauplans - Menge, ME, TE und "Eigene BPC" je
+# Ende aendern den PLAN, nicht nur die Anzeige. Die Zahl steht hier bewusst
+# fest: eine neue Invalidierung soll auffallen, eine verlorene auch.
+# 10 seit 27.09.2026: ein Ende aus dem OFFENEN Buendel nehmen
+# (_multi_ende_entfernen) bzw. hineinhaengen (_multi_offen_einfuegen) - das
+# Fenster bleibt offen und rechnet neu.
 eq("aa82 Cache faellt bei jedem Preis-/Options-Wechsel",
-   _src_txt.count("self._bd_plan_cache = None"), 4)
+   _src_txt.count("self._bd_plan_cache = None"), 10)
 check("aa82 ... auch wenn Weg A die Rezept-Kopie wechselt",
       "if set(_uw.keys()) != _uw_vorher:\n"
       "                self._bd_reaction_stages = None" in _rb82
@@ -3424,12 +3482,16 @@ check("aa82 anderer Bestand -> kein Treffer",
 # unter Datacores und Decryptor").
 _fi83 = _fn_src("_fill_invention_tab")
 # (1) EINSPALTIG: Ergebnis steht jetzt UNTER der Eingabe, nicht daneben.
-check("aa83 Ergebnis unter der Eingabe", "outer.addWidget(_out_w)" in _fi83)
+# Seit 26.09.2026 liegt der Rumpf der Karte in `body` (zuklappbar).
+check("aa83 Ergebnis unter der Eingabe", "body.addWidget(_out_w)" in _fi83)
 check("aa83 Pfeil zwischen den Spalten ist weg",
       'arrow = QLabel("\\u2192")' not in _fi83)
 # (2) ZEILENWEISE statt Fliesstext.
 check("aa83 Zeilen-Helfer existiert", "def _kv_rows(rows):" in _fi83)
-eq("aa83 alle drei Textbloecke nutzen ihn", _fi83.count("_kv_rows("), 4)
+# SEIT 26.09.2026 (Nutzer: "for runs / on average / invention cost - nicht
+# noetig, die koennen weg") nutzt nur noch der unsichtbare Tooltip-Traeger
+# score_lbl den Helfer: Definition + ein Aufruf.
+eq("aa83 der Helfer traegt nur noch den Tooltip-Block", _fi83.count("_kv_rows("), 2)
 check("aa83 keine Mittelpunkt-Ketten mehr in need_lbl",
       "Erfolge n\\u00f6tig \\u00b7 " not in _fi83)
 # (3) Klammer-Erklaerungen in den Tooltip.
@@ -3604,7 +3666,7 @@ for _b89 in ("tw_expcol_btn", "sched_expcol_btn", "mat_expcol_btn"):
 # KAUFEN und dafuer mehr aus dem Bestand ziehen, sahen dadurch kuenstlich
 # guenstig aus. Die Korrektur greift nach jedem "Neu berechnen" - also fast
 # immer.
-_pb90 = _fn_src("_pick_best")
+_pb90 = _fn_src("_rangliste")
 check("aa90 Ladder-Korrektur zaehlt den Bestand mit",
       'float((_tp or {}).get("stock_cost", 0.0))' in _pb90)
 for _k90 in ("job_cost", "inv_cost", "stock_cost"):
@@ -4522,8 +4584,11 @@ check("aa114 Name in Amber und groesser",
 # EVE-Namen duerfen & und < enthalten - das Label rendert Rich-Text.
 check("aa114 Name wird escaped, nicht roh eingesetzt",
       "_h_sk.escape(str(_skill_char))" in _b114)
-check("aa114 lange Namen brechen um statt den Dialog zu dehnen",
-      "_skill_lbl.setWordWrap(True)" in _b114)
+# SEIT 26.09.2026 (kompakter Invention-Reiter) ist die Skill-Zeile kurz
+# ("Skills x1.392 Name") und steht in der Datacore-Zeile; der lange Satz
+# mit dem Amber-Namen wandert in den Tooltip - die Zusage lebt dort weiter.
+check("aa114 der lange Satz steht im Tooltip der kurzen Zeile",
+      "_skill_lbl.setToolTip(t(" in _b114)
 
 # ---------------------------------------------------------------- (aa115)
 # INVENTION-SICHERHEIT EINSTELLBAR (Nutzer, Vorgabe 75 %). Der Rechenkern las
@@ -4572,6 +4637,14 @@ check("aa116 Rueckfall auf die alten Schluessel",
 _MWc = MW._STRUCT_ROLE_JOBCOST
 eq("aa116 Azbel 4 %, Sotiyo 5 % (Info-Fenster, Nutzer-Screenshot 19.09.2026)",
    (_MWc.get("azbel"), _MWc.get("sotiyo")), (4.0, 5.0))
+# RAITARU GEMESSEN (Nutzer-Screenshot 25.09.2026, Info-Fenster "Role Bonus"):
+# 1 % Material, 15 % Zeit, "3% reduction in ISK requirements". Hier standen
+# vorher 4 % - geraten und nie gemessen, also ein Prozentpunkt zu guenstig.
+eq("aa116 Raitaru 3 % ISK (Info-Fenster, Nutzer-Screenshot 25.09.2026)",
+   _MWc.get("raitaru"), 3.0)
+eq("aa116 ... und daneben 1 % Material und 15 % Zeit, ebenfalls gemessen",
+   (MW._STRUCT_ROLE_ME.get("raitaru"),
+    (MW._STRUCT_ROLE_TIME.get("raitaru") or {}).get("mfg")), (1.0, 15.0))
 eq("aa116 Refineries geben keinen", _MWc.get("tatara"), 0.0)
 check("aa116 alle bekannten Typen erfasst",
       set(_MWc) == {"raitaru", "azbel", "sotiyo", "athanor", "tatara"})
@@ -4954,14 +5027,14 @@ check("aa125 ein wirklich NEUER Plan setzt ME weiterhin zurueck",
       _elif125 is not None and _weist_me_zu125(_elif125.orelse))
 # Die Marke muss gesetzt UND verbraucht werden, sonst wirkt sie nach.
 check("aa125 Loader setzt die Marke",
-      "self._bd_loading_saved = True" in _fn_src("_open_saved_plan"))
+      "self._bd_loading_saved = True" in _fn_src("_open_saved_plan_zustand"))
 _obd_src125 = _fn_src("open_build_detail")
 check("aa125 Marke wird verbraucht (wirkt nicht nach)",
       "self._bd_loading_saved = False" in _obd_src125)
 check("aa125 ein neuer Plan (fresh) gewinnt immer",
       "and not fresh" in _obd_src125)
 # Der Loader liest ME/TE ueberhaupt zurueck (die Grundlage von allem).
-_osp125 = _fn_src("_open_saved_plan")
+_osp125 = _fn_src("_open_saved_plan_zustand")   # Multi-Bauplan: Zustand ausgelagert
 check("aa125 Loader stellt ME/TE aus dem Plan wieder her",
       'self._bd_me = int(p.get("me") or 0)' in _osp125
       and 'self._bd_te = int(p.get("te") or 0)' in _osp125)
@@ -5066,12 +5139,16 @@ check("aa128 Rechtsklick oeffnet direkt (normale Liste)",
 check("aa128 Rechtsklick oeffnet direkt (Capital-Liste)",
       "_build_row_open_plan(self.b_cap_table, row)" in _bmc128)
 _op128 = _fn_src("_build_row_open_plan")
+# 26.09.2026: (tid, Name) der Zeile kommen aus _build_row_tid_name - EINE
+# Stelle fuer "Bauplan oeffnen" UND "zu Plan hinzufuegen".
+_rt128 = _fn_src("_build_row_tid_name")
 check("aa128 EIN Oeffner fuer beide Tabellen (Arbeitsregel 9)",
-      "open_build_detail(int(tid), name, fresh=True)" in _op128)
+      "open_build_detail(tid, name, fresh=True)" in _op128
+      and "self._build_row_tid_name(tbl, row)" in _op128)
 check("aa128 Anzeige-Marken kommen nicht in den Plannamen",
       # Seit Sitzung 16 gibt es nur noch die Warn-Marke - die Emojis sind
       # aus den Anzeigenamen verschwunden.
-      'lstrip("\u26a0 ")' in _op128)
+      'lstrip("\u26a0 ")' in _rt128)
 # Die alten Picker-Fuetterer sind restlos weg - auch ihre Klick-Connects
 # (einfacher Klick befuellte sonst still ein nicht mehr existierendes Feld).
 check("aa128 Picker-Fuetterer entfernt",
@@ -5834,8 +5911,10 @@ check("aa146 stattdessen bekommt voll Gedecktes einen ZUSTAND (Sitzung 14)",
       # bekommt Punkt + Dimmung statt eines Kaestchens. Die Automatik setzt
       # nach wie vor KEINE Haekchen ("nur ich darf streichen").
       '_zustand = ("laeuft"' in _fbs146)
-eq("aa146 'checked_runplan' hat weiter genau drei Stellen (save/plan/loader)",
-   _src_txt.count('"checked_runplan"'), 3)
+# 4 seit 27.09.2026: die KOPIE eines gespeicherten Plans (_multi_kopie_von)
+# startet ohne Haken - sie loescht sie dort, setzt nie welche.
+eq("aa146 'checked_runplan' hat genau vier Stellen (save/plan/loader/Kopie leeren)",
+   _src_txt.count('"checked_runplan"'), 4)
 
 # ---------------------------------------------------------------- (aa147)
 # NEU BERECHNEN SETZT DIE RUNPLANER-HAEKCHEN ZURUECK (Nutzer-Entscheidung,
@@ -7281,12 +7360,24 @@ _inv171 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
 # t("{n} copy runs (1 attempt = 1 run, split as you like)").format(n=...).
 # Die Zusage ist dieselbe - beide Zweige, und die Zahl kommt aus der
 # 75%-Sicherheit bzw. dem Handwert.
-eq("aa171 die T1-Kopien-Zeile steht in beiden Invention-Zweigen",
-   _inv171.count('t("{n} copy runs (1 attempt = 1 run, split as you like)")'), 2)
-check("aa171 automatisch: Kopie-Runs = die 75%-sicheren Versuche",
-      'n=ap["confident_attempts"]' in _inv171)
-check("aa171 manuell: Kopie-Runs = der eingestellte Wert",
-      "n=manual_spin.value()" in _inv171)
+# SEIT 26.09.2026 ERSETZT (Nutzer: "Alles, was ich pro T2-Blueprint sehen
+# will, ist, wie ich kopieren muss und wie viel - schoen angezeigt und
+# groesser: Copy your T1 original like this -> Job Runs / Runs per Copy").
+# Die Kopie-Zeile im Text ist weg, die Anleitung steht gross je Karte und
+# kommt aus DERSELBEN Aufteilung wie die Versuche (kopien_aufteilung).
+check("aa171 die Kopieranleitung steht gross in jeder Karte",
+      't("Copy your T1 original like this \\u2192")' in _inv171
+      and 'Job Runs: <span style="{_zahl}">{_auf["kopien"]}</span>' in _inv171
+      and "Runs per Copy: <span" in _inv171
+      and '{_auf["runs_je_kopie"]}</span></div>' in _inv171)
+check("aa171 die Zahlen in Kennzahl-Groesse (FS_KPI), nicht als Fliesstext",
+      "_zahl = (f'font-size:{theme.FS_KPI}; font-weight:800; '" in _inv171)
+# "Attempts manually" ist seit 26.09.2026 AUSGEBAUT (Nutzer: "nehmen wir
+# raus, ist nur verwirrend") - und ein alter gespeicherter Handwert darf
+# nicht unsichtbar weiterrechnen.
+check("aa171 'Attempts manually' ist weg (kein Haken, kein Handwert in der Rechnung)",
+      "manual_spin" not in _inv171 and 'Attempts manually' not in _inv171
+      and "return {}" in _fn_src("_resolve_inv_manual_attempts"))
 
 
 # ---------------------------------------------------------------- (aa172)
@@ -7406,6 +7497,17 @@ eq("aa173 nirgends mehr eine flaechig leuchtende Knopf-Fuellung",
    + _ui173.count("background:{theme.CYAN}; color:{theme.BG}")
    + _ui173.count("background: {theme.CYAN}; color: {theme.BG}")
    + _ui173.count("background:{theme.CYAN};color:{theme.BG}"), 0)
+# FORTSCHRITTSBALKEN DER PLAN-KARTEN (Nutzer 26.09.2026: "kann man kaum
+# lesen"): Schrift CYAN_ON_FILL auf CYAN_FILL, fertig GREEN_ON_FILL auf
+# GREEN_FILL - beide >= 7:1, und die Karte nutzt genau diese Paare.
+check("aa173 Plan-Karten-Balken: Schrift auf Flaeche >= 7:1 (laufend und fertig)",
+      _kontrast173(_th173.CYAN_ON_FILL, _th173.CYAN_FILL) >= 7.0
+      and _kontrast173(_th173.GREEN_ON_FILL, _th173.GREEN_FILL) >= 7.0)
+check("aa173 ... und die Karte zeichnet den Balken mit diesen Paaren",
+      "color: {theme.CYAN_ON_FILL}; font-weight: 700; }}" in _ui173
+      and "QProgressBar::chunk {{ background: {theme.CYAN_FILL};" in _ui173
+      and "theme.CYAN_ON_FILL, theme.GREEN_ON_FILL).replace(" in _ui173
+      and "theme.CYAN_FILL, theme.GREEN_FILL))" in _ui173)
 check("aa173 Panels heben sich vom Hintergrund ab",
       _kontrast173(_th173.PANEL, _th173.BG) >= 1.25)
 check("aa173 und die Kanten heben sich von den Panels ab",
@@ -7593,36 +7695,31 @@ eq("aa176 die Erklaerzeile 'davon gelingen' ist raus",
    _ui176.count('("davon gelingen"'), 0)
 eq("aa176 die Datacore-Doppelung ist raus (steht in der Gesamtzeile)",
    _ui176.count('("Datacores"'), 0)
-# Was BLEIBEN muss: die Leitzahl - sie ist der Grund, warum der Tab
-# ueberhaupt geoeffnet wird.
-# SEIT SITZUNG 16 ENGLISCH: "Enter in game \u2013 ..." in beiden Zweigen.
-eq("aa176 BEIDE Zweige zeigen die Versuchszahl als grosse Leitzahl",
-   _ui176.count('t("Enter in game \\u2013'), 2)
-eq("aa176 und zwar in Kennzahl-Groesse, nicht als Fliesstext",
-   _ui176.count("font-size:26px;font-weight:800;"), 2)
-check("aa176 die Leitzahl kommt aus der 75%-Sicherheit bzw. dem Handwert",
-      'line-height:1.05;">{ap["confident_attempts"]}' in _ui176
-      and 'line-height:1.05;">{manual_spin.value()}' in _ui176)
-check("aa176 der Invention-Tab zeigt die Aufteilung an",
-      "_inv_kopien" in _ui176 and "_inv_split_lbl" in _ui176
+# DIE GROSSE LEITZAHL "Enter in game - n attempts" IST SEIT 26.09.2026 WEG
+# (Nutzer: nur noch die Kopieranleitung gross; die Versuchszahl steht in
+# der Kopfzeile der Karte). Sie darf nicht still zurueckkommen.
+eq("aa176 keine zweite grosse Leitzahl neben der Kopieranleitung",
+   _ui176.count("font-size:26px;font-weight:800;"), 0)
+check("aa176 der Invention-Tab zeigt die Aufteilung an (je Karte)",
+      "_bd_inv_split_w[int(bp_id)] = {" in _ui176
       and "kopien_aufteilung" in _ui176)
 # NUTZER-FUND (Sitzung 8): "ich kann hier gar nichts eingeben." Die
 # Regler hingen an _on_manual_change -> _bd_full_rebuild -> der baute den
 # ganzen Tab NEU und zerstoerte die Spinbox mitten in der Eingabe.
-# Die Regler duerfen NUR die Panel-Anzeige auffrischen.
-check("aa176 die Regler loesen eine Neuberechnung aus",
-      "self._inv_kopien.valueChanged.connect(_split_refresh)" in _ui176
-      and "self._inv_slots.valueChanged.connect(_split_refresh)" in _ui176)
-_sr176 = _ui176[_pos_von(_ui176, "def _split_refresh"):]
-_sr176 = _sr176[:_pos_von(_sr176, "self._inv_kopien.valueChanged")]
-check("aa176 und zwar OHNE vollen Rebuild (sonst stirbt das Eingabefeld)",
+# Der Regler darf NUR die Anzeige SEINER Karte auffrischen.
+check("aa176 der Regler loest eine Anzeige-Auffrischung aus",
+      '_sw_k["slider"].valueChanged.connect(_regler_zieht)' in _ui176
+      and "self._inv_slots.valueChanged.connect(_slots_neu)" in _ui176)
+_sr176 = _ui176[_pos_von(_ui176, "def _regler_zieht"):]
+_sr176 = _sr176[:_pos_von(_sr176, '_sw_k["slider"].valueChanged')]
+check("aa176 und zwar OHNE vollen Rebuild (sonst stirbt das Bedienelement)",
       "_on_manual_change" not in _sr176
       and "_bd_full_rebuild" not in _sr176
-      and "_fuelle_aufteilung" in _sr176)
-check("aa176 die Regler-Werte ueberleben einen echten Rebuild",
-      "_bd_inv_split" in _ui176 and "blockSignals(True)" in _ui176)
-check("aa176 mehr Kopien als Slots werden als Warnung benannt",
-      "More copies than slots" in _ui176)
+      and '_sw["fill"]()' in _sr176)
+check("aa176 der Regler-Wert ueberlebt einen echten Rebuild (je Blaupause)",
+      "self._bd_inv_split[_bp] = int(v2)" in _ui176
+      and "_sl.setValue(max(1, int((self._bd_inv_split or {}).get(int(bp_id), 1) or 1)))"
+      in _ui176)
 
 
 # ---------------------------------------------------------------- (aa177)
@@ -7973,10 +8070,15 @@ check("aa183 ohne type_id passiert gar nichts (statt Markt auf None)",
 _ct183 = _fn_src("_build_characters_tab")
 _lp183 = _fn_src("_build_ladder_panel")
 _ot183 = _fn_src("_make_order_table")
-for _n183, _s183 in (("Charaktere", _ct183), ("Orderbuch-Leiter", _lp183),
-                     ("Order-Update", _ot183)):
+for _n183, _s183 in (("Charaktere", _ct183), ("Orderbuch-Leiter", _lp183)):
     check(f"aa183 {_n183}: die Streichung ist im Code begruendet",
           "KEINE Sortierung (Auftrag A, Sitzung 9 gestrichen)" in _s183)
+# ORDER-UPDATE SEIT 27.09.2026 SORTIERBAR - aber weiter OHNE Qt-Sortierung
+# (Zell-Widgets), ueber die gemerkten Zeilen (b123 prueft das Verhalten).
+check("aa183 Order-Update: keine Qt-Sortierung, begruendet, eigene Sortierung",
+      "KEINE QT-Sortierung (Auftrag A, Sitzung 9)" in _ot183
+      and "setSortingEnabled(True)" not in _ot183
+      and "self._ord_sortieren(ib, c)" in _ot183)
 eq("aa183 Charaktere schaltet keine Sortierung ein",
    _ct183.count("setSortingEnabled(True)"), 0)
 eq("aa183 die Orderbuch-Leiter schaltet keine Sortierung ein",
@@ -8458,10 +8560,43 @@ check("aa194 Ueberbau wird benannt statt abgeschnitten",
       "over plan" in _cc194)   # Sitzung 13: Tooltip laeuft ueber t()
 # Gleicher Gebuehren-Fix wie in der Gewinn-Schaetzung: die Verkaufs-
 # Empfehlung nutzt den Verkaufscharakter, nicht die globalen Prozente.
+# Seit 26.09.2026 ueber die EINE Formel _plan_sell_vorschlag (dort steht
+# der Charakter-Gebuehrenweg), damit die Buendel-Zeile dieselbe nutzt.
 check("aa194 die Verkaufs-Empfehlung nutzt die Dialog-Gebuehrenquelle",
-      "self._fees_for_hub(\n                        self.settings, _cid" in _cc194)
+      'self._plan_sell_vorschlag(cost_unit, p.get("sell_hub"))' in _cc194
+      and "self._fees_for_hub(\n                self.settings, _cid"
+      in _fn_src("_plan_sell_vorschlag"))
 check("aa194 der Fertig-Text erscheint nur bei exaktem Treffer",
       'if not info or "cost_unit" not in info:' in _cc194)
+# KEIN Stueckpreis fuer Buendel und ihre Mitglieder (26.09.2026): beim
+# Buendel waere es Gesamtkosten / Summe aller Stueck - eine Zahl fuer 14
+# Produkte; das Mitglied traegt seinen Anteil schon auf der Karte.
+check("aa194 KEIN Stueckpreis fuer Buendel und gebundene Einzelplaene",
+      'if self._multi_ist_plan(p) or p.get("id") in _gebunden9:\n'
+      '                    eintrag.update({"cost_unit": None, "rec_sell": None})\n'
+      '                    continue' in _cc194
+      and "_gebunden9 = set(self._multi_gehoert_zu(plans).keys())" in _cc194)
+# DIE EINE FORMEL, AUSGEFUEHRT: Kosten x (1 + Marge) / (1 - Steuer - Broker).
+import types as _ty194
+class _Fake194:
+    def __init__(self, fees):
+        self.settings = {"target_margin": 12.0, "sales_tax_pct": 4.0,
+                         "broker_fee_pct": 2.0, "char_fees": {}}
+        self._fees = fees
+    def _best_sell_char(self, _m):
+        return 1
+    def _fees_for_hub(self, _s, _c, _h):
+        if self._fees is None:
+            raise RuntimeError("keine Gebuehren")
+        return self._fees
+_sv194 = MW._plan_sell_vorschlag
+check("aa194 Formel mit Charakter-Gebuehren: 100 x 1.12 / (1 - 0.05 - 0.03)",
+      abs(_sv194(_Fake194((0.05, 0.03, "x")), 100.0) - 100.0 * 1.12 / 0.92) < 1e-9)
+check("aa194 Rueckfall auf die globalen Prozente (4 % + 2 %)",
+      abs(_sv194(_Fake194(None), 100.0) - 100.0 * 1.12 / 0.94) < 1e-9)
+eq("aa194 ohne Kosten kein Vorschlag", _sv194(_Fake194(None), None), None)
+eq("aa194 Gebuehren >= 100 % -> kein Vorschlag statt Division durch Null",
+   _sv194(_Fake194((0.6, 0.4, "x")), 100.0), None)
 
 
 # ---------------------------------------------------------------- (aa195)
@@ -8551,9 +8686,14 @@ check("aa197 doppelte Namen werden nur einmal kopiert",
 # Kopien-Aufteilung ODER exakter Mengen-Gleichheit.
 _rp198 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
 check("aa198 das Tor steht VOR der Marker-Entscheidung",
-      0 <= _rp198.find("if not _passt9 and sum(_lauf9) != _pl_runs9:\n"
+      0 <= _rp198.find("if not _passt9 and sum(_lauf9) != _pl_runs9 and not _teil9:\n"
                        "                            _active = []")
       < _rp198.find('_ready = [j for j in _active if j.get("status") == "ready"]'))
+# DIE ZUSAGE STEHT AUCH IM QUELLTEXT, nicht nur im Mini-Nachbau unten: die
+# Rotprobe meldete den Nachbau als BLIND - er rechnet die Regel nach, ohne
+# den Code zu befragen.
+check("aa198 der angefangene Satz ist im Quelltext verankert",
+      "_teil9 = 0 < sum(_lauf9) < _pl_runs9" in _rp198)
 check("aa198 die Aufteilung wird wie in der Blaupausen-Anzeige hergeleitet",
       "_split9 = self._bp_teile(" in _rp198
       and '_pl_runs9, a.get("jobs"), a.get("max_runs"),' in _rp198)
@@ -8571,17 +8711,30 @@ def _tor198(pl_runs, pl_jobs, lauf):
         else:
             passt = False
             break
-    return passt or sum(lauf) == pl_runs
+    # TEILWEISE GESTARTET (24.09.2026): weniger als die Zeile braucht ist
+    # kein fremder Job, sondern ein angefangener Satz - seit die Zeit je
+    # Stufe einstellbar ist, schneidet der Plan anders als das Spiel.
+    return passt or sum(lauf) == pl_runs or 0 < sum(lauf) < pl_runs
 check("aa198 passender Teilstart markiert (2 von 6 Kopien laufen)",
       _tor198(250, 6, [42, 42]) is True)
 check("aa198 kompletter Satz markiert (4x42 + 2x41)",
       _tor198(250, 6, [42, 42, 42, 42, 41, 41]) is True)
-check("aa198 fremder Job markiert NICHT (100er-Run eines anderen Plans)",
-      _tor198(250, 6, [100]) is False)
+check("aa198 ein angefangener Satz markiert (64 von 130 laufen)",
+      _tor198(130, 1, [13, 13, 13, 13, 12]) is True)
+check("aa198 ein Job GROESSER als die Zeile markiert NICHT (fremder Plan)",
+      _tor198(250, 6, [300]) is False)
+check("aa198 ... auch wenn mehrere zusammen zu gross sind",
+      _tor198(250, 6, [200, 200]) is False)
 check("aa198 anders geschnitten, aber exakte Menge: markiert (125+125)",
       _tor198(250, 6, [125, 125]) is True)
-check("aa198 doppelter 41er faellt durch (Vielfachheit zaehlt)",
-      _tor198(250, 6, [41, 41, 41]) is False)
+# BEWUSST GELOCKERT (24.09.2026): drei 41er passen nicht in die Aufteilung
+# 4x42+2x41 - frueher fiel das durch. Es ist aber ein angefangener Satz von
+# 123 auf 250 Runs, und genau so schneidet das Spiel, wenn der Nutzer die
+# Zeit je Stufe anders einstellt als der Plan. Die Vielfachheit entscheidet
+# weiterhin ueber "passt exakt"; ausgeschlossen wird nur noch, was MEHR
+# verlangt als die Zeile braucht - das kann kein Teil dieser Bestellung sein.
+check("aa198 ein angefangener Satz zaehlt, auch wenn er nicht in die Aufteilung passt",
+      _tor198(250, 6, [41, 41, 41]) is True)
 
 
 # ---------------------------------------------------------------- (aa199)
@@ -8773,9 +8926,14 @@ check("aa203 es gibt beide Kopier-Aktionen im Blueprints-Tab",
 check("aa203 Reaktionen heissen Reaction Formula (an der Stufe erkannt)",
       'startswith("Reaktion")' in _bt203
       and 'f"{base} Reaction Formula"' in _bt203)
+# ANKER NACHGEZOGEN 21.09.2026 (aa386): die Zeile merkt sich jetzt den
+# BASISNAMEN, weil die Spalte selbst den fertigen Blaupausen-Namen zeigt.
+# Die Zusage ist unveraendert - gelesen wird aus der Item-Rolle, nicht aus
+# dem angezeigten Text (der sortiert mit und waere nicht sortiersicher).
 check("aa203 die Einzel-Kopie liest SORT-SICHER aus den Item-Rollen",
       '_hit.data(Qt.UserRole + 8)' in _bt203
-      and 'it.setData(Qt.UserRole + 8, r.get("name"))' in _bt203)
+      and 'it.setData(Qt.UserRole + 8, r.get("basis") or r.get("name"))'
+      in _bt203)
 check("aa203 doppelte Namen nur einmal, Menue-Verbindungen stapeln nicht",
       "if _n9 and _n9 not in seen:" in _bt203
       and "tbl.customContextMenuRequested.disconnect()" in _bt203)
@@ -8948,8 +9106,12 @@ with _TempDir200() as _d206b:
 check("aa207 nach dem Speichern wird die Reservierung angeboten",
       '_neu_res = (not new_entry.get("reserve")' in _src_txt
       and 't("Reserve material?"), _txt9,' in _src_txt)
+# Anker seit dem Multi-Bauplan um die Buendel-Bedingung erweitert
+# (aa380): gefragt wird nur, wenn es etwas zu schuetzen gibt UND der Plan
+# nicht schon in einem Buendel steckt.
 check("aa207 gefragt wird nur, wenn es etwas zu schuetzen gibt",
-      'and bool(new_entry.get("reserve_map")))' in _src_txt)
+      'and bool(new_entry.get("reserve_map"))\n                        and not _multi_von9)'
+      in _src_txt)
 check("aa207 kollidierende Plaene werden NAMENTLICH genannt",
       '_koll9.append(str(_p9.get("label")' in _src_txt
       and "need the same materials" in _src_txt
@@ -9013,11 +9175,15 @@ _cc208 = _fn_src("_check_saved_plan_completions")
 # baute der Plan 124, 287 waren gekaufte. Der Balken war im Schnitt auf 13 %
 # gedeckelt, im schlechtesten Fall auf 1 %. Er ging nicht "nicht weiter" - er
 # KONNTE nicht weiter.
+# NACHGEZOGEN 22.09.2026: der Nenner ist derselbe geblieben (was der Plan
+# WIRKLICH baut), nur gezaehlt wird jetzt in RUNS statt in Positionen -
+# siehe aa390. Die Zusage dieser Zeile ist unveraendert.
 check("aa208 der Nenner ist, was der Plan WIRKLICH baut",
-      '_pos9 = [_t9x for _t9x in ((_plan9 or {}).get("build_runs") or {})'
-      in _cc208)
+      '_runs9 = {_k9: _v9' in _cc208
+      and '((_plan9 or {}).get("build_runs")' in _cc208)
 check("aa208 das Endprodukt selbst zaehlt nicht als Zwischen-Position",
-      "if _t9x != type_id]" in _cc208)
+      # Multi-Bauplan (1.0.9): "Endprodukt" ist eine MENGE (alle Enden)
+      "if _k9 not in _endset9}" in _cc208)
 check("aa208 der Plan dafuer kommt aus production_plan, nicht aus einer "
       "eigenen Rekursion",
       # AUF DIE ZUWEISUNG pruefen, nicht auf den Funktionsnamen: eine
@@ -9027,8 +9193,9 @@ check("aa208 der Plan dafuer kommt aus production_plan, nicht aus einer "
       and "def _baum9" not in _cc208)
 check("aa208 ein Ausfall des Plans wird protokolliert, nicht verschluckt",
       'self._log_exception("Fortschritt: Plan fuer Nenner"' in _cc208)
-check("aa208 eine Stufe zaehlt ab dem ersten Job seit Plan-Speicherung",
-      "if _ts9 >= since:" in _cc208 and "_fertig9 += 1" in _cc208)
+check("aa208 nur Jobs seit der Plan-Speicherung zaehlen",
+      '(_seit9(j, "end_date") or 0) >= since' in _cc208
+      and '(_seit9(j, "start_date") or 0) >= since' in _cc208)
 # NACHTRAG (Nutzer-Befund, gleiche Sitzung): der Positions-Anteil
 # unterschaetzte FERTIGE Plaene ("26 % · 12/12 gebaut"), weil viele
 # Stufen nie einen ESI-Job haben (gekauft, oder vor dem Speichern
@@ -9131,8 +9298,10 @@ for _b211 in _erw211:
     check(f"aa211 Knopf umgestellt: {_b211.split(chr(34))[1]}",
           _b211 in _src_txt)
 # Sitzung 17: je -3 mit Handels-, Akkumulations- und Frachtplan, gezaehlt.
-eq("aa211 GENAU 14 Knoepfe tragen gezeichnete Symbole",
-   _src_txt.count("_btn_icon(QPushButton("), 14)
+# 22.09.2026: -2, die beiden Gold-Suche-Knoepfe sind auf Nutzer-Wunsch aus
+# den Werkzeug-Leisten von Daytrade und Swing Trade verschwunden.
+eq("aa211 GENAU 12 Knoepfe tragen gezeichnete Symbole",
+   _src_txt.count("_btn_icon(QPushButton("), 12)
 check("aa211 auch Menue-Aktionen tragen Symbole",
       'addAction(icons.icon("hammer"), t("Open build plan")' in _src_txt
       and 'addAction(icons.icon("trend_up"), t("Open price history")'
@@ -9958,7 +10127,8 @@ check("aa223 ohne Charakter fuehrt der Start zum Charaktere-Reiter",
       "QTimer.singleShot(250, self._erststart_ohne_charakter)" in _src223
       # Nur im else-Zweig: wer schon Charaktere hat, bekommt weiter den
       # automatischen "Alles aktualisieren"-Lauf.
-      and "QTimer.singleShot(400, self.refresh_everything)" in _src223)
+      and "QTimer.singleShot(400, lambda: self.refresh_everything(beim_start=True))"
+      in _src223)
 _ewc223 = _fn_src("_erststart_ohne_charakter")
 check("aa223 der Wegweiser springt an die richtige Stelle",
       'self._go_tab("characters")' in _ewc223
@@ -10797,14 +10967,20 @@ _gs238 = _fn_src("_show_gold_dialog")
 check("aa238 die Gold-Suche wurde ueberhaupt gefunden", len(_gs238) > 200)
 check("aa238 die Gold-Suche hat keinen Erklaerabsatz mehr",
       "intro = QLabel(" not in _gs238)
-# ABER DIE ERKLAERUNG IST NICHT VERLOREN: sie steht im Tooltip des
-# Knopfes, der das Fenster oeffnet. Sonst waere es kein Aufraeumen,
-# sondern ein Wissensverlust.
-# KURZ GENUG, UM NICHT UEBER EINEN ZEILENUMBRUCH ZU LAUFEN - der Quelltext
-# bricht die langen Tooltips um, ein laengeres Suchmuster faende sie nie
-# (dieselbe Falle wie bei aa122).
-check("aa238 der Gold-Knopf erklaert weiterhin, was er tut",
-      "Shows the best flip chances" in _src_txt)
+# DER KNOPF IST WEG (Nutzer 22.09.2026: "ich halte die Gold-Search-Buttons
+# in Daytrade und Swingtrade fuer Quatsch"). Damit faellt die alte Zusage
+# "die Erklaerung lebt im Tooltip weiter" - es gibt keinen Tooltip mehr.
+# Geprueft wird jetzt, dass wirklich KEIN Knopf mehr dort steht; die
+# Rechnung selbst bleibt im Code, nur ohne Einstieg.
+check("aa238 die Gold-Suche hat keinen Knopf mehr in den Leisten",
+      "Shows the best flip chances" not in _src_txt
+      and 'QPushButton(t("Gold search"))' not in _src_txt)
+check("aa238 ... und die Leisten tragen nur noch Deals und Top 15",
+      "[self.deals_btn, self.top_btn])," in _src_txt
+      and "[self.hold_btn, self.hold_top_btn])," in _src_txt)
+check("aa238 ... der Zugriff auf den verschwundenen Knopf ist abgesichert",
+      'getattr(self, "hold_gold_btn" if swing else "gold_btn", None)'
+      in _fn_src("_gold_knopf"))
 
 
 # ---------------------------------------------------------------- (aa238)
@@ -11001,7 +11177,7 @@ check("aa243 wird beim Speichern in den Plan geschrieben",
 # GENAU HINSEHEN: es reicht nicht, dass der Text irgendwo vorkommt - die
 # Erinnerung muss auch WIRKLICH ZUGEWIESEN werden. Eine Mutation, die nur
 # die Zuweisung kappte und den Ausdruck stehenliess, blieb sonst unbemerkt.
-_op243 = _fn_src("_open_saved_plan")
+_op243 = _fn_src("_open_saved_plan_zustand")   # Multi-Bauplan: Zustand ausgelagert
 check("aa243 und beim Oeffnen zurueckgeholt",
       "self._bd_covered_once = {int(_x) for _x in" in _op243
       and 'p.get("covered_once")' in _op243)
@@ -11099,11 +11275,21 @@ eq("aa245 die Uhr startet neu, wenn der Fehlbetrag wiederkehrt",
 _sched246 = _fn_src("_fill_bauplan_schedule")
 check("aa246 die Zeile bekommt den Punkt",
       "iit.setIcon(0, icons.gruener_punkt())" in _sched246)
-# UND DAS KAESTCHEN VERSCHWINDET: sonst staende neben dem Punkt weiter ein
-# Haken zum Anklicken - zwei Aussagen fuer denselben Zustand.
-check("aa246 und das Kaestchen verschwindet",
-      "iit.setFlags(iit.flags() & ~Qt.ItemIsUserCheckable)" in _sched246
-      and "iit.setData(0, Qt.CheckStateRole, None)" in _sched246)
+# DAS KAESTCHEN BLEIBT - UMGEKEHRT AM 21.09.2026 (s. aa384).
+#
+# Diese Pruefung verlangte frueher das Gegenteil: "und das Kaestchen
+# verschwindet ... sonst staende neben dem Punkt weiter ein Haken zum
+# Anklicken - zwei Aussagen fuer denselben Zustand". Die Begruendung war
+# oberflaechlich richtig und im Ergebnis teuer: der Hand-Haken ist die
+# EINZIGE Quelle, aus der die Reservierung die Zutaten einer Zeile abbucht.
+# Ohne Kaestchen konnte fuer eine ESI-fertige Zeile nie ein Haken entstehen,
+# und ihr Material blieb fuer immer gesperrt (Nachrechnung in aa384).
+# Punkt und Kaestchen sagen auch NICHT dasselbe: der Punkt sagt "ESI sieht
+# das als gebaut", der Haken sagt "ich bin damit durch, das Material darf
+# weg". Das ist zweierlei.
+check("aa246 das Kaestchen bleibt bedienbar (umgekehrt 21.09.2026)",
+      "iit.setFlags(iit.flags() & ~Qt.ItemIsUserCheckable)" not in _sched246
+      and "iit.setData(0, Qt.CheckStateRole, None)" not in _sched246)
 # NUR BEI VOLLSTAENDIGER DECKUNG: ein Teilfortschritt darf nicht wie
 # "fertig" aussehen - sonst haelt der Nutzer Rest-Runs fuer erledigt.
 check("aa246 nur bei voller Deckung, nicht bei Teilfortschritt",
@@ -11179,9 +11365,14 @@ check("aa247 'wird gebaut' ist nicht die Stufen-Farbe",
 # benutzt - das gibt es in `_fill_material_tab` NICHT. Die Funktion
 # bekommt die Namen als PARAMETER. Beide Suiten blieben gruen, weil
 # niemand den Text der Warnung geprueft hat.
+# SEIT 26.09.2026 GIBT ES DEN BANNER NICHT MEHR (Nutzer: "dieser riesige
+# Informationstext ist unnoetig ... was fehlt, sieht man unten in der
+# Liste"). Die Zusage wird zu: kein Namens-Banner, der Fehlbedarf bleibt
+# in der Zeile (b54).
 _mt248 = _fn_src("_fill_material_tab")
-check("aa248 die Warnung nimmt die Namen aus dem Parameter",
-      "(names or {}).get(_t)" in _mt248)
+check("aa248 kein Fehlbedarf-Banner mit Namensliste mehr ueber der Tabelle",
+      "materials will be missing for the" not in _mt248
+      and "self._bd_fehl_live = {int(_t)" in _mt248)
 # NUR AUSGEFUEHRTE ZEILEN: der Kommentar darueber NENNT `_bd_names` als
 # abschreckendes Beispiel und muss das duerfen (dieselbe Falle wie aa234).
 _code248 = "\n".join(_z for _z in _mt248.splitlines()
@@ -12609,13 +12800,38 @@ import subprocess as _sp271
 import sys as _sys271
 
 
+# ALLE SECHS GLEICHZEITIG GESTARTET (27.09.2026, Nutzer: "deine Antworten
+# dauern sehr lange"): nacheinander warteten sie ~11 s aufeinander. Jeder
+# bleibt ein eigener Unterprozess wie beim Nutzer; gelesen wird unten wie
+# vorher, je Skript, mit derselben Zeitgrenze.
+_laeufe271 = {}
+
+
+def _starte_scans271():
+    for _sk in ("de_scan.py", "de_scan2.py", "de_scan3.py", "de_scan4.py",
+                "de_scan5.py", "de_scan6.py"):
+        if _sk not in _laeufe271:
+            _laeufe271[_sk] = _sp271.Popen(
+                [_sys271.executable, os.path.join(_ROOT, "tests", _sk), "--kurz"],
+                cwd=_here222, stdout=_sp271.PIPE, stderr=_sp271.DEVNULL,
+                text=True, encoding="utf-8", errors="replace")
+
+
 def _scan271(skript):
     # Die Scanner liegen in tests\ und wechseln selbst zur Projektwurzel.
-    _r = _sp271.run([_sys271.executable, os.path.join(_ROOT, "tests", skript),
-                     "--kurz"], cwd=_here222,
-                    capture_output=True, text=True, encoding="utf-8",
-                    errors="replace", timeout=120)
-    for _z in (_r.stdout or "").splitlines():
+    _starte_scans271()
+    _pr = _laeufe271.pop(skript, None)
+    if _pr is None:              # unbekannter Scanner: wie frueher einzeln
+        _pr = _sp271.Popen([_sys271.executable, os.path.join(_ROOT, "tests", skript),
+                            "--kurz"], cwd=_here222, stdout=_sp271.PIPE,
+                           stderr=_sp271.DEVNULL, text=True, encoding="utf-8",
+                           errors="replace")
+    try:
+        _aus, _ = _pr.communicate(timeout=120)
+    except _sp271.TimeoutExpired:
+        _pr.kill()
+        return None                              # haengt -> faellt auf
+    for _z in (_aus or "").splitlines():
         if _z.startswith("GESAMT"):
             return int(_z.split()[1])
     return None                                  # Skript kaputt -> faellt auf
@@ -13376,7 +13592,12 @@ check("aa272 der Schalter ist sichtbar und vorbelegt",
 # Der Restbedarf las nur `_bd_runplan_delivered` - das sind AUSSCHLIESSLICH
 # ESI-gelieferte Runs. Was er von Hand abhakte (weil ESI den Job nicht mehr
 # sieht, oder er ausserhalb lief), galt weiter als OFFEN.
-_rb273 = _fn_src("_restbedarf_jetzt")
+# SEIT 26.09.2026 steckt die Liefer-Karte (ESI-sicher + Hand-Haken) in
+# `_rest_geliefert_jetzt`; `_restbedarf_jetzt` liest sie von dort. Die
+# Zusage ist dieselbe, nur die Stelle ist umgezogen.
+_rb273 = _fn_src("_rest_geliefert_jetzt")
+check("aa273 _restbedarf_jetzt holt die Karte ueber _rest_geliefert_jetzt",
+      "self._rest_geliefert_jetzt()" in _fn_src("_restbedarf_jetzt"))
 check("aa273 der Restbedarf liest auch die Hand-Haekchen",
       "_bd_runplan_checked" in _rb273 and "_bd_runplan_runs_by_key" in _rb273)
 # MAXIMUM, NICHT SUMME: derselbe Run kann in beiden Quellen stehen. Summiert
@@ -13823,8 +14044,15 @@ check(f"aa285 Emojis nur noch in Kommentaren/Docstrings ({len(_treffer285)})",
 #
 # Zwei Schloss-Zeichnungen allein sind bei 16 px kaum zu trennen. Die FARBE
 # traegt den Unterschied: gesperrt leuchtet amber, offen bleibt gedaempft.
+#
+# NACHGEZOGEN 22.09.2026: die Faerbung steht nicht mehr im Karten-Aufbau,
+# sondern in `_plan_reserve_stil` - EINE Stelle fuer beide Wege (Aufbau und
+# Umschalten), und "an" ist jetzt eine ganze amberne FLAECHE statt nur
+# eines amber gezeichneten Symbols. Die Zusage dieser Pruefung ist
+# unveraendert: die beiden Zustaende muessen unterscheidbar bleiben.
 check("aa286 der Reservier-Knopf faerbt nach Zustand",
-      'farbe=theme.AMBER if p.get("reserve") else theme.MUTED' in _src_txt)
+      "background:{theme.AMBER}" in _fn_src("_plan_reserve_stil")
+      and "farbe=theme.MUTED" in _fn_src("_plan_reserve_stil"))
 # DER BILDVERGLEICH steht in b56 - hier laeuft keine QGuiApplication, ohne
 # die es kein QPixmap gibt. Auf Quelltext-Ebene reicht: die Farben muessen
 # ueberhaupt verschieden sein.
@@ -14594,8 +14822,11 @@ check("aa319 das Umschalten holt die echten Werte",
       "self._bd_me, self._bd_te = self._bd_own_bpc_me_te(type_id)" in _tog319)
 check("aa319 nur beim EINschalten, nicht beim Ausschalten",
       "if v:" in _tog319.split("self._bd_me, self._bd_te")[0])
-_obc319 = _bpf319.split('if getattr(self, "_bd_own_bpc", False):')[1].split(
-    "elif _inv0")[0]
+# Anker seit Schritt 4 mit Buendel-Ausschluss (der EINE Schalter gilt nur
+# noch fuer einen Einzelplan) - die geprueften Zusagen bleiben dieselben.
+_obc319 = _bpf319.split(
+    'if getattr(self, "_bd_own_bpc", False) and type_id != industry.BUENDEL_ID:'
+)[1].split("elif _inv0")[0]
 check("aa319 auch aus der Invention-Sperre heraus werden sie gesetzt",
       "me_spin.setValue(_obc_me)" in _obc319
       and "te_spin.setValue(_obc_te)" in _obc319)
@@ -15901,7 +16132,7 @@ _sav352 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
 for _k352 in ("blacklist_names", "blacklist_gruppen",
               "buy_datacores", "buy_decryptors", "reprocess_on", "unrefined_on"):
     check(f"aa352 {_k352} wird mitgespeichert", f'"{_k352}":' in _sav352)
-_open352 = _fn_src("_open_saved_plan")
+_open352 = _fn_src("_open_saved_plan_zustand")   # Multi-Bauplan: Zustand ausgelagert
 check("aa352 und beim Oeffnen zurueckgeholt",
       '("blacklist_names", "bau_blacklist_names")' in _open352
       and '("reprocess_on", "bau_reprocess_on")' in _open352
@@ -17539,6 +17770,3254 @@ _bf372 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
 check("aa372 beim Speichern werden label und item_name bereinigt",
       "label = config.plan_name_bereinigen(label)" in _bf372
       and '"item_name": config.plan_name_bereinigen(name),' in _bf372)
+
+# ---------------------------------------------------------------- (aa373)
+# HUBS ENTFERNEN UND NICHT DOPPELN (Nutzer 19.09.2026: "gibt es eine
+# Moeglichkeit, gewaehlte Hubs wieder zu loeschen? falls man aus Versehen
+# einen Hub doppelt hinzugefuegt hat?"). Vorher: kein Weg zum Entfernen, und
+# add_favorite nahm jeden Ort beliebig oft. AUSGEFUEHRT gegen die echte
+# SQLite in .smoke_home - kein Text-Vergleich.
+from eve_trader import store as _st373
+for _f373 in _st373.list_favorites():
+    if _f373.get("structure_id") == 990373001:
+        _st373.remove_favorite(_f373["id"])
+_fav373 = {"kind": "structure", "name": "Probe-Sotiyo 373", "structure_id": 990373001,
+           "character_id": 1, "region_id": 10000002, "station_id": None}
+check("aa373 erstes Hinzufuegen klappt", _st373.add_favorite(dict(_fav373)) is True)
+check("aa373 dasselbe nochmal wird ABGELEHNT (kein Doppel)",
+      _st373.add_favorite(dict(_fav373)) is False)
+_n373 = [f for f in _st373.list_favorites() if f.get("structure_id") == 990373001]
+eq("aa373 die Struktur steht genau einmal drin", len(_n373), 1)
+# Alt-Doubletten (aus Fassungen ohne Sperre) raeumt dedupe_favorites weg.
+with _st373._conn() as _c373:
+    _c373.execute("INSERT INTO favorites(kind,name,region_id,station_id,structure_id,character_id)"
+                  " VALUES ('structure','Probe-Sotiyo 373',10000002,NULL,990373001,1)")
+eq("aa373 Vorbedingung: zweimal drin", len([f for f in _st373.list_favorites()
+                                           if f.get("structure_id") == 990373001]), 2)
+eq("aa373 dedupe_favorites entfernt genau die Doublette", _st373.dedupe_favorites(), 1)
+eq("aa373 ... und danach ist sie einmal da", len([f for f in _st373.list_favorites()
+                                                 if f.get("structure_id") == 990373001]), 1)
+for _f373 in _st373.list_favorites():
+    if _f373.get("structure_id") == 990373001:
+        _st373.remove_favorite(_f373["id"])
+eq("aa373 remove_favorite loescht", len([f for f in _st373.list_favorites()
+                                         if f.get("structure_id") == 990373001]), 0)
+# DER CHARAKTER ZAEHLT (Nutzer 19.09.2026: "ist es egal welche man anklickt?"):
+# der gemerkte Charakter ruft das Orderbuch ab. Bereinigung und Doppel-Sperre
+# muessen den VERLINKTEN Charakter behalten, nicht blind den aeltesten.
+_alt_lc373 = _st373.list_characters
+try:
+    _st373.list_characters = lambda: [{"character_id": 42, "character_name": "Da"}]
+    with _st373._conn() as _c373:
+        _c373.execute("INSERT INTO favorites(kind,name,region_id,station_id,structure_id,character_id)"
+                      " VALUES ('structure','Probe 373',10000002,NULL,990373001,7)")    # 7 = weg
+        _c373.execute("INSERT INTO favorites(kind,name,region_id,station_id,structure_id,character_id)"
+                      " VALUES ('structure','Probe 373',10000002,NULL,990373001,42)")   # 42 = da
+    eq("aa373 dedupe entfernt einen von zweien", _st373.dedupe_favorites(), 1)
+    _rest373 = [f for f in _st373.list_favorites() if f.get("structure_id") == 990373001]
+    check("aa373 ... und behaelt den VERLINKTEN Charakter, nicht den aelteren",
+          len(_rest373) == 1 and int(_rest373[0]["character_id"]) == 42)
+    _st373.remove_favorite(_rest373[0]["id"])
+    # Doppel-Sperre: alter Eintrag an abgehaengtem Charakter, neuer an verlinktem
+    with _st373._conn() as _c373:
+        _c373.execute("INSERT INTO favorites(kind,name,region_id,station_id,structure_id,character_id)"
+                      " VALUES ('structure','Probe 373',10000002,NULL,990373001,7)")
+    check("aa373 add_favorite lehnt ab (kein zweiter Eintrag) ...",
+          _st373.add_favorite({"kind": "structure", "name": "Probe 373 neu", "structure_id": 990373001,
+                               "character_id": 42, "region_id": 10000002, "station_id": None}) is False)
+    _rest373 = [f for f in _st373.list_favorites() if f.get("structure_id") == 990373001]
+    check("aa373 ... schreibt den Eintrag aber auf den verlinkten Charakter um",
+          len(_rest373) == 1 and int(_rest373[0]["character_id"]) == 42)
+finally:
+    _st373.list_characters = _alt_lc373
+    for _f373 in _st373.list_favorites():
+        if _f373.get("structure_id") == 990373001:
+            _st373.remove_favorite(_f373["id"])
+check("aa373 die Hub-Box hat ein Kontextmenue zum Entfernen",
+      "self.g_hub.customContextMenuRequested.connect(self._hub_kontextmenue)" in _src_txt
+      and "store.remove_favorite(f[\"id\"])" in _src_txt)
+check("aa373 das Dropdown bereinigt Alt-Doubletten beim Aufbau",
+      "store.dedupe_favorites()" in _ab_anker("def _reload_hub_structures"))
+
+# ---------------------------------------------------------------- (aa374)
+# MULTI-BAUPLAN, SCHRITT 1: DAS BUENDEL (1.0.9, Weg 1 aus CLAUDE.md). Ein
+# Multi-Plan ist ein Bauplan mit dem Pseudo-Endprodukt BUENDEL, dessen Rezept
+# die Endprodukte samt Menge sind. Die Zusagen, AUSGEFUEHRT an einem
+# Mini-Rezept: zwei Enden (A x20, B x10) teilen ein Zwischenprodukt X, das in
+# 100er-Batches reagiert wird; A braucht 40, B 50.
+_A374, _B374, _X374, _M374 = 970001, 970002, 970003, 970004
+_BPA374, _BPB374, _BPX374 = 980001, 980002, 980003
+
+
+class _Rec374:
+    product_to_bp = {_A374: (_BPA374, _I.MANUFACTURING, 1),
+                     _B374: (_BPB374, _I.MANUFACTURING, 1),
+                     _X374: (_BPX374, _I.REACTION, 100)}
+    bp_materials = {(_BPA374, _I.MANUFACTURING): [(_X374, 2), (_M374, 10)],
+                    (_BPB374, _I.MANUFACTURING): [(_X374, 5), (_M374, 20)],
+                    (_BPX374, _I.REACTION): [(_M374, 50)]}
+    activity_time = {(_BPA374, _I.MANUFACTURING): 3600, (_BPB374, _I.MANUFACTURING): 7200,
+                     (_BPX374, _I.REACTION): 1800}
+    activity_max_runs = {}
+    reaction_products = {_X374}
+    invention_for_bpc = {}
+    bp_products = {}
+    item_cat = {}
+
+
+_pr374 = {_M374: 100.0, _X374: 1e9, _A374: 1e12, _B374: 1e12}.get   # X/A/B: kaufen nie lohnend
+_o374 = {"invention": False, "job_pct": 0, "build_reactions": True, "me": 10, "me_map": {},
+         "adjusted_prices": {_M374: 100.0, _X374: 5000.0, _A374: 1e6, _B374: 1e6},
+         "system_index_mfg": 0.05, "system_index_reaction": 0.05, "facility_tax": 0.01}
+_rb374 = _I.buendel_rezepte(_Rec374(), [(_A374, 20), (_B374, 10)])
+eq("aa374 das Buendel kennt seine Enden", _I.buendel_enden(_rb374), {_A374: 20, _B374: 10})
+eq("aa374 ein normales Rezept traegt kein Buendel", _I.buendel_enden(_Rec374()), {})
+check("aa374 das Original bleibt unberuehrt",
+      _I.BUENDEL_ID not in _Rec374.product_to_bp and (_I.BUENDEL_BP, _I.MANUFACTURING)
+      not in _Rec374.bp_materials)
+eq("aa374 Doppelte werden addiert, Nullen fallen weg",
+   _I.buendel_enden(_I.buendel_rezepte(_Rec374(), [(_A374, 5), (_A374, 7), (_B374, 0)])),
+   {_A374: 12})
+_plb374 = _I.production_plan(_I.BUENDEL_ID, 1, _pr374, _rb374, _o374)
+_pla374 = _I.production_plan(_A374, 20, _pr374, _Rec374(), _o374)
+_plb2_374 = _I.production_plan(_B374, 10, _pr374, _Rec374(), _o374)
+eq("aa374 beide Enden werden mit ihrer Menge GEBAUT (trotz ME 10 auf dem Buendel exakt 20/10)",
+   {_A374: _plb374["build_runs"].get(_A374), _B374: _plb374["build_runs"].get(_B374)},
+   {_A374: 20, _B374: 10})
+check("aa374 das Buendel selbst ist KEIN Job (nicht in Runs, Folge, Zutaten, Entscheidung)",
+      _I.BUENDEL_ID not in _plb374["build_runs"]
+      and all(t != _I.BUENDEL_ID for t, _r in _plb374["build_seq"])
+      and _I.BUENDEL_ID not in _plb374["build_mats"]
+      and _I.BUENDEL_ID not in _plb374["decision"]
+      and _I.BUENDEL_ID not in _plb374["build_made"])
+eq("aa374 der Plan meldet die Enden", _plb374["buendel_enden"], {_A374: 20, _B374: 10})
+# Ein Ende wird NIE gekauft, auch wenn der Markt es fuer 1 ISK haette - genau
+# wie das Endprodukt eines normalen Plans (Root-Kauf-Bug).
+_plbillig374 = _I.production_plan(_I.BUENDEL_ID, 1,
+                                  {_M374: 100.0, _X374: 1e9, _A374: 1.0, _B374: 1.0}.get,
+                                  _rb374, _o374)
+eq("aa374 Enden werden auch dann gebaut, wenn Kaufen billiger waere",
+   (_plbillig374["build_runs"].get(_A374), _plbillig374["build_runs"].get(_B374),
+    _plbillig374["buy"].get(_A374), _plbillig374["buy"].get(_B374)),
+   (20, 10, None, None))
+eq("aa374 ein normaler Plan meldet keine Enden", _pla374["buendel_enden"], {})
+# GETEILTER UEBERSCHUSS - der Sinn des Buendels: A braucht 2x20=40 X (ME 10,
+# je Run gerundet: ceil(1,8)=2), B 5x10=50 X; einzeln je 1 Batch (100 X),
+# im Buendel 90 X = ebenfalls EIN Run.
+eq("aa374 einzeln: A und B reagieren je einen Batch X",
+   (_pla374["build_runs"].get(_X374), _plb2_374["build_runs"].get(_X374)), (1, 1))
+eq("aa374 im Buendel: EIN Batch X deckt beide (geteilter Ueberschuss)",
+   _plb374["build_runs"].get(_X374), 1)
+check("aa374 ... und das Buendel ist deshalb billiger als die Summe der Einzelplaene",
+      _plb374["total_cost"] < _pla374["total_cost"] + _plb2_374["total_cost"] - 1.0)
+# Job-Kosten im Buendel = A-Job + B-Job + EIN X-Batch (einzeln waren es zwei).
+check("aa374 Job-Kosten: nur die echten Jobs (A, B, ein X-Batch), nichts fuers Buendel",
+      _plb374["job_cost"] < _pla374["job_cost"] + _plb2_374["job_cost"] - 1e-6
+      and _plb374["job_cost"] > 0)
+# Ohne geteilten Ueberschuss (X in 1er-Batches) muss das Buendel EXAKT die
+# Summe der Einzelplaene kosten - Job-Kosten inklusive. Das ist die Gegenprobe
+# gegen einen versteckten Buendel-Job oder eine Buendel-ME.
+class _Rec374b(_Rec374):
+    product_to_bp = {**_Rec374.product_to_bp, _X374: (_BPX374, _I.REACTION, 1)}
+    bp_materials = {**_Rec374.bp_materials, (_BPX374, _I.REACTION): [(_M374, 1)]}
+_rb374b = _I.buendel_rezepte(_Rec374b(), [(_A374, 20), (_B374, 10)])
+_s374 = (_I.production_plan(_A374, 20, _pr374, _Rec374b(), _o374)["total_cost"]
+         + _I.production_plan(_B374, 10, _pr374, _Rec374b(), _o374)["total_cost"])
+_g374 = _I.production_plan(_I.BUENDEL_ID, 1, _pr374, _rb374b, _o374)["total_cost"]
+check(f"aa374 ohne Ueberschuss kostet das Buendel EXAKT die Summe ({_g374:.2f} vs {_s374:.2f})",
+      abs(_g374 - _s374) < 1e-6)
+# Endprodukt-Regeln gelten fuer JEDES Ende: Bestand wird nicht abgezogen,
+# Blacklist greift nicht - genau wie beim Endprodukt eines normalen Plans.
+_pls374 = _I.production_plan(_I.BUENDEL_ID, 1, _pr374, _rb374,
+                             dict(_o374, stock={_A374: 5, _B374: 100}, excluded={_B374}))
+eq("aa374 Bestand an Enden wird NICHT abgezogen, Blacklist greift nicht (wie beim Endprodukt)",
+   {_A374: _pls374["build_runs"].get(_A374), _B374: _pls374["build_runs"].get(_B374),
+    "own": _pls374["decision"].get(_B374)},
+   {_A374: 20, _B374: 10, "own": "build"})
+eq("aa374 build_cost je Buendel = Summe der Enden x Menge (kein ME, kein Job aufs Buendel)",
+   round(_I.build_cost(_I.BUENDEL_ID, _pr374, _rb374b, _o374, {}), 4),
+   round(20 * _I.build_cost(_A374, _pr374, _Rec374b(), _o374, {})
+         + 10 * _I.build_cost(_B374, _pr374, _Rec374b(), _o374, {}), 4))
+try:
+    _I.buendel_rezepte(_Rec374(), [(_A374, 0)])
+    _leer374 = False
+except ValueError:
+    _leer374 = True
+check("aa374 leeres Buendel wird abgelehnt (ValueError)", _leer374)
+
+# ---------------------------------------------------------------- (aa375)
+# KOSTEN JE ENDPRODUKT (Nutzer, Sitzung 23: "Am Ende moechte ich dann auch
+# noch den Einzelproduktionspreis sehen von jedem Endprodukt"). Geteilte
+# Zwischenprodukte werden ANTEILIG NACH BEDARF auf die Enden verteilt; die
+# Summe ueber alle Enden ist EXAKT die Gesamtkosten des Plans.
+def _summe375(d):
+    return sum(float(v) for v in (d or {}).values())
+
+
+for _nm, _pl in (("Buendel", _plb374), ("Einzelplan", _pla374)):
+    check(f"aa375 {_nm}: Job-Kosten je Item summieren sich zu job_cost",
+          abs(_summe375(_pl["job_cost_items"]) - _pl["job_cost"]) < 1e-6)
+    check(f"aa375 {_nm}: Kaufkosten je Item summieren sich zu mat_cost",
+          abs(_summe375(_pl["buy_cost_items"]) - _pl["mat_cost"]) < 1e-6)
+    check(f"aa375 {_nm}: Invention je Item summiert sich zu inv_cost",
+          abs(_summe375(_pl["inv_cost_items"]) - _pl["inv_cost"]) < 1e-6)
+    check(f"aa375 {_nm}: Bestandskosten je Item summieren sich zu stock_cost",
+          abs(_summe375(_pl["stock_cost_items"]) - _pl["stock_cost"]) < 1e-6)
+eq("aa375 ein normaler Plan hat keine Kosten je Ende", _I.buendel_kosten_je_ende(_pla374), {})
+_k375 = _I.buendel_kosten_je_ende(_plb374)
+eq("aa375 jedes Ende bekommt einen Eintrag mit seiner Menge",
+   {t: k["menge"] for t, k in _k375.items()}, {_A374: 20, _B374: 10})
+check("aa375 Summe der Enden == Gesamtkosten des Buendels (Invariante)",
+      abs(sum(k["gesamt"] for k in _k375.values()) - _plb374["total_cost"]) < 1e-6
+      and _plb374["total_cost"] > 0)
+check("aa375 je_stueck x Menge == gesamt, beide > 0",
+      all(abs(k["je_stueck"] * k["menge"] - k["gesamt"]) < 1e-6 and k["gesamt"] > 0
+          for k in _k375.values()))
+# Nachgerechnet von Hand: A braucht 40 X, B 50 X (ME 10, je Run gerundet) ->
+# A traegt 40/90 des einen X-Batches (50 M + Job), dazu 180 M (ceil(9)x20)
+# und seinen eigenen Job.
+_kx375 = 50 * 100.0 + _plb374["job_cost_items"].get(_X374, 0.0)
+_erwA375 = 40.0 / 90.0 * _kx375 + 180 * 100.0 + _plb374["job_cost_items"].get(_A374, 0.0)
+_erwB375 = 50.0 / 90.0 * _kx375 + 180 * 100.0 + _plb374["job_cost_items"].get(_B374, 0.0)
+check(f"aa375 A traegt 40/90 des X-Batches ({_k375[_A374]['gesamt']:.2f} vs {_erwA375:.2f})",
+      abs(_k375[_A374]["gesamt"] - _erwA375) < 1e-6)
+check(f"aa375 B traegt 50/90 des X-Batches ({_k375[_B374]['gesamt']:.2f} vs {_erwB375:.2f})",
+      abs(_k375[_B374]["gesamt"] - _erwB375) < 1e-6)
+# OHNE geteilten Ueberschuss (X in 1er-Batches) kostet jedes Ende im Buendel
+# EXAKT so viel wie sein Einzelplan - die Gegenprobe der Verteilung.
+_kb375 = _I.buendel_kosten_je_ende(_I.production_plan(_I.BUENDEL_ID, 1, _pr374, _rb374b, _o374))
+_ea375 = _I.production_plan(_A374, 20, _pr374, _Rec374b(), _o374)["total_cost"]
+_eb375 = _I.production_plan(_B374, 10, _pr374, _Rec374b(), _o374)["total_cost"]
+check(f"aa375 ohne Ueberschuss: Ende A im Buendel == Einzelplan A ({_kb375[_A374]['gesamt']:.2f} vs {_ea375:.2f})",
+      abs(_kb375[_A374]["gesamt"] - _ea375) < 1e-6)
+check("aa375 ohne Ueberschuss: Ende B im Buendel == Einzelplan B",
+      abs(_kb375[_B374]["gesamt"] - _eb375) < 1e-6)
+# MIT Ueberschuss ist jedes Ende BILLIGER als sein Einzelplan - der Sinn des
+# Buendels, sichtbar je Endprodukt.
+check("aa375 mit geteiltem Ueberschuss ist A im Buendel billiger als einzeln",
+      _k375[_A374]["gesamt"] < _pla374["total_cost"] - 1.0)
+check("aa375 mit geteiltem Ueberschuss ist B im Buendel billiger als einzeln",
+      _k375[_B374]["gesamt"] < _plb2_374["total_cost"] - 1.0)
+# BESTAND (M aus dem Hangar) kostet auch - und gehoert den Verbrauchern.
+_pls2_375 = _I.production_plan(_I.BUENDEL_ID, 1, _pr374, _rb374, dict(_o374, stock={_M374: 100}))
+_ks375 = _I.buendel_kosten_je_ende(_pls2_375)
+check("aa375 mit Bestand: Summe der Enden == Gesamtkosten, Bestand ist nicht gratis",
+      _pls2_375["stock_cost"] > 0
+      and abs(sum(k["gesamt"] for k in _ks375.values()) - _pls2_375["total_cost"]) < 1e-6)
+# GEKAUFTES Zwischenprodukt (X billig am Markt): sein Kaufpreis wird verteilt.
+_plk375 = _I.production_plan(_I.BUENDEL_ID, 1,
+                             {_M374: 100.0, _X374: 10.0, _A374: 1e12, _B374: 1e12}.get,
+                             _rb374, _o374)
+_kk375 = _I.buendel_kosten_je_ende(_plk375)
+check("aa375 gekauftes X: A traegt 40 x 10 ISK, Summe == Gesamtkosten",
+      _plk375["decision"].get(_X374) == "buy"
+      and abs(_kk375[_A374]["gesamt"] - (400.0 + 180 * 100.0
+                                          + _plk375["job_cost_items"].get(_A374, 0.0))) < 1e-6
+      and abs(sum(k["gesamt"] for k in _kk375.values()) - _plk375["total_cost"]) < 1e-6)
+# EIN ENDE ALS ZUTAT DES ANDEREN (B braucht 1 A, ME rundet je Run auf 1):
+# A gibt den Anteil weiter, den B verbraucht - die Summe bleibt exakt.
+class _Rec375c(_Rec374):
+    bp_materials = {**_Rec374.bp_materials,
+                    (_BPB374, _I.MANUFACTURING): [(_X374, 5), (_M374, 20), (_A374, 1)]}
+_plc375 = _I.production_plan(_I.BUENDEL_ID, 1, _pr374,
+                             _I.buendel_rezepte(_Rec375c(), [(_A374, 20), (_B374, 10)]), _o374)
+_kc375 = _I.buendel_kosten_je_ende(_plc375)
+check("aa375 Ende als Zutat des anderen Endes: A wird 20 + 10 gebaut, Summe == Gesamtkosten",
+      _plc375["build_runs"].get(_A374) == 30
+      and abs(sum(k["gesamt"] for k in _kc375.values()) - _plc375["total_cost"]) < 1e-6
+      and _kc375[_A374]["menge"] == 20)
+check("aa375 Kosten je Ende ohne Buendel-Schluessel: leer",
+      _I.buendel_kosten_je_ende({"build_mats": _plb374["build_mats"]}) == {})
+# ERSPARNIS NACH DEM PLAN (Erz statt Mineral / Ruecklaeufer senken nur
+# total_cost): anteilig auf die Enden, Verhaeltnis der Enden bleibt.
+_plr375 = dict(_plb374); _plr375["total_cost"] = 0.9 * _plb374["total_cost"]
+_kr375 = _I.buendel_kosten_je_ende(_plr375)
+check("aa375 gesenkte Gesamtkosten (Reprocessing) werden anteilig auf die Enden verteilt",
+      abs(sum(k["gesamt"] for k in _kr375.values()) - _plr375["total_cost"]) < 1e-6
+      and abs(_kr375[_A374]["gesamt"] - 0.9 * _k375[_A374]["gesamt"]) < 1e-6
+      and abs(_kr375[_A374]["je_stueck"] * 20 - _kr375[_A374]["gesamt"]) < 1e-6)
+
+# ---------------------------------------------------------------- (aa376)
+# MULTI BUILDPLANER, SCHRITT 3 - die Zusagen, die ohne Fenster pruefbar sind.
+_mb376 = open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+_fe376 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+_mw376 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa376 der Speicherer haengt die Buendel-Felder an (Enden, Quellen, ME/TE je Ende)",
+      "new_entry.update(self._multi_eintrag_felder(existing))" in _fe376
+      and '"enden": enden, "quellen": quellen' in _mb376)
+check("aa376 MainWindow traegt den Multi-Bauplan-Mixin",
+      "MultiBauplan," in _mw376.split("class MainWindow(")[1][:200])
+# UEBER EIN LAMBDA (Befund 20.09.2026): haengt der Knopf direkt an der
+# Methode, schiebt `clicked` sein `checked`-Bool in den Parameter
+# `bearbeiten` - der Planer ging dann gar nicht mehr auf. lint_order
+# Muster D (aa381) findet dieselbe Falle projektweit.
+# 26.09.2026: der Rail-Knopf ist weg (Buendel entstehen aus jedem Bauplan).
+check("aa376 es gibt keinen Rail-Knopf zum Multi Buildplaner mehr",
+      "self._bau_multi_btn = tool_btn(" not in _mw376)
+check("aa376 das Buendel bekommt im Bauplan-Dialog den Plan-Namen (kein ESI-Name)",
+      "names[industry.BUENDEL_ID] = name" in _mw376)
+check("aa376 der Verkaufspreis des Buendels ist die Summe der Enden",
+      "pm[industry.BUENDEL_ID] = self._multi_buendel_verkauf(pm, _enden_mb)" in _mw376)
+check("aa376 die Menge eines Buendels ist im Rechenlauf immer 1",
+      'qty0 = 1 if _enden_mb else int(getattr(self, "_bd_qty", 1) or 1)' in _mw376)
+check("aa376 Entscheid B steht als Begruendung im Modul (Strukturen sind global)",
+      "bau_structures" in _mb376 and "GLOBAL" in _mb376)
+# JEDER t()-Text des neuen Moduls hat einen DE-Eintrag - ausgefuehrt, nicht
+# behauptet: alle Konstanten in t(...)-Aufrufen gegen den Katalog.
+import ast as _ast376
+_de376 = __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+_ohne376 = sorted({_n.args[0].value for _n in _ast376.walk(_ast376.parse(_mb376))
+                   if isinstance(_n, _ast376.Call) and getattr(_n.func, "id", None) == "t"
+                   and _n.args and isinstance(_n.args[0], _ast376.Constant)
+                   and isinstance(_n.args[0].value, str)
+                   and _n.args[0].value not in _de376})
+check("aa376 jeder sichtbare Text des Multi-Moduls hat einen DE-Eintrag"
+      + (f" - fehlt: {_ohne376[:2]}" if _ohne376 else ""), not _ohne376)
+
+# ---------------------------------------------------------------- (aa377)
+# SCHRITT 4: ME/TE UND "EIGENE BPC" JE ENDPRODUKT (Nutzer, 19.09.2026:
+# "aber jeder Plan hat doch seine eigene ME/TE wenn sie T2 sind").
+# AUSGEFUEHRT an einem Mini-Rezept mit ZWEI erfindbaren Enden: eines laeuft
+# ueber die Invention (feste ME 2 %), das andere ist eine eigene Kopie mit
+# ME 10. Das ist genau der Fall, den der alte EINE Schalter nicht trennen
+# konnte - er haette beide gleich gerechnet.
+_A377, _B377, _M377 = 971001, 971002, 971004
+_BPA377, _BPB377 = 981001, 981002
+_T1A377, _T1B377 = 961001, 961002
+
+
+class _Rec377:
+    product_to_bp = {_A377: (_BPA377, _I.MANUFACTURING, 1),
+                     _B377: (_BPB377, _I.MANUFACTURING, 1)}
+    bp_materials = {(_BPA377, _I.MANUFACTURING): [(_M377, 100)],
+                    (_BPB377, _I.MANUFACTURING): [(_M377, 100)]}
+    activity_time = {(_BPA377, _I.MANUFACTURING): 60,
+                     (_BPB377, _I.MANUFACTURING): 60}
+    activity_max_runs = {}
+    reaction_products = set()
+    # BEIDE Enden sind erfindbar - ohne Override regiert die Invention-ME.
+    invention_for_bpc = {_BPA377: (_T1A377, 10, 0.5, []),
+                         _BPB377: (_T1B377, 10, 0.5, [])}
+    bp_products = {}
+    item_cat = {}
+
+
+_pr377 = {_M377: 100.0, _A377: 1e12, _B377: 1e12}.get
+_o377 = {"invention": True, "job_pct": 0, "build_reactions": True,
+         "me": 0, "me_map": {}, "adjusted_prices": {_M377: 100.0},
+         "system_index_mfg": 0.0, "facility_tax": 0.0,
+         # Invention-Kosten ausklammern: hier geht es NUR um die ME.
+         "inv_datacore_free": True}
+_rb377 = _I.buendel_rezepte(_Rec377(), [(_A377, 10), (_B377, 10)])
+# Ohne Override: beide Enden bekommen die Invention-ME (gleich viel Material).
+_pl377 = _I.production_plan(_I.BUENDEL_ID, 1, _pr377, _rb377, dict(_o377))
+_mat377 = {t377: q377 for t377, q377 in (_pl377["build_mats"].get(_A377) or [])}
+_matb377 = {t377: q377 for t377, q377 in (_pl377["build_mats"].get(_B377) or [])}
+eq("aa377 ohne Override rechnen beide Enden mit derselben (Invention-)ME",
+   _mat377.get(_M377), _matb377.get(_M377))
+# MIT Override fuer B + ME 10 auf B: NUR B braucht weniger Material.
+_o377b = dict(_o377)
+_o377b["inv_manual_override"] = {_BPB377: True}
+_o377b["me_map"] = {_B377: 10.0}
+_pl377b = _I.production_plan(_I.BUENDEL_ID, 1, _pr377, _rb377, _o377b)
+_a377b = {t377: q377 for t377, q377 in (_pl377b["build_mats"].get(_A377) or [])}
+_b377b = {t377: q377 for t377, q377 in (_pl377b["build_mats"].get(_B377) or [])}
+check(f"aa377 'Eigene BPC' je Ende wirkt NUR auf dieses Ende "
+      f"(A {_a377b.get(_M377)} unveraendert, B {_b377b.get(_M377)} kleiner)",
+      _a377b.get(_M377) == _mat377.get(_M377)
+      and _b377b.get(_M377) < _matb377.get(_M377))
+# NACHGERECHNET: A laeuft weiter ueber die Invention - deren feste ME ist
+# 2 %, also 10 Runs x 100 x 0,98 = 980. B ist die eigene Kopie mit ME 10:
+# 10 x 100 x 0,90 = 900. Genau diese 80 Stueck Unterschied konnte der alte
+# EINE Schalter nicht abbilden.
+eq("aa377 ... A mit Invention-ME 2 % (980), B mit eigener ME 10 % (900)",
+   (_a377b.get(_M377), _b377b.get(_M377)), (980, 900))
+check("aa377 ... was die Gesamtkosten des Buendels senkt",
+      _pl377b["total_cost"] < _pl377["total_cost"] - 1.0)
+# Die Kosten je Ende folgen: A bleibt, B wird billiger.
+_k377 = _I.buendel_kosten_je_ende(_pl377)
+_k377b = _I.buendel_kosten_je_ende(_pl377b)
+check("aa377 Kosten je Ende: A unveraendert, B guenstiger, Summe stimmt weiter",
+      abs(_k377b[_A377]["je_stueck"] - _k377[_A377]["je_stueck"]) < 1e-6
+      and _k377b[_B377]["je_stueck"] < _k377[_B377]["je_stueck"] - 1e-6
+      and abs(sum(_x["gesamt"] for _x in _k377b.values())
+              - _pl377b["total_cost"]) < 1e-6)
+# DIE UEBERSETZUNG (UI -> opts) ist der Kern von Schritt 4.
+_mb377 = open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+_hp377 = open("eve_trader/ui/mw_helpers.py", encoding="utf-8").read()
+_fe377 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+check("aa377 'Eigene BPC' je Ende wird in inv_manual_override je Blaupause uebersetzt",
+      "def _multi_opts_je_ende" in _mb377
+      and 'opts["inv_manual_override"] = ov' in _mb377)
+check("aa377 ein abgewaehltes Ende wird ausdruecklich WIEDER entfernt",
+      "ov.pop(bp[0], None)" in _mb377)
+# OHNE ZUWEISUNG AN `opts` (Nutzer-Befund 20.09.2026): ein `opts = ...` in
+# job() macht den Namen dort lokal und damit ueberall unbelegt - "Open build
+# plan" oeffnete deshalb gar kein Fenster. Die Methode aendert das Woerterbuch
+# an Ort und Stelle; lint_order Muster C haelt das jetzt fest (aa379).
+check("aa377 die Uebersetzung laeuft VOR dem ersten Baum (sonst alte ME)",
+      0 < _src_txt.find("self._multi_opts_je_ende(opts, recipes)")
+      < _src_txt.find("tree = industry.build_tree(type_id, pm.get, recipes, opts)"))
+check("aa377 ... und weist `opts` in job() NICHT neu zu (UnboundLocalError)",
+      "opts = self._multi_opts_je_ende(" not in _src_txt)
+check("aa377 'Runs/BPC' je Ende erreicht den Runplaner-Deckel",
+      "def _multi_runs_cap_je_ende" in _mb377
+      and "_mr = getattr(self, \"_multi_runs_cap_je_ende\", None)" in _hp377)
+check("aa377 das einzelne ME/TE-Feld oben ist beim Buendel ausgeblendet",
+      "and not _ist_buendel)" in _fe377
+      # NUR hide(), nie setVisible(True): sonst wird aus dem Haken ein
+      # eigenes Fenster, solange er in keinem Layout haengt (b8).
+      and "if _ist_buendel:\n            own_bpc_cb.hide()" in _fe377)
+check("aa377 der alte EINE 'Eigene BPC'-Zweig laeuft beim Buendel nicht mehr",
+      'if getattr(self, "_bd_own_bpc", False) and type_id != industry.BUENDEL_ID:'
+      in _fe377)
+check("aa377 'Eigene BPC' gehoert in den Aenderungs-Vergleich (Entscheid A)",
+      'bool(p.get("own_bpc", False)),' in _mb377)
+
+# ---------------------------------------------------------------- (aa378)
+# SCHRITT 4b: EIN Decryptor je Blaupause - fuer ME UND fuer Runs/Kopien.
+# `decryptor_fuer_bp` ist die eine Stelle, die das beantwortet. Stuende die
+# Wahl zweimal im Code, koennten die ME (aus `_invention_me_pct`) und die
+# Kopienzahl (Multi-Bauplan) irgendwann von VERSCHIEDENEN Decryptoren
+# ausgehen - eine Zahl waere dann still falsch.
+_glob378 = {"inv_prob_mult": 1.0, "inv_run_mod": 0, "inv_me_mod": 0,
+            "inv_te_mod": 0, "inv_decryptor_id": None}
+_je378 = (1.0, 9, 5, 0, 34203)          # Decryptor mit +9 Runs, +5 ME
+eq("aa378 ohne Wahl je Item gilt die globale Einstellung",
+   _I.decryptor_fuer_bp(9999, dict(_glob378)),
+   (1.0, 0, 0, 0, None))
+eq("aa378 die Wahl je Blaupause schlaegt die globale Einstellung",
+   _I.decryptor_fuer_bp(9999, dict(_glob378, inv_decryptor_map={9999: _je378})),
+   _je378)
+eq("aa378 ... und gilt nur fuer DIESE Blaupause",
+   _I.decryptor_fuer_bp(8888, dict(_glob378, inv_decryptor_map={9999: _je378})),
+   (1.0, 0, 0, 0, None))
+
+
+class _Rec378:
+    product_to_bp = {770001: (780001, _I.MANUFACTURING, 1)}
+    bp_materials = {(780001, _I.MANUFACTURING): [(34, 100)]}
+    activity_time = {(780001, _I.MANUFACTURING): 60}
+    activity_max_runs = {}
+    reaction_products = set()
+    invention_for_bpc = {780001: (760001, 10, 0.5, [])}
+    bp_products = {}
+    item_cat = {}
+
+
+# ME und Runs MUESSEN aus demselben Decryptor stammen - hier gemessen:
+_o378 = dict(_glob378, invention=True, inv_decryptor_map={780001: _je378})
+_me378 = _I._invention_me_pct(780001, _Rec378(), _o378)
+_out378 = _I.invention_outcome(10, 0.5, _I.decryptor_fuer_bp(780001, _o378))
+eq("aa378 ME und Runs kommen aus DEMSELBEN Decryptor (eine Quelle)",
+   (_me378, _out378["runs"]), (_out378["me_pct"], 19))
+check("aa378 der Decryptor je Item wirkt wirklich (ME ist nicht die 2-%-Basis)",
+      _me378 != _I._invention_me_pct(780001, _Rec378(), dict(_glob378, invention=True)))
+# Die Stufen-Zeile "Endprodukt" behauptet beim Buendel keine EINE Zahl mehr.
+check("aa378 das Stufen-Panel verweist beim Buendel auf die Endprodukte-Karte",
+      'if getattr(self, "_bd_buendel_enden", None):' in
+      _fn_src("_bd_refresh_bp_stage_info")
+      and "Several end products" in _fn_src("_bd_refresh_bp_stage_info"))
+check("aa378 Kopien je Ende gehen als Pro-Item-Wert an den Runplaner",
+      "def _multi_bp_cap_je_ende" in _mb376
+      and "_mc = getattr(self, \"_multi_bp_cap_je_ende\", None)" in _hp377)
+
+# ---------------------------------------------------------------- (aa379)
+# LINT-MUSTER C:  x = f(x)  als ERSTE Zuweisung von x in einer Funktion.
+# NUTZER-BEFUND 20.09.2026: "Open build plan" oeffnete kein Fenster. Im
+# Bauplan-Job stand `opts = self._multi_opts_je_ende(opts, recipes)` - durch
+# diese eine Zeile war `opts` in job() lokal und damit ueberall unbelegt.
+# Muster A sucht Lesen VOR der Zuweisung, Muster B den Zugriff einer
+# verschachtelten Funktion - BEIDE gingen daran vorbei, weil Lesen und
+# Zuweisen in DERSELBEN Zeile stehen. AUSGEFUEHRT, nicht behauptet.
+import tempfile as _tf379
+import importlib.util as _iu379
+_spec379 = _iu379.spec_from_file_location("lint379", "tests/lint_order.py")
+_lint379 = _iu379.module_from_spec(_spec379)
+_spec379.loader.exec_module(_lint379)
+_quelle379 = """
+def aussen(a):
+    opts = {"x": 1}
+
+    def job():
+        opts = hilf(opts, 2)
+        return opts
+    return job
+
+
+def zaehler():
+    n = 0
+
+    def inner():
+        n += 1
+        return n
+    return inner
+
+
+def erlaubt(a):
+    xs = [b for b in range(3)]
+    xs = xs + [4]
+    return xs
+
+
+def erlaubt2(w):
+    w = w or {}
+    return w
+
+
+def erlaubt3():
+    global GLOB
+    GLOB = GLOB + 1
+    return GLOB
+"""
+with _tf379.NamedTemporaryFile("w", suffix=".py", delete=False,
+                               encoding="utf-8") as _fh379:
+    _fh379.write(_quelle379)
+    _pfad379 = _fh379.name
+_bef379 = _lint379.check_file(_pfad379)
+os.unlink(_pfad379)
+eq("aa379 genau zwei Befunde - die beiden echten Fehler", len(_bef379), 2)
+check("aa379 der Selbstbezug in der ersten Zuweisung wird gefunden (x = f(x))",
+      any(":6:" in _b and "'opts'" in _b for _b in _bef379))
+check("aa379 ... und '+=' ohne nonlocal genauso",
+      any(":15:" in _b and "'n'" in _b for _b in _bef379))
+check("aa379 eine Comprehension mit gleichem Namen ist KEIN Fund",
+      not any("'xs'" in _b for _b in _bef379))
+check("aa379 ein Parameter, der sich selbst absichert (w = w or {}), auch nicht",
+      not any("'w'" in _b for _b in _bef379))
+check("aa379 und ein als global erklaerter Name auch nicht",
+      not any("'GLOB'" in _b for _b in _bef379))
+check("aa379 die Meldung nennt den Ausweg, nicht nur den Fehler",
+      all("Anderen Namen nehmen" in _b for _b in _bef379))
+
+# ---------------------------------------------------------------- (aa381)
+# LINT-MUSTER D: eine Methode mit einer Vorgabe ungleich False/0 wird als
+# RUECKRUF weitergereicht. NUTZER-BEFUND 20.09.2026: "klicke ich jetzt auf
+# multibuildplan passiert gar nichts". Der Rail-Knopf hing direkt an
+# `self._open_multi_bauplan_dialog`, die gerade `bearbeiten=None` bekommen
+# hatte; `clicked` uebergab sein `checked`-Bool, `False is not None` fuehrte
+# in den Bearbeiten-Zweig, der nach einem Plan mit der id False suchte und
+# still zurueckkam. Kein Absturz, kein Eintrag im Log - nichts geschah.
+# Dateiuebergreifend, weil die Methode in einem Mixin steht und der Knopf
+# woanders gebaut wird. AUSGEFUEHRT, nicht behauptet.
+_quelle381a = """
+class Fenster:
+    def gefaehrlich(self, bearbeiten=None):
+        return bearbeiten
+
+    def harmlos_false(self, still=False):
+        return still
+
+    def harmlos_index(self, i=0):
+        return i
+
+    def ohne_vorgabe(self, pflicht):
+        return pflicht
+
+    def ohne_parameter(self):
+        return 1
+"""
+_quelle381b = """
+def bau(self):
+    b1.clicked.connect(self.gefaehrlich)
+    b2.clicked.connect(self.harmlos_false)
+    b3.currentIndexChanged.connect(self.harmlos_index)
+    b4.clicked.connect(self.ohne_vorgabe)
+    b5.clicked.connect(self.ohne_parameter)
+    knopf(text, self.gefaehrlich)
+    b6.clicked.connect(lambda: self.gefaehrlich())
+    self.gefaehrlich(4711)
+"""
+_pfade381 = []
+for _txt381 in (_quelle381a, _quelle381b):
+    with _tf379.NamedTemporaryFile("w", suffix=".py", delete=False,
+                                   encoding="utf-8") as _fh381:
+        _fh381.write(_txt381)
+        _pfade381.append(_fh381.name)
+_bef381 = _lint379.check_alle(_pfade381)
+for _p381 in _pfade381:
+    os.unlink(_p381)
+eq("aa381 genau zwei Befunde - beide Weitergaben der heiklen Methode",
+   len(_bef381), 2)
+check("aa381 der Signal-Anschluss wird gefunden (clicked.connect)",
+      any(":3:" in _b and "gefaehrlich" in _b for _b in _bef381))
+check("aa381 ... und die Weitergabe ueber einen Helfer genauso",
+      any(":8:" in _b and "gefaehrlich" in _b for _b in _bef381))
+check("aa381 eine Vorgabe False ist kein Fund - genau das schickt Qt",
+      not any("harmlos_false" in _b for _b in _bef381))
+check("aa381 ein Index-Vorgabewert 0 auch nicht",
+      not any("harmlos_index" in _b for _b in _bef381))
+check("aa381 eine Methode ohne Vorgabe ist kein Fund",
+      not any("ohne_vorgabe" in _b for _b in _bef381))
+check("aa381 eine Methode ohne Parameter erst recht nicht",
+      not any("ohne_parameter" in _b for _b in _bef381))
+check("aa381 ein Lambda und ein echter Aufruf sind keine Weitergabe",
+      not any(":9:" in _b or ":10:" in _b for _b in _bef381))
+check("aa381 die Meldung nennt den Ausweg (Lambda), nicht nur den Fehler",
+      all("Lambda" in _b for _b in _bef381))
+
+# ---------------------------------------------------------------- (aa380)
+# RESERVIERUNGS-FRAGE UND MULTI-BAUPLAN (Nutzer-Frage 20.09.2026: "wie soll
+# ich da antworten? brauchen wir einen 3ten Antwort Button?"). Kein dritter
+# Knopf - er waere nur eine zweite Art, Nein zu sagen. Stattdessen:
+#   * gehoert der Plan schon zu einem Buendel, wird GAR NICHT gefragt
+#     (dort wird gemeinsam reserviert; ein "Ja" wuerde doppelt blockieren -
+#     auf der Karte ist das Schloss aus demselben Grund gesperrt);
+#   * sonst nennt die Frage den Multi-Fall beim Namen.
+_sav380 = _fn_src("_save_plan") if "_save_plan" in _src_txt else _src_txt
+check("aa380 ein Plan in einem Buendel wird gar nicht erst gefragt",
+      '_multi_von9 = self._multi_gehoert_zu(plans).get(new_entry["id"]) or []'
+      in _src_txt
+      and "and not _multi_von9)" in _src_txt)
+check("aa380 ... und seine Reservierung wird dabei ausdruecklich ausgeschaltet",
+      'if _multi_von9:\n                new_entry["reserve"] = False' in _src_txt)
+check("aa380 ... und er erfaehrt, wer stattdessen reserviert",
+      "and is reserved there." in _src_txt)
+check("aa380 die Frage nennt den Multi-Fall",
+      "plan into a multi build " in _src_txt)
+# KEIN DRITTER KNOPF - und zwar aus dem Grund, den der NUTZER selbst genannt
+# hat (20.09.2026): "Nein, ich will einen Multiplan daraus machen" kaeme zum
+# falschen Zeitpunkt, denn man muss erst mehrere Plaene anlegen. Er waere auch
+# ueberfluessig: die Antwort ist NICHT bindend - beim Buendeln hebt
+# `config.buendel_quellen_freigeben` (aus `_save_plan`) die Einzel-
+# Reservierung ohnehin auf. Das sagt der Text jetzt, statt eine dritte Wahl
+# anzubieten.
+check("aa380 es bleibt bei ZWEI Antworten (kein dritter Knopf)",
+      "_QMB9.Yes | _QMB9.No, _QMB9.Yes if _koll9 else _QMB9.No)" in _src_txt
+      and "bundle it in a multi build plan" not in _src_txt)
+check("aa380 die Frage sagt, dass die Antwort umkehrbar ist",
+      "You can change this any time with the lock on the plan's " in _src_txt)
+check("aa380 ... und was beim spaeteren Buendeln von selbst passiert",
+      "reservation is released automatically" in _src_txt)
+# Und das ist keine leere Zusage: der Speicherer tut es wirklich (b86).
+# Seit 26.09.2026 ueber config.buendel_quellen_freigeben (EINE Stelle) - seit
+# dem Aufraeumen des Multi-Dialogs (26.09.2026) ruft sie nur noch `_save_plan`
+# im Bauplan-Fenster; die Funktion loest.
+check("aa380 der Buendel-Speicherer loest die Einzel-Reservierung wirklich auf",
+      "config.buendel_quellen_freigeben(" in
+      open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+      and 'x["reserve"] = False' in
+      open("eve_trader/config.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa382)
+# EIN JOB, ZWEI PLAENE - und die Einkaufsliste beider faellt auf leer.
+#
+# NACHGESTELLT AM 21.09.2026 (Regel 5), Nutzer-Bild: "ich muss staendig
+# Reactions fuer einen Plan nachbauen, es gehen aber bei anderen Plaenen die
+# Runs zurueck" und "mir fehlt ploetzlich wieder Material".
+#
+# URSACHE: `_frozen_auto_checked` ordnet einen gelieferten Job allein ueber
+# Item + Aktivitaet + Zeitpunkt zu - ESI verraet den Bauplan naemlich nicht.
+# Gemessen: EIN Job ueber 2'250 Runs, Plan A braucht 2'250 (richtig), Plan B
+# nur 400 - und bekam trotzdem 2'250 angerechnet. Weil dieselbe Zahl frueher
+# auch `_restbedarf_jetzt` speiste, fiel die EINKAUFSLISTE beider auf leer.
+#
+# DIE TRENNUNG, die daraus folgte: raten darf nur die ANZEIGE. Der
+# Restbedarf rechnet mit `delivered_sicher` - Deckel auf die Plan-Runs, und
+# umstrittene Items zaehlen gar nicht (Regel 3).
+from eve_trader.ui.mw_helpers import (MainWindowHelpers as _MWH,   # noqa: E402
+                                      delivered_sicher as _mwh_sicher,
+                                      restbedarf_map as _mwh_restmap)
+_aa382_job = [{"product_type_id": 31337, "activity_id": 9, "runs": 2250,
+               "completed_date": "2001-09-09T02:46:40Z", "job_id": 4242}]
+_aa382_ts = 1_000_000.0
+_aa382_A = [{"tid": 31337, "runs": 375, "stage": "reaction_1", "char_id": 11}
+            for _ in range(6)]                      # 2250 Runs
+_aa382_B = [{"tid": 31337, "runs": 100, "stage": "reaction_1", "char_id": 22}
+            for _ in range(4)]                      # 400 Runs
+_aa382_mats = {31337: [(16644, 100), (16643, 40)]}
+_, _aa382_gelA = _MWH._frozen_auto_checked(_aa382_job, _aa382_A, _aa382_ts)
+_, _aa382_gelB = _MWH._frozen_auto_checked(_aa382_job, _aa382_B, _aa382_ts)
+# DAS FEHLERBILD selbst festnageln - verschwindet es, ist die Zuordnung
+# repariert und diese Pruefung gehoert angepasst, nicht geloescht.
+eq("aa382 Plan B bekommt den fremden Job weiterhin angerechnet (Anzeige)",
+   int(_aa382_gelB.get(31337, 0)), 2250)
+# ... aber die EINKAUFSLISTE sieht ihn nicht mehr.
+_aa382_umstr = {31337}          # beide Plaene beanspruchen dieses Item
+_aa382_sichB = _mwh_sicher(_aa382_gelB, {31337: 400}, _aa382_umstr)
+eq("aa382 umstrittenes Item zaehlt fuer den Restbedarf GAR NICHT",
+   dict(_aa382_sichB), {})
+_, _aa382_needB = _mwh_restmap({31337: 400}, _aa382_mats, _aa382_sichB)
+eq("aa382 Plan B kauft sein Material weiterhin ein",
+   dict(_aa382_needB), {16644: 100, 16643: 40})
+# GEGENPROBE (Regel 5): ohne Streit rechnet die sichere Karte ganz normal -
+# ein Plan allein darf seinen eigenen Fortschritt sehr wohl abziehen.
+_aa382_sichA = _mwh_sicher(_aa382_gelA, {31337: 2250}, set())
+eq("aa382 Gegenprobe: unstrittiger Job wird voll angerechnet",
+   int(_aa382_sichA.get(31337, 0)), 2250)
+_, _aa382_needA = _mwh_restmap({31337: 2250}, _aa382_mats, _aa382_sichA)
+eq("aa382 Gegenprobe: dessen Einkaufsliste ist leer", dict(_aa382_needA), {})
+# ZWEITE SICHERUNG, unabhaengig vom Streit: der Deckel. Ein Job kann nie
+# mehr abbuchen, als der Plan ueberhaupt vorhat.
+eq("aa382 Deckel: hoechstens die Plan-Runs",
+   int(_mwh_sicher({31337: 9999}, {31337: 400}, set()).get(31337, 0)), 400)
+eq("aa382 kein Plan-Eintrag -> kein Abzug",
+   dict(_mwh_sicher({31337: 50}, {}, set())), {})
+# UND DIE VERDRAHTUNG: die beiden Materialrechnungen duerfen die geratene
+# Karte nicht mehr lesen. Ohne das waere die ganze Trennung Kosmetik.
+# Seit 26.09.2026 liest `_restbedarf_jetzt` die Karte ueber
+# `_rest_geliefert_jetzt` (aa273 prueft die Verdrahtung).
+_aa382_rest = _fn_src("_rest_geliefert_jetzt") + _fn_src("_restbedarf_jetzt")
+_aa382_fehl = _fn_src("_fehlbedarf_jetzt")
+check("aa382 _restbedarf_jetzt liest die SICHERE Karte",
+      "_bd_runplan_delivered_sicher" in _aa382_rest)
+check("aa382 _restbedarf_jetzt liest die geratene NICHT mehr",
+      '"_bd_runplan_delivered",' not in _aa382_rest)
+check("aa382 _fehlbedarf_jetzt liest die SICHERE Karte",
+      "_bd_runplan_delivered_sicher" in _aa382_fehl)
+check("aa382 _fehlbedarf_jetzt liest die geratene NICHT mehr",
+      '"_bd_runplan_delivered",' not in _aa382_fehl)
+# Die Anzeige behaelt ihre Karte - sonst waere die Trennung nur ein
+# Umbenennen und der Runplaner verloere seine Farben.
+# WER BEANSPRUCHT DASSELBE ITEM? Gelesen wird `reserve_map` JEDES anderen
+# Plans - auch ohne Schloss. Die Frage lautet hier nicht "wer hat
+# reserviert", sondern "wer koennte denselben Job gebaut haben"; ein Plan
+# ohne Schloss baut genauso. Wuerde nur auf Schloss geprueft, waere der
+# haeufigste Fall (Nutzer hat bei einem Plan Nein gedrueckt) wieder offen.
+_aa382_set = {"bau_saved_plans": [
+    {"id": 1, "reserve_map": {"31337": 10}},                 # ohne Schloss!
+    {"id": 2, "reserve": True, "reserve_map": {"16644": 5}},
+    {"id": 3, "reserve_map": {"99999": 1}}]}
+eq("aa382 umstritten = alle anderen Plaene, Schloss egal",
+   _MWH._umstrittene_items(_aa382_set, 3), {31337, 16644})
+# ABGESCHLOSSENE PLAENE NICHT (Nutzer 25.09.2026: "die Frage war relativ
+# unnoetig, es ist der einzige nicht abgeschlossene Bauplan den ich habe").
+# Beim Abschliessen geht nur das Schloss auf, die reserve_map bleibt stehen -
+# sonst haengt jedes Zwischenprodukt fuer immer im Streit.
+eq("aa382 ein abgeschlossener Plan macht nichts mehr umstritten",
+   _MWH._umstrittene_items({"bau_saved_plans": [
+       {"id": 1, "done_manual": True, "reserve_map": {"31337": 10}},
+       {"id": 2, "reserve_map": {"16644": 5}}]}, 9), {16644})
+eq("aa382 der EIGENE Plan macht nichts umstritten",
+   _MWH._umstrittene_items({"bau_saved_plans": [
+       {"id": 7, "reserve_map": {"31337": 10}}]}, 7), set())
+check("aa382 der Runplaner fragt wirklich nach den umstrittenen Items",
+      "self._umstrittene_items(" in _src_txt)
+check("aa382 die sichere Karte entsteht aus den PLAN-Runs der Zuteilungen",
+      "_plan_runs_s[_t_s] = (_plan_runs_s.get(_t_s, 0)" in _src_txt)
+check("aa382 im Fehlerfall wird NICHTS abgebucht (Regel 3)",
+      "self._bd_runplan_delivered_sicher = {}" in _src_txt)
+check("aa382 die Anzeige-Karte wird weiterhin gefuellt",
+      "self._bd_runplan_delivered = dict(_auto_runs or {})" in _src_txt)
+
+# ---------------------------------------------------------------- (aa383)
+# STUFE B: DIE ZUORDNUNG WIRD BELEGT STATT GERATEN (21.09.2026)
+#
+# ESI sagt nicht, zu welchem Bauplan ein Job gehoert. Die Logik dahinter,
+# und sie ist bewusst herum:
+#     ESI belegt, DASS gebaut wurde. Der Klick belegt, FUER WEN.
+# Ein Klick allein bewirkt nichts - er wird erst wirksam, wenn ESI danach
+# einen passenden Job meldet. Ein Fehlklick bleibt damit folgenlos.
+from eve_trader.ui.mw_helpers import (job_zuordnen as _jz,                # noqa: E402
+                                      stufe_ist_reaktion as _sir,
+                                      KLICK_FENSTER_SEK as _KFS)
+_T383 = 31337
+
+
+def _j383(jid, runs, ts, tid=_T383, akt=9):
+    return {"job_id": jid, "product_type_id": tid, "runs": runs,
+            "activity_id": akt, "start_ts": ts}
+
+
+def _k383(runs, ts, tid=_T383, reak=True):
+    return {"tid": tid, "runs": runs, "ts": ts, "reaktion": reak}
+
+
+# EIN KLICK ORDNET DIE ZEILE ZU, NICHT EINEN JOB: bei "6 x 375" klickt man
+# einmal und startet sechs Jobs.
+eq("aa383 ein Klick deckt alle Jobs seiner Zeile",
+   len(_jz([_j383(i, 375, 1000 + i) for i in range(6)], [_k383(375, 900)],
+           {}, "A", {_T383: 2250})), 6)
+# DER DECKEL IST DIE BREMSE, nicht die Zeit: mehr als die Plan-Runs geht nie.
+eq("aa383 Deckel: 750 Plan-Runs lassen nur zwei 375er-Jobs zu",
+   len(_jz([_j383(i, 375, 1000 + i) for i in range(6)], [_k383(375, 900)],
+           {}, "A", {_T383: 750})), 2)
+eq("aa383 Item, das der Plan gar nicht baut -> nichts",
+   _jz([_j383(1, 375, 1000, tid=999)], [_k383(375, 900, tid=999)], {}, "A",
+       {_T383: 2250}), {})
+# EIN KLICK KANN NICHTS BELEGEN, WAS VORHER SCHON LIEF.
+eq("aa383 Job vor dem Klick zaehlt nicht",
+   _jz([_j383(1, 375, 800)], [_k383(375, 900)], {}, "A", {_T383: 2250}), {})
+eq("aa383 Klick aelter als das Fenster bindet nichts mehr",
+   _jz([_j383(1, 375, 900 + _KFS + 1)], [_k383(375, 900)], {}, "A",
+       {_T383: 2250}), {})
+# DIE RUN-ZAHL IST DAS ERKENNUNGSMERKMAL (Nutzer-Idee: 6x375 passt nur zu
+# einem Plan). Wer anders startet, bekommt keine Zuordnung - lieber keine
+# Aussage als eine falsche.
+eq("aa383 andere Run-Zahl als geklickt -> keine Zuordnung",
+   _jz([_j383(1, 248, 1000)], [_k383(375, 900)], {}, "A", {_T383: 2250}), {})
+# AKTIVITAET MUSS PASSEN - eine Reaktion rechnet keine Fertigung ab.
+eq("aa383 Fertigungs-Job gegen Reaktions-Klick -> nichts",
+   _jz([_j383(1, 375, 1000, akt=1)], [_k383(375, 900)], {}, "A",
+       {_T383: 2250}), {})
+# SCHON VERGEBENE JOBS BLEIBEN, WO SIE SIND - das macht die Zuordnung stabil.
+eq("aa383 ein bereits vergebener Job wird nicht neu verteilt",
+   _jz([_j383(1, 375, 1000)], [_k383(375, 900)], {1: "B"}, "A",
+       {_T383: 2250}), {})
+eq("aa383 ohne Klick gibt es keine Zuordnung",
+   _jz([_j383(1, 375, 1000)], [], {}, "A", {_T383: 2250}), {})
+# REPRODUZIERBAR: aelteste Jobs zuerst, damit die Reihenfolge der Liste das
+# Ergebnis nicht aendert (dieselbe Regel wie in plane_erz_einkauf).
+_jobs383 = [_j383(7, 375, 3000), _j383(3, 375, 1000), _j383(5, 375, 2000)]
+eq("aa383 bei knappem Deckel gewinnt der AELTESTE Job",
+   sorted(_jz(_jobs383, [_k383(375, 900)], {}, "A", {_T383: 375})), [3])
+eq("aa383 ... unabhaengig von der Listenreihenfolge",
+   sorted(_jz(list(reversed(_jobs383)), [_k383(375, 900)], {}, "A",
+              {_T383: 375})), [3])
+
+# BELEGTES ZAEHLT AUCH BEI STREIT - sonst wuerde ausgerechnet der bewiesene
+# Fortschritt verschenkt und der Nutzer kaufte dauerhaft zu viel.
+eq("aa383 umstritten + belegt -> die belegten Runs zaehlen",
+   _mwh_sicher({_T383: 2250}, {_T383: 400}, {_T383}, {_T383: 400}),
+   {_T383: 400})
+eq("aa383 umstritten + belegt bleibt am Deckel",
+   _mwh_sicher({_T383: 2250}, {_T383: 400}, {_T383}, {_T383: 900}),
+   {_T383: 400})
+eq("aa383 umstritten ohne Beleg zaehlt weiterhin NICHT",
+   _mwh_sicher({_T383: 2250}, {_T383: 400}, {_T383}), {})
+# DIE TATSACHE BLEIBT ESI (Skizze 2.4): ein abgebrochener Job verschwindet
+# aus der Lieferliste - eine Zuordnung allein baut nichts.
+eq("aa383 belegt, aber von ESI nicht geliefert -> nichts",
+   _mwh_sicher({}, {_T383: 400}, {_T383}, {_T383: 400}), {})
+
+# UNREFINED IST EINE REAKTION (Befund 21.09.2026, zwei Wahrheiten im Code).
+check("aa383 stufe_ist_reaktion kennt die Unrefined-Stufe",
+      _sir("unrefined") and _sir("reaction_1") and _sir("reaction_2")
+      and not _sir("component") and not _sir("end") and not _sir(None))
+_job383u = [{"product_type_id": 42, "activity_id": 9, "runs": 10,
+             "completed_date": "2001-09-09T02:46:40Z"}]
+eq("aa383 gelieferter Unrefined-Job zaehlt als Fortschritt",
+   _MWH._frozen_auto_checked(
+       _job383u, [{"tid": 42, "runs": 10, "stage": "unrefined",
+                   "char_id": 1}], 1_000_000.0)[1], {42: 10})
+# GEGENPROBE: ein FERTIGUNGS-Job darf eine Unrefined-Zeile nicht abrechnen.
+eq("aa383 Gegenprobe: Fertigungs-Job auf der Unrefined-Stufe zaehlt nicht",
+   _MWH._frozen_auto_checked(
+       [{"product_type_id": 42, "activity_id": 1, "runs": 10,
+         "completed_date": "2001-09-09T02:46:40Z"}],
+       [{"tid": 42, "runs": 10, "stage": "unrefined", "char_id": 1}],
+       1_000_000.0)[1], {})
+
+# DER SPEICHER (gegen echte SQLite, wie aa373).
+import tempfile as _tf383                                            # noqa: E402
+_alt_home383 = os.environ.get("EVE_TRADER_HOME")
+os.environ["EVE_TRADER_HOME"] = _tf383.mkdtemp()
+try:
+    import importlib as _il383                                       # noqa: E402
+    from eve_trader import config as _cfg383, store as _st383        # noqa: E402
+    _il383.reload(_cfg383)
+    _il383.reload(_st383)
+    check("aa383 Zuordnung wird gespeichert",
+          _st383.job_zuordnung_setzen(4711, "A", _T383, 375, "klick"))
+    # DIE ERSTE ENTSCHEIDUNG GEWINNT - sonst waere die Tabelle so wackelig
+    # wie die Raterei, die sie ersetzt.
+    check("aa383 eine bestehende Zuordnung wird NICHT ueberschrieben",
+          not _st383.job_zuordnung_setzen(4711, "B", _T383, 375, "signatur"))
+    eq("aa383 der Job gehoert weiterhin dem ersten Plan",
+       _st383.job_zuordnung_alle(), {4711: "A"})
+    # ... ausser der NUTZER korrigiert von Hand.
+    check("aa383 der Nutzer darf umhaengen",
+          _st383.job_zuordnung_umhaengen(4711, "B"))
+    eq("aa383 nach dem Umhaengen gehoert er dem anderen Plan",
+       _st383.job_zuordnung_alle(), {4711: "B"})
+    eq("aa383 Zuordnungen eines Plans sind loeschbar",
+       (_st383.job_zuordnung_loeschen("B"), _st383.job_zuordnung_alle()),
+       (1, {}))
+    try:
+        _st383.job_zuordnung_setzen(1, "A", 1, 1, "erfunden")
+        check("aa383 unbekannte Quelle wird abgelehnt", False)
+    except ValueError:
+        check("aa383 unbekannte Quelle wird abgelehnt", True)
+    # VORHER AUFRAEUMEN: dieser Test schreibt in eine echte SQLite-Datei.
+    # Ohne das sammelt er ueber die Laeufe hinweg seine eigenen Klicks an und
+    # wird beim zweiten Durchgang rot - dieselbe Falle wie b46 mit der
+    # .smoke_home (Suiten-Zustand ueberlebt Laeufe).
+    _st383.job_zuordnung_loeschen("A")
+    _st383.job_zuordnung_loeschen("B")
+    _st383.run_klicks_loeschen("A")
+    _st383.run_klick_merken("A", _T383, 375, True, ts=1000.0)
+    _st383.run_klick_merken("A", _T383, 248, False, ts=1100.0)
+    eq("aa383 Klicks kommen im Format von job_zuordnen zurueck",
+       _st383.run_klicks_fuer_plan("A"),
+       [{"tid": _T383, "runs": 375, "reaktion": True, "ts": 1000.0},
+        {"tid": _T383, "runs": 248, "reaktion": False, "ts": 1100.0}])
+    eq("aa383 alte Klicks lassen sich aufraeumen",
+       (_st383.run_klicks_aufraeumen(1050.0),
+        len(_st383.run_klicks_fuer_plan("A"))), (1, 1))
+    _st383.run_klicks_loeschen("A")
+    _st383.job_zuordnung_loeschen("A")
+    _st383.job_zuordnung_loeschen("B")
+finally:
+    if _alt_home383 is None:
+        os.environ.pop("EVE_TRADER_HOME", None)
+    else:
+        os.environ["EVE_TRADER_HOME"] = _alt_home383
+    _il383.reload(_cfg383)
+    _il383.reload(_st383)
+
+# DIE VERDRAHTUNG - ohne sie waere die ganze Stufe Theorie.
+# EIN GELOESCHTER PLAN LAESST NICHTS ZURUECK. Beides liegt in industry.db,
+# nicht in den Einstellungen - ohne ausdrueckliches Loeschen blieben die
+# Eintraege stehen und wuerden Jobs fuer einen Plan blockieren, den es nicht
+# mehr gibt.
+_del383 = _fn_src("_delete_saved_plan")
+check("aa383 Plan loeschen raeumt die Job-Zuordnung mit auf",
+      "store.job_zuordnung_loeschen(pid)" in _del383)
+check("aa383 Plan loeschen raeumt die Klicks mit auf",
+      "store.run_klicks_loeschen(pid)" in _del383)
+check("aa383 der Run-Knopf merkt sich den Klick",
+      "self._run_klick_merken(" in _src_txt)
+check("aa383 ... mit der ECHTEN Aktivitaet, nicht ueber den Stufennamen",
+      "_ak=a.get(\"activity\")" in _src_txt and "_ak in (9, 11)" in _src_txt)
+check("aa383 der Runplaner-Aufbau fuehrt die Zuordnung nach",
+      "self._job_zuordnung_nachfuehren(" in _src_txt)
+check("aa383 belegte Runs werden an delivered_sicher gereicht",
+      "_belegt_s)" in _src_txt)
+check("aa383 belegt zaehlt nur, was ESI auch geliefert hat",
+      "for _dj in (getattr(self, \"_bd_delivered_jobs\"" in _src_txt)
+check("aa383 ein Klick ohne gespeicherten Plan wird verworfen",
+      "_pid = getattr(self, \"_bd_open_plan_id\", None)" in
+      _fn_src("_run_klick_merken"))
+check("aa383 faellt das Zuordnen aus, gilt das bisherige Verhalten",
+      "self._log_exception(\"Job-Zuordnung\"" in _src_txt)
+
+# ---------------------------------------------------------------- (aa384)
+# DAS KAESTCHEN EINER ESI-FERTIGEN ZEILE BLEIBT (Nutzer 21.09.2026: "ist der
+# Tool gruene Hacken da kann ich selber kein gruenen Hacken mehr setzen").
+#
+# Das klang nach Bedienkomfort und war ein MATERIAL-Fehler: der Hand-Haken
+# ist die EINZIGE Quelle, aus der `_reserve_map_mitlaufend` die Zutaten einer
+# Zeile abbucht. Wurde das Kaestchen entfernt, sobald ESI die Zeile als
+# fertig meldete, konnte fuer sie nie ein Haken entstehen - ihr Material
+# blieb fuer immer reserviert. Je weiter ein Plan gebaut wurde, desto mehr
+# Zeilen verloren ihr Kaestchen: ein FERTIGER Plan konnte sich per Bauart
+# nicht mehr entlasten und fing jeden Nachschub anderer Plaene ab.
+_pl384 = {"build_mats": {50: [(16644, 1000), (16643, 500)]}}
+_res384 = {16644: 1000, 16643: 500, 50: 100}
+_ass384 = [{"tid": 50, "runs": 100, "stage": "component", "char_id": 7}]
+# MIT Haken: die Zutaten sind verbraucht, nur das Erzeugnis bleibt
+# reserviert - es liegt jetzt im Hangar und gehoert diesem Plan.
+eq("aa384 ein Haken bucht die Zutaten der Zeile ab",
+   _MWH._reserve_map_mitlaufend(_pl384, _res384, {"component|7|50": 1500.0},
+                                _ass384, 2000.0), {50: 100})
+# OHNE Haken (genau der Zustand, den das entfernte Kaestchen erzwang):
+# nichts wird frei.
+eq("aa384 ohne Haken bleibt ALLES reserviert - der Fehler, um den es geht",
+   _MWH._reserve_map_mitlaufend(_pl384, _res384, {}, _ass384, 2000.0),
+   {16644: 1000, 16643: 500, 50: 100})
+# Die ESI-Verzugssperre bleibt unangetastet: ein Haken zaehlt erst, wenn der
+# Bestand JUENGER ist als er - sonst gaebe der Plan Zutaten frei, die ESI
+# noch als vorhanden meldet (Regel 3, lieber eine Stunde zu lange sperren).
+eq("aa384 ein Haken vor dem letzten Bestand zaehlt noch nicht",
+   _MWH._reserve_map_mitlaufend(_pl384, _res384, {"component|7|50": 2500.0},
+                                _ass384, 2000.0),
+   {16644: 1000, 16643: 500, 50: 100})
+# UND DIE OBERFLAECHE: das Kaestchen darf nicht mehr entfernt werden.
+check("aa384 eine ESI-fertige Zeile verliert ihr Kaestchen NICHT mehr",
+      "iit.setFlags(iit.flags() & ~Qt.ItemIsUserCheckable)" not in _src_txt)
+check("aa384 sie bekommt stattdessen ein leeres Kaestchen",
+      "if iit.data(0, Qt.CheckStateRole) is None:\n"
+      "                            iit.setCheckState(0, Qt.Unchecked)"
+      in _src_txt)
+# ... und der Nutzer erfaehrt, WOFUER es noch gut ist (Regel 6) - sonst
+# sieht es nach Arbeit aus, die laengst erledigt ist.
+check("aa384 der Tooltip sagt, was das Abhaken bewirkt",
+      "Tick it once you are really done" in _src_txt
+      and "line still reserves for other " in _src_txt)
+check("aa384 der Hinweis haengt an BEIDEN Zustaenden (fertig wie laufend)",
+      "iit.setToolTip(0, iit.toolTip(0) + _frei_tip)" in _src_txt)
+# GEGENPROBE: Material-Unterzeilen bekommen weiterhin KEIN Kaestchen
+# (Sitzung 22 - "dieser gruene Haken ist nicht von mir").
+check("aa384 Material-Unterzeilen bleiben ohne Kaestchen",
+      "NIE ABHAKBAR (Nutzer, 15.09.2026" in _src_txt)
+
+# ---------------------------------------------------------------- (aa385)
+# IM BUENDEL IST JEDES ENDE EIN ENDPRODUKT - auch beim ESI-Lauf-Hinweis.
+# (Nutzer-Screenshot 21.09.2026: "warum ist Flycatcher violett?")
+#
+# Violett heisst "fuer dieses Item laeuft laut ESI gerade ein Job". Bei
+# einer ZWISCHENSTUFE wird die Zeile zusaetzlich DURCHGESTRICHEN ("laeuft
+# schon, nicht nochmal einplanen"); beim ENDPRODUKT nicht - dort ist es
+# genau das Item, das man bauen will, und der Tooltip sagt stattdessen
+# "der Plan bleibt gueltig, pruef nur, ob du wirklich MEHR willst".
+#
+# `int(t) == int(type_id)` trifft beim Multi-Bauplan NIE zu: dort ist
+# `type_id` die Buendel-ID (-1). Jedes Ende galt deshalb als Zwischenstufe.
+# In Schritt 2 wurde diese Frage ueberall auf `_bd_enden` umgestellt -
+# diese eine Stelle wurde uebersehen.
+_esi385 = _fn_src("_show_build_detail")
+check("aa385 der Lauf-Hinweis fragt die Enden-Menge, nicht nur type_id",
+      "or int(t) in self._bd_enden(type_id))" in _esi385)
+check("aa385 ... und zwar an der Stelle, die das Durchstreichen entscheidet",
+      "_is_root = (int(t) == int(type_id)" in _esi385)
+# Die Unterscheidung selbst muss erhalten bleiben - ohne sie waere der Fix
+# sinnlos: dann wuerde entweder alles oder nichts durchgestrichen.
+check("aa385 Zwischenstufen werden weiterhin durchgestrichen",
+      "if not _is_root:" in _esi385
+      and "f.setStrikeOut(True)" in _esi385)
+check("aa385 und der Endprodukt-Tooltip sagt, dass der Plan gueltig bleibt",
+      "This is your end product" in _esi385)
+
+# ---------------------------------------------------------------- (aa386)
+# BLUEPRINTS-TAB: das Buendel ist keine Blaupause, und die Spalte
+# "Blueprint" zeigt den BLAUPAUSEN-Namen (Nutzer-Befunde 21.09.2026).
+_bt386 = _fn_src("_fill_blueprint_tab")
+# (1) "im Blueprint-Tab wird Multiplan als Blueprint gewertet. ist aber
+#     keiner nur eine Gruppierung" - der Multi-Bauplan hat ein PSEUDO-Rezept
+#     (BUENDEL_BP), damit production_plan ueber mehrere Enden rechnen kann.
+#     `full_build_chain` liefert es deshalb wie jedes andere Item mit, und im
+#     Tab stand es als Komponente mit "completely missing - you need 1":
+#     eine Blaupause, die es im Spiel nicht gibt.
+check("aa386 das Buendel wird im Blueprints-Tab uebersprungen",
+      'if int(j.get("tid", 0) or 0) == industry.BUENDEL_ID:' in _bt386
+      and "continue" in _bt386)
+# (2) "es steht nur das Item, nicht Blueprint hintendran" - die Spalte heisst
+#     Blueprint, also gehoert der Name hinein, unter dem man im Spiel sucht.
+check("aa386 die Spalte zeigt den Blaupausen-Namen",
+      'self._bp_name_fuer(_basis_bp, activity)' in _bt386)
+check("aa386 der Basisname bleibt daneben erhalten",
+      '"basis": _basis_bp' in _bt386)
+# ... und genau deshalb darf das Kopieren NICHT den Anzeigenamen nehmen:
+# sonst haengt ein zweites " Blueprint" dran.
+check("aa386 Kopieren/Suche nehmen den Basisnamen",
+      'base = str(r9.get("basis") or r9.get("name") or "").strip()' in _src_txt)
+check("aa386 die Zeile merkt sich den Basisnamen, nicht die Anzeige",
+      'it.setData(Qt.UserRole + 8, r.get("basis") or r.get("name"))' in _src_txt)
+# DIE REGEL SELBST ist EINE Stelle (aa-Regel 9): Reaktionen heissen anders.
+from eve_trader import industry as _ind386                          # noqa: E402
+eq("aa386 Fertigung -> ' Blueprint'",
+   MW._bp_name_fuer("Magpulse Thruster", _ind386.MANUFACTURING),
+   "Magpulse Thruster Blueprint")
+eq("aa386 Reaktion -> ' Reaction Formula'",
+   MW._bp_name_fuer("Caesarium Cadmide", _ind386.REACTION),
+   "Caesarium Cadmide Reaction Formula")
+eq("aa386 leerer Name bleibt leer", MW._bp_name_fuer("", 1), "")
+
+# ---------------------------------------------------------------- (aa387)
+# 51 TAGE STATT 4 - "EINE RIESENKOPIE" WAR GERATEN (Nutzer 21.09.2026):
+# "es werden zwar die bpc copy runs vollstaendig aufgeteilt doch werden nicht
+# alle charaktere verwendet und somit steht 51 Tage Bauzeit."
+# SEINE LAGE (Screenshots der Blaupausen, nachgezaehlt): 13 Flycatcher-Kopien
+# a 4 Runs = 52, 14 Stork a 2 = 28, 5 Ametat II a 10 = 50. Die Karte meldete
+# "1 x 52 runs" / "1 x 28 runs" - `_multi_bp_je_ende` nahm ohne getippte
+# "Runs/BPC" die GESAMTE Run-Zahl als EINE Kopie
+# (`... or 0) or noetig`). Eine Kopie = ein gleichzeitiger Job = ein Slot =
+# ein Charakter = alles hintereinander.
+# NACHGESTELLT, NICHT HERGELEITET (Regel 5) - die Zeiten je Run stammen aus
+# den Dauern seines Screenshots, und die Gegenprobe (richtige Kopienzahl)
+# laeuft mit exakt denselben Zahlen.
+_TF387, _TS387, _TA387 = 85785.0, 75270.0, 4374.0        # s/Run
+_J387 = [
+    {"tid": 100, "name": "Flycatcher", "runs": 52, "activity": _I.MANUFACTURING,
+     "base_time": _TF387, "is_end": True},
+    {"tid": 200, "name": "Stork", "runs": 28, "activity": _I.MANUFACTURING,
+     "base_time": _TS387, "is_end": True},
+    {"tid": 300, "name": "Ametat II", "runs": 50, "activity": _I.MANUFACTURING,
+     "base_time": _TA387, "is_end": True},
+]
+_RC387 = {100: 4, 200: 2, 300: 10}       # Runs je Kopie (aus dem ESI-Cache)
+_C387 = [{"id": i + 1, "name": f"C{i+1}", "mfg_slots": 9, "reaction_slots": 9,
+          "can_mfg": True, "can_react": True} for i in range(5)]
+
+
+def _end387(cap):
+    _r = _I.schedule_build(_J387, _C387, per_item_cap=cap,
+                           per_item_runs_cap=_RC387)
+    _chars = {a["char_name"] for a in _r["assignments"] if a.get("stage") == "end"}
+    return _r["stage_times"]["end"] / 86400.0, len(_chars)
+
+
+_alt387 = _end387({100: 1, 200: 1, 300: 5})      # die alte Annahme
+_neu387 = _end387({100: 13, 200: 14, 300: 5})    # was er wirklich besitzt
+check(f"aa387 FEHLERBILD: 'eine Kopie' zwingt alles auf EINEN Charakter "
+      f"({_alt387[0]:.1f} Tage, {_alt387[1]} Charakter)",
+      _alt387[1] == 1 and 51.0 <= _alt387[0] <= 52.0)
+check(f"aa387 GEGENPROBE: mit der echten Kopienzahl verteilt es sich "
+      f"({_neu387[0]:.1f} Tage, {_neu387[1]} Charaktere)",
+      _neu387[1] >= 3 and _neu387[0] < 5.0)
+check("aa387 ... und das ist mehr als eine Zehntel-Verbesserung",
+      _alt387[0] > _neu387[0] * 10)
+
+# DIE REINE ENTSCHEIDUNG - ohne Fenster pruefbar (mw_helpers-Regel).
+from eve_trader.ui.mw_helpers import eigene_kopie_lage as _ekl387  # noqa: E402
+eq("aa387 getippte 'Runs/BPC' gewinnt vor allem anderen",
+   _ekl387(52, 10, 4, 13), {"copies": 6, "runs": 10})
+eq("aa387 sonst zaehlt die kleinste eigene Kopie aus dem Blaupausen-Cache",
+   _ekl387(52, 0, 4, 13), {"copies": 13, "runs": 4})
+eq("aa387 Stork: 28 Runs, Kopien a 2", _ekl387(28, 0, 2, 14),
+   {"copies": 14, "runs": 2})
+# WEISS NIEMAND ETWAS, WIRD NICHTS GERATEN. Frueher entstand genau hier die
+# Riesenkopie; "unbekannt" heisst jetzt unbegrenzt - wie bei T1/BPO.
+eq("aa387 ohne jede Angabe: kein Deckel (None), NICHT 'eine Kopie mit allem'",
+   _ekl387(52, 0, 0, 0), None)
+eq("aa387 mehr Jobs als Blaupausen kann niemand fahren",
+   _ekl387(52, 0, 4, 3), {"copies": 3, "runs": 4})
+eq("aa387 weniger Runs als eine Kopie traegt: EINE Kopie",
+   _ekl387(3, 0, 10, 5), {"copies": 1, "runs": 10})
+eq("aa387 Muell in den Feldern kippt nicht auf die alte Annahme zurueck",
+   _ekl387(52, None, None, None), None)
+
+_mb387 = open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+check("aa387 die alte Annahme steht nicht mehr im Code",
+      "or 0) or noetig)" not in _mb387)
+check("aa387 der Multi-Bauplan fragt den Blaupausen-Cache, statt zu raten",
+      "_lage = eigene_kopie_lage(noetig, obpc_runs.get(tid)," in _mb387
+      and "self._bpc_runs_by_tid(_cache, runs_von, p2b)" in _mb387
+      and "self._bp_copies_by_tid(_cache, runs_von, p2b)" in _mb387)
+# GEAENDERT 26.09.2026 (Einherji II, "unendlich T2 Copys? das geht nicht"):
+# unbekannte Groesse bei eigener Kopie heisst jetzt 1 Run je Kopie (die 1,
+# die das Feld zeigt) und wird gespeichert - nie mehr "kein Eintrag".
+check("aa387 unbekannte Kopiengroesse bei eigener Kopie: 1 Run je Kopie, gespeichert",
+      "if _lage is None:" in _mb387
+      and "self._bd_own_bpc_runs_je_ende[tid] = 1" in _mb387
+      and "_lage = eigene_kopie_lage(noetig, 1, None, _esi_kop.get(tid))" in _mb387)
+# ZWEI ZAHLEN FUER DIESELBE SACHE (sein Screenshot): das Feld "Runs/BPC"
+# zeigte 1, die Spalte daneben rechnete mit 52. Das Feld zeigt jetzt IMMER,
+# womit gerechnet wird - auch bei "Eigene BPC".
+check("aa387 'Runs/BPC' zeigt die Zahl, mit der wirklich gerechnet wird",
+      'if bpd and int(bpd.get("runs", 0) or 0) >= 1:' in _mb387
+      and "if not _ob and bpd" not in _mb387)
+check("aa387 und der Unendlich-Fall sagt bei eigener Kopie, WAS fehlt",
+      "but how many runs one copy carries is " in _mb387
+      and '(getattr(self, "_bd_own_bpc_je_ende", None) or {}).get(int(tid)):'
+      in _mb387)
+
+# ---------------------------------------------------------------- (aa388)
+# EIN EINGEFRORENES BUENDEL WIRD NICHT STILL UMGEBAUT. Bis 26.09.2026 fragte
+# der Bearbeiten-Dialog vorher (Nutzer 21.09.2026: "Vorher fragen"); der
+# Dialog ist ausgebaut. Die Zusage lebt in den zwei neuen Wegen weiter:
+# HERAUSNEHMEN (x je Ende) verweigert bei eingefrorenem Fenster mit dem
+# Hinweis "erst auftauen" (b87 faehrt es), DAZUNEHMEN taut auf und SAGT es
+# (Nutzer 26.09.2026: eingefroren ist kein Hindernis, b87). Hier steht, dass
+# keine dritte, stille Variante im Code ist.
+check("aa388 Herausnehmen: eingefroren -> Hinweis, kein stiller Umbau",
+      'if getattr(self, "_bd_frozen", None):' in _mb387
+      and 'Frozen plan \\u2013 unfreeze it first (Tools), then ' in _mb387)
+# SEIT 27.09.2026 (Nutzer: "gefrorene und gespeicherte Plaene sind dazu da,
+# dass ich im Profit-Overview immer weiss, wie viel Profit ich mache"):
+# DAZUNEHMEN veraendert einen eingefrorenen/reservierten/abgeschlossenen
+# gespeicherten Plan NICHT mehr, sondern legt eine Kopie an - auf beiden
+# Wegen (Rechtsklick und Knopf im Fenster).
+check("aa388 Dazunehmen: eingefroren/reserviert -> Kopie, beide Wege",
+      "def _multi_braucht_kopie(p):" in _mb387
+      and "_kopie = self._multi_braucht_kopie(p)" in _mb387
+      and "_kopie = self._multi_braucht_kopie(gesp)" in _mb387
+      and "self._multi_kopie_von(p) if _kopie else p" in _mb387
+      and "_basis = self._multi_kopie_von(_basis)" in _mb387
+      and "The plan was unfrozen" not in _mb387)
+check("aa388 der alte Dialog-Weg ist wirklich weg",
+      "_multi_ist_eingefroren(bearb)" not in _mb387
+      and "This bundle is frozen AND reserves material" not in _mb387)
+
+# ---------------------------------------------------------------- (aa389)
+# (1) RAIL-KNOEPFE TRAGEN DEN ALTEN NAMEN (Nutzer 22.09.2026: "die
+# Namensgebung der Buttons gefaellt mir generell immernoch nicht, gehe
+# zurueck auf alten Namensstand fuer Multibuildplan und Build plan"). Die
+# "Create ..."-Fassung vom selben Tag ist damit zurueckgenommen; sie war
+# ausserdem breiter als die Rail. Knopf und Fenstertitel heissen jetzt
+# wieder gleich - genau das prueft der Block.
+check("aa389 der Rail-Knopf heisst 'New build plan'",
+      't("New build plan"), self._open_build_picker_dialog,' in _src_txt)
+check("aa389 kein Multi-Rail-Knopf mehr (26.09.2026)",
+      "self._bau_multi_btn = tool_btn(" not in _src_txt)
+check("aa389 der Fenstertitel des Auswahlfensters heisst genauso",
+      'dlg.setWindowTitle(t("New build plan"))' in _src_txt)
+# Kein verwaister Katalogeintrag: aa235/aa257 zaehlen jeden Eintrag, der
+# im Code nicht mehr vorkommt, als Fehler.
+_spr389 = open("eve_trader/sprache.py", encoding="utf-8").read()
+check("aa389 die 'Create ...'-Eintraege sind aus dem Katalog raus",
+      '"Create build plan":' not in _spr389
+      and '"Create multibuild plan":' not in _spr389)
+# Das Tutorial zeigt auf diesen Knopf - es muss ihn beim alten Namen nennen.
+_tut389 = open("eve_trader/ui/tutorial.py", encoding="utf-8").read()
+check("aa389 das Tutorial nennt den Knopf beim alten Namen",
+      "click 'New build plan' here" in _tut389
+      and "click 'Create build plan' here" not in _tut389)
+
+# (2) DAS RESERVIERUNGS-SCHLOSS - EINE STELLE FUERS AUSSEHEN.
+# Nutzer 22.09.2026: "das Schloss-Symbol ist zu unuebersichtlich. Nicht
+# aktiviert -> grau wie jetzt / aktiviert mit Amber voll ausgefuellt."
+# DABEI GEFUNDEN: `_toggle_plan_reserve` zeichnete das Symbol beim Klick
+# ohne `farbe=` neu - die amberne Faerbung des Karten-Aufbaus war nach dem
+# ERSTEN Klick weg und kam erst nach einem Neuaufbau der Liste zurueck.
+_res389 = _fn_src("_plan_reserve_stil")
+check("aa389 es gibt EINE Stelle fuer das Aussehen des Schlosses",
+      "def _plan_reserve_stil" in _src_txt)
+check("aa389 aktiviert: amberne FLAECHE, Symbol in der Hintergrundfarbe",
+      "background:{theme.AMBER}" in _res389
+      and 'icons.icon("lock", farbe=theme.BG)' in _res389)
+check("aa389 aus: gedaempftes Symbol, Knopf im Themen-Stil",
+      'icons.icon("lock_open", farbe=theme.MUTED)' in _res389
+      and 'btn.setStyleSheet("")' in _res389)
+check("aa389 der Karten-Aufbau zeichnet ueber diese eine Stelle",
+      "self._plan_reserve_stil(rs, bool(p.get(\"reserve\")))" in _src_txt)
+check("aa389 ... und das Umschalten ebenso (die Farbe ging dort verloren)",
+      "self._plan_reserve_stil(btn, bool(on))" in _fn_src("_toggle_plan_reserve")
+      # Der alte, farblose Aufruf darf nirgends mehr stehen.
+      and 'setIcon(icons.icon("lock" if on else "lock_open"))' not in _src_txt)
+
+# ---------------------------------------------------------------- (aa390)
+# DER FORTSCHRITTSBALKEN SPRINGT NICHT MEHR (Nutzer 22.09.2026: "es fuehlt
+# sich an, als gaebe es am Anfang kaum Fortschritt und dann springt der
+# Balken von 20 % auf 100 % und fertig"). Nutzer-Entscheid: RUNS statt
+# Positionen, ein laufender Job zaehlt halb.
+#
+# ZWEI URSACHEN, beide gemessen:
+#  (1) gezaehlt wurden POSITIONEN - eine Stufe mit 52 Runs sah genauso weit
+#      aus wie eine mit 2, und der Balken bewegte sich nur in Stufen-
+#      Spruengen;
+#  (2) `esi.fetch_delivered_jobs` filterte auf `activity_id == 1` -
+#      REAKTIONEN fielen komplett heraus. Die ersten Stufen eines
+#      Schiffsplans sind fast nur Reaktionen, also konnte da NIE etwas
+#      erledigt werden. Dieselbe Fehlerklasse wie "unrefined war keine
+#      Reaktion": eine fuer EINEN Zweck gefilterte Liste bekam spaeter
+#      einen zweiten Zweck.
+from eve_trader.ui.mw_helpers import plan_fortschritt_runs as _pfr  # noqa: E402
+from eve_trader import esi as _esi390                               # noqa: E402
+
+# (2) zuerst - die Filterung selbst.
+eq("aa390 herstellend sind Fertigung UND beide Reaktions-Kennungen",
+   tuple(_esi390.HERSTELLENDE_AKTIVITAETEN), (1, 9, 11))
+_src390 = open("eve_trader/esi.py", encoding="utf-8").read()
+check("aa390 die Lieferliste filtert ueber DIESE Menge, nicht auf '== 1'",
+      'if j.get("activity_id") not in HERSTELLENDE_AKTIVITAETEN:' in _src390
+      and 'j.get("activity_id") != 1' not in _src390)
+check("aa390 ... und reicht die Aktivitaet weiter, statt sie zu verschlucken",
+      '"activity_id": j.get("activity_id"),' in _src390)
+# Forschung/Kopieren/Invention bleiben DRAUSSEN - ihr product_type_id ist
+# eine Blaupause, kein gebautes Stueck.
+check("aa390 Forschung, Kopieren und Invention zaehlen NICHT als gebaut",
+      all(_a390 not in _esi390.HERSTELLENDE_AKTIVITAETEN
+          for _a390 in (3, 4, 5, 8)))
+
+# (1) die Rechnung, nachgerechnet von Hand.
+# Plan: 100 Runs von A, 50 von B. Geliefert 50 A, laufend 50 B.
+#   erledigt = 50 + 0,5 x 50 = 75 von 150 = 50,0 %.
+# Positionen haetten gesagt: 2 von 2 angelaufen = 100 %.
+_z390 = {10: 100, 20: 50}
+eq("aa390 geliefert zaehlt voll",
+   _pfr(_z390, [{"job_id": 1, "product_type_id": 10, "runs": 50}]),
+   (50.0, 150.0))
+eq("aa390 ein laufender Job zaehlt halb (50 + 0,5x50 = 75)",
+   _pfr(_z390, [{"job_id": 1, "product_type_id": 10, "runs": 50}],
+        [{"job_id": 2, "product_type_id": 20, "runs": 50}]),
+   (75.0, 150.0))
+# MONOTON: wird derselbe Job abgeliefert, geht es HOCH, nie zurueck.
+_vorher390 = _pfr(_z390, [], [{"job_id": 2, "product_type_id": 20, "runs": 50}])[0]
+_nachher390 = _pfr(_z390, [{"job_id": 2, "product_type_id": 20, "runs": 50}], [])[0]
+check(f"aa390 Abliefern schiebt den Balken HOCH ({_vorher390} -> {_nachher390})",
+      _nachher390 > _vorher390)
+# DECKEL: ein einzelner Riesen-Job gleicht nicht den ganzen Plan aus.
+eq("aa390 mehr als geplant traegt eine Position nicht bei",
+   _pfr({10: 100}, [{"job_id": 1, "product_type_id": 10, "runs": 5000}]),
+   (100.0, 100.0))
+eq("aa390 ... auch nicht geliefert PLUS laufend",
+   _pfr({10: 100}, [{"job_id": 1, "product_type_id": 10, "runs": 100}],
+        [{"job_id": 2, "product_type_id": 10, "runs": 100}]),
+   (100.0, 100.0))
+# "FEST ZUGEORDNET" (seine Worte): ein Job, der einem ANDEREN Plan gehoert,
+# schiebt diesen Balken nicht.
+eq("aa390 ein fremd belegter Job zaehlt hier NICHT",
+   _pfr({10: 100}, [], [{"job_id": 9, "product_type_id": 10, "runs": 100}],
+        {9: "anderer"}, "meiner"),
+   (0.0, 100.0))
+eq("aa390 ... der EIGENE dagegen schon",
+   _pfr({10: 100}, [], [{"job_id": 9, "product_type_id": 10, "runs": 100}],
+        {9: "meiner"}, "meiner"),
+   (50.0, 100.0))
+eq("aa390 ohne Zuordnungs-Eintrag bleibt es bei der bisherigen Zaehlung",
+   _pfr({10: 100}, [], [{"job_id": 9, "product_type_id": 10, "runs": 100}],
+        {}, "meiner"),
+   (50.0, 100.0))
+eq("aa390 ein Job fuer ein Item ausserhalb des Plans zaehlt nicht",
+   _pfr({10: 100}, [{"job_id": 1, "product_type_id": 999, "runs": 50}]),
+   (0.0, 100.0))
+eq("aa390 ohne Plan-Runs gibt es keinen Nenner", _pfr({}, []), (0.0, 0.0))
+
+# VERDRAHTUNG: der Balken rechnet wirklich damit, und die laufenden Jobs
+# werden wirklich geholt.
+check("aa390 die Plan-Karte holt auch die LAUFENDEN Jobs",
+      "aktiv_jobs.extend(\n                        esi.fetch_active_jobs("
+      in _cc208)
+check("aa390 ... fragt die Zuordnungs-Tabelle",
+      "job_besitzer = store.job_zuordnung_alle()" in _cc208)
+check("aa390 ... und der Prozentwert kommt aus den RUNS",
+      "_erl9, _ges9 = plan_fortschritt_runs(" in _cc208
+      and "_pos_pct9 = (100.0 * _erl9 / _ges9) if _ges9 > 0 else 0.0" in _cc208)
+check("aa390 der Tooltip nennt die Zahlen, aus denen der Prozentwert entsteht",
+      '"runs_done": _erl9, "runs_all": _ges9}' in _src_txt
+      and "planned runs are delivered or running" in _src_txt)
+
+# ---------------------------------------------------------------- (aa391)
+# VERKAUFSLISTE: DIE MELDUNG MUSS SAGEN, WAS DIE ZAHL IST (Nutzer 22.09.2026:
+# "sollte dieser Modus nicht mein eingekauftes Item anschauen und mir den
+# Ziel-Preis kopieren und nicht einfach den naechstbesten Sell unterbieten?").
+#
+# GEPRUEFT: der PREIS war immer richtig. Im Ziel-Preis-Modus kommt er aus
+# `_optimal_sell_price(avg_buy)` - also genau aus seinem Einkauf, unabhaengig
+# vom Markt (in seinem Screenshot liegt eine Zeile sogar UEBER dem Marktpreis,
+# was ein Undercut nie koennte). Falsch war nur die Statuszeile: sie behauptete
+# IMMER "unterbietet den besten Sell um einen Tick". Dieselbe Fehlerklasse wie
+# in Sitzung 9 - eine Zahl mit einem Namen, der etwas anderes meint.
+_cs391 = _fn_src("_copy_sell_price")
+# RE-ANKER (aa392): die Meldung liest seit dem Markt-statt-Ziel-Fall nicht
+# mehr selbst den Modus-Schalter, sondern bekommt die QUELLE von der
+# Stelle, die den Preis gerechnet hat. Geprueft wird dasselbe wie vorher -
+# EIN Urteil ueber die Zahl, kein zweites -, nur am neuen Anker.
+check("aa391 die Meldung urteilt nicht selbst, sondern nimmt die Quelle des Preises",
+      "def _copy_sell_price(self, price, name, quelle)" in _src_txt
+      and 'if quelle == "ziel":' in _cs391
+      and "_sell_target_mode" not in _cs391)
+# ANKER NICHT UEBER EINEN ZEILENUMBRUCH SUCHEN: der Satz ist im Quelltext
+# auf zwei Zeichenketten verteilt ("... that is YOUR target " + "margin ...").
+check("aa391 im Ziel-Preis-Modus nennt sie die Ziel-Marge, nicht den Undercut",
+      "that is YOUR target " in _cs391
+      and "margin on the average buy price" in _cs391)
+check("aa391 im Normalfall bleibt die alte, richtige Meldung stehen",
+      "undercuts the best sell by one tick" in _cs391)
+# DIE RECHNUNG SELBST (unveraendert, hier nur festgenagelt): Ziel-Preis =
+# Einkauf x (1 + Ziel-Marge) / (1 - Steuer - Broker). NACHGERECHNET:
+# 1'000 x 1,20 / (1 - 0,036 - 0,025) = 1'200 / 0,939 = 1'277,955...
+_op391 = _fn_src("_optimal_sell_price")
+check("aa391 der Ziel-Preis geht vom EINKAUFSPREIS aus, nicht vom Markt",
+      "avg_buy * (1 + target) / denom" in _op391
+      and "jita_sell" not in _op391)
+# RE-ANKER (aa392): vorher rechneten MEHRERE Stellen der VERKAUFSLISTE den
+# Ziel-Preis selbst (darum ">= 2"). Jetzt tut das dort genau eine Methode.
+# Die zweite Fundstelle im Fenster ist das PORTFOLIO (`opt_price`, eigene
+# Spalte, eigener Zweck) - die darf und muss bleiben.
+check("aa391 ... und in der Verkaufsliste rechnet ihn genau EINE Stelle",
+      _fn_src("_sell_zeilen_preis").count(
+          "self._optimal_sell_price(h.avg_buy)") == 1
+      and _src_txt.count("self._optimal_sell_price(h.avg_buy)") == 2
+      and "opt_price = self._optimal_sell_price(h.avg_buy)" in _src_txt)
+# DER KNOPF AM EINFUEGE-FELD heisst jetzt nach seiner Wirkung (Nutzer
+# 22.09.2026). Er arbeitet auf der eingefuegten Hangar-Liste und unterbietet
+# IMMER - er kennt den Ziel-Preis-Modus gar nicht, also ist der Name hier
+# unbedingt richtig und nicht modus-abhaengig.
+check("aa391 der Clipboard-Knopf heisst nach seiner Wirkung",
+      't("Copy undercut sell")' in _src_txt
+      and 't("Copy sell prices")' not in _src_txt)
+_sp391 = _fn_src("_sell_paste_prices")
+check("aa391 ... und er unterbietet dort wirklich immer (kein Modus-Zweig)",
+      "_sell_target_mode" not in _sp391)
+
+
+# ---------------------------------------------------------------- (aa392)
+# MARKT STATT ZIEL (Nutzer-Wunsch 22.09.2026: "Also wenn der Zielpreis unter
+# dem aktuellen Undercut-Preis liegen wuerde, sollten wir vielleicht den
+# Undercut-Preis fuer diese spezifischen Einzelfaelle nehmen." Dazu seine
+# Angabe: "standard haben wir in den Einstellungen 12 Ziel-Marge drin, und
+# ich auch" - die Vorgabe in config.py ist ebenfalls 12,0.)
+#
+# WARUM ER RECHT HAT: der Ziel-Preis kennt den Markt nicht, er rechnet nur
+# Einkauf + Ziel-Marge + Gebuehren. Liegt der billigste Sell HOEHER, verkauft
+# die Ziel-Order trotzdem sofort (sie ist ja die billigste) - nur unnoetig
+# billig. Sein Beispiel: Ziel 196'745 gegen Markt 234'700, also rund 38'000
+# ISK je Stueck verschenkt.
+from eve_trader.ui.mw_helpers import sell_preis_ziel_modus as _spz392
+from eve_trader.config import DEFAULT_SETTINGS as _cfg392
+check("aa392 die Vorgabe der Ziel-Marge ist wirklich 12 (seine Angabe)",
+      float(_cfg392["target_margin"]) == 12.0)
+# HANDRECHNUNG mit seinen eigenen Zahlen:
+_p392a, _q392a = _spz392(196745.0, 234700.0)
+check("aa392 Markt ueber Ziel -> der Marktpreis gewinnt (196'745 vs 234'700)",
+      _p392a == 234700.0 and _q392a == "markt_statt_ziel")
+_p392b, _q392b = _spz392(300000.0, 234700.0)
+check("aa392 Ziel ueber Markt -> die Ziel-Marge bleibt die Untergrenze",
+      _p392b == 300000.0 and _q392b == "ziel")
+check("aa392 gleich gross ist KEIN Sonderfall (kein Preis-Flackern)",
+      _spz392(234700.0, 234700.0) == (234700.0, "ziel"))
+check("aa392 ohne Marktpreis bleibt der Ziel-Preis stehen",
+      _spz392(196745.0, 0.0) == (196745.0, "ziel"))
+check("aa392 ohne Einkaufspreis greift der Markt (kein 0-ISK-Preis)",
+      _spz392(None, 5.0) == (5.0, "markt_statt_ziel"))
+# EINE WAHRHEIT: alle Stellen, die einen Zeilenpreis brauchen, fragen
+# dieselbe Methode - und rechnen NICHT selbst.
+_zp392 = _fn_src("_sell_zeilen_preis")
+check("aa392 die eine Stelle kennt beide Modi",
+      "if not target_mode:" in _zp392
+      and 'return undercut, "markt"' in _zp392
+      and "return sell_preis_ziel_modus(" in _zp392)
+for _name392 in ("_sell_sort_value", "_render_sell_list", "_sell_copy_list"):
+    _f392 = _fn_src(_name392)
+    check(f"aa392 {_name392} fragt die eine Stelle",
+          "self._sell_zeilen_preis(" in _f392)
+    check(f"aa392 {_name392} rechnet den Preis nicht selbst nach",
+          "_optimal_sell_price" not in _f392
+          and "_undercut_price" not in _f392)
+# DIE ZAHL BEHAELT EINEN EHRLICHEN NAMEN: Farbe, Tooltip, Spaltenkopf und
+# Zwischenablage-Meldung haengen an der QUELLE, nicht an einem zweiten Blick
+# auf den Modus-Schalter.
+_rs392 = _fn_src("_render_sell_list")
+check("aa392 die ersetzte Zeile ist sichtbar anders gefaerbt",
+      'theme.CYAN if quelle == "markt_statt_ziel" else theme.AMBER' in _rs392)
+check("aa392 ... und erklaert im Tooltip, warum dort der Marktpreis steht",
+      "MARKET INSTEAD OF TARGET" in _rs392
+      and 'elif quelle == "markt_statt_ziel":' in _rs392)
+check("aa392 der Spaltenkopf nennt den Modus",
+      't("Sell price (target)") if target_mode' in _rs392
+      and 't("Sell price (undercut)")' in _rs392)
+check("aa392 die Quelle haengt an der Zelle, die den Preis gerechnet hat",
+      "pit.setData(Qt.UserRole + 2, quelle)" in _rs392
+      and "it.data(Qt.UserRole + 2)" in _fn_src("_sell_cell_clicked"))
+check("aa392 die Zwischenablage-Meldung hat einen eigenen Satz dafuer",
+      'elif quelle == "markt_statt_ziel":' in _cs391
+      and "your target price would be " in _cs391
+      and "BELOW the current market here" in _cs391)
+# KEIN TEXT DARF DIE ALTE ZUSAGE WEITER GEBEN. Der Modus-Knopf versprach
+# "genau der Preis, der deine Ziel-Marge erzielt - unabhaengig vom Markt",
+# und der Preise-laden-Knopf "ein Tick unter dem echten niedrigsten Sell".
+# Beides stimmt seit "Markt statt Ziel" nicht mehr in jedem Fall. Dieselbe
+# Fehlerklasse wie die alte Statuszeile - nur an einer anderen Stelle.
+_bt392 = _fn_src("_build_sell_tab")
+check("aa392 der Modus-Knopf verspricht keine Marktunabhaengigkeit mehr",
+      "at exactly the price that achieves your set target margin" not in _bt392
+      and "Where the market is HIGHER than that target price" in _bt392)
+check("aa392 ... und nennt die cyan markierte Ausnahme",
+      "is marked in cyan" in _bt392)
+check("aa392 'Preise laden' behauptet keinen Undercut mehr",
+      "the sale price (one tick below the real lowest sell)" not in _bt392
+      and "recalculates the sale price column from them" in _bt392)
+# DEUTSCH VORHANDEN (Regel: jeder sichtbare Text mit DE-Eintrag).
+from eve_trader import sprache as _sp392
+_de392 = _sp392.KATALOG["de"]
+for _t392 in ("Sell price (target)", "Sell price (undercut)"):
+    check(f"aa392 DE vorhanden: {_t392}", bool(_de392.get(_t392)))
+
+
+# ---------------------------------------------------------------- (aa393)
+# ORDERS GEHOEREN EINEM CHARAKTER (Nutzer-Befund 22.09.2026, mit seinem
+# eigenen Bericht `orders_bericht.txt` BELEGT, nicht vermutet):
+# sein Portfolio stand auf Lezaar und meldete bei Kinetic Energized
+# Membrane II (11249) "Buy" - die Order lag bei Leziris Gotflow, an einer
+# Struktur, waehrend sein Stack in Jita liegt. Drei seiner 14 verkaufs-
+# bereiten Zeilen waren so blockiert. Nutzer dazu: "das Portfolio darf
+# nicht mehr Sachen anzeigen, die einem anderen Charakter gehoeren, genau
+# deswegen haben wir ja Charakter-Auswahl-Dropdowns."
+class _FakeMW393:
+    pass
+
+_f393 = _FakeMW393()
+# Seine echte Lage, nachgebaut: Gotflow hat 11249, Lezaar hat 570.
+MW._orders_uebernehmen(_f393, {2118033530: {"buy": {11249}, "sell": set()},
+                               2115775672: {"buy": {570}, "sell": {2865}}})
+# MIT .get(), NICHT MIT [] - eine Pruefung, die beim Kaputtmachen eine
+# Ausnahme wirft statt rot zu werden, reisst die ganze Suite ab und
+# verdeckt alles danach (in der Rotprobe als "BLIND" aufgefallen).
+check("aa393 die Quelle bleibt je Charakter erhalten",
+      (_f393._orders_je_char.get(2118033530) or {}).get("buy") == {11249}
+      and (_f393._orders_je_char.get(2115775672) or {}).get("buy") == {570})
+check("aa393 die flache Menge ist daraus ABGELEITET, nicht daneben gefuehrt",
+      _f393._buy_order_ids == {11249, 570}
+      and _f393._sell_order_ids == {2865})
+_f393._pf_char_cid = lambda: 2115775672        # Portfolio steht auf Lezaar
+check("aa393 Lezaar traegt Gotflows Kauf-Order NICHT (der gemeldete Fehler)",
+      MW._hat_order(_f393, "buy", 11249) is False)
+check("aa393 ... seine eigene aber schon",
+      MW._hat_order(_f393, "buy", 570) is True)
+_f393._pf_char_cid = lambda: "all"
+check("aa393 bei 'alle Charaktere' zaehlt wieder jede Order",
+      MW._hat_order(_f393, "buy", 11249) is True
+      and MW._hat_order(_f393, "buy", 570) is True)
+check("aa393 ein ausdruecklich genannter Charakter schlaegt die Auswahl",
+      MW._hat_order(_f393, "buy", 11249, cid=2118033530) is True
+      and MW._hat_order(_f393, "buy", 11249, cid=2115775672) is False)
+# BEIDE Abrufwege muessen durch dieselbe Stelle - sonst klopft der grosse
+# Scan die Auskunft nach jedem "Refresh all" wieder flach.
+check("aa393 beide Abrufwege laufen durch _orders_uebernehmen",
+      _src_txt.count("self._orders_uebernehmen(") == 2
+      and "self._buy_order_ids = res[" not in _src_txt
+      and 'self._buy_order_ids = res.get("buy_order_ids"' not in _src_txt)
+_fo393 = _fn_src("_fetch_open_orders")
+check("aa393 der Abruf wirft den Charakter nicht mehr weg",
+      'je_char[int(cid)] = {"buy": _b, "sell": _s}' in _fo393)
+# PORTFOLIO: Bestand und Order-Auskunft kennen DIESELBE Einschraenkung.
+check("aa393 Portfolio-Zeile und Status fragen den gewaehlten Charakter",
+      'in_market = self._hat_order("sell", h.type_id)' in _src_txt
+      and 'has_open_buy = self._hat_order("buy", h.type_id)' in _src_txt)
+check("aa393 ... und _sell_ready ebenso",
+      'self._hat_order("sell", h.type_id)' in _fn_src("_sell_ready"))
+check("aa393 auch die rote Markierung der Verkaufsliste fragt den Charakter",
+      'and self._hat_order("sell", h.type_id))' in _fn_src("_render_sell_list"))
+check("aa393 die fremde Order verschwindet nicht, sie steht im Tooltip",
+      "Buy order at: {chars}" in _src_txt
+      and "_order_fremde_chars" in _fn_src("_render_portfolio"))
+# VERKAUFSLISTE: der Filter ist eine ENTSCHEIDUNG, keine Automatik.
+_rs393 = _fn_src("_render_sell_list")
+check("aa393 die Liste filtert nicht mehr von sich aus",
+      "h.type_id not in buy_open_ids" not in _rs393)
+check("aa393 ... sondern nur mit dem Schalter",
+      'if getattr(self, "_sell_hide_orders", False):' in _rs393
+      and 'not self._hat_order("buy", h.type_id)' in _rs393)
+check("aa393 ... und sagt dann, wie viele sie versteckt",
+      "hidden (open buy order)" in _rs393
+      and "self._sell_versteckt = _alle - len(rows)" in _rs393)
+_bt393 = _fn_src("_build_sell_tab")
+check("aa393 der Schalter steht im Tools-Menue und ist ankreuzbar",
+      't("Hide active orders")' in _bt393
+      and "_sl_hide_act.setCheckable(True)" in _bt393)
+check("aa393 ... und merkt sich seinen Zustand",
+      '"sell_hide_active_orders"' in _bt393
+      and '"sell_hide_active_orders"' in _fn_src("_sell_hide_orders_toggle"))
+from eve_trader.config import DEFAULT_SETTINGS as _cfg393
+check("aa393 Standard ist AUS - die alte stille Filterung war der Befund",
+      _cfg393["sell_hide_active_orders"] is False)
+for _t393 in ("Hide active orders", "Buy order at: {chars}",
+              "{n} Item(s) \u2013 {k} hidden (open buy order)"):
+    check(f"aa393 DE vorhanden: {_t393[:28]}", bool(_de392.get(_t393)))
+
+
+# ---------------------------------------------------------------- (aa394)
+# ORDER-LEITER: FREMDE KAUF-ORDERS SIND KEINE MENGENVORLAGE (Nutzer
+# 22.09.2026: "da werden alle Buy Order von anderen Spielern aufgelistet, da
+# kann man draufklicken, dann bekommt man die Anzahl Items von anderen Buy
+# Order in den Einkaufswagen - das ist daemlich, ich will ja keine Buy Order
+# kaufen, ich will eigene erstellen").
+# Auf der VERKAUFSseite (Swing/Regional) bleibt der Klick richtig: dort
+# kauft man die Orders wirklich weg.
+_lp394 = _fn_src("_ladder_pick")
+check("aa394 auf der Kaufseite nimmt der Klick keine fremde Menge mehr",
+      'if ctx.get("buy_side"):' in _lp394 and "return" in _lp394)
+check("aa394 ... auf der Verkaufsseite bleibt er erhalten",
+      "qty = sum(v for _p, v in ladder[:row + 1])" in _lp394)
+_bl394 = _fn_src("_build_ladder_panel")
+# NUR DIE ORDER-LEITER: "→ Shopping list" heisst anderswo noch so (die
+# Rechtsklick-Menues der Tabellen), und das ist dort richtig - ein Menue-
+# eintrag ist kurz, ein Knopf soll seine Wirkung nennen.
+check("aa394 der Knopf heisst nach seiner Wirkung",
+      't("Add to shopping list")' in _bl394
+      and 't("→ Shopping list")' not in _bl394)
+check("aa394 ... auch nach dem Zuruecksetzen aus dem Wagen",
+      't("Add to shopping list")' in _fn_src("_set_ladder_button"))
+_wb394 = _fn_src("_wagen_block")
+check("aa394 das Mengenfeld steht im Wagen-Block und erklaert sich",
+      "zeile.addWidget(spin, 1)" in _wb394
+      and "spin.setToolTip(" in _bl394)
+# NUTZER 22.09.2026: "schreibe quantity bitte voll aus" - ueberall, nicht
+# nur an einer Stelle, sonst heisst dasselbe Feld zweimal verschieden.
+check("aa394 das Mengenfeld heisst ausgeschrieben",
+      't("Quantity:")' in _wb394 and 't("Qty:")' not in _src_txt)
+# DIE ORDER-LEITER IST IM DAYTRADE UNBRAUCHBAR (Nutzer: "die untere
+# Miniliste mit den aktiven Buy Ordern von anderen Spielern soll komplett
+# raus, das ist unbrauchbar, wir brauchen das nur in Swingtrade"). Dort
+# stehen FREMDE Kauf-Orders - man kauft sie nicht, man stellt eine eigene
+# daneben. Auf der Verkaufsseite bleibt sie.
+check("aa394 im Daytrade ist die Leiter versteckt",
+      "if self._ladder_is_buy_side(key):\n            table.setVisible(False)"
+      in _bl394)
+# MIT .find(), NICHT .index() - .index() wirft beim Kaputtmachen eine
+# ValueError und reisst die ganze Suite ab statt rot zu werden (derselbe
+# Fehler wie in aa393, dort mit eckigen Klammern).
+check("aa394 ... aber erst NACH addWidget (sonst wird sie ein Fenster)",
+      0 <= _bl394.find("lay.addWidget(table)")
+      < _bl394.find("table.setVisible(False)"))
+check("aa394 eine Zeile ueber dem Knopf sagt, WAS gewaehlt ist",
+      'sel = ElideLabel("")' in _bl394
+      and "v.addWidget(sel)" in _wb394
+      and '"sel": sel' in _bl394)
+check("aa394 ... mit fester Hoehe (der alte Infotext schob die Liste)",
+      "sel.setFixedHeight(22)" in _bl394)
+check("aa394 ... und sie wird beim Waehlen wirklich gefuellt",
+      "self._ladder_zeige_auswahl(ctx, name)" in _fn_src("_render_ladder"))
+_za394 = _fn_src("_ladder_zeige_auswahl")
+check("aa394 ... leer heisst Platzhalter, nicht verschwinden",
+      "Selected: {name}" in _za394 and "No item selected" in _za394)
+for _t394 in ("Add to shopping list", "Selected: {name}"):
+    check(f"aa394 DE vorhanden: {_t394}", bool(_de392.get(_t394)))
+
+
+# ---------------------------------------------------------------- (aa395)
+# DIE ORDER-WARNUNG IST KEIN WERKZEUG (Nutzer 22.09.2026: "In sell order? -
+# welche Funktionalitaet hat der Knopf, brauchen wir ihn ueberhaupt?" und
+# danach: "fuege die automatische Warnung, dass sich bereits etwas in Buy
+# Orders befindet, auch in der Shopping List ein; den Knopf kann man
+# entfernen, stattdessen dauerhafte Warnungen an den Items").
+# Beide Knoepfe holten nur Daten, die die Liste ohnehin braucht, und
+# schalteten eine Warnung ein, die niemand ausschalten will.
+_bt395 = _fn_src("_build_sell_tab")
+_bs395 = _fn_src("_build_shopping_tab")
+check("aa395 die Markierung ist in beiden Listen ab Werk an",
+      "self._sell_mark_orders = True" in _bt395
+      and "self._sh_mark_orders = True" in _bs395)
+check("aa395 die beiden Knoepfe sind weg",
+      't("In sell order?")' not in _src_txt
+      and 't("In buy order?")' not in _src_txt)
+check("aa395 ... und stehen in keinem Werkzeuge-Menue mehr",
+      "_sl_check_act" not in _src_txt and "_sh_check_act" not in _src_txt)
+# DIE DATEN KOMMEN BEIM BETRETEN - sonst waere die Warnung ab Werk an, aber
+# ohne etwas zu wissen.
+_tc395 = _fn_src("_on_tab_changed")
+check("aa395 die Verkaufsliste holt beim Betreten Orders UND Preise",
+      'is getattr(self, "_sell_w", None)' in _tc395
+      and "self._sell_tab_betreten()" in _tc395)
+check("aa395 der Einkaufswagen zieht die Orders beim Betreten nach",
+      'self._orders_nachziehen("_sh_orders_at", self._render_shopping)' in _tc395)
+_sb395 = _fn_src("_sell_tab_betreten")
+check("aa395 erst die Orders, dann die Preise",
+      "self._fetch_open_orders(self._sell_load_prices)" in _sb395)
+check("aa395 ... und gedrosselt (Hub-Wechsel oder aelter als 5 Minuten)",
+      "_t_sell.time() - _alt) <= 300" in _sb395
+      and '_hub == getattr(self, "_sell_geladen_hub", None)' in _sb395)
+_on395 = _fn_src("_orders_nachziehen")
+check("aa395 die Drossel des Wagens ist dieselbe Regel",
+      "_t_o.time() - _alt) <= 300" in _on395
+      and "self._fetch_open_orders(fertig)" in _on395)
+check("aa395 ein Abruf reicht fuer beide Reiter",
+      "self._sh_orders_at = _t_sell.time()" in _sb395)
+
+# ---------------------------------------------------------------- (aa396)
+# (1) DER RUECKWEG AUS DEM INDUSTRIE-REITER (Nutzer-Befund 22.09.2026:
+# "wenn man auf Industry Tab wechselt, verschwinden auch Daytrade,
+# Swingtrade, Regional Trade Tab, somit ist es unmoeglich
+# zurueckzukehren"). Ursache war meine eigene Aenderung vom selben Tag:
+# `_nav_sichtbarkeit` lief ueber ALLE `_nav_buttons` - und dieses
+# Woerterbuch traegt sowohl die Werkzeuge links als auch die vier Reiter
+# oben. FEHLERKLASSE (CLAUDE.md): eine Menge verliert die Einschraenkung,
+# unter der sie gebaut wurde. Gefragt werden darf nur `_common_keys`.
+_ns396 = _fn_src("_nav_sichtbarkeit")
+check("aa396 die Sichtbarkeit fragt NUR die linke Leiste",
+      'getattr(self, "_common_keys", None)' in _ns396)
+check("aa396 ... und laeuft nicht ueber alle Nav-Knoepfe",
+      "for k in self._nav_buttons" not in _ns396
+      and "for k, b in" not in _ns396)
+check("aa396 die vier Reiter oben stehen wirklich im selben Woerterbuch",
+      "_paid_keys" in _src_txt and 'self._nav_buttons[k] = b' in _src_txt)
+
+# (2) DIE BREITE DER BAU-RAIL WIRD GEMESSEN, NICHT GESETZT (Nutzer-Befund
+# 22.09.2026: "rechte Sidebar teils Button-Woerter abgeschnitten"). Auf
+# seinem Windows sind dieselben Widgets rund 1,85x breiter als offscreen
+# hier - eine feste Zahl kann dort nur zu klein sein (Lehre b66). Die
+# Verhaltenspruefung dazu ist b94.
+_br396 = _fn_src("_build_bau_rail")
+check("aa396 die Rail-Breite kommt aus sizeHint(), nicht aus einer Zahl",
+      "_b.sizeHint().width() + 30" in _br396
+      and "rail.setFixedWidth(_breit)" in _br396)
+check("aa396 ... und alle fuenf Rail-Knoepfe werden gemessen",
+      "for _b in (b_scan, b_myblue, b_plans, b_struct," in _br396
+      and "self._bau_newplan_btn):" in _br396)
+check("aa396 keine feste Rail-Breite mehr im Bau-Rail",
+      "rail.setFixedWidth(210)" not in _br396)
+
+# ---------------------------------------------------------------- (aa397)
+# DIE RECHTE LEISTE DER HANDELS-REITER WIRD BEFUELLT (Nutzer 23.09.2026:
+# "im Industry Tab ist die rechte Sidebar extrem wichtig und
+# uebersichtlich gestaltet, gefaellt mir. Bei den Trade Tabs ist diese
+# bisher scheinbar etwas unnoetig ... wenn wir sie nicht sinnvoll
+# befuellen koennen, sollte man sie weglassen.")
+#
+# SIE BEKOMMT DEN EINKAUFSWAGEN - und damit dieselbe Grammatik wie die
+# Bau-Rail: farbige Gruppen-Ueberschrift, darunter die Gruppe. Die
+# Verhaltenspruefung dazu ist b95.
+_tr397 = _fn_src("_build_tool_rail")
+check("aa397 die Leiste wird aus Gruppen gebaut, nicht aus einer Knopfliste",
+      "for titel, farbe, widgets in gruppen:" in _tr397)
+check("aa397 der alte Reiter-Name oben ist raus (die Bau-Rail hat auch keinen)",
+      "border-bottom: 2px solid" not in _tr397)
+check("aa397 ... und die Ueberschriften sehen aus wie in der Bau-Rail",
+      "font-size:11px; letter-spacing:2px; font-weight:800; " in _tr397
+      and "font-size:11px; letter-spacing:2px; font-weight:800; " in _fn_src("_build_bau_rail"))
+# BREITE GEMESSEN, NICHT GERATEN (Lehre b66): "In den Einkaufswagen" ist
+# der laengste Knopf im Programm; eine feste Zahl kann auf seinem Windows
+# nur zu klein sein.
+check("aa397 die Leisten-Breite kommt aus sizeHint(), nicht aus einer Zahl",
+      "_k.sizeHint().width() + 30" in _tr397
+      and "rail.setFixedWidth(_breit)" in _tr397)
+# ALLE DREI REITER TRAGEN DIESELBEN ZWEI GRUPPEN - sonst sieht jeder
+# Reiter anders aus, und genau das war der Auftrag ("einheitlich").
+for _k397 in ("day", "swing", "region"):
+    check(f"aa397 der Reiter {_k397} haengt den Wagen in die Leiste",
+          f'self._wagen_block("{_k397}")' in _src_txt)
+check("aa397 alle drei Leisten tragen beide Gruppen",
+      _src_txt.count('(t("DEALS"), theme.CYAN,') == 3
+      and _src_txt.count('(t("SHOPPING LIST"), theme.GREEN,') == 3)
+# EINE BAUSTELLE FUER DIE WIDGETS: sie entstehen weiter in
+# `_build_ladder_panel` (ein Dutzend Stellen schreibt ueber den Kontext
+# hinein) und bekommen in `_wagen_block` nur ein Layout. Zwei Bauorte
+# fuer dasselbe Feld waeren die Falle, in die wir dreimal gelaufen sind.
+_wb397 = _fn_src("_wagen_block")
+_bl397 = _fn_src("_build_ladder_panel")
+check("aa397 der Wagen-Block baut nichts neu, er holt aus dem Kontext",
+      'ctx.get("sel")' in _wb397 and 'ctx.get("spin")' in _wb397
+      and 'ctx.get("addb")' in _wb397
+      and "QSpinBox(" not in _wb397 and "QPushButton(" not in _wb397)
+check("aa397 ... und die Leiter haengt sie selbst nicht mehr ein",
+      "lay.addWidget(sel)" not in _bl397
+      and "head.addWidget(spin)" not in _bl397
+      and "head.addWidget(addb)" not in _bl397)
+# HERVORHEBUNG (Nutzer: "nicht zu klein, Ersichtlichkeit ist mir wichtig").
+check("aa397 der Wagen-Knopf ist hoch genug, um aufzufallen",
+      "addb.setMinimumHeight(36)" in _wb397)
+# IM DAYTRADE BLEIBT VON DEM ALTEN KASTEN NICHTS - Leiter unbrauchbar,
+# Wagen umgezogen. Ein leerer Kasten wuerde die Strategie-Karte grundlos
+# auf 60 % der Breite druecken.
+check("aa397 im Daytrade ist der ganze Leiter-Kasten versteckt",
+      "box.setVisible(False)" in _bl397)
+check("aa397 ... und erst NACH addWidget (sonst wird er ein Fenster)",
+      0 <= _bl397.find("parent.addWidget(box)")
+      < _bl397.find("box.setVisible(False)"))
+# DIE LEISTEN SIND AN EINER MARKE ERKENNBAR, nicht an ihrer Breite - die
+# ist seit 23.09.2026 gemessen und taugt nicht mehr als Kennzeichen.
+check("aa397 beide Leisten tragen die Marke 'rail'",
+      _src_txt.count('rail.setProperty("rolle", "rail")') == 2)
+for _t397 in ("DEALS", "SHOPPING LIST", "No item selected \u2013 click one in the list."):
+    check(f"aa397 DE vorhanden: {_t397}", bool(_de392.get(_t397)))
+
+
+# ---------------------------------------------------------------- (aa398)
+# DER GEWINN AUF DER PLAN-KARTE WAR ABGESCHNITTEN (Nutzer-Befund
+# 23.09.2026: "bei Multibuildplan 1 kann man den Profit nicht vollstaendig
+# ablesen, weil der Reservations-Button dort ist").
+#
+# ZWEI URSACHEN, beide dieselbe Fehlerklasse "eine feste Zahl statt einer
+# Messung":
+# (1) Die Untertitel-Zeile war ein gewoehnliches QLabel. Das meldet als
+#     MINDESTbreite seine volle Textbreite - "52x Flycatcher + 28x Stork +
+#     50x Ametat II" schob damit die ganze Kartenzeile auf, und Qt quetschte
+#     dafuer die Status-Spalte rechts unter ihre festen 250 px.
+# (2) Die 250 px selbst: hier reichen sie, auf seinem Windows sind dieselben
+#     Widgets rund 1,85x breiter (derselbe Befund wie b66).
+_pk398 = _fn_src("_reload_saved_plans")
+check("aa398 der Untertitel kuerzt mit ... statt zu draengen",
+      "sub_lbl = ElideLabel(sub_txt)" in _pk398)
+check("aa398 ... und die Multi-Zeile ebenso",
+      "_mz = ElideLabel(t(" in _pk398)
+check("aa398 jede Karte merkt sich ihre Status-Spalte",
+      'self._plan_stat_widgets[p["id"]] = stat_w' in _pk398)
+_sm398 = _fn_src("_plan_statusspalte_messen")
+check("aa398 die Spaltenbreite wird gemessen, nicht gesetzt",
+      "l.sizeHint().width() + 10" in _sm398)
+check("aa398 ... mit Untergrenze und Deckel",
+      "breit = 250" in _sm398 and "min(breit, 460)" in _sm398)
+check("aa398 ... und ALLE Karten bekommen dieselbe Breite",
+      "w.setFixedWidth(breit)" in _sm398
+      and "_plan_stat_widgets" in _sm398)
+# GEMESSEN WIRD ERST, WENN DIE ZAHLEN DA SIND: beide Texte kommen aus
+# Hintergrund-Laeufen, der Aufbau kennt sie noch nicht.
+check("aa398 nach der Gewinn-Schaetzung wird nachgemessen",
+      "self._plan_statusspalte_messen()" in _fn_src("_load_saved_plan_estimates"))
+check("aa398 nach der Fertig-Meldung ebenso",
+      'lbl.setStyleSheet(f"color:{theme.GREEN}; font-weight:700;")\n'
+      "            # Die Fertig-Meldung ist der laengste Text in der Spalte -"
+      in _src_txt)
+check("aa398 ... und sonst nirgends (zwei Stellen, beide nach dem Fuellen)",
+      _src_txt.count("self._plan_statusspalte_messen()") == 2)
+
+
+# ---------------------------------------------------------------- (aa399)
+# DIE KOPFZEILE IST IN ZWEI GRUPPEN GETEILT (Nutzer 23.09.2026: "der obere
+# Teil des Tools hat zu viele Knoepfe auf einem Haufen und wirkt
+# unuebersichtlich").
+#
+# LINKS steht, WO du bist und was du damit tust: Markt-Scan (ganz links,
+# Nutzer-Vorgabe), Hub, Plus, Charakter. RECHTS stehen die Handlungen. Der
+# dehnbare Platzhalter `_tb_spacer` ist die Grenze. Verhaltenspruefung: b97.
+_hr399 = _src_txt
+_pos399 = _hr399.find("tb.addWidget(_tb_spacer)")
+check("aa399 der Platzhalter teilt die Kopfzeile", _pos399 > 0)
+# LINKS - und der Markt-Scan als ERSTES (Nutzer: "market scan ganz links").
+for _n399, _w399 in (("Markt-Scan", "tb.addWidget(_scan_platz)"),
+                     ("Hub", "tb.addWidget(self.g_hub)"),
+                     ("Charakter", "tb.addWidget(self.g_char)")):
+    check(f"aa399 {_n399} steht links (vor dem Platzhalter)",
+          0 < _hr399.find(_w399) < _pos399)
+check("aa399 der Markt-Scan steht ganz vorne, vor der Hub-Beschriftung",
+      0 < _hr399.find("tb.addWidget(_scan_platz)")
+      < _hr399.find("_hublbl = QLabel("))
+check("aa399 ... und der Knopf landet wirklich in diesem Platz",
+      "_scan_lay.addWidget(self.g_scan_btn)" in _hr399
+      and _hr399.count("addWidget(self.g_scan_btn)") == 1)
+# RECHTS: NUR die taegliche Handlung steht offen, der Rest in der Klappe.
+check("aa399 Alles aktualisieren haengt rechts (nach dem Platzhalter)",
+      0 < _pos399 < _hr399.find("tb.addWidget(self.global_refresh_btn)"))
+check("aa399 ... und genau einmal",
+      _hr399.count("tb.addWidget(self.global_refresh_btn)") == 1)
+# KEINE PRIMAER-OPTIK MEHR (Nutzer 23.09.2026: "Refresh all bitte die
+# Cyan-Hintergrundfarbe entfernen, damit der Knopf aussieht wie alle
+# anderen auch"). Die Regel selbst bleibt im Thema - sie ist weiter der
+# Hervorhebungs-Zustand anderer Knoepfe.
+check("aa399 der Aktualisieren-Knopf traegt keine Primaer-Optik mehr",
+      'self.global_refresh_btn.setObjectName("Primary")' not in _hr399)
+check("aa399 ... die Regel #Primary gibt es im Thema weiter",
+      "QPushButton#Primary" in open("eve_trader/ui/theme.py",
+                                    encoding="utf-8").read())
+
+# DIE DREI SELTENEN STEHEN OFFEN DANEBEN. Sie standen einen Zwischenstand
+# lang in einer Klappe; der Nutzer wollte sie wieder sehen ("ja, wir lassen
+# es immer ausgeklappt bitte"), und eine Klappe, die immer offen ist, waere
+# nur ein toter Mechanismus.
+for _n399, _w399 in (("Baurezepte laden", "tb.addWidget(self.g_sde_btn)"),
+                     ("EVE-Daten", "tb.addWidget(self.update_btn)"),
+                     ("Programm-Updates", "tb.addWidget(self.ver_btn)")):
+    check(f"aa399 {_n399} steht rechts in der Leiste",
+          0 < _pos399 < _hr399.find(_w399))
+    check(f"aa399 {_n399} steht dort genau einmal",
+          _hr399.count(_w399) == 1)
+check("aa399 von der Klappe ist nichts mehr uebrig",
+      "_kopf_extras" not in _hr399
+      and "ui_kopf_extras_offen" not in open("eve_trader/config.py",
+                                             encoding="utf-8").read())
+# DIE SPRACHWAHL STEHT AM ENDE: wer auf Englisch startet und Deutsch sucht,
+# soll sie sehen, ohne etwas aufzuklappen.
+check("aa399 die Sprachwahl steht sichtbar am Ende",
+      0 < _hr399.find("tb.addWidget(self.ver_btn)")
+      < _hr399.find("tb.addWidget(self.lang_box)"))
+
+# NUR NOCH EIN PLUS (Nutzer 23.09.2026: "auch das grosse + Structure,
+# dachte ich wird nur noch ein +").
+check("aa399 der Struktur-Knopf traegt keinen Text mehr",
+      'self.g_struct_btn = QPushButton("")' in _hr399)
+check("aa399 ... aber sein Symbol und die Erklaerung bleiben",
+      'self.g_struct_btn.setIcon(icons.icon("plus"))' in _hr399
+      and "Structure: add an Upwell structure" in _hr399)
+
+# DER TRENNSTRICH zwischen Handel und Produktion (Nutzer: "haben wir
+# bessere optische Moeglichkeiten, dass wir Trading und Produktion besser
+# trennen koennen?").
+_kt399 = _fn_src("_kopf_trenner")
+check("aa399 der Trenner ist ein eigener Helfer",
+      "st.setFixedWidth(1)" in _kt399 and "return st" in _kt399)
+check("aa399 ... und baut bei jedem Aufruf ein neues Widget",
+      "st = QFrame()" in _kt399)
+check("aa399 der Strich steht VOR einem benannten Reiter, nicht an einer Zahl",
+      '_NAV_TRENNER_VOR = "build"' in _hr399
+      and "if k == self._NAV_TRENNER_VOR:" in _hr399
+      and "th.addWidget(self._kopf_trenner(26), 0, Qt.AlignVCenter)" in _hr399)
+check("aa399 und die Kopfzeile trennt ihre beiden Knopfgruppen ebenso",
+      "tb.addWidget(self._kopf_trenner())" in _hr399)
+
+# ---------------------------------------------------------------- (aa400)
+# DREI OBERFLAECHEN-WUENSCHE VOM 23.09.2026, am Quelltext festgenagelt.
+# Die Verhaltenspruefungen sind b98 (Karte) und b99 (Farben).
+
+# (1) BILDER DER ENDPRODUKTE im Multi-Bauplan ("danach fehlen mir in einem
+# Multibuildplan immer noch die Icons der Endprodukte ganz oben").
+_mb400 = open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+check("aa400 die Namensspalte bekommt ein Symbol",
+      "_it0.setIcon(QIcon(_px0))" in _mb400
+      and "tbl.setIconSize(QSize(24, 24))" in _mb400)
+# EINMAL HOLEN, DANN MERKEN: `_refresh` laeuft bei jedem Neuaufbau - ein
+# Abruf je Durchgang waere eine Abruf-Lawine (Lehre aus der Plan-Liste des
+# Multi-Dialogs, die deshalb `allow_fetch=False` nutzt).
+check("aa400 das Bild wird gemerkt, nicht je Neuaufbau geholt",
+      "_c = getattr(self, \"_bd_multi_icons\", None)" in _mb400
+      and "if int(tid) not in _c:" in _mb400)
+
+# (2) DIE KARTE LAESST SICH EINKLAPPEN ("wie der Details auch,
+# standardmaessig aber offen").
+check("aa400 die Karte hat einen Klapp-Knopf",
+      "_klapp = QPushButton(\"\")" in _mb400
+      and "_klapp.setCheckable(True)" in _mb400)
+check("aa400 versteckt wird ein KASTEN, die Ueberschrift bleibt",
+      "_body = QWidget()" in _mb400
+      and "_body.setVisible(bool(offen))" in _mb400
+      and "cv.addLayout(_kopf)" in _mb400)
+check("aa400 ... und erst NACH dem Einhaengen (b8-Falle)",
+      0 <= _mb400.find("cv.addWidget(_body)")
+      < _mb400.find("_klapp_setzen(_offen0)"))
+check("aa400 Standard OFFEN, der eigene Stand gewinnt",
+      '_offen0 = bool(self.settings.get("bau_multi_enden_offen", True))' in _mb400
+      and '"bau_multi_enden_offen": True,' in open(
+          "eve_trader/config.py", encoding="utf-8").read())
+
+# (3) FARBE JE BAUPLAN ("einfach links neben dem Endprodukt-Bild eine
+# Farbpalette zum Ausklappen jeweils").
+check("aa400 die Farbtabelle steht an EINER Stelle",
+      "PLAN_FARBEN = {" in open("eve_trader/ui/theme.py",
+                                encoding="utf-8").read())
+_fs400 = _fn_src("_plan_farb_stil")
+check("aa400 gefaerbt wird die FLAECHE, schwach",
+      "background: rgba({r},{g},{b},0.18)" in _fs400)
+check("aa400 der amberne Multi-Rand ueberlebt die Farbwahl",
+      'rand = "rgba(242,162,60,0.55)" if (multi or buendel) else None'
+      in _fs400)
+_fm400 = _fn_src("_plan_farb_palette")
+for _k400 in ("f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"):
+    check(f"aa400 die Palette kennt {_k400}",
+          f'"{_k400}"' in _src_txt.split("_PLAN_FARB_WAHL = ")[1][:80])
+check("aa400 ... und einen Weg zurueck ohne Farbe",
+      't("No colour")' in _fm400 and "self._plan_farbe_setzen(pid, None," in _fm400)
+check("aa400 die Palette klappt als MENUE auf (schiebt die Liste nicht)",
+      "m.exec(btn.mapToGlobal(" in _fn_src("_plan_farb_menue"))
+_fz400 = _fn_src("_plan_farbe_setzen")
+check("aa400 die Farbe wird im Plan gemerkt",
+      'p["farbe"] = str(key)' in _fz400 and 'p.pop("farbe", None)' in _fz400
+      and "config.save_settings(self.settings)" in _fz400)
+# IN DER PLAN-SEITE NACHSEHEN, nicht im ganzen Modul: `row.addWidget(
+# icon_lbl)` steht auch in einer anderen Karte weiter oben - mit dem
+# ganzen Quelltext haette die Pruefung die falsche Stelle verglichen und
+# waere zufaellig rot (oder schlimmer: zufaellig gruen) gewesen.
+_pk400 = _fn_src("_reload_saved_plans")
+check("aa400 der Knopf sitzt VOR dem Bild in der Kartenzeile",
+      0 <= _pk400.find("row.addWidget(_fb)")
+      < _pk400.find("row.addWidget(icon_lbl)"))
+for _t400 in ("No colour",
+              "Colour of this build plan \u2013 click to choose."):
+    check(f"aa400 DE vorhanden: {_t400}", bool(_de392.get(_t400)))
+
+
+# ---------------------------------------------------------------- (aa401)
+# DER MARKT-SCAN-WARNER (Nutzer 23.09.2026: "alle Stunde soll erkennbar
+# gemacht werden, dass ein Market Scan durchgefuehrt werden muss, und bei
+# Tool-Oeffnung").
+#
+# DREI ZAHLEN, ALLE AN EINER STELLE - und sie muessen zusammenpassen:
+# Blinktakt, Pruefrhythmus und Altersschwelle.
+check("aa401 die Altersschwelle ist eine Stunde",
+      "_SCAN_ALT_SEKUNDEN = 3600" in _src_txt)
+check("aa401 der Knopf blinkt im 700-ms-Takt",
+      "self._scan_blink_timer.setInterval(700)" in _src_txt)
+check("aa401 geprueft wird alle 30 Sekunden",
+      "self._scan_pruef_timer.setInterval(30000)" in _src_txt)
+check("aa401 ... und einmal gleich beim Oeffnen",
+      "QTimer.singleShot(600, self._scan_alter_pruefen)" in _src_txt)
+_sp401 = _fn_src("_scan_alter_pruefen")
+# NOCH NIE GESCANNT IST NICHT "ZU ALT": es gibt nichts, was alt sein
+# koennte. Genau dieser Fall tritt bei jeder Tool-Oeffnung ohne Scan auf.
+check("aa401 ohne Scan sagt die Warnung, dass noch keiner da ist",
+      "if _alter is None:" in _sp401
+      and "No market scan yet" in _sp401)
+check("aa401 ... und erst danach kommt 'zu alt'",
+      0 <= _sp401.find("if _alter is None:")
+      < _sp401.find("elif _alter > self._SCAN_ALT_SEKUNDEN:"))
+check("aa401 waehrend eines Scans schweigt der Warner",
+      'if getattr(self, "_scan_laeuft", False):' in _sp401)
+# DIE WARNUNG STEHT NEBEN DEM KNOPF, DEN SIE MEINT. Sie sass frueher beim
+# Charakter-Feld; seit der Markt-Scan ganz links sitzt, blinkte der Knopf
+# am einen Ende der Leiste und der amberne Satz stand am anderen.
+check("aa401 die Warnung haengt im selben Platz wie der Knopf",
+      "_scan_lay.addWidget(self.g_scan_warn)" in _src_txt
+      and "tb.addWidget(self.g_scan_warn)" not in _src_txt)
+check("aa401 DE vorhanden: kein Scan bisher",
+      bool(_de392.get("\u26a0 No market scan yet \u2013 run it once.")))
+
+
+# ---------------------------------------------------------------- (aa402)
+# DIE ACHT PLAN-FARBEN (Nutzer 23.09.2026: "Blau sieht man kaum, waehle
+# anderes Blau / Fuege weitere 4 Farben hinzu / keine EVE-Fraktionen als
+# Namen [...] wir muessen gar keine Namen geben / Nimm kein Rot oder Full
+# Green [...] Das Rot sieht aus wie Verlustzahlen").
+#
+# GEMESSEN, NICHT BEHAUPTET: jede Forderung des Nutzers ist hier eine Zahl,
+# die aus den Farbwerten selbst faellt. "Blau sieht man kaum" wird zur
+# Helligkeit, "kein Verlustrot" zum Abstand zu RED, "acht verschiedene" zum
+# Abstand untereinander. Eine Pruefung, die nur zaehlt, ob acht Eintraege
+# dastehen, waere blind gegen genau den Fehler, der den Wunsch ausgeloest
+# hat (ein Ton, den man auf der Karte nicht sieht).
+from eve_trader.ui.main_window import MainWindow as _MW402  # noqa: E402
+_pf402 = dict(_th49.PLAN_FARBEN or {})
+
+
+def _hell402(h):
+    """Wahrgenommene Helligkeit (Rec. 601) eines #rrggbb-Werts."""
+    _r, _g, _b = (int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16))
+    return 0.299 * _r + 0.587 * _g + 0.114 * _b
+
+
+def _abst402(a, b):
+    """Abstand zweier Farben im RGB-Wuerfel."""
+    return sum((int(a[_i:_i + 2], 16) - int(b[_i:_i + 2], 16)) ** 2
+               for _i in (1, 3, 5)) ** 0.5
+
+
+eq("aa402 es sind acht Farben", len(_pf402), 8)
+eq("aa402 ... und die Palette bietet genau diese acht an",
+   sorted(_pf402), sorted(_MW402._PLAN_FARB_WAHL))
+# DAS ALTE BLAU (#3A6EA5) IST DIE MESSLATTE: es ist der Ton, von dem der
+# Nutzer gesagt hat, man sehe ihn kaum. Kein neuer Wert darf darunter
+# liegen - sonst haetten wir den Fehler nur verschoben.
+_dunkel402 = [_k for _k, _v in _pf402.items()
+              if _hell402(_v) <= _hell402("#3A6EA5")]
+eq("aa402 keine Farbe ist dunkler als das beanstandete Blau", _dunkel402, [])
+# ROT UND GRUEN SIND BESETZT: Verlust und Gewinn. 70 ist der Abstand, ab
+# dem zwei Toene auf der schwachen 18-%-Flaeche nicht mehr verwechselt
+# werden - der naechste Wert (Rose) liegt mit 91 darueber.
+for _sig402, _snam402 in ((_th49.RED, "RED"), (_th49.GREEN, "GREEN"),
+                          (_th49.GREEN_BRIGHT, "GREEN_BRIGHT")):
+    _nah402 = [_k for _k, _v in _pf402.items() if _abst402(_v, _sig402) < 70]
+    eq(f"aa402 keine Farbe kommt {_snam402} zu nahe", _nah402, [])
+_paare402 = [(_a, _b) for _i, _a in enumerate(sorted(_pf402))
+             for _b in sorted(_pf402)[_i + 1:]
+             if _abst402(_pf402[_a], _pf402[_b]) < 40]
+eq("aa402 die acht sind untereinander unterscheidbar", _paare402, [])
+
+# KEINE NAMEN (Nutzer: "wir muessen gar keine Namen geben"). Die Schluessel
+# sind Nummern, und im Menue steht kein Farbname mehr.
+_falsch402 = [_k for _k in _pf402 if not (_k[:1] == "f" and _k[1:].isdigit())]
+eq("aa402 die Schluessel sind Nummern, keine Namen", _falsch402, [])
+_fm402 = _fn_src("_plan_farb_palette")
+# BAUEN UND AUFKLAPPEN SIND GETRENNT: `QMenu.exec` haelt an, bis jemand
+# klickt - stuende der Aufbau in derselben Methode, koennte keine Pruefung
+# hineinsehen (gemessen 23.09.2026: ein Ersatz von QMenu.exec wirkt in
+# PySide6 nicht, der C++-Aufruf geht daran vorbei).
+_fk402 = _fn_src("_plan_farb_menue")
+check("aa402 die Palette wird gebaut, bevor sie aufklappt",
+      "self._plan_farb_palette(" in _fk402
+      and "m.exec(btn.mapToGlobal(" in _fk402
+      and "m.exec(" not in _fm402)
+for _n402 in ("Caldari", "Gallente", "Amarr", "Minmatar"):
+    check(f"aa402 kein Fraktionsname mehr im Menue: {_n402}",
+          _n402 not in _fm402 and not _de392.get(_n402))
+check("aa402 die Palette ist ein Raster aus Feldern, keine Namensliste",
+      "_QGridF(_feld)" in _fm402 and "_wa.setDefaultWidget(_feld)" in _fm402
+      and "_g.addWidget(_b, _i // 4, _i % 4)" in _fm402)
+check("aa402 das gewaehlte Feld traegt einen hellen Rand",
+      "_rand = theme.TEXT if akt == key else theme.BORDER" in _fm402)
+check("aa402 ein Klick schliesst die Palette wieder", "_m.close()" in _fm402)
+
+# ALTBESTAND: gespeicherte Fraktionsschluessel duerfen ihre Farbe nicht
+# verlieren. Das ist keine Quelltext-, sondern eine Rechenpruefung.
+_norm402 = _MW402._plan_farb_norm
+eq("aa402 alter Schluessel caldari wird weitergefuehrt", _norm402("caldari"), "f1")
+eq("aa402 alter Schluessel gallente wird weitergefuehrt", _norm402("gallente"), "f2")
+eq("aa402 alter Schluessel amarr wird weitergefuehrt", _norm402("amarr"), "f7")
+eq("aa402 alter Schluessel minmatar wird weitergefuehrt", _norm402("minmatar"), "f6")
+eq("aa402 ein neuer Schluessel bleibt, wie er ist", _norm402("f5"), "f5")
+eq("aa402 Unbekanntes faerbt nichts, statt zu platzen", _norm402("quatsch"), None)
+eq("aa402 ... und nichts bleibt nichts", _norm402(None), None)
+
+# STANDARDFARBE FUER BUENDEL (Nutzer: "faerbe Multiplaene standardmaessig
+# schon anders ein"). Amber, weil Amber hier schon "Multi-Bauplan" heisst -
+# und SCHWAECHER als eine gewaehlte Farbe, damit beides nebeneinander
+# lesbar bleibt.
+_stil402 = _MW402._plan_farb_stil
+check("aa402 ein Buendel ist ohne eigene Wahl schon eingefaerbt",
+      "rgba(242,162,60,0.10)" in _stil402(None, False, True))
+check("aa402 ... schwaecher als eine gewaehlte Farbe",
+      "0.18" in _stil402("f1", False, True))
+check("aa402 eine gewaehlte Farbe gewinnt ueber die Standardfarbe",
+      "rgba(76,144,240,0.18)" in _stil402("f1", False, True))
+check("aa402 ein gewoehnlicher Plan bleibt ohne Wahl ungefaerbt",
+      _stil402(None, False, False) == "")
+_pk402 = _fn_src("_reload_saved_plans")
+check("aa402 die Karte weiss beim Faerben schon, ob sie ein Buendel ist",
+      0 <= _pk402.find("_ist_multi = self._multi_ist_plan(p)")
+      < _pk402.find("_stil_p = self._plan_farb_stil("))
+
+# (2) TUTORIAL-SCHRITT "PORTFOLIO" (Nutzer 23.09.2026: "Tutorial stimmt
+# nicht mehr, across all characters. Nimm diesen Satz raus und schreibe
+# stattdessen, das Portfolio zeigt dir, wann du verkaufen sollst").
+_tu402 = open("eve_trader/ui/tutorial.py", encoding="utf-8").read()
+_neu402 = ("Shows you when to sell an item and when to hold it a little "
+           "longer until the margin is right \u2013 you read that off the "
+           "\u201eStatus\u201c column.")
+check("aa402 der alte Portfolio-Satz ist weg",
+      "What you own and what it is worth" not in _tu402
+      and not _de392.get(
+          "What you own and what it is worth, across all characters."))
+check("aa402 ... und der neue steht im Tutorial",
+      "when to sell an item and when to hold it" in _tu402)
+check("aa402 DE vorhanden: neuer Portfolio-Satz", bool(_de392.get(_neu402)))
+
+
+# ---------------------------------------------------------------- (aa403)
+# ZIELZEIT JE STUFE IM RUNPLANER (Nutzer 24.09.2026: "wie lange moechtest du
+# Reactionen fahren? [...] 90 % der Nutzer lassen sie abends laufen und
+# bauen am naechsten Tag weiter [...] somit koennen Arbeitsslots gespart
+# werden, weil wir mehr Runs in einen Blueprint packen").
+#
+# GERECHNET, NICHT BEHAUPTET: die drei Zusagen (straffen ist gratis, ein
+# Ziel spart Slots, ein zu kurzes Ziel aendert nichts) sind hier je eine
+# Messung an `schedule_build` - eine Quelltextsuche koennte nicht sagen, ob
+# am Ende wirklich weniger Jobs herauskommen.
+_I403 = _I
+_ch403 = [{"id": _i, "name": f"C{_i}", "mfg_slots": 10, "reaction_slots": 10,
+           "can_mfg": True, "can_react": True} for _i in (1, 2, 3, 4, 5)]
+_jobs403 = [{"tid": 100, "name": "A403", "runs": 40, "activity": _I403.REACTION,
+             "base_time": 3600.0, "reaction_tier": 2},
+            {"tid": 101, "name": "B403", "runs": 5, "activity": _I403.REACTION,
+             "base_time": 3600.0, "reaction_tier": 2}]
+
+
+def _plan403(ziel):
+    _r = _I403.schedule_build(_jobs403, _ch403, react_bp=50, stage_ziel=ziel)
+    _jobs = {}
+    for _a in _r["assignments"]:
+        _jobs[_a["name"]] = _jobs.get(_a["name"], 0) + 1
+    return _r["stage_times"]["reaction_2"], _jobs
+
+
+_t_ohne403, _j_ohne403 = _plan403(None)
+_t_ziel403, _j_ziel403 = _plan403({"reaction_2": 23 * 3600.0})
+_t_kurz403, _j_kurz403 = _plan403({"reaction_2": 600.0})
+check(f"aa403 mit Ziel 23 h laeuft die Stufe laenger, aber nicht darueber "
+      f"({round(_t_ziel403 / 3600, 1)} h)",
+      _t_ohne403 < _t_ziel403 <= 23 * 3600.0)
+check("aa403 ... und braucht dafuer weniger Zuteilungen",
+      sum(_j_ziel403.values()) < sum(_j_ohne403.values()))
+# ZWEI SICHERUNGEN TRAGEN DIESE ZUSAGE, deshalb steht dafuer KEINE eigene
+# Mutation in der Rotprobe (sie blieb gruen, und eine Mutation, die nichts
+# rot macht, waere eine Luege ueber die Pruefdichte): `max(Dauer, Ziel)` und
+# die Bedingung "nur weniger Slots, nie mehr". Selbst wenn beide fielen,
+# gaebe es nicht mehr Slots, als die Charaktere haben.
+eq("aa403 ein Ziel unter der erreichbaren Dauer aendert nichts",
+   (round(_t_kurz403), sorted(_j_kurz403.items())),
+   (round(_t_ohne403), sorted(_j_ohne403.items())))
+# DIE STRAFFUNG IST GRATIS: 40 Runs a 1 h auf so vielen Slots, dass die
+# Stufe so lang ist wie ihr laengstes Item - das kuerzere Item (5 Runs)
+# darf sich ueber dieselbe Zeit strecken, statt Slots zu belegen.
+_fs403 = _src_ind.split("def schedule_build(")[1].split("\ndef ")[0]
+check("aa403 gestrafft wird auf die Dauer der Stufe, nicht auf 'so breit wie moeglich'",
+      "_T_st = max(_dauer_st, float((stage_ziel or {}).get(stage) or 0.0))" in _fs403
+      and "budget[_tid_st] = _noetig" in _fs403)
+check("aa403 der Planer nimmt die Zielzeit ueberhaupt an",
+      "per_item_runs_cap=None, stage_ziel=None):" in _fs403)
+# VERDRAHTUNG: die Einstellung steht in Stunden, der Planer bekommt Sekunden.
+_bt403 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa403 der Runplaner reicht die Zielzeit an den Planer weiter",
+      "stage_ziel=self._runplan_ziel_sekunden()," in _bt403)
+check("aa403 die Zielzeit wird gespeichert, nicht je Fenster neu erfunden",
+      '"bau_runplan_ziel": {},' in open("eve_trader/config.py",
+                                        encoding="utf-8").read()
+      and '"bau_runplan_ziel_std": 0,' in open("eve_trader/config.py",
+                                               encoding="utf-8").read())
+check("aa403 jede der sechs Stufen ist einstellbar",
+      '_RUNPLAN_STUFEN = ("fuel", "unrefined", "reaction_1", "reaction_2",' in _bt403)
+check("aa403 der Regler geht bis zu einer Woche",
+      "_RUNPLAN_ZIEL_MAX = 168" in _bt403)
+# LINKS IST DIE GEMESSENE MINDESTDAUER, keine feste Zahl (Nutzer 24.09.2026:
+# "ich brauche hier keine 4-Stunden-Vorschlaege, das ist gar nicht moeglich").
+check("aa403 die Stufe bekommt ihre gemessene Mindestdauer gereicht",
+      '(res.get("stage_min_times") or {}).get(stage, 0.0),' in _bt403)
+# GANZE KOPIEN BLEIBEN IN RUHE (Nutzer-Befund 24.09.2026: "bei Endprodukt hat
+# Peanut Motor 2 Wellen bekommen, da koennte man sich die 2. Welle sparen").
+# 52 Runs, Kopie kann 4 Runs = 13 Jobs - diese Zahl steht fest. Weniger Slots
+# sparen dort keine Blaupause, sie machen aus nebeneinander ein nacheinander.
+_ch403b = [{"id": _i, "name": f"E{_i}", "mfg_slots": 10, "reaction_slots": 10,
+            "can_mfg": True, "can_react": True} for _i in (1, 2, 3, 4)]
+_jb403b = [{"tid": 100, "name": "Fly403", "runs": 52, "activity": _I403.MANUFACTURING,
+            "base_time": 3600.0, "is_end": True}]
+
+
+def _wellen403(ziel):
+    _r = _I403.schedule_build(_jb403b, _ch403b, end_bp=50,
+                              per_item_runs_cap={100: 4}, stage_ziel=ziel)
+    # Eine zweite Welle heisst: ein Charakter hat mehr Kopien als Slots.
+    _slots = {_c["id"]: _c["mfg_slots"] for _c in _ch403b}
+    return [(_a["char_name"], len(_a.get("parts") or []))
+            for _a in _r["assignments"]
+            if len(_a.get("parts") or []) > _slots.get(_a["char_id"], 0)]
+
+
+eq("aa403 ganze Kopien bekommen keine zweite Welle, nur weil Zeit da waere",
+   _wellen403({"end": 23 * 3600.0}), [])
+eq("aa403 ... und ohne Zielzeit erst recht nicht", _wellen403(None), [])
+check("aa403 der Grund steht im Quelltext, nicht nur im Ergebnis",
+      "if _tid_st in _unit:" in _fs403)
+check("aa403 der Planer liefert diese Mindestdauer ueberhaupt",
+      "stage_min_times[stage] = _dauer_st" in _fs403
+      and '"stage_min_times": stage_min_times,' in _fs403)
+check("aa403 null heisst 'so schnell wie moeglich' (keine Zahl)",
+      'return t("as fast as possible")' in _bt403)
+check("aa403 die Felder haengen in der Stufenzeile, in der Blaupausen-Spalte",
+      "self._runplan_ziel_feld(\n                tbl, stage_item, stage," in _bt403
+      and "tbl.setItemWidget(item, 2, _box)" in _bt403)
+# ZWEI AUSWAHLFELDER STATT REGLER (Nutzer 24.09.2026, dritte Runde: "es
+# springt von 23 h auf 1 T 1 h [...] vielleicht sollten wir den Regler
+# weglassen und stattdessen 2 Dropdowns einfuegen, Tage Stunden"). Ein
+# Auswahlfeld trifft jede Stunde, ohne Zielen.
+check("aa403 Tage und Stunden sind zwei Auswahlfelder",
+      "for _d in range(_min_h // 24, self._RUNPLAN_TAGE_MAX + 1):" in _bt403
+      and "for _h in range(min(_ab, 23), 24):" in _bt403)
+# WAS NICHT GEHT, STEHT NICHT ZUR WAHL (Nutzer 24.09.2026: "das Dropdown
+# erlaubt Einstellungen, die nicht moeglich sind, 0 d und 1 h geht nicht").
+check("aa403 die Stunden beginnen erst ueber der Mindestdauer",
+      "_ab = max(0, _min_h - int(tage) * 24) if int(tage) * 24 < _min_h else 0"
+      in _bt403)
+check("aa403 ... und werden bei jeder Tages-Wahl neu gefuellt",
+      "_stunden_fuellen(_tage, int(_ch.currentData() or 0))" in _bt403)
+check("aa403 ... und eine Aenderung rechnet sofort neu",
+      "_cd.currentIndexChanged.connect(_gewaehlt)" in _bt403
+      and "_ch.currentIndexChanged.connect(_gewaehlt)" in _bt403)
+check("aa403 eine fertige Stufe traegt keinen Regler mehr",
+      "tbl.removeItemWidget(stage_item, 2)" in _bt403)
+check("aa403 die Vorgabe oben nimmt die Ausnahmen der Stufen zurueck",
+      'self.settings["bau_runplan_ziel"] = {}' in _bt403)
+for _t403 in ("Target per stage:", "as fast as possible", "{n} h", "{n} d",
+              "as long as it takes"):
+    check(f"aa403 DE vorhanden: {_t403}", bool(_de392.get(_t403)))
+
+
+# ---------------------------------------------------------------- (aa404)
+# ABGEHAKTE RUNS UEBERLEBEN EINEN CHARAKTER-WECHSEL (Nutzer-Befund
+# 24.09.2026: "ich hatte 3 Charaktere in Reactions am Laufen [...] habe mit
+# Peanut Motor Runs gemacht und abgehakt, danach Charaktere ausgewechselt
+# und Apply gedrueckt. Nun sind die abgehakten Runs verschwunden und das
+# Tool hat sie neu verteilt [...] jetzt weiss ich nicht mehr, was ich bauen
+# muss, bis die ESI aktualisiert").
+#
+# DIE FEHLERKLASSE: der Haken-Schluessel traegt die Charakter-ID
+# (`stufe|cid|item`). Nach einer Umverteilung zeigt er ins Leere - die
+# Arbeit war getan, der Beleg dafuer nicht mehr auffindbar. Gemerkt wird
+# jetzt, was der Haken WIRKLICH sagt: so viele Runs DIESES Items sind
+# gestartet, ohne Charakter.
+_bt404 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+_bf404 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+_mw404 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa404 der Haken fuehrt die erledigten Runs je Item nach",
+      "self._runplan_erledigt_pflegen(key, struck)" in _bf404)
+check("aa404 ... ueber die Runs-Zuordnung, nicht ueber den Zeilentext",
+      '_rk = getattr(self, "_bd_runplan_runs_by_key", None) or {}'
+      in _fn_src("_runplan_erledigt_pflegen"))
+check("aa404 gespeichert wird es im Plan",
+      'p["checked_runplan_runs"] = {str(k): int(v)' in _bf404)
+check("aa404 ... und beim Oeffnen zurueckgeholt",
+      '(p.get("checked_runplan_runs") or {}).items() if int(_v or 0) > 0}'
+      in _mw404)
+# BEIM NEUAUFBAU WIRD DER HAKEN WIEDER GESETZT, auch wenn die Zeile jetzt
+# einem anderen Charakter gehoert - sonst waere das Merken wertlos.
+_fs404 = _fn_src("_fill_bauplan_schedule")
+check("aa404 der Neuaufbau holt die erledigten Runs hervor",
+      '_rest_erl = dict(getattr(self, "_bd_runplan_erledigt", None) or {})' in _fs404)
+check("aa404 ... und hakt damit die neue Zeile desselben Items ab",
+      "if (_ckey_item not in _checked_set and _runs_hier > 0" in _fs404
+      and "_checked_set.add(_ckey_item)" in _fs404)
+check("aa404 ... und verbraucht sie dabei, statt sie doppelt zu zaehlen",
+      "_rest_erl[_k_erl] = max(" in _fs404)
+# DER ZEITSTEMPEL WANDERT MIT: ohne ihn duerfte die mitlaufende
+# Reservierung nichts freigeben (Sitzung 10).
+check("aa404 der wiederhergestellte Haken bekommt einen Zeitstempel",
+      "_tsm_e[_ckey_item] = float(" in _fs404)
+# DER REGLER: feine Rasten, obere Grenze nicht mehr fest (Nutzer 24.09.2026).
+check("aa404 die Tage reichen bis eine Woche",
+      "_RUNPLAN_TAGE_MAX = 7" in _bt404)
+check("aa404 'so lange wie noetig' steht als eigener Eintrag zur Wahl",
+      '_cd.addItem(t("as long as it takes"), -1)' in _bt404
+      and 'return t("as long as it takes")' in _bt404)
+check("aa404 ... und kommt ohne Grenze beim Planer an",
+      '_out[_st] = float("inf")' in _bt404)
+check("aa404 'so lange wie noetig' sperrt das Stunden-Feld",
+      "_ch.setEnabled(False)" in _bt404)
+
+
+# ---------------------------------------------------------------- (aa405)
+# WIE VIEL LAEUFT SCHON? (Nutzer-Screenshot 24.09.2026, Bauschleife im
+# Spiel: fuenf Jobs Titanium Carbide ueber 64 Runs, die Zeile verlangt 130 -
+# und war voellig unmarkiert.) Ein angefangener Satz ist jetzt "im Bau", und
+# die Zeile sagt die Zahl dazu: "(im Bau 64/130)". Ein blosses "(im Bau)"
+# saehe bei 5 Runs genauso aus wie bei 130.
+_rp405 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa405 die Zeile nennt die laufenden Runs samt Ziel",
+      '_txt("(building {n}/{m})").format(' in _rp405
+      and "n=_lauf_n9, m=_soll_n9)" in _rp405)
+check("aa405 ... nur wenn es weniger ist als die Zeile braucht",
+      "if 0 < _lauf_n9 < _soll_n9 else _txt(\"(building)\")" in _rp405)
+check("aa405 DE vorhanden: (building {n}/{m})",
+      bool(_de392.get("(building {n}/{m})")))
+
+
+# ---------------------------------------------------------------- (aa406)
+# WARUM GEHT ES NICHT KUERZER? (Nutzer 24.09.2026: "es ist mir nicht moeglich,
+# bei Composite Reactions 2 Stunden einzustellen".) Die Untergrenze des
+# Reglers ist gemessen - aber eine Grenze ohne Begruendung sieht aus wie eine
+# Sperre. Der Planer nennt jetzt den Verursacher, und der Tooltip sagt ihn.
+_ch406 = [{"id": 1, "name": "C1", "mfg_slots": 11, "reaction_slots": 11,
+           "can_mfg": True, "can_react": True}]
+_jb406 = [{"tid": 100, "name": "Titanium Carbide", "runs": 130,
+           "activity": _I403.REACTION, "base_time": 3600.0, "reaction_tier": 2},
+          {"tid": 101, "name": "Fullerides", "runs": 8,
+           "activity": _I403.REACTION, "base_time": 3600.0, "reaction_tier": 2}]
+_r406 = _I403.schedule_build(_jb406, _ch406, react_bp=50)
+_by406 = (_r406.get("stage_min_by") or {}).get("reaction_2") or {}
+eq("aa406 der Planer nennt das Item, das die Stufe bremst",
+   _by406.get("name"), "Titanium Carbide")
+eq("aa406 ... samt Runs und gleichzeitigen Slots",
+   (int(_by406.get("runs") or 0), int(_by406.get("slots") or 0)), (130, 10))
+# GEGENPROBE: mit mehr Slots faellt die Untergrenze - die Grenze ist also
+# wirklich die Kapazitaet und keine willkuerliche Zahl.
+_ch406b = [{"id": _i, "name": f"C{_i}", "mfg_slots": 11, "reaction_slots": 11,
+            "can_mfg": True, "can_react": True} for _i in (1, 2, 3)]
+_r406b = _I403.schedule_build(_jb406, _ch406b, react_bp=50)
+check("aa406 mit mehr Charakteren wird die Untergrenze kleiner",
+      _r406b["stage_min_times"]["reaction_2"]
+      < _r406["stage_min_times"]["reaction_2"])
+check("aa406 der Regler sagt den Grund im Tooltip",
+      "Shorter than {d} is not possible" in _bt404
+      and 'if min_info and min_info.get("name"):' in _bt404)
+check("aa406 ... und bekommt ihn vom Planer gereicht",
+      '(res.get("stage_min_by") or {}).get(stage))' in _bt404)
+check("aa406 DE vorhanden: Grund der Untergrenze",
+      bool(_de392.get(
+          "Shorter than {d} is not possible: {name} needs {runs} run(s) "
+          "and can use {slots} slot(s) at once. More characters or more "
+          "blueprint copies for that item would shorten it.")))
+
+
+# ---------------------------------------------------------------- (aa407)
+# STUFE C: EINE EINDEUTIGE ZUORDNUNG WIRD FESTGESCHRIEBEN (24.09.2026)
+#
+# Bis Stufe B wurde ein gelieferter Job bei JEDEM Aufbau neu geraten. Solange
+# nur EIN Plan das Item baut, faellt das immer gleich aus - bis ein ZWEITER
+# Plan mit demselben Zwischenprodukt entsteht. Von da an gilt das Item als
+# umstritten, `delivered_sicher` verwirft seine Runs, und der Fortschritt
+# verschwindet aus dem alten Plan ("es gehen bei anderen Plaenen die Runs
+# zurueck"). Die Heilung ist kein besseres Raten, sondern ein GEDAECHTNIS.
+from eve_trader.ui.mw_helpers import (                                   # noqa: E402
+    job_zuordnen_eindeutig as _jze, delivered_sicher as _ds407)
+_T407 = 41337
+_FRZ407 = 10_000.0
+
+
+def _j407(jid, runs, fts, tid=_T407, akt=9):
+    return {"job_id": jid, "product_type_id": tid, "runs": runs,
+            "activity_id": akt, "fertig_ts": fts}
+
+
+_RE407 = {_T407: True}
+_PR407 = {_T407: 100}
+# DER NORMALFALL: kein anderer Plan will das Item -> der Job wird MIR
+# zugeschrieben, und zwar dauerhaft.
+_e407 = _jze([_j407(1, 40, _FRZ407 + 5)], _PR407, _RE407, {}, set(), _FRZ407)
+eq("aa407 ein eindeutiger Job wird zugeordnet", _e407, {1: (_T407, 40)})
+# GEGENPROBE: ist das Item umstritten, entsteht KEIN Eintrag - eine
+# Vermutung darf sich nicht als Beleg festsetzen.
+eq("aa407 ein umstrittenes Item wird nicht festgeschrieben",
+   _jze([_j407(1, 40, _FRZ407 + 5)], _PR407, _RE407, {}, {_T407}, _FRZ407), {})
+eq("aa407 Item, das der Plan gar nicht baut -> nichts",
+   _jze([_j407(1, 40, _FRZ407 + 5, tid=999)], _PR407, _RE407, {}, set(),
+        _FRZ407), {})
+eq("aa407 Fertigungs-Job auf einer Reaktions-Stufe zaehlt nicht",
+   _jze([_j407(1, 40, _FRZ407 + 5, akt=1)], _PR407, _RE407, {}, set(),
+        _FRZ407), {})
+eq("aa407 ... und umgekehrt",
+   _jze([_j407(1, 40, _FRZ407 + 5, akt=9)], _PR407, {_T407: False}, {},
+        set(), _FRZ407), {})
+eq("aa407 ein Job von VOR dem Einfrieren zaehlt nicht",
+   _jze([_j407(1, 40, _FRZ407 - 1)], _PR407, _RE407, {}, set(), _FRZ407), {})
+eq("aa407 ein schon vergebener Job bleibt, wo er ist",
+   _jze([_j407(1, 40, _FRZ407 + 5)], _PR407, _RE407, {1: "B"}, set(),
+        _FRZ407), {})
+# DECKEL: nie mehr zuordnen, als der Plan ueberhaupt vorhat.
+eq("aa407 Deckel: 100 Plan-Runs nehmen nur zwei 40er-Jobs",
+   len(_jze([_j407(i, 40, _FRZ407 + i) for i in (1, 2, 3)], _PR407, _RE407,
+            {}, set(), _FRZ407)), 2)
+# ... und bei knappem Deckel gewinnt der AELTESTE, nicht der erste in der
+# Liste - sonst haengt das Ergebnis an der Reihenfolge (wie in job_zuordnen).
+eq("aa407 bei knappem Deckel gewinnt der aelteste Job",
+   sorted(_jze([_j407(2, 60, _FRZ407 + 9), _j407(1, 60, _FRZ407 + 1)],
+               _PR407, _RE407, {}, set(), _FRZ407)), [1])
+eq("aa407 ... unabhaengig von der Listenreihenfolge",
+   sorted(_jze([_j407(1, 60, _FRZ407 + 1), _j407(2, 60, _FRZ407 + 9)],
+               _PR407, _RE407, {}, set(), _FRZ407)), [1])
+eq("aa407 ohne Einfrier-Zeitpunkt wird nichts festgeschrieben",
+   _jze([_j407(1, 40, _FRZ407 + 5)], _PR407, _RE407, {}, set(), None), {})
+
+# DAS FEHLERBILD, NACHGERECHNET: derselbe Job, einmal ohne und einmal mit
+# Gedaechtnis - nachdem ein zweiter Plan dasselbe Item beansprucht.
+_gel407 = {_T407: 40}
+eq("aa407 Fehlerbild ohne Gedaechtnis: der Fortschritt faellt weg",
+   _ds407(_gel407, _PR407, {_T407}), {})
+eq("aa407 mit festgeschriebener Zuordnung bleibt er stehen",
+   _ds407(_gel407, _PR407, {_T407}, {_T407: 40}), {_T407: 40})
+# Und er bleibt am Deckel: mehr als der Plan vorhat, zaehlt auch belegt nie.
+eq("aa407 ... aber nie mehr als der Plan vorhat",
+   _ds407({_T407: 500}, _PR407, {_T407}, {_T407: 500}), {_T407: 100})
+
+# DIE QUELLE MUSS DER SPEICHER AUCH KENNEN. `job_zuordnung_setzen` wirft bei
+# einer unbekannten Quelle ValueError, und der Aufrufer faengt das ab - die
+# Zuordnung waere also NIE passiert, sichtbar nur in fehler.log. Genau so
+# stand es nach dem ersten Entwurf im Code. Deshalb hier AUSGEFUEHRT, nicht
+# nur gelesen.
+from eve_trader import store as _st407                                   # noqa: E402
+check("aa407 der Speicher kennt die Quelle 'eindeutig'",
+      "eindeutig" in _st407.JOB_QUELLEN)
+_alt_home407 = os.environ.get("EVE_TRADER_HOME")
+os.environ["EVE_TRADER_HOME"] = _tf383.mkdtemp()
+try:
+    _il383.reload(_cfg383)
+    _il383.reload(_st383)
+    check("aa407 ... und nimmt sie auch wirklich an",
+          _st383.job_zuordnung_setzen(5150, "C", _T407, 40, "eindeutig"))
+    eq("aa407 der Job gehoert danach diesem Plan",
+       _st383.job_zuordnung_alle(), {5150: "C"})
+    _st383.job_zuordnung_loeschen("C")      # Suiten-Zustand ueberlebt Laeufe
+finally:
+    if _alt_home407 is None:
+        os.environ.pop("EVE_TRADER_HOME", None)
+    else:
+        os.environ["EVE_TRADER_HOME"] = _alt_home407
+    _il383.reload(_cfg383)
+    _il383.reload(_st383)
+
+# VERDRAHTUNG
+_jzn407 = _fn_src("_job_zuordnung_nachfuehren")
+check("aa407 der Nachzug schreibt eindeutige Jobs mit der Quelle 'eindeutig'",
+      'job_zuordnung_setzen(_jid, _pid, _t, _r, "eindeutig")' in _jzn407)
+# find() statt index(): eine Pruefung muss beim Kaputtmachen ROT werden,
+# nicht mit ValueError die ganze Suite abbrechen (Lehre aus aa393).
+_ik407 = _jzn407.find('"klick"')
+_ie407 = _jzn407.find('"eindeutig"')
+check("aa407 der Klick kommt VOR der Eindeutigkeit",
+      _ik407 >= 0 and _ie407 > _ik407)
+check("aa407 ... und fragt dabei die anderen Plaene",
+      "self._umstrittene_items(" in _jzn407)
+check("aa407 ohne Einfrier-Zeitpunkt laeuft der Eindeutigkeits-Teil nicht",
+      "if seit_ts is None:" in _jzn407)
+check("aa407 der Runplaner reicht den Einfrier-Zeitpunkt weiter",
+      'self._job_zuordnung_nachfuehren(res["assignments"],' in _src_txt
+      and 'float(_frz_sched["ts"]))' in _src_txt)
+check("aa407 belegte Runs zaehlen nur seit dem Einfrieren",
+      '_fts_b = self._iso_job_ts(' in _src_txt)
+
+# ---------------------------------------------------------------- (aa408)
+# STUFE C, TEIL 2: BEI ECHTER MEHRDEUTIGKEIT EINMAL FRAGEN (24.09.2026)
+#
+# Nutzer-Entscheide: "einmal fragen, Antwort merken" und "gesammelt im
+# Runplaner". Uebrig bleibt genau der Fall, den weder Klick noch
+# Eindeutigkeit loesen: zwei gespeicherte Plaene bauen dasselbe Item.
+from eve_trader.ui.mw_helpers import offene_job_fragen as _ojf            # noqa: E402
+_PR408 = {_T407: 100}
+_RE408 = {_T407: True}
+eq("aa408 ein umstrittener Job kommt auf die Frage-Liste",
+   [_f["job_id"] for _f in _ojf([_j407(1, 40, _FRZ407 + 5)], _PR408, _RE408,
+                                {}, {_T407}, _FRZ407)], [1])
+# GEGENPROBE: eindeutig heisst, es gibt nichts zu fragen - das erledigt
+# job_zuordnen_eindeutig von selbst.
+eq("aa408 ein eindeutiger Job wird NICHT gefragt",
+   _ojf([_j407(1, 40, _FRZ407 + 5)], _PR408, _RE408, {}, set(), _FRZ407), [])
+eq("aa408 ein schon beantworteter Job wird nicht wieder gefragt",
+   _ojf([_j407(1, 40, _FRZ407 + 5)], _PR408, _RE408, {1: "-"}, {_T407},
+        _FRZ407), [])
+eq("aa408 ein Job, der allein groesser ist als der ganze Plan, gehoert woanders hin",
+   _ojf([_j407(1, 400, _FRZ407 + 5)], _PR408, _RE408, {}, {_T407}, _FRZ407),
+   [])
+eq("aa408 falsche Aktivitaet -> keine Frage",
+   _ojf([_j407(1, 40, _FRZ407 + 5, akt=1)], _PR408, _RE408, {}, {_T407},
+        _FRZ407), [])
+eq("aa408 ein Job von vor dem Einfrieren -> keine Frage",
+   _ojf([_j407(1, 40, _FRZ407 - 1)], _PR408, _RE408, {}, {_T407}, _FRZ407),
+   [])
+eq("aa408 Item, das der Plan gar nicht baut -> keine Frage",
+   _ojf([_j407(1, 40, _FRZ407 + 5, tid=999)], _PR408, _RE408, {}, {999},
+        _FRZ407), [])
+# AELTESTE ZUERST - die Reihenfolge im Dialog darf nicht an der Listenfolge
+# von ESI haengen.
+eq("aa408 die Fragen stehen in der Reihenfolge der Lieferung",
+   [_f["job_id"] for _f in _ojf([_j407(2, 10, _FRZ407 + 9),
+                                 _j407(1, 10, _FRZ407 + 1)],
+                                _PR408, _RE408, {}, {_T407}, _FRZ407)],
+   [1, 2])
+check("aa408 'zu keinem davon' hat einen eigenen Platzhalter",
+      _st407.PLAN_KEINER == "-")
+
+_jfa408 = _fn_src("_job_frage_antworten")
+check("aa408 die Antwort des Nutzers wird als 'nutzer' verbucht",
+      '"nutzer")' in _jfa408)
+check("aa408 ... und ueberschreibt notfalls eine bestehende Zuordnung",
+      "job_zuordnung_umhaengen(" in _jfa408)
+check("aa408 'keiner' wird genauso gemerkt wie ein Plan",
+      "_st.PLAN_KEINER if _plan is None else _plan" in _jfa408)
+_jpk408 = _fn_src("_job_plan_kandidaten")
+check("aa408 die Auswahl kommt aus der reserve_map der anderen Plaene",
+      "reserve_map" in _jpk408)
+check("aa408 ... und der offene Plan steht immer mit drin",
+      "if _pid is not None and str(_pid) not in _gesehen:" in _jpk408)
+_jfk408 = _fn_src("_jobfrage_knopf_auffrischen")
+check("aa408 ohne offene Frage verschwindet die Zeile, statt grau zu werden",
+      "_btn.hide()" in _jfk408 and "setEnabled" not in _jfk408)
+check("aa408 der Runplaner frischt die Zeile bei jedem Aufbau auf",
+      "self._jobfrage_knopf_auffrischen()" in _src_txt)
+check("aa408 gefragt wird nur auf Klick, nie von selbst",
+      "self._job_frage_dialog()" in _src_txt
+      and "_jf_btn.clicked.connect" in _src_txt)
+for _k408 in ("{n} job(s) not assigned \u2013 assign",
+              "Which build plan do these jobs belong to?",
+              "None of these", "Save assignment", "Belongs to", "Delivered",
+              "{n} job(s) assigned."):
+    check("aa408 DE vorhanden: " + _k408, bool(_de392.get(_k408)))
+
+# ---------------------------------------------------------------- (aa409)
+# "FEHLT", OBWOHL NICHTS FEHLT (Nutzer 25.09.2026: "es fehlen anscheinend
+# Silicon Diborite, das ist aber neu, die haben nicht immer gefehlt").
+#
+# SEINE ZAHLEN, nachgerechnet (Bericht zuordnung_bericht.txt + SDE):
+# Multiplan 1 braucht 22'932 Silicon Diborite, im Hangar liegen 9'913,
+# gemeldet fehlen 13'019 (9'913 + 13'019 = 22'932, geht auf). Gleichzeitig
+# laufen 143 von 194 Runs Titanium Carbide. Die SDE sagt: Blaupause 46204
+# macht 10'000 Titanium Carbide je Run und braucht dafuer 100 Silicon
+# Diborite - 143 Runs also 14'300 Stueck, die im Spiel laengst weg sind.
+# Es fehlt damit NICHTS; die Einkaufsliste zaehlt nur den Bedarf eines
+# laufenden Jobs weiter mit, weil sein Erzeugnis noch nicht da ist.
+#
+# NUTZER-ENTSCHEID ("koennen wir 2 und 3 kombinieren?"): die RECHNUNG bleibt
+# unveraendert (Regel 3 - lieber zu viel als zu wenig), die ZEILE sagt jetzt
+# warum. Deshalb prueft dieser Block eine reine Auskunft.
+from eve_trader.ui.mw_helpers import laufend_verbraucht as _lvb             # noqa: E402
+_TC409, _SD409 = 16671, 16658
+# build_mats traegt die Menge fuer ALLE Plan-Runs: 194 x 100 = 19'400.
+_BM409 = {_TC409: [[_SD409, 19400], [4312, 970]]}
+_BR409 = {_TC409: 194}
+eq("aa409 143 von 194 laufenden Runs stecken 14'300 Silicon Diborite",
+   _lvb(_BR409, _BM409, {_TC409: 143}).get(_SD409), 14300)
+eq("aa409 ... und das erklaert die gemeldeten 13'019 vollstaendig",
+   _lvb(_BR409, _BM409, {_TC409: 143}).get(_SD409) >= 22932 - 9913, True)
+eq("aa409 ohne laufende Jobs steckt nichts drin", _lvb(_BR409, _BM409, {}), {})
+eq("aa409 mehr laufende Runs als geplant sind auf den Plan gedeckelt",
+   _lvb(_BR409, _BM409, {_TC409: 999}).get(_SD409), 19400)
+eq("aa409 abgerundet, nie aufgerundet – eine Auskunft behauptet lieber zu wenig",
+   _lvb({1: 3}, {1: [[7, 10]]}, {1: 1}).get(7), 3)
+eq("aa409 eine Position ohne Plan-Runs liefert nichts",
+   _lvb({1: 0}, {1: [[7, 10]]}, {1: 5}), {})
+# Die Auskunft addiert ueber ALLE laufenden Positionen, die dasselbe
+# Material brauchen - sonst waere sie bei geteilten Zutaten zu klein.
+eq("aa409 zwei laufende Positionen mit derselben Zutat addieren sich",
+   _lvb({1: 10, 2: 10}, {1: [[7, 100]], 2: [[7, 50]]},
+        {1: 10, 2: 10}).get(7), 150)
+
+_mt409 = _fn_src("_fill_material_tab")
+check("aa409 der Materials-Tab holt die laufenden Runs aus derselben Quelle "
+      "wie der Runplaner",
+      '_bd_active_jobs_map' in _mt409 and "laufend_verbraucht" in _mt409)
+check("aa409 die Zeile nennt die laufenden Jobs im Status",
+      '{n} in running jobs' in _mt409)
+check("aa409 ... und erklaert es im Grund der Zeile",
+      'are already used up by jobs that are ' in _mt409)
+check("aa409 der Hinweis erscheint nur dort, wo etwas fehlt oder gebaut wird",
+      'if _lv_n > 0 and (int(r["missing"]) > 0 or int(built or 0) > 0):'
+      in _mt409)
+check("aa409 die RECHNUNG bleibt unberuehrt: der Restbedarf kennt die "
+      "laufenden Jobs weiterhin nicht",
+      "laufend_verbraucht" not in _fn_src("_restbedarf_jetzt")
+      and "laufend_verbraucht" not in _fn_src("_fehlbedarf_jetzt"))
+for _k409 in ("{n} in running jobs",
+              "{n} units of this are already used up by jobs that are "
+              "RUNNING right now \u2013 in game the material is gone, but "
+              "their output is not in the hangar yet, so the plan keeps "
+              "counting the need. Nothing is really missing here. The number "
+              "stays as it is on purpose (better to buy too much than too "
+              "little); tick the running rows in the run planner to take "
+              "their material out of the list."):
+    check("aa409 DE vorhanden: " + _k409[:40], bool(_de392.get(_k409)))
+
+# ---------------------------------------------------------------- (aa410)
+# DAS BEANCOUNTER-IMPLANTAT ZAEHLT AUF DEM SCRAPMETAL-PFAD NICHT (gemessen
+# 25.09.2026, Nutzer-Vorschau MIT gestecktem RX-804): Unrefined Titanium
+# Chromide liefert 164 -> 86 Titanium und 36 -> 19 Titanium Chromide, also
+# exakt dieselben Zahlen wie ohne Implantat. Mit +4 % waeren es 90 gewesen.
+# Das Implantat sagt selbst "4% bonus to ore and ice reprocessing yield" -
+# ein Unrefined-Reaktionsprodukt ist weder Erz noch Eis.
+_F410 = _I403.scrap_char_faktor(3)          # Scrapmetal Processing 3 -> 53 %
+_A410 = _I403.scrap_ausbeute(_F410)
+eq("aa410 Scrapmetal-Pfad: 53,0 % (gemessen)", round(_A410 * 1000), 530)
+eq("aa410 ... 164 Titanium werden zu 86", int(164 * _A410), 86)
+eq("aa410 ... 36 Titanium Chromide werden zu 19", int(36 * _A410), 19)
+# GEGENPROBE: haette das Implantat gezaehlt, staende dort 90 - die Messung
+# schliesst das aus.
+eq("aa410 mit +4 % waeren es 90 gewesen – waren es nicht",
+   int(164 * _A410 * 1.04), 90)
+import inspect as _ins410                                                # noqa: E402
+check("aa410 scrap_char_faktor nimmt NUR die Skill-Stufe",
+      list(_ins410.signature(_I403.scrap_char_faktor).parameters) ==
+      ["scrapmetal"])
+check("aa410 scrap_ausbeute nimmt NUR den Charakter-Faktor",
+      list(_ins410.signature(_I403.scrap_ausbeute).parameters) ==
+      ["char_faktor"])
+check("aa410 der Erz-Pfad rechnet das Implantat dagegen weiterhin mit",
+      "implant_pct" in
+      list(_ins410.signature(_I403.reprocess_char_faktor).parameters))
+# Die Messung gehoert an die Funktion, nicht nur ins Sitzungsprotokoll -
+# sonst rechnet in einem Jahr jemand das Implantat "nachtraeglich" ein.
+check("aa410 die Messung steht am Quelltext, nicht nur im Protokoll",
+      "RX-804" in (_I403.scrap_ausbeute.__doc__ or ""))
+
+# ---------------------------------------------------------------- (aa411)
+# EINGEFROREN SCHLAEGT ORDERBUCH-LADDER (Nutzer-Befund 25.09.2026).
+#
+# Sein Small Nanobot Accelerator II x160: Dialog 3'894'389/Stk, Karte
+# 4'767'285 - und im eingefrorenen Schnappschuss steht 4'767'285
+# (Material 670'396'800 + Job 20'234'550 + Invention 72'134'370 =
+# 762'765'720, Bestand 0). Der Dialog zeigte 530'733'296 Material, eine
+# Zahl, die in keinem Schnappschuss steht: die Orderbuch-Ladder hatte den
+# EINGEFRORENEN Einkauf mit gecachten Buechern neu bepreist. Der Kopf sagt
+# "purchase 15.08.2026" - die Zahl darunter kam von heute.
+# Dazu kam: `_bd_ladder_result` wurde nur beim NEUEN Bauplan geleert, nicht
+# beim Oeffnen eines gespeicherten - die Buecher eines ANDEREN Plans liefen
+# also mit.
+import types as _ty411                                                   # noqa: E402
+_LC411 = MW._bd_ladder_ctx
+_ladder411 = {"qty": 160, "_orderbooks": {34: [(5.0, 10)]},
+              "mat_cost_ladder": 530733296.0}
+_frei411 = _ty411.SimpleNamespace(_bd_ladder_result=_ladder411,
+                                  _bd_frozen=None)
+check("aa411 ohne Einfrieren gilt die Ladder weiterhin",
+      _LC411(_frei411, 160) is not None)
+_frz411 = _ty411.SimpleNamespace(
+    _bd_ladder_result=_ladder411,
+    _bd_frozen={"ts": 1.0, "qty": 160, "plan_snapshot": {"total_cost": 1.0}})
+eq("aa411 ein eingefrorener Plan laesst die Ladder NICHT an seine Kosten",
+   _LC411(_frz411, 160), None)
+# ALT-PAYLOAD ohne Schnappschuss: dort gibt es nichts zu schuetzen, also
+# bleibt das bisherige Verhalten.
+_alt411 = _ty411.SimpleNamespace(_bd_ladder_result=_ladder411,
+                                 _bd_frozen={"ts": 1.0, "qty": 160})
+check("aa411 ohne Schnappschuss bleibt es beim bisherigen Verhalten",
+      _LC411(_alt411, 160) is not None)
+eq("aa411 ohne Ladder aendert sich ohnehin nichts",
+   _LC411(_ty411.SimpleNamespace(_bd_ladder_result=None, _bd_frozen=None),
+          160), None)
+check("aa411 das Oeffnen eines gespeicherten Plans wirft die alte Ladder weg",
+      "self._bd_ladder_result = None\n            self._bd_ladder_pending = False"
+      in _src_txt)
+check("aa411 ... und zwar dort, wo auch der Einfrier-Zustand uebernommen wird",
+      "self._bd_frozen_plan_cache = None   # anderer Plan -> anderer Snapshot"
+      in _src_txt)
+
+# ---------------------------------------------------------------- (aa412)
+# DER EMPFOHLENE VERKAUFSPREIS AUF DER PLAN-KARTE IST ANKLICKBAR
+# (Nutzer 25.09.2026: "so wie im Runplanner, damit ich den Preis direkt in
+# das Clipboard bekomme"). SEIT 26.09.2026 EIN KNOPF, KEIN ETIKETT (Nutzer:
+# "optisch sieht man aber nicht, dass er anklickbar ist - bitte einen
+# kleinen Button daraus machen mit Amber-Umrahmung"): _plan_sell_knopf_zeigen
+# fuellt den Knopf und haengt den Klick an DIESELBE Kopierstelle.
+_sk412 = _fn_src("_plan_sell_knopf_zeigen")
+check("aa412 der Knopf kopiert ueber DIESELBE Stelle wie die Verkaufsliste",
+      'self._copy_sell_price(_p, _n, "bauplan"))' in _sk412
+      and "btn.clicked.connect(" in _sk412)
+check("aa412 ohne Preis bleibt der Knopf versteckt",
+      "if not preis:\n            btn.hide()" in _sk412)
+check("aa412 der Knopf wird erst mit Preis sichtbar",
+      _sk412.rstrip().endswith("btn.show()"))
+check("aa412 der alte Etikett-Klick ist weg (eine Zusage, EIN Mechanismus)",
+      "                    lbl.mousePressEvent = (" not in _src_txt
+      and "lbl.setCursor(Qt.PointingHandCursor)\n"
+      "                    lbl.mousePressEvent" not in _src_txt)
+check("aa412 der Knopf hat den Amber-Rahmen und wird beim Aufbau versteckt",
+      "border:1px solid {theme.AMBER}; border-radius:5px; " in _src_txt
+      and "sell_btn.hide()" in _src_txt
+      and 'self._plan_sell_btns[p["id"]] = sell_btn' in _src_txt)
+check("aa412 die Fertig-Zeile ruft den Knopf (nicht mehr Sell im Text)",
+      "self._plan_sell_knopf_zeigen(pid, rec_sell," in _src_txt
+      and "Build {cost} \u00b7 Sell {sell}" not in _src_txt)
+check("aa412 die Statusspalte misst den Knopf mit",
+      '"_plan_sell_btns", None) or {}):' in _fn_src("_plan_statusspalte_messen"))
+check("aa412 kopiert wird ueber DIESELBE Stelle wie die Verkaufsliste",
+      "def _copy_sell_price(self, price, name, quelle):" in _src_txt)
+check("aa412 die Meldung hat einen EIGENEN Satz fuer den Bauplan",
+      'if quelle == "bauplan":' in _src_txt)
+check("aa412 DE vorhanden: Knopf-Text und Tooltip",
+      bool(_de392.get("Sell {sell}"))
+      and bool(_de392.get(
+          "Recommended sale per unit: {sell}\nClick copies it to the "
+          "clipboard \u2013 paste it into the price field of the sell order "
+          "in game.")))
+check("aa412 DE vorhanden: Meldung des Bauplan-Preises",
+      bool(_de392.get(
+          "Sale price {price} for {name} copied \u2013 that is the price at "
+          "which THIS build plan reaches your target margin after fees. The "
+          "market may pay more or less.")))
+
+
+# ---------------------------------------------------------------- (aa418)
+# QUELLEN EINES BUENDELS SIND NIE EINGEFROREN - auf BEIDEN Speicherwegen
+# (Nutzer-Befund 26.09.2026, karten_bericht: Ametat II / Flycatcher / Stork
+# standen eingefroren mit Einkaeufen vom 10./11.09. da, obwohl alles ueber
+# das Buendel vom 23.09. gekauft war - das Buendel war aus dem Bauplan-
+# Dialog gespeichert worden, und nur der Multi-Dialog taute auf).
+import eve_trader.config as _cfg418
+_pl418 = [
+    {"id": 1, "label": "A", "type_id": 10, "frozen": {"ts": 1.0}, "reserve": True},
+    {"id": 2, "label": "B", "type_id": 11, "frozen": {"ts": 2.0}},
+    {"id": 3, "label": "C", "type_id": 12, "frozen": {"ts": 3.0}, "reserve": True},
+    {"id": 9, "label": "M", "type_id": -1, "quellen": [1, 2]},
+]
+eq("aa418 freigeben: nur die genannten Quellen, Namen fuer die Meldung",
+   _cfg418.buendel_quellen_freigeben(_pl418, [1, 2]), (["A"], ["A", "B"]))
+check("aa418 ... A aufgetaut und entsperrt, B aufgetaut, C unberuehrt",
+      _pl418[0]["frozen"] is None and _pl418[0]["reserve"] is False
+      and _pl418[1]["frozen"] is None
+      and _pl418[2]["frozen"] == {"ts": 3.0} and _pl418[2]["reserve"] is True)
+eq("aa418 zweiter Lauf aendert nichts mehr (idempotent)",
+   _cfg418.buendel_quellen_freigeben(_pl418, [1, 2]), ([], []))
+_pl418b = [
+    {"id": 1, "label": "A", "type_id": 10, "frozen": {"ts": 1.0}},
+    {"id": 2, "label": "B", "type_id": 11, "frozen": {"ts": 2.0}},
+    {"id": 8, "label": "Fertig", "type_id": -1, "quellen": [2], "done_manual": True},
+    {"id": 9, "label": "Offen", "type_id": -1, "quellen": [1]},
+]
+eq("aa418 Migration: Quellen OFFENER Buendel werden aufgetaut, abgeschlossene nicht",
+   _cfg418.buendel_quellen_nachziehen(_pl418b), ["A"])
+check("aa418 ... B (Quelle eines abgeschlossenen Buendels) bleibt eingefroren",
+      _pl418b[1]["frozen"] == {"ts": 2.0} and _pl418b[0]["frozen"] is None)
+import inspect as _insp418
+check("aa418 die Migration haengt in _nach_migrationen",
+      'if buendel_quellen_nachziehen(data.get("bau_saved_plans") or []):'
+      in _insp418.getsource(_cfg418._nach_migrationen))
+_sv418 = _fn_src("_save_plan")
+check("aa418 der Bauplan-Dialog gibt die Quellen beim Speichern eines Buendels frei",
+      "config.buendel_quellen_freigeben(" in _sv418
+      and 'new_entry.get("quellen") or []' in _sv418)
+# Der zweite Aufrufer (`_multi_plan_speichern` im Multi-Dialog) ist mit dem
+# Dialog ausgebaut (26.09.2026) - es gibt nur noch diese eine Stelle. Ein
+# Ruecklaeufer waere eine zweite Wahrheit; darum steht hier, dass er weg ist.
+check("aa418 ... und es gibt keinen zweiten Speicherweg mehr (Multi-Dialog ausgebaut)",
+      "def _multi_plan_speichern(" not in
+      open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+      and "def _open_multi_bauplan_dialog(" not in
+      open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read())
+check("aa418 DE vorhanden: Meldung",
+      bool(_de392.get(
+          "{n} single plan(s) unfrozen / released \u2013 build and buy through "
+          "the multi build plan from now on.")))
+
+# ---------------------------------------------------------------- (aa413)
+# DIE ZEIT JE RUN, WIE DER SLOT SIE SIEHT (Nutzer 25.09.2026, aus seiner
+# planer_diagnose.txt nachgestellt: Silicon Diborite 66 Runs, 19 Kopien,
+# Reactions V = Zeitfaktor 0.8 je Charakter). "as fast as possible" zeigte
+# 7 h, das Spiel 5 h 36 m; "23 h eingestellt" ergab 15 h 26 m. Grund: die
+# Mindestdauer und die Straffung rechneten base_time x TE OHNE den
+# Charakter-Faktor (6'318 s statt 5'054 s je Run) und mit 3,47 statt 4
+# ganzen Runs je Kopie. Alle drei Zahlen hier sind GERECHNET.
+_ch413 = [{"id": _i, "name": f"R{_i}", "mfg_slots": 10, "reaction_slots": 11,
+           "can_mfg": True, "can_react": True, "react_time": 0.8,
+           "mfg_time": 0.8} for _i in (1, 2)]
+_job413 = [{"tid": 16658, "name": "Silicon Diborite", "runs": 66,
+            "activity": _I.REACTION, "base_time": 10800.0,
+            "te_factor": 0.585, "reaction_tier": 1}]
+_run413 = 10800.0 * 0.585 * 0.8            # 5'054,4 s = 1 h 24 m 14 s (Spiel)
+
+
+def _plan413(ziel):
+    _r = _I.schedule_build(_job413, _ch413, per_item_cap={16658: 19},
+                           stage_ziel=ziel)
+    _n = sum(1 for _a in _r["assignments"] if _a["tid"] == 16658
+             for _ in range(int(_a.get("jobs") or 1)))
+    return (_r["stage_times"]["reaction_1"],
+            _r["stage_min_times"]["reaction_1"], _n)
+
+
+_t413, _m413, _n413 = _plan413(None)
+check("aa413 ohne Ziel: 66 Runs auf 19 Kopien = 4 ganze Runs auf der "
+      "vollsten = 5 h 37 m (nicht 7 h)",
+      abs(_t413 - 4 * _run413) < 1.0)
+check("aa413 die Mindestdauer ist GENAU diese Zeit - mit Charakter-Faktor "
+      "und ganzen Runs (vorher 6,1 h -> '7 h')",
+      abs(_m413 - 4 * _run413) < 1.0)
+# 66 Runs zu je hoechstens 4 = 17 Kopien (11 + 6). Die Kopien 18 und 19
+# machten die Stufe keine Minute kuerzer - die Straffung laesst sie liegen.
+check("aa413 ... auf 17 Kopien (11 + 6): mehr macht die Stufe nicht kuerzer",
+      _n413 == 17)
+_t413z, _m413z, _n413z = _plan413({"reaction_1": 82800.0})
+check("aa413 23 h Ziel: 5 Kopien statt 6, die Stufe bleibt unter 23 h",
+      _n413z == 5 and _t413z <= 82800.0 + 1.0)
+check("aa413 ... und laenger als die alten 15 h 26 m (mehr Runs je Kopie)",
+      _t413z > 11 * _run413 + 1.0)
+check("aa413 die Mindestdauer haengt nicht vom Ziel ab",
+      abs(_m413z - _m413) < 1.0)
+_fs413 = open(os.path.join(_ROOT, "eve_trader", "industry.py"),
+              encoding="utf-8").read()
+check("aa413 im Quelltext: der schnellste zulaessige Charakter zaehlt",
+      "def _sek_je_run(j):" in _fs413
+      and "* sci_factor.get((_c, j[\"tid\"]), 1.0)" in _fs413)
+check("aa413 im Quelltext: die Straffung zaehlt ganze Runs je Kopie",
+      "_je = max(1, int(math.floor(_T_st / _sek_je_run(j) + 1e-9)))" in _fs413)
+
+
+# ---------------------------------------------------------------- (aa414)
+# BUENDEL-MITGLIEDER SIND KEINE EIGENEN PLAENE MEHR (Nutzer 26.09.2026:
+# "Flycatcher, Stork und Ametat II sollten gar nicht mehr als Einzelplaene
+# gelten, die sind aktuell in einem Multiplan verflochten - die sollen NUR
+# noch da existieren, nicht doppelt"). Sein Fall aus zuordnung_bericht.txt:
+# Titanium Carbide stand bei Multiplan 1 als STRITTIG, weil die drei
+# Einzelplaene es auch beanspruchten - darum durfte die Einkaufsliste die
+# 143 gelieferten TC-Runs keinem Plan zuschreiben, und der Bauplan verlangte
+# 66 Silicon-Diborite-Runs, die er nicht brauchte. Alle vier Leser der
+# reserve_map muessen die Mitglieder ueberspringen - hier je eine Messung.
+from eve_trader.ui.mw_helpers import MainWindowHelpers as _H414
+_TC414 = 16671
+_set414 = {"bau_saved_plans": [
+    {"id": 1790001501385, "type_id": _I.BUENDEL_ID, "label": "Multiplan 1",
+     "quellen": [1789162106671, 1789162835294], "reserve": True,
+     "reserve_map": {str(_TC414): 1000}},
+    {"id": 1789162106671, "type_id": 22464, "label": "Flycatcher \u00d752",
+     "reserve": True, "reserve_map": {str(_TC414): 700}},
+    {"id": 1789162835294, "type_id": 22468, "label": "Stork \u00d728",
+     "reserve": False, "reserve_map": {str(_TC414): 300}},
+    {"id": 1787425009551, "type_id": 11999, "label": "Vagabond \u00d720",
+     "reserve": True, "reserve_map": {str(_TC414): 50}},
+]}
+eq("aa414 die Mitglieder eines offenen Buendels sind bekannt",
+   _H414.buendel_mitglieder(_set414), {"1789162106671", "1789162835294"})
+check("aa414 strittig ist TC fuer das Buendel nur noch durch den Vagabond",
+      _TC414 in _H414._umstrittene_items(_set414, 1790001501385))
+_ohne414 = {"bau_saved_plans": [p for p in _set414["bau_saved_plans"]
+                                if p["id"] != 1787425009551]}
+check("aa414 ... und ohne ihn ist TC EINDEUTIG - die Mitglieder zaehlen nicht",
+      _TC414 not in _H414._umstrittene_items(_ohne414, 1790001501385))
+_fr414 = _H414._fremde_reservierungen(_set414, 1790001501385)
+check("aa414 fremde Reservierungen: das Mitglied Flycatcher fehlt, der Vagabond bleibt",
+      "Vagabond \u00d720" in _fr414 and "Flycatcher \u00d752" not in _fr414)
+_agg414, _lab414 = _H414._reserved_by_other_plans(_set414, 1790001501385)
+eq("aa414 summierte Fremd-Reservierung: nur der Vagabond (50), nicht 750",
+   int(_agg414.get(_TC414, 0)), 50)
+
+
+class _Dummy414:
+    settings = _set414
+    _bd_open_plan_id = 1790001501385
+
+
+_kand414 = [str(n) for _i, n in _H414._job_plan_kandidaten(_Dummy414(), _TC414)]
+check("aa414 zur Wahl im Frage-Dialog stehen Buendel und Vagabond, kein Mitglied",
+      _kand414 == ["Multiplan 1", "Vagabond \u00d720"])
+_fertig414 = {"bau_saved_plans": [dict(_set414["bau_saved_plans"][0], done_manual=True)]
+              + _set414["bau_saved_plans"][1:]}
+eq("aa414 ein ABGESCHLOSSENES Buendel gibt seine Mitglieder wieder frei",
+   _H414.buendel_mitglieder(_fertig414), set())
+
+
+# ---------------------------------------------------------------- (aa415)
+# ZEIT ENTSCHEIDET BEI ZWEI EINZELPLAENEN (Nutzer 26.09.2026: "wie koennte
+# man so etwas zusaetzlich verhindern im Falle von Einzelplaenen?" - "ja
+# macht Sinn, bauen wir ein"). Ein Plan, der erst NACH dem Start eines Jobs
+# eingefroren wurde, kann ihn nicht gebaut haben. Bleibt kein anderer Plan
+# uebrig, ist der Job eindeutig - ohne Frage. Alles hier GERECHNET, mit
+# Gegenprobe: ein Job, der nach dem Einfrieren des anderen Plans startete,
+# bleibt strittig.
+from eve_trader.ui.mw_helpers import (job_umstritten as _ju415,
+                                       job_zuordnen_eindeutig as _je415,
+                                       offene_job_fragen as _of415,
+                                       MainWindowHelpers as _H415)
+_TC415 = 16671
+_set415 = {"bau_saved_plans": [
+    {"id": 1, "type_id": 22464, "label": "Plan A", "frozen": {"ts": 1000.0},
+     "reserve_map": {str(_TC415): 100}},
+    {"id": 2, "type_id": 22468, "label": "Plan B", "frozen": {"ts": 5000.0},
+     "reserve_map": {str(_TC415): 100}},
+    {"id": 3, "type_id": 22470, "label": "Plan C fertig", "done_manual": True,
+     "frozen": {"ts": 10.0}, "reserve_map": {str(_TC415): 100}},
+    {"id": 4, "type_id": 22472, "label": "Plan D spaeter",
+     "frozen": {"ts": 8000.0}, "reserve_map": {str(_TC415): 100}},
+]}
+# ZWEI Mitbewerber (B 5000, D 8000): der FRUEHESTE zaehlt - ein Job von
+# 6000 kann von B stammen, auch wenn D ihn nicht gebaut haben kann.
+eq("aa415 fuer Plan A ist TC erst seit Plan B (5000) strittig - der fertige "
+   "Plan C zaehlt nicht, der spaetere D verschiebt nichts",
+   _H415._umstrittene_seit(_set415, 1), {_TC415: 5000.0})
+_set415o = {"bau_saved_plans": [dict(_set415["bau_saved_plans"][1], frozen={})]
+            + [_set415["bau_saved_plans"][0]]}
+eq("aa415 ein Plan ohne Einfrier-Zeitpunkt gilt als 'schon immer' (0.0)",
+   _H415._umstrittene_seit(_set415o, 1), {_TC415: 0.0})
+check("aa415 Job vor dem Einfrieren von B: NICHT strittig",
+      _ju415(_TC415, 4000.0, {_TC415}, {_TC415: 5000.0}) is False)
+check("aa415 Job nach dem Einfrieren von B: strittig (Gegenprobe)",
+      _ju415(_TC415, 6000.0, {_TC415}, {_TC415: 5000.0}) is True)
+check("aa415 ohne Startzeit oder ohne Zeitkarte bleibt es bei der Item-Regel",
+      _ju415(_TC415, None, {_TC415}, {_TC415: 5000.0}) is True
+      and _ju415(_TC415, 4000.0, {_TC415}, None) is True)
+check("aa415 ein unstrittiges Item bleibt unstrittig",
+      _ju415(99, 6000.0, {_TC415}, {_TC415: 5000.0}) is False)
+_jobs415 = [{"job_id": 11, "product_type_id": _TC415, "runs": 40,
+             "activity_id": 11, "start_ts": 4000.0, "fertig_ts": 4500.0},
+            {"job_id": 12, "product_type_id": _TC415, "runs": 40,
+             "activity_id": 11, "start_ts": 6000.0, "fertig_ts": 6500.0}]
+_e415 = _je415(_jobs415, {_TC415: 100}, {_TC415: True}, {}, {_TC415},
+               1000.0, umstritten_seit={_TC415: 5000.0})
+eq("aa415 eindeutig: nur der Job von VOR Plan B wird festgeschrieben",
+   _e415, {11: (_TC415, 40)})
+_f415 = [_f["job_id"] for _f in _of415(
+    _jobs415, {_TC415: 100}, {_TC415: True}, {}, {_TC415}, 1000.0,
+    umstritten_seit={_TC415: 5000.0})]
+eq("aa415 gefragt wird nur nach dem Job von NACH Plan B", _f415, [12])
+_e415o = _je415(_jobs415, {_TC415: 100}, {_TC415: True}, {}, {_TC415}, 1000.0)
+eq("aa415 ohne Zeitkarte wie bisher: strittiges Item, nichts eindeutig",
+   _e415o, {})
+_src415 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_helpers.py"),
+               encoding="utf-8").read()
+check("aa415 der Runplaner-Aufbau reicht die Zeitkarte an BEIDE Stellen",
+      _src415.count("umstritten_seit=_um_seit)") == 2)
+
+
+# ---------------------------------------------------------------- (aa416)
+# RUNPLANER: "(building 16/40)" bei 0 offenen Runs (Nutzer 26.09.2026) las
+# sich wie "24 fehlen noch". Bei voller Deckung (Plan-Runs = geliefert +
+# laufend) steht jetzt die Rechnung des Items in der Zeile. Quelltext-
+# Wächter, weil der Zweig im Fenster einen eingefrorenen Plan mit ESI-
+# Lieferungen braucht; die Zusage selbst steht als Text und Bedingung da.
+_src416 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_bauplan_tabs.py"),
+               encoding="utf-8").read()
+check("aa416 die voll gedeckte Zeile nennt geliefert und laufend",
+      '"(covered \\u2713 {plan}/{plan}: {gel} delivered "' in _src416
+      and '"\\u00b7 {lauf} running)"' in _src416)
+check("aa416 ... und zwar nur bei Plan-Runs <= geliefert + laufend",
+      "_gel_i9 + _lauf_i9 >= _plan_i9:" in _src416)
+check("aa416 DE vorhanden: gedeckt-Zeile",
+      bool(_de392.get("(covered \u2713 {plan}/{plan}: {gel} delivered "
+                      "\u00b7 {lauf} running)")))
+# MATERIALIEN-REITER: die Eigenbau-Zeile zeigt die OFFENEN Runs (b108
+# misst es am Fenster); hier die Verdrahtung und die Texte.
+check("aa416 der Reiter fragt die offenen Runs ueber EINE Stelle",
+      "_rest_runs = self._rest_runs_jetzt()" in _src416)
+check("aa416 laufende Jobs zaehlen als gestartet",
+      "_offen_runs = max(0, int(_rest_runs[int(r[\"tid\"])]) - _lauf_runs)" in _src416)
+for _k416 in ("nothing left to build \u2713", "{r} of {n} runs open", "{n} running"):
+    check("aa416 DE vorhanden: " + _k416, bool(_de392.get(_k416)))
+_mw416 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+              encoding="utf-8").read()
+check("aa416 _rest_runs_jetzt rechnet mit der SICHEREN Liefer-Karte",
+      "def _rest_geliefert_jetzt(self):" in _mw416
+      and '_bd_runplan_delivered_sicher' in _mw416.split("def _rest_geliefert_jetzt")[1][:900]
+      and "self._rest_geliefert_jetzt())" in _mw416.split("def _rest_runs_jetzt")[1][:1200])
+
+
+# ---------------------------------------------------------------- (aa417)
+# RESERVIERUNG OHNE HAND-HAKEN (Nutzer 26.09.2026: "machen okey, aber
+# Handhaken als optischen Marker will ich behalten"). Belegte, gelieferte
+# Jobs (job_zuordnung) geben die Zutaten ihrer Zeile frei wie ein Haken -
+# mit derselben ESI-Verzugs-Sperre, als Maximum (nie Summe), gedeckelt.
+# Dazu: Anzeige und Einkaufsliste lesen EINE Karte. Alles gerechnet.
+from eve_trader.ui.mw_helpers import MainWindowHelpers as _H417
+_zu417 = {1: {"type_id": 5, "runs": 10, "ts": 100.0},
+          2: {"type_id": 5, "runs": 5, "ts": 900.0},
+          3: {"type_id": 6, "runs": 2, "ts": 50.0}}
+eq("aa417 belegte Runs: nur Eintraege, die ESI schon gesehen hat (ts <= Bestand)",
+   _H417.belegte_runs_seit(_zu417, 500.0), {5: 10, 6: 2})
+eq("aa417 ohne Bestandszeit zaehlt nichts (Regel 3)",
+   _H417.belegte_runs_seit(_zu417, None), {})
+_plan417 = {"build_mats": {5: [(7, 1000), (8, 500)]}}
+_rm417 = {5: 100, 7: 1000, 8: 500}
+_asg417 = [{"tid": 5, "runs": 20, "stage": "component", "char_id": 1}]
+eq("aa417 10 von 20 Runs belegt, kein Haken: die Haelfte der Zutaten faellt raus",
+   _H417._reserve_map_mitlaufend(_plan417, _rm417, {}, _asg417, 500.0,
+                                 belegt={5: 10}),
+   {5: 100, 7: 500, 8: 250})
+eq("aa417 ohne Beleg und ohne Haken bleibt alles reserviert (wie bisher)",
+   _H417._reserve_map_mitlaufend(_plan417, _rm417, {}, _asg417, 500.0),
+   dict(_rm417))
+eq("aa417 Haken (20) + Beleg (10) = MAXIMUM 20, nicht 30",
+   _H417._reserve_map_mitlaufend(_plan417, _rm417, {"component|1|5": 100.0},
+                                 _asg417, 500.0, belegt={5: 10}),
+   {5: 100})
+# TEIL-HAKEN: Zuteilung 5 Runs abgehakt, Beleg 10 -> 10 von 20 (Maximum),
+# nicht 15 - sonst gaebe der Plan drei Viertel frei statt der Haelfte.
+_asg417b = [{"tid": 5, "runs": 5, "stage": "component", "char_id": 1},
+            {"tid": 5, "runs": 15, "stage": "component", "char_id": 2}]
+eq("aa417 Teil-Haken (5) + Beleg (10) = Maximum 10 von 20, nicht 15",
+   _H417._reserve_map_mitlaufend(_plan417, _rm417, {"component|1|5": 100.0},
+                                 _asg417b, 500.0, belegt={5: 10}),
+   {5: 100, 7: 500, 8: 250})
+eq("aa417 Beleg ueber Plan (99 von 20) ist gedeckelt - Erzeugnis bleibt reserviert",
+   _H417._reserve_map_mitlaufend(_plan417, _rm417, {}, _asg417, 500.0,
+                                 belegt={5: 99}),
+   {5: 100})
+eq("aa417 Beleg fuer ein Item, das der Plan nicht baut, aendert nichts",
+   _H417._reserve_map_mitlaufend(_plan417, _rm417, {}, _asg417, 500.0,
+                                 belegt={6: 10}),
+   dict(_rm417))
+_src417 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_helpers.py"),
+               encoding="utf-8").read()
+check("aa417 BEIDE Reservierungs-Leser reichen den Beleg weiter",
+      _src417.count("belegt=MainWindowHelpers._belegt_fuer_plan(p))") == 2)
+_tabs417 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_bauplan_tabs.py"),
+                encoding="utf-8").read()
+check("aa417 der Runplaner zeigt DIESELBE Karte, die die Einkaufsliste rechnet",
+      "self._bd_runplan_delivered = dict(\n"
+      "                    self._bd_runplan_delivered_sicher)" in _tabs417)
+
+# ---------------------------------------------------------------- (aa419)
+# BLAUPAUSEN IN JOBS SIND NICHT VERFUEGBAR (Nutzer 26.09.2026: "ich habe
+# Component Blueprints am Researchen auf ME und TE ... das Tool denkt, ich
+# habe diese zur Verfuegung ... eigentlich nur 5 Titanium Diborite Armor
+# Plate Blueprint, die ich benutzen kann, die anderen sind am Researchen und
+# das Tool denkt ich besitze 8 Stueck"). ESI listet sie weiter unter
+# /blueprints/; nur die blueprint_id des Jobs verraet es.
+import eve_trader.esi as _esi419
+_bps419 = [
+    {"item_id": 101, "type_id": 7, "quantity": 5, "is_bpo": True, "runs": -1},
+    {"item_id": 102, "type_id": 7, "quantity": 1, "is_bpo": True, "runs": -1},
+    {"item_id": 103, "type_id": 7, "quantity": 2, "is_bpo": True, "runs": -1},
+    {"item_id": None, "type_id": 8, "quantity": 1, "is_bpo": False, "runs": 3},
+]
+_jobs419 = [
+    {"job_id": 1, "blueprint_id": 102, "activity_id": 4, "status": "active",
+     "end_date": "2026-09-30T14:00:00Z"},
+    {"job_id": 2, "blueprint_id": 103, "activity_id": 3, "status": "ready",
+     "end_date": "2026-09-28T08:00:00Z"},
+    {"job_id": 3, "blueprint_id": 101, "activity_id": 1, "status": "delivered",
+     "end_date": "2026-09-01T00:00:00Z"},
+    {"job_id": 4, "blueprint_id": None, "activity_id": 1, "status": "active"},
+]
+_frei419, _belegt419 = _esi419.blaupausen_in_jobs(_bps419, _jobs419)
+# Nutzer 26.09.2026: "Fertigung koennte zum Problem werden, wenn etwas
+# abholbereit ist, sollte es dennoch zaehlen" - 'ready' sperrt nicht.
+eq("aa419 frei: das 5er-Paket (Job nur 'delivered'), die BPC ohne item_id UND die 'ready'",
+   [b["item_id"] for b in _frei419], [101, 103, None])
+eq("aa419 belegt: nur die ME-Forschung (active)",
+   [(b["item_id"], b["in_job"]["activity_id"], b["in_job"]["job_id"]) for b in _belegt419],
+   [(102, 4, 1)])
+eq("aa419 nur active und paused sperren - ready/cancelled/reverted/delivered nicht",
+   _esi419.JOB_SPERRT_BLAUPAUSE, ("active", "paused"))
+eq("aa419 'paused' (Struktur ohne Strom) haelt die Blaupause fest (Kopie-Job)",
+   [b["item_id"] for b in _esi419.blaupausen_in_jobs(
+       _bps419, [{"blueprint_id": 101, "status": "paused", "activity_id": 5}])[1]],
+   [101])
+# Nutzer 26.09.2026: "Fertigungsauftraege niemals sperren - ESI trackt zu
+# langsam": ein LAUFENDER Bau-Job (activity 1) laesst die Blaupause frei,
+# derselbe Job als Invention (8) sperrt sie.
+eq("aa419 laufende FERTIGUNG sperrt nie, Invention mit demselben Job schon",
+   [[b["item_id"] for b in _esi419.blaupausen_in_jobs(
+        _bps419, [{"blueprint_id": 101, "status": "active", "activity_id": _a}])[1]]
+    for _a in (1, 8)],
+   [[], [101]])
+eq("aa419 nur Fertigung (1) ist ausgenommen", _esi419.JOB_SPERRT_NICHT_AKTIVITAET, (1,))
+check("aa419 Eingabe bleibt unveraendert (Kopie statt Markierung im Original)",
+      "in_job" not in _bps419[1] and _belegt419[0] is not _bps419[1])
+eq("aa419 ohne Jobs ist alles frei", _esi419.blaupausen_in_jobs(_bps419, None),
+   (_bps419, []))
+# fetch_blueprints filtert VORGABE-maessig, mit_belegten=True liefert alle
+# (mit Markierung); ein gescheiterter Job-Abruf laesst alle stehen.
+_src419 = _insp418.getsource(_esi419.fetch_blueprints)
+check("aa419 fetch_blueprints: Vorgabe nur freie, mit_belegten=True alle - Jobs selbst geholt",
+      "return frei + belegt if mit_belegten else frei" in _src419
+      and "jobs = fetch_active_jobs(client_id, character_id)" in _src419
+      and "jobs = []" in _src419
+      and "mit_belegten: bool = False" in _src419)
+_fa419 = _insp418.getsource(_esi419.fetch_active_jobs)
+_fc419 = _insp418.getsource(_esi419.fetch_corporation_jobs)
+_fb419 = _insp418.getsource(_esi419.fetch_corporation_blueprints)
+check("aa419 Jobs tragen blueprint_id, Blaupausen item_id (Char UND Corp)",
+      '"blueprint_id": j.get("blueprint_id")' in _fa419
+      and '"blueprint_id": j.get("blueprint_id")' in _fc419
+      and '"item_id": b.get("item_id")' in _fb419
+      and '"item_id": b.get("item_id")' in _src419)
+check("aa419 esi.py hat den Logger fuer den Fall 'Jobs nicht abrufbar'",
+      "_log = logging.getLogger(__name__)" in _insp418.getsource(_esi419))
+# UEBERBLICK "Meine Blueprints": Zeile zaehlt nur freie, im Job daneben.
+_g419 = MW._bp_zeilen_gruppieren([
+    {"type_id": 7, "quantity": 5, "is_bpo": True, "runs": -1, "_cid": 1,
+     "material_efficiency": 10, "time_efficiency": 20, "location_id": 60003760},
+    {"type_id": 7, "quantity": 3, "is_bpo": True, "runs": -1, "_cid": 1,
+     "material_efficiency": 8, "time_efficiency": 14, "location_id": 60003760,
+     "in_job": {"job_id": 1, "activity_id": 4, "end_date": "2026-09-30T14:00:00Z"}},
+    {"type_id": 9, "quantity": 1, "is_bpo": False, "runs": 10, "_cid": 1,
+     "material_efficiency": 2, "time_efficiency": 4, "location_id": 60003760,
+     "in_job": {"job_id": 2, "activity_id": 5, "end_date": "2026-09-27T00:00:00Z"}},
+])
+eq("aa419 Ueberblick: 5 frei (+3 im Job), ME/TE der FREIEN, nicht der im Job",
+   [(g["type_id"], g["quantity"], g.get("_in_job", 0), g["material_efficiency"],
+     g["time_efficiency"], g.get("runs")) for g in _g419],
+   [(7, 5, 3, 10, 20, -1), (9, 0, 1, 2, 4, 0)])
+check("aa419 ... Job-Daten haengen an der Zeile, 'in_job' selbst nicht mehr",
+      _g419[0]["_in_job_jobs"] == [{"job_id": 1, "activity_id": 4,
+                                    "end_date": "2026-09-30T14:00:00Z"}]
+      and "in_job" not in _g419[1])
+_tip419 = MW._bp_in_job_tooltip(_g419[0]["_in_job_jobs"] + [{"activity_id": 99}])
+check("aa419 Tooltip: Taetigkeit + Ende je Job, unbekannte Taetigkeit = 'Job'",
+      _tip419.startswith("Not available") and "ME research until 2026-09-30" in _tip419
+      and "\nJob until ?" in _tip419)
+_rl419 = _fn_src("_reload_my_blueprints")
+check("aa419 der Ueberblick holt die belegten MIT und zeigt sie in der Anzahl",
+      "mit_belegten=True" in _rl419
+      and 't("{n} (+{j} in job)").format(n=_anz, j=_n_job)' in _rl419
+      and "self._bp_in_job_tooltip(b.get(\"_in_job_jobs\"))" in _rl419)
+check("aa419 Runplaner-Cache und Bestands-Refresh holen NUR freie (Vorgabe)",
+      "mit_belegten" not in _fn_src("_bd_fetch_all_owned_blueprints")
+      and "esi.fetch_blueprints(" in _fn_src("_bd_fetch_all_owned_blueprints")
+      and 'jobs=jobs_by_char.get(ch["character_id"])' in _src_txt)
+check("aa419 Corp-Blaupausen werden gegen die Corp-Jobs gefiltert",
+      "out[\"blueprints\"], _belegt = esi.blaupausen_in_jobs(" in _fn_src("_corp_bau_daten"))
+for _k419 in ("{n} (+{j} in job)", "Not available \u2013 in an industry job:",
+              "{activity} until {end}", "TE research", "ME research", "Copying", "Job",
+              "Blueprints that are in an industry job right now (research, copy, "
+              "invention, manufacturing) are shown as \u201ein job\u201c and do not "
+              "count as available \u2013 neither here nor in the build plan."):
+    check(f"aa419 DE vorhanden: {_k419[:28]}", bool(_de392.get(_k419)))
+
+# ---------------------------------------------------------------- (aa420)
+# BEIM BUENDEL HEISST DIE ZAHL, WAS SIE IST (Nutzer 26.09.2026: "wie ist
+# hier Build Cost/unit gerechnet? das muesste doch Average Build Cost/Unit
+# sein? Dasselbe in Production depth ... wie machen wir das bei mehreren
+# Endprodukten"). Das Buendel hat Menge 1 - die Karte zeigt die GESAMTEN
+# Baukosten aller Enden; ein Durchschnitt ueber verschiedene Produkte waere
+# eine Zahl ohne Bedeutung. Kosten je Stueck stehen je Ende in der Karte.
+_sbd420 = _fn_src("_show_build_detail")
+check("aa420 die Kosten-Karte heisst beim Buendel 'bundle total', sonst '/ unit'",
+      't("Build cost, bundle total") if _ist_buendel' in _sbd420
+      and 'else t("Build cost / unit")' in _sbd420)
+_rdc420 = _fn_src("_render_depth_costs")
+check("aa420 Production depth: beim Buendel ' ISK, bundle total' an JEDER Zeile",
+      '_einheit = (t(" ISK, bundle total")' in _rdc420
+      and "== industry.BUENDEL_ID" in _rdc420
+      and _rdc420.count("+ _einheit") == 2
+      and 't(" ISK/unit") + "</b>"' not in _rdc420)
+for _k420 in ("Build cost, bundle total", " ISK, bundle total"):
+    check(f"aa420 DE vorhanden: {_k420.strip()}", bool(_de392.get(_k420)))
+
+# ---------------------------------------------------------------- (aa421)
+# GEWINN/KOSTEN JE ENDE = KOPFZEILE (Nutzer 26.09.2026: "ich moechte, dass
+# der Profit pro Unit oben rechts stimmt, einfach ohne Button"; sein
+# Screenshot: Spalten-Summe und "Total profit" 10'189'826 auseinander, weil
+# die Kopfzeile nach "Recalculate" mit dem Orderbuch rechnet). rebuild()
+# reicht die Build cost der Kopfzeile an den Nachzug weiter; b90 rechnet
+# den Abgleich nach.
+_rb421 = _fn_src("rebuild")
+check("aa421 rebuild gibt die Build cost der Kopfzeile an den Gewinn je Ende",
+      "gesamt=float(total or 0.0))" in _rb421
+      and "self._multi_gewinn_nachziehen(" in _rb421)
+
+# ---------------------------------------------------------------- (aa422)
+# PORTFOLIO-REFRESH: LIVE-PREISE + EHRLICHES ALTER (Nutzer 27.09.2026:
+# "refresh all zieht Marktpreise?" / "ob die Logik dahinter sinnvoll ist").
+# Die Hilfsfunktionen rechnet b122 nach; hier die Verdrahtung in
+# refresh_all: der Job holt die Live-Preise, done() setzt das Alter ehrlich
+# (ohne Live-Preise = Alter des Scans, nicht "jetzt").
+_ra422 = _fn_src("refresh_all")
+check("aa422 refresh_all holt Live-Preise fuer Bestand und Orders",
+      "live_n = self._portfolio_live_preise(" in _ra422
+      and "self._portfolio_live_ids(assets_struct, ignored, all_tx," in _ra422
+      and '"live_n": live_n}' in _ra422)
+check("aa422 ... und setzt das Preis-Alter ehrlich",
+      'self._prices_ts = _t.time() - float(res["snap_age"])' in _ra422
+      and "if self._prices_live_n:" in _ra422)
+
+# ---------------------------------------------------------------- (aa423)
+# CONTRACT-SUCHE LAEUFT IM VORDERGRUND (Nutzer 27.09.2026: "takes a few
+# minutes, runs in the background - stimmt nicht, es laedt einfach ein
+# paar Minuten, und zwar im Vordergrund"). Beide Einstiege laufen mit dem
+# grossen Overlay; kein Text darf etwas anderes behaupten.
+import re as _re423
+_ui423 = "".join(open(_f, encoding="utf-8").read() for _f in (
+    "eve_trader/ui/main_window.py", "eve_trader/ui/mw_bauplan_tabs.py"))
+_hg423 = [m.group(0) for m in _re423.finditer(r"[^\n]*runs in the background[^\n]*", _ui423)
+          if "contract" in _ui423[max(0, m.start() - 400):m.end() + 200].lower()]
+check(f"aa423 kein Contract-Text verspricht mehr 'runs in the background' ({_hg423[:2]})",
+      not _hg423)
+# LADEZEIT-MESSUNG: der Starter setzt die Variable, CRLF (Windows-bat).
+_bat423 = open("werkzeuge/messe_ladezeit.bat", "rb").read()
+check("aa423 werkzeuge\\messe_ladezeit.bat setzt EMM_LADEZEIT=1, CRLF",
+      b"set EMM_LADEZEIT=1\r\n" in _bat423 and b"\n" not in _bat423.replace(b"\r\n", b""))
+
+# ---------------------------------------------------------------- (aa426)
+# VOR JEDER VEROEFFENTLICHUNG LAEUFT pruefe.py (Nutzer 27.09.2026: "vor
+# Veroeffentlichung lassen wir immer einen Test laufen, um eine fehlerfreie
+# Veroeffentlichung zu gewaehrleisten"). Die Veroeffentlichung bricht bei
+# Rot ab, BEVOR committet wird; eigener Starter per Doppelklick. CRLF.
+_rel426b = open("release/veroeffentliche_1.0.9.bat", "rb").read()
+_rel426 = _rel426b.replace(b"\r\n", b"\n")      # Logik unabhaengig vom Zeilenende
+_p426 = _rel426.find(b"python pruefe.py < nul\n")
+_f426 = _rel426.find(b"if errorlevel 1 (\n  echo ROT: pruefe.py", _p426)
+check("aa426 veroeffentliche_1.0.9.bat prueft ZUERST und bricht bei Rot ab",
+      0 < _p426 < _f426 < _rel426.find(b"git commit")
+      and 0 < _rel426.find(b"  goto ende\n)\necho gruen", _f426))
+check("aa426 ... und hat Windows-Zeilenenden (CRLF)",
+      b"\n" not in _rel426b.replace(b"\r\n", b""))
+_pb426 = open("werkzeuge/pruefe.bat", "rb").read()
+check("aa426 werkzeuge\\pruefe.bat startet pruefe.py (mit .venv), CRLF",
+      b"python pruefe.py\r\n" in _pb426 and b'cd /d "%~dp0.."' in _pb426
+      and b"activate.bat" in _pb426 and b"\n" not in _pb426.replace(b"\r\n", b""))
+
+# ---------------------------------------------------------------- (aa425)
+# item_category_map GEMERKT (Nutzer-Bericht 27.09.2026: 309 Aufrufe, 21 s
+# reine Rechenzeit beim Oeffnen eines Bauplans). Zweiter Aufruf ohne
+# Datenbank; geaendert sich die Datei (SDE neu), wird neu gelesen.
+import tempfile as _tf425, sqlite3 as _sq425
+_w425 = _tf425.mkdtemp(prefix="aa425-")
+_dbp_alt425 = I._db_path
+_conn_alt425 = I._conn
+_zahl425 = []
+try:
+    _pfad425 = os.path.join(_w425, "industry.db")
+    _k425 = _sq425.connect(_pfad425)
+    # WIE IM ECHTEN BETRIEB: industry.db steht laengst auf WAL. Das erste
+    # Umschalten schreibt den Dateikopf um (die Datei aendert sich dabei) -
+    # das ist kein Neueinlesen der SDE.
+    _k425.execute("PRAGMA journal_mode=WAL")
+    _k425.execute("CREATE TABLE item_cat (type_id INTEGER, category_id INTEGER, "
+                  "group_id INTEGER, meta_group_id INTEGER)")
+    _k425.execute("INSERT INTO item_cat VALUES (1, 6, 25, 1)")
+    _k425.commit(); _k425.close()
+    I._db_path = lambda: _pfad425
+    I._KATMAP_CACHE.update({"sig": None, "obj": None})
+    I._conn = lambda: (_zahl425.append(1), _conn_alt425())[1]
+    _m1 = I.item_category_map(); _m2 = I.item_category_map()
+    check(f"aa425 zweiter Aufruf ohne Datenbank, dasselbe Ergebnis ({len(_zahl425)})",
+          _m1 == {1: (6, 25, 1)} and _m2 is _m1 and len(_zahl425) == 1)
+    import time as _t425
+    _t425.sleep(0.02)
+    _k425 = _sq425.connect(_pfad425)
+    _k425.execute("INSERT INTO item_cat VALUES (2, 7, 30, 1)")
+    _k425.commit(); _k425.close()
+    # WAL: die neue Zeile steht in der -wal-Datei, die Hauptdatei muss sich
+    # dabei NICHT aendern - deshalb verwirft download_sde ausdruecklich.
+    I._RECIPES_CACHE.update({"sig": ("x", 1), "obj": object()})
+    I._sde_caches_verwerfen()
+    _m3 = I.item_category_map()
+    check("aa425 SDE neu eingelesen: wird neu gelesen (auch Rezepte verworfen)",
+          _m3.get(2) == (7, 30, 1) and len(_zahl425) == 2
+          and I._RECIPES_CACHE["obj"] is None)
+    # Kommt die SDE WAEHREND einer Lesung neu, wird das Gelesene nicht gemerkt.
+    _conn_z425 = I._conn
+    def _conn_mit_sde425():
+        I._sde_caches_verwerfen()
+        return _conn_z425()
+    I._KATMAP_CACHE.update({"sig": None, "obj": None})
+    I._conn = _conn_mit_sde425
+    _m4 = I.item_category_map()
+    I._conn = _conn_z425
+    check("aa425 SDE kam waehrend der Lesung: nichts gemerkt",
+          _m4.get(2) == (7, 30, 1) and I._KATMAP_CACHE["obj"] is None)
+    import inspect as _in425
+    _src425 = _in425.getsource(I.download_sde)
+    _p_meta425 = _src425.find("VALUES('updated'")
+    _p_verw425 = _src425.find("_sde_caches_verwerfen()")
+    check("aa425 download_sde verwirft die Kopien NACH dem Schreiben",
+          0 < _p_meta425 < _p_verw425)
+finally:
+    I._db_path = _dbp_alt425; I._conn = _conn_alt425
+    I._KATMAP_CACHE.update({"sig": None, "obj": None})
+    import shutil as _sh425
+    _sh425.rmtree(_w425, ignore_errors=True)
+
+# ---------------------------------------------------------------- (aa424)
+# LADEZEIT, ERSTE FUNDE AUS DEM NUTZER-BERICHT (27.09.2026): 27'000
+# Datenbank-Verbindungen beim Start, jede mit dem vollen Datenordner-Weg
+# (exists/isdir/makedirs) und PRAGMA journal_mode. Beides jetzt einmal.
+import tempfile as _tf424, shutil as _sh424
+_w424 = _tf424.mkdtemp(prefix="aa424-")
+_env424 = {_v: os.environ.get(_v) for _v in ("HOME", "APPDATA")}
+_mk_alt424 = os.makedirs
+_mk424 = []
+try:
+    os.environ["HOME"] = _w424; os.environ["APPDATA"] = _w424
+    _p1 = _cfgmod223.app_data_dir()
+    os.makedirs = lambda *a, **k: (_mk424.append(a), _mk_alt424(*a, **k))[1]
+    _p2 = _cfgmod223.app_data_dir()
+    check("aa424 Datenordner steht schon da: kein zweites makedirs (Schnellweg)",
+          _p1 == _p2 and _mk424 == [])
+    os.makedirs = _mk_alt424
+    # Der Schnellweg darf den Umzug nicht ueberspringen: neuer Ordner weg,
+    # alter da -> wie bisher wird der alte UMGEZOGEN (mit seinem Inhalt),
+    # nicht ein leerer neuer angelegt.
+    _basis424 = os.path.dirname(_p1)
+    _sh424.rmtree(_p1)
+    _alt424 = os.path.join(_basis424, _cfgmod223._ALTER_DATENORDNER_NAME)
+    os.makedirs(_alt424)
+    with open(os.path.join(_alt424, "marke.txt"), "w") as _f424:
+        _f424.write("alt")
+    _p3 = _cfgmod223.app_data_dir()
+    check("aa424 ... neuer Ordner weg, alter da: alter wird umgezogen (Inhalt kommt mit)",
+          _p3 == _p1 and os.path.exists(os.path.join(_p3, "marke.txt"))
+          and not os.path.isdir(_alt424))
+    import eve_trader.store as _st424
+    # ROT WERDEN, NICHT KRACHEN (Lehre aa393): faellt oben der Umzug aus,
+    # gibt es den Ordner nicht - die Verbindung scheitert dann hier.
+    try:
+        _st424._WAL_GESETZT.discard(_cfgmod223.db_path())
+        _c1 = _st424._conn(); _c1.close()
+        _c2 = _st424._conn()
+        _jm424 = _c2.execute("PRAGMA journal_mode").fetchone()[0]
+        _c2.close()
+    except Exception as _e424:
+        _jm424 = f"Fehler: {_e424}"
+    check(f"aa424 WAL einmal je Datei gesetzt und bleibt ({_jm424})",
+          str(_jm424).lower() == "wal" and _cfgmod223.db_path() in _st424._WAL_GESETZT)
+finally:
+    os.makedirs = _mk_alt424
+    for _v, _x in _env424.items():
+        if _x is None:
+            os.environ.pop(_v, None)
+        else:
+            os.environ[_v] = _x
+    _sh424.rmtree(_w424, ignore_errors=True)
 
 print(f"(aa) Bestand-Herkunft: {_ok}/{_ok + len(_fail)} gruen")
 for f in _fail:

@@ -84,6 +84,14 @@ CYAN_FILL = "#15514A"        # ruhige Akzentflaeche (Primary-Knopf)
 CYAN_ON_FILL = "#DFFAF4"
 CYAN_FILL_HOVER = "#1B6A60"  # beim Hovern etwas heller
 CYAN_FILL_PRESS = "#0F3C37"  # beim Druecken dunkler
+# FORTSCHRITTSBALKEN DER PLAN-KARTEN (Nutzer 26.09.2026: "die
+# Fortschrittsbalken kann man kaum lesen in der Farbkombination von der
+# Schrift drinnen"): der Balken war leuchtendes CYAN mit MUTED-Schrift
+# darueber. Jetzt dieselbe ruhige Flaeche wie der Primary-Knopf und
+# dieselbe helle Beschriftung (CYAN_ON_FILL, >= 7:1 - aa173) - fertig
+# in einem gleich gedaempften Gruen.
+GREEN_FILL = "#1E5A3A"
+GREEN_ON_FILL = "#E3F8EA"
 AMBER = "#F2A23C"
 # NUTZER (Sitzung 8): "standardmaessig schon einen gelben Rahmen darum
 # machen, bevor man Mouseover macht." Gedaempftes Amber fuer den RUHENDEN
@@ -99,6 +107,50 @@ GOLD = "#F2A23C"          # Mitte (= AMBER, bewusst identisch)
 GOLD_TIEF = "#B87326"     # unterer Verlaufspunkt + Innenkante
 LOGO_KERN = "#0B0F17"     # Wabenfuellung, dunkler als BG fuer Kontrast
 RED = "#E5544B"
+# PLAN-FARBEN (Nutzer 23.09.2026: "Schau mal die Farben, Blau sieht man
+# kaum, waehle anderes Blau / Fuege weitere 4 Farben hinzu / Benenne alle 8
+# Farben anders, waehle keine EVE-Fraktionen als Namen [...] wir muessen gar
+# keine Namen geben, die Farbe sagt schon genug aus / Nimm kein Rot oder Full
+# Green [...] Das Rot sieht aus wie Verlustzahlen. nimm ein anderes Rot").
+#
+# DIE SCHLUESSEL SIND ABSICHTLICH NUMMERN. Sie werden im Plan GESPEICHERT.
+# Ein Name ("caldari") waere eine Aussage ueber den Plan, die der Nutzer nie
+# gemacht hat - und beim naechsten Umfaerben eine Luege. Eine Nummer ist nur
+# ein Platz in dieser Tabelle; wer den Farbwert aendert, aendert die Farbe
+# aller Plaene auf diesem Platz und nichts sonst.
+#
+# ZWEI FARBEN SIND HIER VERBOTEN, weil sie im ganzen Werkzeug etwas anderes
+# bedeuten: RED (#E5544B) = Verlust und GREEN (#4FD17A) = Gewinn. Eine Karte
+# in Signalrot laese sich wie eine Verlustmeldung, ohne eine zu sein. Darum
+# steht auf Platz 6 ein Rose - das "andere Rot", blasser und kuehler als
+# RED - und Gruen fehlt ganz; Petrol (Platz 2) ist der naechste Ton, der
+# nicht nach "Gewinn" aussieht. Geprueft wird das in aa402: jeder Wert haelt
+# im RGB-Raum Abstand zu RED, GREEN und GREEN_BRIGHT, und die acht halten
+# Abstand untereinander - sonst waeren zwei Plaene nicht unterscheidbar.
+#
+# HELLIGKEIT: die Flaeche liegt mit 18 % auf PANEL (#16273B). Unter etwa 60 %
+# Helligkeit verschwindet ein Ton darin - daran ist das alte Blau (#3A6EA5)
+# gescheitert ("Blau sieht man kaum"). Alle acht Werte liegen darueber.
+PLAN_FARBEN = {
+    "f1": "#4C90F0",   # Blau - hell genug, um auf PANEL zu stehen
+    "f2": "#2FB2D4",   # Petrol - der Platz, an dem sonst Gruen staende
+    "f3": "#8C7BF0",   # Indigo
+    "f4": "#B36BE0",   # Violett
+    "f5": "#D95FC4",   # Magenta
+    "f6": "#DE7E9B",   # Rose - das "andere Rot", kein Verlustrot
+    "f7": "#D9B38C",   # Sand
+    "f8": "#93A8C4",   # Stahl
+}
+# ALTBESTAND: die vier Fraktionsschluessel der ersten Fassung stecken schon in
+# gespeicherten Plaenen. Sie werden beim Lesen auf den naechstliegenden neuen
+# Platz gebogen, damit keine Karte ihre Farbe verliert (gelesen wird ueber
+# MainWindow._plan_farb_norm - EINE Stelle).
+PLAN_FARBEN_ALT = {
+    "caldari": "f1",
+    "gallente": "f2",
+    "amarr": "f7",
+    "minmatar": "f6",
+}
 GREEN = "#4FD17A"
 VIOLET = "#9D7FE8"    # Reaktionen-Phase 1 (Intermediate) im Runplaner
 VIOLET_2 = "#C79BE8"  # Reaktionen-Phase 2 (Composite) - HELLER, damit sich
@@ -135,6 +187,7 @@ MONO = "Consolas, monospace"   # NUR fuer Zahlen/Kennwerte (Terminal-Optik)
 # erste gefundene Familie nach vorn. Kein Code-Eingriff noetig.
 FONT_STACK = ['"Bahnschrift"', '"Segoe UI"', '"Inter"', "sans-serif"]
 FONT = ", ".join(FONT_STACK)
+
 
 
 def load_custom_fonts():
@@ -489,3 +542,25 @@ QToolBar QLabel {{
 }}
 """
 # de_scan2: an
+
+
+
+# NACH dem QSS: aa311 schneidet die Knopf-Regel des QSS von "QPushButton {{"
+# bis zum ersten "QPushButton:hover" aus - davor stuende diese hier.
+def amber_rahmen_knopf():
+    """EIN Stil fuer die amber umrandeten Aktions-Knoepfe (Nutzer 26.09.2026:
+    "Buy Missing Blueprints und Best Decryptor optisch an Create Shopping
+    List anpassen - Hintergrund normale Tool-Farbe, nur Umrandung und Text
+    Amber"; "Create shopping list etwas groesser" - 15 px, naechste Stufe der
+    Skala FS_*, 14 px ist verboten, aa170). Kein eigener
+    Hintergrund in Ruhe - der Knopf behaelt die Flaeche des Themas; Hover
+    toent leicht amber. Gesperrt: gedaempftes Amber, damit ein gesperrter
+    Knopf nicht wie ein aktiver aussieht. Rahmen in allen Zustaenden gleich
+    dick, sonst springt das Layout."""
+    return (f"QPushButton{{border:1.5px solid {AMBER}; border-radius:6px; "
+            f"padding:7px 16px; color:{AMBER}; font-weight:700; "
+            f"font-size:15px;}}"
+            f"QPushButton:hover{{background:rgba(242,162,60,0.16);}}"
+            f"QPushButton:disabled{{border:1.5px solid {AMBER_DIM}; "
+            f"color:{AMBER_DIM};}}")
+

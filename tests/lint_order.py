@@ -4,7 +4,10 @@ Zwei reale Nutzer-Abstürze dieser Art (UnboundLocalError decryptor_list,
 NameError refz_btn) hat KEIN Syntax-Check und kein String-Test gefunden -
 beide traten erst zur Laufzeit auf, tief in sehr langen UI-Funktionen.
 
-Erkannt werden zwei Muster innerhalb JEDER Funktion:
+Erkannt werden drei Muster innerhalb JEDER Funktion und ein viertes
+dateiuebergreifend (Muster D, siehe check_alle).
+
+Innerhalb einer Funktion:
   A) Direkte Vorwärts-Referenz: ein lokaler Name wird auf Statement-Ebene
      gelesen, bevor er in derselben Funktion zugewiesen wird.
   B) Closure-Falle: eine verschachtelte Funktion liest einen Namen der
@@ -191,6 +194,53 @@ def check_function(fn, path):
                     f"{path}:{first_read}: '{name}()' liest '{nm}' aus der "
                     f"äußeren Funktion, weist es aber Zeile {aline} auch zu "
                     f"-> UnboundLocalError. Anderen Namen verwenden.")
+
+    # C) SELBSTBEZUG IN DER ERSTEN ZUWEISUNG:  x = f(x)  bzw.  x += 1,
+    #    wenn DIESE Zeile die erste Zuweisung von x in dieser Funktion ist.
+    #    Dann ist x hier lokal, aber noch unbelegt - und zwar in der ganzen
+    #    Funktion, auch weiter oben.
+    #
+    #    WARUM ES DIESE PRUEFUNG GIBT (Nutzer-Befund 20.09.2026): im
+    #    Bauplan-Job stand `opts = self._multi_opts_je_ende(opts, recipes)`.
+    #    `opts` gehoerte der aeusseren Funktion; durch diese eine Zeile war
+    #    es in job() lokal und damit ueberall unbelegt. Im Programm sah das
+    #    so aus: "Open build plan" oeffnete einfach kein Fenster, in der
+    #    Statuszeile stand die Meldung. Muster B findet das NICHT (es sucht
+    #    Lesen VOR der Zuweisungszeile), Muster A auch nicht (gelesen und
+    #    zugewiesen in DERSELBEN Zeile).
+    def _liest_ohne_comprehension(node):
+        """Gelesene Namen - ohne die eigenen Scopes von Comprehensions und
+        Lambdas (deren Laufvariablen gehoeren nicht hierher)."""
+        out, stapel = set(), [node]
+        while stapel:
+            nd = stapel.pop()
+            for ch in ast.iter_child_nodes(nd):
+                if isinstance(ch, (ast.Lambda, ast.ListComp, ast.SetComp,
+                                   ast.DictComp, ast.GeneratorExp)):
+                    continue
+                if isinstance(ch, ast.Name) and isinstance(ch.ctx, ast.Load):
+                    out.add(ch.id)
+                stapel.append(ch)
+        return out
+
+    for stmt in _own_statements(fn):
+        if isinstance(stmt, ast.Assign):
+            ziele = [t.id for t in stmt.targets if isinstance(t, ast.Name)]
+            gelesen = _liest_ohne_comprehension(stmt.value)
+        elif isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
+            ziele = [stmt.target.id]
+            gelesen = {stmt.target.id}
+        else:
+            continue
+        for nm in ziele:
+            if nm in params or nm not in gelesen:
+                continue
+            if assigned.get(nm) == stmt.lineno:      # ERSTE Zuweisung hier
+                problems.append(
+                    f"{path}:{stmt.lineno}: '{nm}' wird in seiner eigenen "
+                    f"ersten Zuweisung gelesen -> in dieser Funktion lokal "
+                    f"und unbelegt (UnboundLocalError). Anderen Namen nehmen "
+                    f"oder das Objekt an Ort und Stelle aendern.")
     return problems
 
 
@@ -203,10 +253,103 @@ def check_file(path):
     return problems
 
 
+# ----------------------------------------------------------------- Muster D
+# QT REICHT SEIN SIGNAL-ARGUMENT AN JEDEN SLOT DURCH, DER EINS ANNEHMEN KANN.
+#
+# WARUM ES DIESE PRUEFUNG GIBT (Nutzer-Befund 20.09.2026: "klicke ich jetzt
+# auf multibuildplan passiert gar nichts"): der Rail-Knopf hing mit
+# `b.clicked.connect(self._open_multi_bauplan_dialog)` an einer Methode, die
+# gerade den Parameter `bearbeiten=None` bekommen hatte. `clicked` traegt ein
+# `checked`-Bool - Qt uebergab es, `False is not None` fuehrte in den
+# Bearbeiten-Zweig, der nach einem Plan mit der id `False` suchte, keinen fand
+# und still zurueckkehrte. Kein Absturz, keine Meldung, nichts im Log.
+#
+# Harmlos ist derselbe Weitergabe-Stil, solange die Vorgabe `False` oder `0`
+# ist: genau das schickt Qt ohnehin (`checked`, Index). Gemeldet wird also nur
+# die gefaehrliche Form - erster Parameter nach `self` mit einer Vorgabe, die
+# WEDER False NOCH 0 ist. Abhilfe ist immer dieselbe: ueber ein Lambda
+# verbinden, das nichts annimmt.
+#
+# Dateiuebergreifend, weil die Methode fast nie in der Datei steht, in der der
+# Knopf gebaut wird (Mixins).
+def _erster_default(fn):
+    """Vorgabewert des ERSTEN Parameters nach `self` - oder _KEIN."""
+    a = fn.args
+    pos = [x.arg for x in a.args]
+    if not (pos and pos[0] == "self" and len(pos) > 1 and a.defaults):
+        return _KEIN
+    if len(pos) - len(a.defaults) != 1:      # der erste hat keine Vorgabe
+        return _KEIN
+    try:
+        return ast.literal_eval(a.defaults[0])
+    except Exception:
+        return _UNKLAR
+
+
+class _KEIN:
+    pass
+
+
+class _UNKLAR:
+    pass
+
+
+def check_alle(pfade):
+    """Muster D ueber ALLE uebergebenen Dateien."""
+    defs = {}
+    for p in pfade:
+        try:
+            tree = ast.parse(open(p, encoding="utf-8").read(), filename=p)
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defs.setdefault(node.name, []).append(_erster_default(node))
+    # Nur wenn ALLE gleichnamigen Definitionen gefaehrlich sind - sonst weiss
+    # der Pruefer nicht, welche gemeint ist, und raet lieber nicht.
+    def _gefaehrlich(vals):
+        if not vals:
+            return False
+        for v in vals:
+            if v is _KEIN or v is _UNKLAR:
+                return False
+            if v is False or (isinstance(v, int) and not isinstance(v, bool)
+                              and v == 0):
+                return False
+        return True
+
+    heikel = {nm for nm, vals in defs.items() if _gefaehrlich(vals)}
+    problems = []
+    for p in pfade:
+        try:
+            src = open(p, encoding="utf-8").read()
+            tree = ast.parse(src, filename=p)
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            args = list(node.args) + [k.value for k in node.keywords]
+            for a in args:
+                if not (isinstance(a, ast.Attribute)
+                        and isinstance(a.value, ast.Name)
+                        and a.value.id == "self" and a.attr in heikel):
+                    continue
+                problems.append(
+                    f"{p}:{node.lineno}: 'self.{a.attr}' wird als Rueckruf "
+                    f"weitergereicht, hat aber einen ersten Parameter mit "
+                    f"einer Vorgabe ungleich False/0. Ein Qt-Signal (etwa "
+                    f"`clicked`) uebergibt sein Argument JEDEM Slot, der eins "
+                    f"annehmen kann - der Wert landet dann dort. Ueber ein "
+                    f"Lambda verbinden, das nichts annimmt.")
+    return problems
+
+
 if __name__ == "__main__":
     allp = []
     for p in sys.argv[1:]:
         allp += check_file(p)
+    allp += check_alle(sys.argv[1:])
     for p in allp:
         print("  " + p)
     print(f"{len(allp)} Befund(e)")

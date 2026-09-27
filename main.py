@@ -57,7 +57,14 @@ def _install_error_log():
 
 
 if __name__ == "__main__":
+    # STARTZEIT MESSEN (Nutzer 27.09.2026: "vor allem das erste Laden beim
+    # Oeffnen des Tools dauert"). Nur mit EMM_LADEZEIT=1, sonst nichts.
+    if os.environ.get("EMM_LADEZEIT") == "1":
+        from eve_trader import ladezeit as _lz
+        _lz.ui_start("start of Eve MoMa")
     _p = _install_error_log()
     print(f"Fehlerprotokoll: {_p}")
     from eve_trader.__main__ import main
+    if os.environ.get("EMM_LADEZEIT") == "1":
+        _lz.ui_zwischenzeit("modules loaded")
     main()
