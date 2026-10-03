@@ -68,7 +68,9 @@ class Optimizer:
         _ist_buendel = (tid == industry.BUENDEL_ID)
         _enden_opt = []
         if _ist_buendel:
-            _namen_b = getattr(self, "_bd_names", None) or {}
+            # `_bd_names_ref` ist die Namensliste des Bauplans (27.09.2026:
+            # hier stand `_bd_names`, das es nie gab -> Dropdown zeigte #IDs).
+            _namen_b = getattr(self, "_bd_names_ref", None) or {}
             for _e in sorted(self._bd_enden(tid, recipes)):
                 _enden_opt.append((int(_e), str(_namen_b.get(int(_e)) or f"#{_e}")))
             if not _enden_opt:

@@ -703,6 +703,17 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
     import threading
     _state = {"stop_fetch": False, "rl_hits": 0}
     _lock = threading.Lock()
+    # GECACHTE HISTORIEN IN EINEM RUTSCH (emm336, Ladezeit-Messung emm237:
+    # 1729 Einzelabfragen, je eine neue Verbindung, 8-9 s Rechenzeit). Das
+    # Ergebnis ist dasselbe wie get_history je Item; scheitert die
+    # Sammelabfrage, liest enrich wie bisher einzeln.
+    _hist_vorab = {}
+    try:
+        _ids_vorab = [x[0]["type_id"] for x in pre if x[0]["type_id"] in cached_ids]
+        if _ids_vorab:
+            _hist_vorab = store.get_histories(_ids_vorab, region)
+    except Exception:
+        _hist_vorab = {}
 
     def enrich(item):
         s, profit_unit, roi = item
@@ -712,7 +723,9 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
             # Alters-Check pro Item UND macht hart unmöglich, dass ein
             # Gratis-Kandidat doch einen ESI-Abruf auslöst - nur so hält das
             # Abruf-Budget unten wirklich.
-            hist = store.get_history(s["type_id"], region)
+            hist = _hist_vorab.get(s["type_id"])
+            if hist is None:
+                hist = store.get_history(s["type_id"], region)
             return s, profit_unit, roi, window_stats(hist, days), hist
         allow = not _state["stop_fetch"]
         try:

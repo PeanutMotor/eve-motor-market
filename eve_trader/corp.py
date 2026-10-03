@@ -196,6 +196,24 @@ def abrufplan(charaktere, corp_von, rollen_von, rolle):
     return plan, ohne_rolle
 
 
+def alle_mit_rolle(charaktere, corp_von, rollen_von, rolle):
+    """{corporation_id: [character_ids]} - ALLE Charaktere je Corp mit der
+    Rolle (Listen-Reihenfolge). Abgerufen wird weiter nur einmal je Corp
+    (`abrufplan`); diese Liste sagt nur, unter WELCHEN Charakteren die
+    Corp-Blaupausen in My Blueprints stehen (Nutzer 01.10.2026: "jeden
+    Charakter mit Director-Rolle im Dropdown waehlen und die Corp-
+    Blueprints sehen")."""
+    alle = {}
+    for ch in charaktere or []:
+        cid = ch.get("character_id") if isinstance(ch, dict) else ch
+        corp = (corp_von or {}).get(cid) if cid is not None else None
+        if not corp:
+            continue
+        if rolle in ((rollen_von or {}).get(cid) or set()):
+            alle.setdefault(corp, []).append(cid)
+    return alle
+
+
 def division_namen(esi_antwort, gewaehlt=None) -> dict:
     """{1..7: Name} - ESI liefert NUR die umbenannten Divisions; die
     uebrigen bekommen "Corp-Hangar N" (Nutzer 19.09.2026). Mit `gewaehlt`

@@ -42,6 +42,7 @@ def asset_pfad(*teile):
 BG = "#080D16"        # Tiefes Blauschwarz - Weltraum, nicht Loch
 PANEL = "#16273B"     # Karten/Panels: kuehles Marine
 PANEL2 = "#0E1A29"    # Sidebar/Tabellenkopf: dazwischen
+PANEL_HELL = "#1D334E"  # laufende Bauplan-Karten: eine Stufe heller als PANEL (emm337)
 BORDER = "#345876"    # Kante: klar sichtbar, blau statt grau
 TEXT = "#E8F1F8"      # eine Spur kuehler und heller als vorher
 MUTED = "#9DB4C6"
@@ -563,4 +564,15 @@ def amber_rahmen_knopf():
             f"QPushButton:hover{{background:rgba(242,162,60,0.16);}}"
             f"QPushButton:disabled{{border:1.5px solid {AMBER_DIM}; "
             f"color:{AMBER_DIM};}}")
+
+
+def kopier_knopf_stil():
+    """Kleiner Kopier-Knopf wie die Run-Knoepfe im Runplaner (emm329): duenner
+    AMBER_DIM-Rahmen, Amber-Text, Hover heller. Fuer "Copy T1 Blueprint" und
+    "Copy Decryptor" in der Invention-Karte - beide gleich gross (Nutzer
+    02.10.2026). Gesperrt: gedaempft, damit man ihn nicht fuer aktiv haelt."""
+    return (f"QPushButton{{background:{PANEL2}; border:1px solid {AMBER_DIM}; "
+            f"color:{AMBER}; border-radius:5px; padding:0px 8px;}}"
+            f"QPushButton:hover{{border-color:{AMBER}; background:{PANEL};}}"
+            f"QPushButton:disabled{{border:1px solid {BORDER}; color:{MUTED};}}")
 

@@ -791,6 +791,28 @@ def get_history(type_id: int, region: int = 10000002) -> list:
             (type_id, region))]
 
 
+def get_histories(type_ids, region: int = 10000002) -> dict:
+    """Wie get_history, aber fuer VIELE Items in wenigen Abfragen (emm336,
+    offen seit der Ladezeit-Messung emm237: 1729 Einzelabfragen im Scan, je
+    eine neue Verbindung). {type_id: [Zeilen nach Datum]} - Items ohne Zeilen
+    stehen mit [] darin, genau wie get_history sie liefern wuerde."""
+    ids = sorted({int(t) for t in (type_ids or ())})
+    out = {t: [] for t in ids}
+    if not ids:
+        return out
+    with _conn() as c:
+        for i in range(0, len(ids), 500):          # SQLite-Grenze fuer ?-Platzhalter
+            teil = ids[i:i + 500]
+            for r in c.execute(
+                    "SELECT type_id,date,average,highest,lowest,volume,order_count "
+                    "FROM history WHERE region=? AND type_id IN (%s) "
+                    "ORDER BY type_id,date" % ",".join("?" * len(teil)),
+                    [region] + teil):
+                d = dict(r)
+                out[d.pop("type_id")].append(d)
+    return out
+
+
 def fresh_history_type_ids(region: int = 10000002, max_age_h: float = 24) -> set:
     """Alle type_ids dieser Region, deren Preishistorie FRISCH im Cache liegt
     (Zeitstempel jünger als max_age_h UND tatsächlich Zeilen vorhanden).
@@ -961,7 +983,12 @@ def journal_fee_sums(character_id=None, since: str = "") -> dict:
 # `job_zuordnung_setzen` mit ValueError scheitern, und der Aufrufer faengt
 # das ab. Ergebnis waere: die Zuordnung passiert nie, und niemand sieht es
 # ausser fehler.log. Wer eine neue Quelle einfuehrt, traegt sie HIER ein.
-JOB_QUELLEN = ("klick", "signatur", "reservierung", "nutzer", "eindeutig")
+JOB_QUELLEN = ("klick", "signatur", "reservierung", "nutzer", "eindeutig",
+               # "prioritaet" (28.09.2026): strittiger Job, nach der
+               # Kartenreihenfolge verteilt - GESPEICHERT, damit Umsortieren
+               # ihn nicht rueckwirkend verschiebt; der Nutzer kann ihn im
+               # Frage-Dialog bestaetigen oder umhaengen (-> "nutzer").
+               "prioritaet")
 
 # "Zu keinem meiner Plaene" (Stufe C, Teil 2): auch das ist eine ANTWORT und
 # muss gemerkt werden, sonst fragt das Werkzeug bei jedem Aufbau erneut. Als
@@ -1044,6 +1071,17 @@ def job_zuordnung_alle() -> dict:
     return {int(r["job_id"]): r["plan_id"] for r in rows}
 
 
+def job_zuordnung_mit_quelle(quelle) -> dict:
+    """{job_id: {plan_id, type_id, runs, ts}} aller Jobs einer Quelle."""
+    init_job_zuordnung()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT job_id,plan_id,type_id,runs,ts FROM job_zuordnung "
+            "WHERE quelle=?", (str(quelle),)).fetchall()
+    return {int(r["job_id"]): {"plan_id": r["plan_id"], "type_id": r["type_id"],
+                               "runs": r["runs"], "ts": r["ts"]} for r in rows}
+
+
 def job_zuordnung_loeschen(plan_id) -> int:
     """Alle Zuordnungen eines Plans entfernen (Plan geloescht/zurueckgesetzt)."""
     if plan_id is None:
@@ -1099,6 +1137,24 @@ def run_klicks_fuer_plan(plan_id, aelter_als=None) -> list:
     with _conn() as c:
         rows = c.execute(
             "SELECT type_id,runs,reaktion,ts FROM run_klicks WHERE plan_id=? "
+            "ORDER BY ts", (str(plan_id),)).fetchall()
+    aus = []
+    for r in rows:
+        if aelter_als is not None and float(r["ts"]) < float(aelter_als):
+            continue
+        aus.append({"tid": int(r["type_id"]), "runs": int(r["runs"] or 0),
+                    "reaktion": bool(r["reaktion"]), "ts": float(r["ts"])})
+    return aus
+
+
+def run_klicks_andere(plan_id, aelter_als=None) -> list:
+    """Klicks ALLER ANDEREN Plaene, gleiches Format wie
+    `run_klicks_fuer_plan` - damit bei gleichem Item und gleicher Run-Zahl
+    der LETZTE Klick vor dem Jobstart gewinnt (Nutzer 28.09.2026)."""
+    init_run_klicks()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT type_id,runs,reaktion,ts FROM run_klicks WHERE plan_id<>? "
             "ORDER BY ts", (str(plan_id),)).fetchall()
     aus = []
     for r in rows:
@@ -1243,12 +1299,29 @@ def init_shopping():
             c.execute("ALTER TABLE shopping ADD COLUMN sugg_qty INTEGER DEFAULT 0")
 
 
+# ANZEIGE-MARKER, die nie in einen Item-Namen gehoeren (emm359, Nutzer:
+# EVE-Multibuy meldete "Could not be interpreted: ⚠ Curator I 166" - der
+# Swing-Tab schreibt "⚠ " vor verdaechtige Items, und genau dieser Zellentext
+# landete als Name in der Einkaufsliste).
+_NAME_MARKER = "\u2605\u26a0\u2197\u26a1\u2713\ufe0f\u25cf\u2022"
+
+
+def item_name_rein(name) -> str:
+    """Item-Name ohne vorangestellte Anzeige-Marker (★ ⚠ ↗ ⚡ ✓ ● •) und
+    ohne Rand-Leerzeichen - so, wie EVE ihn im Multibuy versteht. Rein."""
+    s = str(name or "").strip()
+    while s and (s[0] in _NAME_MARKER or s[0].isspace()):
+        s = s[1:]
+    return s.strip()
+
+
 def add_shopping(type_id, name, qty, buy=0.0, sell=0.0, source="", sugg_qty=0):
     """Add qty of an item. If the item is already on the list, the quantity is
     accumulated into the existing row (multibuy-style merge). The 'source'
     (daytrade / swing / …) of an existing row is kept, not overwritten.
     'sugg_qty' is the daily-volume-based suggested quantity, stored so the
     shopping list can apply it later per button."""
+    name = item_name_rein(name)
     init_shopping()
     with _conn() as c:
         row = c.execute("SELECT id, qty FROM shopping WHERE type_id=?",

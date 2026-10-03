@@ -94,7 +94,9 @@ class SetupWizard(QDialog):
         root.addWidget(_CopyRow(t("Callback URL"), config.callback_url(port)))
         root.addWidget(_CopyRow("Scopes",
                                 " ".join(config.DEFAULT_SCOPES
-                                         + [config.ASSETS_SCOPE, config.UI_SCOPE])))
+                                         + [config.ASSETS_SCOPE, config.UI_SCOPE,
+                                            # Standort-Hinweis ist Standard AN (emm316)
+                                            config.LOCATION_SCOPE])))
         hint = QLabel(t("Pick the scopes from the list in the portal (use the search "
                         "box). Name and description of the app are up to you."))
         hint.setObjectName("Muted")

@@ -884,7 +884,7 @@ JOB_SPERRT_BLAUPAUSE = ("active", "paused")
 JOB_SPERRT_NICHT_AKTIVITAET = (1,)     # 1 = Manufacturing
 
 
-def blaupausen_in_jobs(blueprints, jobs):
+def blaupausen_in_jobs(blueprints, jobs, now=None):
     """Blaupausen markieren, die gerade in einem Industrie-Job stecken.
     Rein: {b} bekommt `in_job` = {job_id, activity_id, end_date}, wenn ihre
     item_id die blueprint_id eines nicht abgelieferten Jobs ist. Gibt
@@ -910,6 +910,13 @@ def blaupausen_in_jobs(blueprints, jobs):
         if bid is None or j.get("status") not in JOB_SPERRT_BLAUPAUSE:
             continue
         if j.get("activity_id") in JOB_SPERRT_NICHT_AKTIVITAET:
+            continue
+        # ABHOLBEREIT ZAEHLT (Nutzer 30.09.2026: "wie schnell erkennt der
+        # Bauplan, dass meine Blueprints fertig und abholbereit sind?" ->
+        # "sinnvoll"). CCP setzt 'ready' praktisch nie, ein fertiger Job bleibt
+        # 'active' mit abgelaufenem end_date (s. job_is_finished) - ohne diese
+        # Zeile sperrte er die Blaupause bis zum Abholen + Job-Cache.
+        if job_is_finished(j, now):
             continue
         belegt_von[int(bid)] = j
     frei, belegt = [], []
@@ -1042,6 +1049,33 @@ def fetch_corporation_name(corporation_id: int) -> str:
         return str(corporation_id)
 
 
+def fetch_corporation_info(corporation_id: int) -> dict:
+    """{"name", "ticker"} einer Corporation - oeffentlich, kein Token.
+    15 Minuten vorgehalten. Bei Fehler {} (der Aufrufer zeigt dann den
+    Namen bzw. die Nummer, nie einen geratenen Ticker)."""
+    def _hole():
+        r = _session.get(
+            f"{config.ESI_BASE}/corporations/{int(corporation_id)}/",
+            timeout=20)
+        r.raise_for_status()
+        _j = r.json() or {}
+        return {"name": _j.get("name"), "ticker": _j.get("ticker")}
+    try:
+        return dict(_ttl_geholt(("corp_info", int(corporation_id)), _hole) or {})
+    except Exception:
+        return {}
+
+
+def fetch_corporation_logo_bytes(corporation_id: int, size: int = 64) -> bytes:
+    """Corp-Logo von CCPs oeffentlichem Bilder-Server (wie das Portrait).
+    Wirft bei Fehler - der Aufrufer zeigt dann kein Logo."""
+    url = (f"https://images.evetech.net/corporations/{int(corporation_id)}"
+           f"/logo?size={int(size)}")
+    r = _session.get(url, timeout=15)
+    r.raise_for_status()
+    return r.content
+
+
 def fetch_character_roles(client_id: str, character_id: int) -> set:
     """Die Corp-Rollen des Charakters (z.B. {"Director", "Factory_Manager"}).
     Braucht CORP_ROLES_SCOPE. Nur die ALLGEMEINEN Rollen - `roles_at_hq`
@@ -1052,6 +1086,31 @@ def fetch_character_roles(client_id: str, character_id: int) -> set:
                         timeout=30)
     r.raise_for_status()
     return set((r.json() or {}).get("roles") or [])
+
+
+def fetch_character_location(client_id: str, character_id: int) -> dict:
+    """Wo ist der Charakter? {solar_system_id, station_id?, structure_id?}
+    (station/structure nur, wenn angedockt). Braucht LOCATION_SCOPE (emm313)."""
+    url = f"{config.ESI_BASE}/characters/{int(character_id)}/location/"
+    r = _get_with_retry(url, headers=_auth_headers(client_id, character_id),
+                        timeout=20)
+    r.raise_for_status()
+    return r.json() or {}
+
+
+def orts_namen(ids) -> dict:
+    """{id: Name} fuer Systeme und NPC-Stationen per /universe/names/ -
+    OHNE den Typ-Namens-Cache (das sind keine Items). Strukturen (> 2^31)
+    kann der oeffentliche Endpunkt nicht, sie fehlen dann einfach."""
+    _ids = sorted({int(i) for i in (ids or []) if i and 0 < int(i) < 2 ** 31})
+    if not _ids:
+        return {}
+    r = _session.post(f"{config.ESI_BASE}/universe/names/", json=_ids,
+                      timeout=20)
+    if r.status_code != 200:
+        return {}
+    return {int(e["id"]): e.get("name") for e in (r.json() or [])
+            if e.get("id") is not None}
 
 
 def fetch_corporation_assets(client_id: str, character_id: int,
@@ -1301,9 +1360,13 @@ def fetch_structure_orders_full(client_id: str, character_id: int, structure_id:
 
     def fold(orders):
         for o in orders:
-            b = book.setdefault(o["type_id"], {"sell": [], "buy": []})
+            b = book.setdefault(o["type_id"], {"sell": [], "buy": [], "ids": {}})
             (b["buy"] if o["is_buy_order"] else b["sell"]).append(
                 (o["price"], o["volume_remain"]))
+            # order_id -> Preis (emm322): das Order-Update erkennt daran die
+            # EIGENE, eben geaenderte Order auch in Spielerstrukturen.
+            if o.get("order_id") is not None:
+                b["ids"][int(o["order_id"])] = float(o["price"])
 
     fold(first.json())
     if progress:
@@ -1477,9 +1540,13 @@ def station_location_ids(client_id: str, character_id: int) -> set:
 def fetch_type_orders(type_id: int, station: int = config.JITA_STATION,
                       region: int = config.FORGE_REGION) -> dict:
     """Full order ladder for one item at a station.
-    Returns {'sell': [(price, qty) ascending], 'buy': [(price, qty) descending]}."""
+    Returns {'sell': [(price, qty) ascending], 'buy': [(price, qty) descending],
+    'ids': {order_id: price}}. `ids` (emm321): das Orderbuch ist frischer als
+    /characters/{id}/orders/ - eine eben geaenderte EIGENE Order steht hier
+    schon mit neuem Preis; ueber die order_id erkennt das Order-Update sie."""
     url = f"{config.ESI_BASE}/markets/{region}/orders/"
     sell, buy = [], []
+    ids = {}
     page = 1
     while True:
         r = _get_with_retry(url, params={"type_id": type_id, "order_type": "all",
@@ -1490,13 +1557,15 @@ def fetch_type_orders(type_id: int, station: int = config.JITA_STATION,
             if o["location_id"] != station:
                 continue
             (buy if o["is_buy_order"] else sell).append((o["price"], o["volume_remain"]))
+            if o.get("order_id") is not None:
+                ids[int(o["order_id"])] = float(o["price"])
         pages = int(r.headers.get("X-Pages", "1"))
         if page >= pages:
             break
         page += 1
     sell.sort(key=lambda x: x[0])
     buy.sort(key=lambda x: x[0], reverse=True)
-    return {"sell": sell, "buy": buy}
+    return {"sell": sell, "buy": buy, "ids": ids}
 
 
 def resolve_corp_id(name: str):

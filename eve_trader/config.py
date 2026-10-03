@@ -67,6 +67,12 @@ SKILL_SCOPES = ["esi-skills.read_skills.v1", "esi-characters.read_standings.v1",
 # Optional, only added when the user enables implant-based time-bonus detection
 # (Zainou 'Beancounter' Industry BX-80X etc.).
 IMPLANT_SCOPE = "esi-clones.read_implants.v1"
+# Optional, only added when the user enables the location hint (emm313,
+# Nutzer 01.10.2026: Meldung, wenn der Trading-Charakter nicht am Hub ist).
+# Name laut esi/esi-issues #1518 ("esi-location.read_location.v1"); der
+# Endpunkt /characters/{id}/location/ liefert solar_system_id (immer),
+# station_id bzw. structure_id (nur wenn angedockt).
+LOCATION_SCOPE = "esi-location.read_location.v1"
 # Optional, only added when the user enables corporation hangars (build only).
 # JEDER EINZELNE MIT NAMEN, nicht als Positionsindex (dieselbe Lehre wie bei
 # STRUCTURE_READ_SCOPE): der Bauplan muss je Charakter pruefen koennen, ob
@@ -202,6 +208,11 @@ DEFAULT_SETTINGS = {
     # bei mir ist als Standard fuer alle Nutzer"). Der Implantat-Scope wird
     # beim Verlinken mit angefragt. Gilt fuer NEUE Installationen.
     "use_implants": True,
+    # STANDORT-HINWEIS (emm313). STANDARD AN seit emm316 (Nutzer 01.10.2026:
+    # "character location standardmaessig auf on bitte") - ERSETZT "Standard
+    # aus". Folge: der Scope wird beim Verlinken angefragt, er muss also in
+    # der EVE-App stehen; der Einrichtungs-Assistent listet ihn deshalb mit.
+    "use_location": True,
     # CORP-HANGAR ALS BAU-BESTAND (1.0.8). War STANDARD AUS (Entscheid
     # 14.09.2026, Regel 3). STANDARD AN seit 19.09.2026 (Nutzer-Entscheid,
     # s. oben) - ohne gewaehlte Division zaehlt trotzdem nichts, die Karte
@@ -283,6 +294,13 @@ DEFAULT_SETTINGS = {
     # bereiten Positionen heraus, waehrend die Kachel "Ready to sell"
     # weiter 14 zeigte. Wer filtern will, schaltet es im Tools-Menue ein.
     "sell_hide_active_orders": False,
+    # FRACHT (Nutzer 29.09.2026): ISK je m3 fuer den Transport. EIN Wert fuer
+    # Regional Trading UND Verkaufsliste. 0 = keine Fracht (Standard).
+    # Fracht bekommen nur Stueck, die laut Wallet NICHT am Verkaufs-Hub
+    # gekauft wurden (`market.fracht_je_item`).
+    "fracht_isk_m3": 0,
+    # Items, fuer die der Nutzer per Rechtsklick "keine Fracht" gewaehlt hat.
+    "fracht_aus_items": [],
     # Die Karte "Endprodukte dieses Buendels" im Multi-Bauplan laesst sich
     # einklappen (Nutzer 23.09.2026) - standardmaessig OFFEN, weil dort die
     # Mengen und ME/TE jedes Endes geschraubt werden.
@@ -629,6 +647,30 @@ def _nach_migrationen(data: dict) -> dict:
     # buendel_quellen_freigeben). Idempotent: beim zweiten Lauf gibt es
     # nichts mehr zu aendern.
     if buendel_quellen_nachziehen(data.get("bau_saved_plans") or []):
+        _migrated = True
+    # MITGLIEDER ABGESCHLOSSENER BUENDEL (29.09.2026): Buendel, die VOR emm269
+    # abgeschlossen wurden, liessen ihre Einzelplaene offen - sie bekamen
+    # Rang #3/#4/#5 und schoben neue Plaene nach hinten (Nutzer-Screenshot
+    # "Linsen Multiplan 1 #6"). Dasselbe wie "Done" am Buendel heute:
+    # abschliessen mit Merker, "Reopen" am Buendel oeffnet sie wieder.
+    # EINMAL (Marker) - wer danach ein Mitglied selbst oeffnet, behaelt das.
+    if not data.get("buendel_done_nachgezogen"):
+        _pl = data.get("bau_saved_plans") or []
+        _nach_id = {str(x.get("id")): x for x in _pl}
+        for _b in _pl:
+            try:
+                _ist_b = int(_b.get("type_id", 0) or 0) == -1
+            except (TypeError, ValueError):
+                _ist_b = False
+            if not _ist_b or not _b.get("done_manual"):
+                continue
+            for _qid in (_b.get("quellen") or []):
+                _q = _nach_id.get(str(_qid))
+                if _q is not None and not _q.get("done_manual"):
+                    _q["done_manual"] = True
+                    _q["reserve"] = False
+                    _q["done_durch_buendel"] = _b.get("id")
+        data["buendel_done_nachgezogen"] = True
         _migrated = True
     if _migrated:
         try:

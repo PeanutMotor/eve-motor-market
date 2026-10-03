@@ -27,7 +27,9 @@ from . import icons, theme
 # zusammen mit `dec_anzeige` aus derselben Datei holen.
 __all__ = ["KEIN_DECRYPTOR", "dec_anzeige", "isk", "tab_icon", "tab_icon_at",
            "NumericItem", "IskMillionSpin", "IskGroupedSpin",
-           "MinimizableDialog", "ohne_mausrad", "combos_ohne_mausrad"]
+           "MinimizableDialog", "ohne_mausrad", "combos_ohne_mausrad",
+           "kopier_menue", "kontext_menue", "kopier_wert", "zellen_text",
+           "ZahlVorneSpin"]
 
 
 def dec_anzeige(nm):
@@ -493,6 +495,155 @@ def ohne_mausrad(w):
     return w
 
 
+# ---- RECHTSKLICK "COPY" IN JEDER TABELLE (Nutzer 29.09.2026) --------------
+# "per Rechtsklick dann 'Copy' klicken, dann kopiert es Item Name oder Zahlen
+# die da stehen je nach Column, und zwar ueberall im ganzen Tool ... An
+# gewissen Orten gibt es schon Rechtsklick-Informationen, dann fuegen wir
+# 'Copy' einfach auch dazu." Und ausdruecklich: NICHT per Linksklick.
+#
+# EIN MECHANISMUS fuer alle Tabellen: `kopier_menue(view, handler)` haengt
+# statt des alten Menue-Handlers einen Verteiler an. Er merkt sich Tabelle +
+# Klickpunkt, ruft den alten Handler, und jedes Menue, das dieser ueber
+# `kontext_menue()` baut, bekommt "Copy" als ersten Eintrag. Baut der
+# Handler GAR KEIN Menue (leere Zeile, keine Type-ID ...), zeigt der
+# Verteiler selbst eines mit nur "Copy" - sonst gaebe es genau dort, wo der
+# alte Handler frueh aussteigt, kein Kopieren.
+KOPIER_ZIELE = []           # Stapel [view, pos, verbraucht]
+
+
+def kopier_wert(text):
+    """Was "Copy" in die Zwischenablage legt.
+
+    Namen und Texte wie angezeigt. Eine reine ZAHL ohne Tausender-
+    Trennzeichen und ohne " ISK" - so nimmt sie das Preisfeld im Spiel an
+    ("1'234'567 ISK" -> "1234567"). Prozent, m³ usw. bleiben Text, weil
+    dort die Einheit zur Zahl gehoert.
+    """
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    roh = s[:-4].strip() if s.endswith(" ISK") else s
+    zahl = (roh.replace("'", "").replace("’", "").replace(" ", "")
+            .replace(" ", "").replace(" ", ""))
+    try:
+        float(zahl)
+    except ValueError:
+        return s
+    return zahl if zahl not in ("nan", "inf", "-inf") else s
+
+
+def zellen_text(view, pos):
+    """Angezeigter Text der Zelle unter `pos` (Viewport-Koordinaten) oder
+    None. Zelle ohne Text, aber mit Zell-Widget: der Text seiner Labels
+    (ein Knopf ist eine Handlung, keine Angabe - der zaehlt nicht)."""
+    try:
+        idx = view.indexAt(pos)
+    except RuntimeError:
+        return None
+    if not idx.isValid():
+        return None
+    txt = str(idx.data(Qt.DisplayRole) or "").strip()
+    if txt:
+        return txt
+    try:
+        w = view.indexWidget(idx)
+    except RuntimeError:
+        w = None
+    if w is None:
+        return None
+    _eigen = w.property("kopier_text")
+    if _eigen:
+        return str(_eigen)
+    from PySide6.QtGui import QTextDocument
+    from PySide6.QtWidgets import QLabel
+    teile = []
+    for lb in ([w] if isinstance(w, QLabel) else []) + w.findChildren(QLabel):
+        _t = lb.text() or ""
+        if "<" in _t:
+            _d = QTextDocument(); _d.setHtml(_t); _t = _d.toPlainText()
+        _t = _t.strip()
+        if _t:
+            teile.append(_t)
+    return " ".join(teile) or None
+
+
+def _kopieren_ausfuehren(view, text):
+    wert = kopier_wert(text)
+    QApplication.clipboard().setText(wert)
+    try:
+        fen = view.window()
+        _pop = getattr(fen, "_flash_tip", None)
+        if callable(_pop):
+            _pop(t("copied: {name}").format(name=wert))
+    except RuntimeError:
+        pass
+
+
+def kopier_aktion(menu, view, pos):
+    """"Copy" als ERSTEN Eintrag in `menu`, danach ein Trennstrich. Ohne
+    Text in der Zelle steht der Eintrag ausgegraut da (nicht weg - sonst
+    wirkt das Menue an manchen Stellen anders als an anderen)."""
+    text = zellen_text(view, pos)
+    erste = menu.actions()[0] if menu.actions() else None
+    from PySide6.QtGui import QAction
+    a = QAction(icons.icon("copy"), t("Copy"), menu)
+    a.setEnabled(bool(text))
+    if text:
+        a.setToolTip(kopier_wert(text))
+        a.triggered.connect(lambda *_a, v=view, x=text: _kopieren_ausfuehren(v, x))
+    menu.insertAction(erste, a)
+    if erste is not None:
+        menu.insertSeparator(erste)
+    a.setProperty("ist_kopieren", True)
+    return a
+
+
+def kontext_menue(parent=None):
+    """Statt `QMenu(parent)` in jedem Rechtsklick-Handler einer Tabelle:
+    dasselbe Menue, das beim Oeffnen "Copy" oben einfuegt.
+
+    KEIN QMenu-UNTERKLASSE MIT exec(): `super().exec()` aus einer
+    Python-Unterklasse stuerzt PySide6 ab (Segfault, nachgestellt
+    29.09.2026). Deshalb ein normales QMenu, und "Copy" kommt ueber
+    `aboutToShow` hinein - dann stehen die Eintraege des Handlers schon."""
+    from PySide6.QtWidgets import QMenu
+    m = QMenu(parent)
+    if KOPIER_ZIELE and not KOPIER_ZIELE[-1][2]:
+        _z = KOPIER_ZIELE[-1]
+        _z[2] = True
+        _getan = []
+
+        def _vor_dem_zeigen(menu=m, v=_z[0], pos=_z[1]):
+            if not _getan:
+                _getan.append(True)
+                kopier_aktion(menu, v, pos)
+        m.aboutToShow.connect(_vor_dem_zeigen)
+    return m
+
+
+def kopier_menue(view, handler=None):
+    """Rechtsklick auf `view` bekommt "Copy". `handler(pos)` ist der
+    bisherige Menue-Handler (oder None: dann NUR "Copy")."""
+    view.setContextMenuPolicy(Qt.CustomContextMenu)
+
+    def _verteiler(pos, v=view, h=handler):
+        ziel = [v, pos, False]
+        KOPIER_ZIELE.append(ziel)
+        try:
+            if h is not None:
+                h(pos)
+        finally:
+            KOPIER_ZIELE.pop()
+        if not ziel[2]:
+            # der alte Handler hat kein Menue gebaut -> eines mit nur "Copy"
+            m = kontext_menue(v)
+            kopier_aktion(m, v, pos)
+            m.exec(v.viewport().mapToGlobal(pos))
+    view.customContextMenuRequested.connect(_verteiler)
+    view.setProperty("kopier_menue", True)
+    return view
+
+
 def isk(n, suffix=True):
     if n is None:
         return "—"
@@ -588,6 +739,35 @@ class IskGroupedSpin(QSpinBox):
             return self.value()
 
 
+class ZahlVorneSpin(IskGroupedSpin):
+    """ISK-Feld, das die Zahl VORNE nimmt und den Rest ignoriert.
+
+    Nutzer 29.09.2026 tippte "335isk/m3" ins Fracht-Feld. Die geerbte
+    Pruefung weist jeden Buchstaben einzeln ab - die "3" aus "m3" aber
+    nicht: heraus kam 3'353 statt 335 (nachgestellt). Hier zaehlt nur die
+    fuehrende Ziffernfolge; was danach kommt ("isk/m3", " ISK"), faellt weg.
+    """
+    def _vorne(self, text):
+        import re
+        m = re.match(r"\s*\+?(\d+)", self._plain(text))
+        return int(m.group(1)) if m else None
+
+    def validate(self, text, pos):
+        from PySide6.QtGui import QValidator
+        raw = self._plain(text)
+        if raw in ("", "+"):
+            return (QValidator.Intermediate, text, pos)
+        z = self._vorne(text)
+        if z is None:
+            return (QValidator.Invalid, text, pos)
+        return ((QValidator.Acceptable if self.minimum() <= z <= self.maximum()
+                 else QValidator.Intermediate), text, pos)
+
+    def valueFromText(self, text):
+        z = self._vorne(text)
+        return z if z is not None else self.value()
+
+
 class MinimizableDialog(QDialog):
     """Plain QDialog zeigt standardmäßig NUR einen Schließen-Button in der
     Titelleiste, kein Minimieren - man kann so ein offenes Bauplan-/Optimierer-/
@@ -612,3 +792,18 @@ class MinimizableDialog(QDialog):
         flags |= Qt.Window
         flags |= Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint
         self.setWindowFlags(flags)
+
+    # ENTER DRUECKT KEINEN KNOPF (emm312, Nutzer 01.10.2026: "nur bei einem
+    # Endprodukt die Anzahl geaendert und Enter gedrueckt" -> Reset-Frage).
+    # Ein Zahlenfeld reicht Enter an das Fenster weiter, und ein QDialog
+    # drueckt dann seinen ersten Knopf - im Bauplan ist das "Reset". Wer das
+    # will, setzt `enter_ohne_knopf = True` (der Bauplan tut es); das Feld
+    # selbst hat den Wert dann schon uebernommen.
+    enter_ohne_knopf = False
+
+    def keyPressEvent(self, event):
+        if (self.enter_ohne_knopf
+                and event.key() in (Qt.Key_Return, Qt.Key_Enter)):
+            event.accept()
+            return
+        super().keyPressEvent(event)

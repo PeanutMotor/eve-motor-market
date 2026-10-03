@@ -1420,6 +1420,77 @@ def buildable_category_options() -> list:
         return []
 
 
+# RIGS ALS EIGENER EINTRAG IM KATEGORIE-DROPDOWN (Nutzer 29.09.2026: "Category
+# Modules gewaehlt, da werden aber Rigs aufgelistet, und den Filter Rigs gibts
+# im Dropdown nicht" -> "ja sehr gerne"). GEMESSEN in der SDE: Rigs stehen in
+# der Kategorie "Module", in 14 Gruppen, deren Name mit "Rig " beginnt (Rig
+# Armor, Rig Shield ...). Erkannt wird ueber den GRUPPENNAMEN, nie ueber IDs.
+RIGS_KAT = "rigs"
+
+
+def ist_rig_gruppe(name) -> bool:
+    # de_scan4: aus - SDE-Gruppenname, kein Anzeigetext
+    return str(name or "").startswith("Rig ")
+    # de_scan4: an
+
+
+def rig_gruppen() -> set:
+    """group_ids aller Rig-Gruppen (Name beginnt mit "Rig ") aus der SDE -
+    nur Gruppen GEBAUTER Items (ohne "Rig Blueprint", Kategorie Blueprint)."""
+    if not os.path.exists(_db_path()):
+        return set()
+    try:
+        with _conn() as c:
+            placeholders = ",".join("?" * len(ACTIVITIES))
+            return {r["group_id"] for r in c.execute(
+                "SELECT DISTINCT ic.group_id, gn.name FROM item_cat ic "
+                "JOIN group_name gn ON gn.group_id=ic.group_id "
+                "JOIN products p ON p.product_id=ic.type_id "
+                f"WHERE p.activity_id IN ({placeholders})", ACTIVITIES)
+                if ist_rig_gruppe(r["name"])}
+    except Exception:
+        return set()
+
+
+def bp_kategorie_passt(want, cat_id, group_id, rig_ids) -> bool:
+    """Filter "Category" in My Blueprints: `want` ist eine Kategorie-ID,
+    RIGS_KAT oder None (alle). Rigs gehoeren NUR zu RIGS_KAT, nicht mehr zu
+    ihrer SDE-Kategorie (Module) - wie im Ingame-Markt."""
+    if want is None:
+        return True
+    ist_rig = group_id is not None and group_id in (rig_ids or ())
+    if want == RIGS_KAT:
+        return ist_rig
+    return cat_id == want and not ist_rig
+
+
+def bp_kategorien_zeigen(opts, zeilen, rig_ids, rigs_name) -> list:
+    """Kategorie-Dropdown in My Blueprints (Nutzer 30.09.2026: "Category
+    Dropdown enthaelt unnoetige Kategorien, die gar keine baubaren Items
+    enthalten, z. B. Asteroid, Celestial, Commodity"). GEMESSEN: die SDE hat
+    fuer alle drei Fertigungs-Blaupausen - es sind nur keine DEINER.
+    `opts` = [(cat_id, name)] (baubar laut SDE), `zeilen` = [(cat_id,
+    group_id)] der Tabelle oder None (keine Einschraenkung, z. B. vor dem
+    Laden oder mit "Show missing"). Rigs bekommen ihren Eintrag, sobald eine
+    Zeile ein Rig ist; ihre SDE-Kategorie nur, wenn dort noch Nicht-Rigs
+    stehen. Alphabetisch."""
+    rig_ids = set(rig_ids or ())
+    out = list(opts or [])
+    if zeilen is not None:
+        kats, hat_rig = set(), False
+        for _c, _g in zeilen:
+            if _g is not None and _g in rig_ids:
+                hat_rig = True
+            elif _c is not None:
+                kats.add(_c)
+        out = [o for o in out if o[0] in kats]
+        if hat_rig:
+            out.append((RIGS_KAT, rigs_name))
+    elif rig_ids and out:
+        out.append((RIGS_KAT, rigs_name))
+    return sorted(out, key=lambda _o: str(_o[1]).lower())
+
+
 def group_options(category_id=None) -> list:
     """List of (group_id, name) for groups actually present, optionally
     beschränkt auf eine Kategorie - für einen "Kategorie -> Gruppe"-Filter
@@ -2902,6 +2973,7 @@ class Recipes:
         self.bp_materials = {}     # (blueprint_id, activity_id) -> [(mat_id, qty)]
         self.reaction_products = set()
         self.invention_for_bpc = {}  # t2_bpc_id -> (t1_bp, runs, prob, [(dc,qty)])
+        self.invention_copy_mats = {}  # t2_bpc_id -> [(mat,qty)] fuers KOPIEREN (je Versuch)
         self.activity_time = {}      # (blueprint_id, activity_id) -> base time (s)
         self.activity_max_runs = {}  # (blueprint_id, activity_id) -> max Runs/Job
                                       # (0/fehlt = kein Limit laut SDE)
@@ -2958,7 +3030,23 @@ class Recipes:
                 datacores = self.bp_materials.get((t1_bp, INVENTION), [])
                 prob = probs.get(t2_bpc, 0.0)
                 if prob > 0 and datacores:
-                    self.invention_for_bpc[t2_bpc] = (t1_bp, runs, prob, datacores)
+                    # KOPIER-MATERIAL GEHOERT DAZU (Nutzer 29.09.2026: "hast du
+                    # gewusst, dass Mobile Warp Disruptors noch zusaetzlich
+                    # Materialien brauchen, um Blueprint Copys zu machen? ...
+                    # haben wir im Bauplan nicht eingerechnet"). GEMESSEN in
+                    # der SDE: 938 Blaupausen haben Material fuer Aktivitaet 5
+                    # (Kopieren), die Bubble-Vorlagen 15/10/5 Stueck Typ 3812
+                    # je Kopie-Run. Ein Invention-Versuch braucht einen
+                    # Kopie-Run (so rechnet schon die Jobgebuehr, `_inv_cost`),
+                    # also ist das Kopier-Material Material JE VERSUCH - wie
+                    # die Datacores. Hier angehaengt, damit JEDE Stelle, die
+                    # Datacores kennt (Kosten, Einkaufsliste, Invention-Reiter,
+                    # Decryptor-Wahl), es ohne zweite Rechnung mitnimmt.
+                    _cp = list(self.bp_materials.get((t1_bp, COPYING), []) or [])
+                    if _cp:
+                        self.invention_copy_mats[t2_bpc] = _cp
+                    self.invention_for_bpc[t2_bpc] = (
+                        t1_bp, runs, prob, list(datacores) + _cp)
 
     def is_manufactured(self, type_id) -> bool:
         """True only for real MANUFACTURING end-products. Excludes reaction-only
@@ -4824,6 +4912,27 @@ def _skill_time_bonus_pct(skill_id, fallback):
         except Exception:
             _skill_time_bonus_cache = {}
     return abs(_skill_time_bonus_cache.get(skill_id, fallback))
+
+
+def science_jobzeit(basis, art, rolle_pct=0.0, rig_pct=0.0, adv_industry=0,
+                    science=0):
+    """Dauer EINES Invention-Versuchs bzw. EINES Kopier-Runs in Sekunden (emm325).
+
+    Nutzer 01.10.2026 mit zwei Ingame-Fenstern, an denen das hier gemessen ist:
+      * Invention Ultraviolet XL -> Scorch XL, KEINE Anlage gewaehlt:
+        17:00:00 = 20 h (SDE) x 0,85 -> Advanced Industry 5 x 3 %.
+      * Kopieren Ultraviolet XL, Raitaru (A-DDGY, Null x2,1, Blueprint Copy
+        Accelerator I -20 %), 4 Kopien x 4 Runs: 1:20:27 = 16 x 16 min x
+        (1-0,15 Raitaru) x (1-0,42 Rig x Sicherheit) x 0,85 Adv. Industry 5
+        x 0,75 Science 5 (5 %/Stufe) = 4'828 s.
+    `rig_pct` kommt SCHON mit dem Sicherheits-Faktor. Vorher rechnete Eve
+    MoMa nur den nackten Rig (-24 %), ohne Rolle, Sicherheit und Skills."""
+    f = ((1.0 - float(rolle_pct or 0) / 100.0)
+         * (1.0 - float(rig_pct or 0) / 100.0)
+         * (1.0 - 0.03 * int(adv_industry or 0)))
+    if art == "copy":
+        f *= (1.0 - 0.05 * int(science or 0))
+    return float(basis or 0) * max(0.01, f)
 
 
 def skill_time_bonus_pct(skill_id, fallback):

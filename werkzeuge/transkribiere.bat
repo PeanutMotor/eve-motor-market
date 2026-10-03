@@ -1,7 +1,7 @@
 @echo off
 REM Sprache -> Text (Deutsch) fuer YouTube-Tutorials. Doppelklick -> Datei
 REM waehlen (oder Datei auf die .bat ziehen). Ergebnis liegt NEBEN dem Video:
-REM   <video>.de.txt  (Text mit Zeitmarken)   <video>.de.srt  (Untertitel)
+REM   <video>.de.txt  (deutscher Text mit Zeitmarken) - sonst nichts (Fassung 6)
 REM Fassung 3 (19.09.2026, Dateiauswahl; Liste ohne BOM - Fassung 2 gab Python
 REM einen Pfad mit unsichtbarem Zeichen davor, "FEHLT"). Erster Lauf: installiert
 REM faster-whisper und laedt das Modell (~1,5 GB) - dauert einige Minuten.
@@ -11,7 +11,7 @@ cd /d "%~dp0.."
 if not exist "berichte" mkdir "berichte"
 set B=berichte\transkript_bericht.txt
 set LISTE=berichte\transkript_dateien.txt
-echo Fassung 3 - %DATE% %TIME% > "%B%"
+echo Fassung 6 - %DATE% %TIME% > "%B%"
 if exist "%LISTE%" del "%LISTE%"
 if "%~1"=="" goto auswahl
 :args
@@ -49,6 +49,6 @@ for /f "usebackq delims=" %%F in ("%LISTE%") do (
   if errorlevel 1 (echo FEHLER bei %%F >> "%B%") else (echo fertig: %%~dpnF.de.txt >> "%B%")
 )
 echo.
-echo Fertig - Texte liegen NEBEN den Videos ^(.de.txt / .de.srt^). Bericht in %B%
+echo Fertig - der Text liegt NEBEN dem Video ^(.de.txt^). Bericht in %B%
 type "%B%"
 pause

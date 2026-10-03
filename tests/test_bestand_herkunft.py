@@ -12,6 +12,15 @@ sie ohne Qt-Fenster pruefbar ist.
 import os
 import sys
 
+# AUSGABE NIE AN EINEM ZEICHEN STERBEN LASSEN (pruefe.py 02.10.2026, Windows,
+# Python 3.14, cp1252-Konsole): ein Fehltext mit "\u25b8" warf beim print()
+# UnicodeEncodeError - die Liste der roten Pruefungen kam gar nicht heraus.
+for _strom in (sys.stdout, sys.stderr):
+    try:
+        _strom.reconfigure(errors="backslashreplace")
+    except Exception:
+        pass
+
 # ---- PARSE-ZWISCHENSPEICHER (15.09.2026, Nutzer: "was frisst viel Zeit?")
 # GEMESSEN, nicht vermutet: die Suite ruft `ast.parse` 120-mal auf und
 # zerlegt dabei `main_window.py` (1,4 MB) NEUNMAL, `mw_bauplan_fenster.py`
@@ -547,9 +556,10 @@ check("aa11 Endprodukt-ME/TE sind mit ueberwacht",
       '(me_spin, "end_me"), (te_spin, "end_te")' in _src_txt)
 check("aa11 Marker wird nach dem Rechnen zurueckgesetzt",
       "self._bd_me_te_applied = _current_me_te()" in _src_txt)
-check("aa11 kein Auto-Recompute an den Reglern (waere zu teuer)",
+check("aa11 Regler starten den ENTPRELLTEN Timer (nicht jede Stufe rechnet)",
       "_msp.valueChanged.connect(lambda _v=0: _sync_recalc_marker())"
-      in _src_txt)
+      in _src_txt and "_mete_timer.setInterval(600)" in _src_txt
+      and "_mete_timer.setSingleShot(True)" in _src_txt)
 
 # ---------------------------------------------------------------- (aa12)
 # NUTZER-BUG (Screenshot): "ANDERE BLAUPAUSEN" zeigte ME 0 % statt 10/8.
@@ -849,8 +859,9 @@ for _pend in ("_bd_bp_pending", "_bd_frozen_pending", "_bd_manual_pending",
           f"self.{_pend} = None" in _src_txt)
 # Alle drei "neuer Plan"-Einstiege muessen fresh=True setzen,
 # _open_saved_plan hingegen NICHT (der soll ja den Plan wiederherstellen).
-eq("aa19 drei Einstiege oeffnen frisch",
-   _src_txt.count("fresh=True)"), 3)
+# 4 seit emm298: der Reset-Knopf oeffnet den Einzelplan ebenfalls frisch.
+eq("aa19 vier Einstiege oeffnen frisch (drei neue Plaene + Reset)",
+   _src_txt.count("fresh=True)"), 4)
 check("aa19 gespeicherter Plan oeffnet NICHT frisch",
       'self.open_build_detail(p["type_id"], p["item_name"])' in _src_txt)
 check("aa19 Menge faellt auf 1 zurueck", "self._bd_qty = 1" in _src_txt)
@@ -2452,8 +2463,8 @@ eq("aa63 _bd_ladder_result wird nur an einer Stelle gelesen",
    _src_txt.count('getattr(self, "_bd_ladder_result", None)'), 1)
 # Auch das Decryptor-Ranking haengt an derselben Quelle, sonst weicht
 # "Beste Wahl" wieder von der Kopfzeile ab.
-# Seit 26.09.2026 rechnet `_rangliste` (fuer den Knopf je Karte UND
-# "Best Decryptor for all Blueprints"); `_pick_best` waehlt nur noch.
+# Seit 26.09.2026 rechnet `_rangliste`; seit emm329 nutzt sie nur noch
+# "Auto-Decryptor" (der Knopf je Karte kopiert den Namen).
 _pb63 = _fn_src("_rangliste")
 check("aa63 Decryptor-Ranking nutzt _bd_ladder_ctx",
       "self._bd_ladder_ctx(" in _pb63)
@@ -3362,18 +3373,23 @@ check("aa79 kein doppelter Stretch (ctrl liefert ihn)",
 _fbs79 = _fn_src("_frozen_btn_style")
 check("aa79 aktiv: amber gefuellt",
       f"background:{{theme.AMBER}}; color:{{theme.BG}}" in _fbs79)
-check("aa79 inaktiv: gedaempft statt amber",
-      "color:{theme.MUTED}" in _fbs79 and "border:1px solid {theme.BORDER}" in _fbs79)
-check("aa79 inaktiv NICHT mehr amber umrandet",
-      "border:2px solid {theme.AMBER}; border-radius:6px; "
-      "padding:6px 16px; font-size:13px; font-weight:800;}}"
-      "QPushButton:hover" not in _fbs79)
-check("aa79 Hover zeigt weiter die Zielfarbe",
-      "border-color:{theme.AMBER}" in _fbs79)
+# UMGEDREHT 30.09.2026 (Nutzer: "lass bitte Freeze Plan auch noch amber
+# sein"): aus = Amber-Rahmen + Amber-Text, keine Flaeche; Rahmen wie AN 2 px.
+_fbs79_aus = _fbs79.split("else:")[-1]
+check("aa79 inaktiv: Amber-Rahmen und Amber-Text, keine Flaeche",
+      "background:transparent; color:{theme.AMBER}" in _fbs79_aus
+      and "border:2px solid {theme.AMBER}" in _fbs79_aus
+      and "color:{theme.MUTED}" not in _fbs79_aus)
+check("aa79 Rahmen in beiden Zustaenden gleich dick (kein Springen)",
+      _fbs79.count("border:2px solid {theme.AMBER}") == 2)
+check("aa79 Hover toent amber",
+      "border-color:{theme.AMBER}" in _fbs79_aus
+      and "rgba(242,162,60,0.16)" in _fbs79_aus)
 # (3) Genau EINE primaere Aktion in der Kopfzeile.
-check("aa79 'Neu berechnen' bleibt hervorgehoben",
-      'recalc.setStyleSheet("font-size:13px; font-weight:800; padding:6px 16px;")'
-      in _sbd79)
+# SEIT emm298: "Save build plan" ist die hervorgehobene Aktion, Reset neutral.
+check("aa79 'Save build plan' ist hervorgehoben, Reset nicht",
+      'save_btn.setStyleSheet("font-size:13px; font-weight:800; padding:6px 16px;")'
+      in _sbd79 and "recalc.setStyleSheet(_secondary_btn_css)" in _sbd79)
 
 # ---------------------------------------------------------------- (aa80)
 # DAUERTEXTE (Nutzer-Linie "mehr per Mouseover"): der Invention-Tab trug 314
@@ -5460,9 +5476,12 @@ eq("aa139 Namen fuer die Anzeige", _lbl139, ["Falcon-Charge", "Kirin-Charge"])
 # unabhaengig vom Alter. Der Preis ist Material auf der Kaufliste, das der
 # Nutzer besitzt (gebundenes ISK, nichts verloren) - steuerbar ueber das
 # Schloss.
+# BAU-PRIORITAET (28.09.2026, Nutzer-Entscheid Kartenreihenfolge) loest
+# "beide Richtungen" ab: ein Plan sieht nur die Plaene VOR ihm; ohne
+# gespeicherte Kartenfolge gilt die Speicher-Reihenfolge.
 _agg139b, _ = MW._reserved_by_other_plans(_set139, 1)
-eq("aa139 auch der aeltere Plan sieht die Reservierung des juengeren",
-   _agg139b, {34: 20})
+eq("aa139 Plan #1 sieht keinen Plan hinter sich",
+   _agg139b, {})
 _agg139c, _ = MW._reserved_by_other_plans(_set139, 2)
 eq("aa139 der EIGENE Plan wird ausgenommen (hungert sich nicht selbst aus)",
    _agg139c, {34: 150, 35: 7})
@@ -5472,10 +5491,15 @@ eq("aa139 der EIGENE Plan wird ausgenommen (hungert sich nicht selbst aus)",
 _set139d = {"bau_saved_plans": [
     {"id": 1000 * _n, "label": f"P{_n}", "reserve": True,
      "reserve_map": {500: 100}} for _n in (1, 2, 3, 4)]}
-eq("aa139 jeder Plan sieht die Ansprueche ALLER anderen, egal wie alt",
+eq("aa139 jeder Plan sieht die Ansprueche der Plaene VOR ihm",
    [MW._reserved_by_other_plans(_set139d, 1000 * _n)[0].get(500, 0)
     for _n in (1, 2, 3, 4)],
-   [300, 300, 300, 300])
+   [0, 100, 200, 300])
+eq("aa139 Karten umgestellt (P4 nach vorn): P4 sieht nichts, P1 sieht P4",
+   [MW._reserved_by_other_plans(dict(_set139d, bau_plan_manuell=True,
+                                     bau_plan_reihenfolge=["4000", "1000", "2000", "3000"]),
+                                1000 * _n)[0].get(500, 0) for _n in (4, 1)],
+   [0, 100])
 # Verdrahtung: Abzug an der einen Bestandsstelle, gedeckelt auf das
 # Vorhandene, und sichtbar gemacht.
 # SITZUNG 20: die Verdrahtung ist in `_reservierungen_anwenden` gewandert,
@@ -5870,16 +5894,18 @@ def _rufe146(fn_node):
             if isinstance(c, _ast49.Call)}
 
 
-_rc146_fn, _rc146 = _fn146_erste("_recompute", innerhalb="_show_build_detail")
-# SEIT SITZUNG 16 ENGLISCH im Quelltext, Deutsch im Katalog.
-check("aa146 Neu berechnen stellt die abgestimmte Frage",
-      "unfreeze and recalculate?" in _rc146)
-check("aa146 Ja loest den 🔒-Knopf (EIN Auftau-Pfad, keine Kopie)",
-      "frozen_btn.setChecked" in _rufe146(_rc146_fn)
-      and "QMessageBox.question" in _rufe146(_rc146_fn))
-check("aa146 Alt-Payload (nur Preise fest) rechnet weiter wie bisher",
-      "plan_snapshot" in _rc146
-      and "Recalculated with frozen prices" in _rc146)
+# SEIT 30.09.2026 (emm298) gibt es "Neu berechnen" nicht mehr: ME/TE rechnen
+# von selbst, und beim eingefrorenen PLAN sind die Felder GESPERRT statt
+# nachzufragen. Der Timer-Weg rechnet dann nicht (EIN Auftau-Pfad bleibt der
+# Schloss-Knopf); Alt-Payloads (nur Preise fest) rechnen weiter.
+_mu146_fn, _mu146 = _fn146_erste("_mete_uebernehmen", innerhalb="_show_build_detail")
+check("aa146 ME/TE-Timer rechnet beim eingefrorenen PLAN nicht",
+      "self._bd_plan_fest()" in _mu146 and "rebuild" in _rufe146(_mu146_fn))
+check("aa146 _bd_plan_fest verlangt den Schnappschuss (Alt-Payload rechnet weiter)",
+      "plan_snapshot" in _fn_src("_bd_plan_fest"))
+check("aa146 der alte Recalculate-Weg ist weg (keine zweite Rechnung daneben)",
+      _fn146_erste("_recompute", innerhalb="_show_build_detail")[0] is None
+      and "unfreeze and recalculate?" not in _src_txt)
 
 # Einfrieren legt den Schnappschuss ins Payload.
 check("aa146 _on_freeze_toggle packt den Plan ein",
@@ -5924,31 +5950,24 @@ eq("aa146 'checked_runplan' hat genau vier Stellen (save/plan/loader/Kopie leere
 # obwohl ingame nichts lief. NICHT still (Regel 6): beide Wege melden es
 # (Frage-Text bzw. Flash-Tip). Der EINGEFRORENE Plan behaelt seine Haken -
 # genau dafuer ist er eingefroren.
-_hr147_fn, _hr147 = _fn146_erste("_hakerl_reset")
-check("aa147 Reset-Funktion existiert", bool(_hr147))
-check("aa147 sie leert den EINEN checked-Satz (keine Kopie daneben)",
-      "self._bd_runplan_checked = set()" in _hr147
-      and "self._bd_runplan_auto = {}" in _hr147)
-check("aa147 und sichert SOFORT im Plan (bewusste Aktion, nicht entprellt)",
-      "_sched_save_now" in _rufe146(_hr147_fn))
-_rc147_fn, _rc147 = _fn146_erste("_recompute", innerhalb="_show_build_detail")
-_rc147_calls = sum(1 for _c in _ast49.walk(_rc147_fn)
-                   if isinstance(_c, _ast49.Call)
-                   and isinstance(_c.func, _ast49.Name)
-                   and _c.func.id == "_hakerl_reset")
-eq("aa147 BEIDE Neu-berechnen-Wege setzen zurueck (Ja-Pfad + live)",
-   _rc147_calls, 2)
-_p147_reset = _rc147.find("_hakerl_reset()")
-_p147_auftau = _rc147.find("frozen_btn.setChecked(False)")
-check("aa147 Ja-Pfad: erst leeren, DANN auftauen (rebuild sieht keine Alt-Haken)",
-      _p147_reset >= 0 and _p147_auftau >= 0 and _p147_reset < _p147_auftau)
-check("aa147 die Einfrier-Frage KUENDIGT das Zuruecksetzen an (Regel 6)",
-      "Run planner ticks " in _rc147 and "are reset in the process" in _rc147)
-check("aa147 der Live-Weg meldet es per Flash-Tip (Regel 6)",
-      "old run planner " in _rc147 and "ticks reset" in _rc147)
-check("aa147 Reset ist auf den EXPLIZITEN Knopf beschraenkt - der "
-      "Mengen-Spinner raeumt nichts weg",
-      "_hakerl_reset" not in _fn_src("rebuild"))
+# SEIT 30.09.2026 (emm298): der Knopf heisst "Reset" und oeffnet den Plan
+# FRISCH - der Neu-Zweig von open_build_detail leert Haken, Stempel und
+# erledigte Runs (emm285). Die Haken-Funktion _hakerl_reset ist mit
+# "Recalculate" ausgebaut; niemand raeumt Haken mehr nebenbei weg.
+_pr147_fn, _pr147 = _fn146_erste("_plan_reset", innerhalb="_show_build_detail")
+check("aa147 Reset fragt vorher, Vorgabe Nein",
+      "QMessageBox.question" in _rufe146(_pr147_fn)
+      and "QMessageBox.No, QMessageBox.No)" in _pr147)
+check("aa147 Reset oeffnet den Einzelplan frisch (Haken-Reset dort, EINE Stelle)",
+      "self.open_build_detail(type_id, name, fresh=True)" in _pr147)
+check("aa147 Reset eines Buendels behaelt nur die Enden (plan_id=None)",
+      "self._multi_plan_oeffnen(_e, plan_id=None)" in _pr147)
+check("aa147 Reset tut beim eingefrorenen Plan nichts",
+      'if getattr(self, "_bd_frozen", None):' in _pr147)
+check("aa147 _hakerl_reset ist ausgebaut",
+      _fn146_erste("_hakerl_reset")[0] is None)
+check("aa147 der Mengen-Spinner raeumt keine Haken weg",
+      "_plan_reset" not in _fn_src("rebuild"))
 
 
 # ---------------------------------------------------------------- (aa148)
@@ -8050,8 +8069,11 @@ check("aa182 fallend liegt vor steigend",
 #     Pruefungen halten die Entscheidung fest, damit sie niemand spaeter
 #     als offene Restarbeit wieder aufmacht.
 _gd183 = _fn_src("_show_gold_dialog")
+# seit emm272 (Rechtsklick "Copy") laeuft die Verbindung ueber
+# `kopier_menue` - gezaehlt werden beide Wege zusammen.
 eq("aa183 die Gold-Suche verbindet GENAU EIN Kontextmenue",
-   _gd183.count("customContextMenuRequested.connect"), 1)
+   _gd183.count("customContextMenuRequested.connect")
+   + _gd183.count("kopier_menue(tbl, gold_menu)"), 1)
 eq("aa183 das aermere Zweitmenue ist weg", _gd183.count("def _gold_menu"), 0)
 check("aa183 das verbliebene Menue kann weiterhin alle drei Dinge",
       't("Open market in game")' in _gd183
@@ -8877,7 +8899,10 @@ check("aa201 jeder Zweig begruendet sich im Tooltip (sig_tip je Zweig)",
       and "item.setToolTip(sig_tip)" in _pf201)
 _sr201 = _fn_src("_sell_ready")
 check("aa201 VERKAUFEN haengt NUR an Einstand + Ziel-Marge (+ nicht gelistet)",
-      "sellable = has_cost and round(h.margin_pct, 1) >= target" in _sr201
+      # seit emm272 ist die Marge die MIT Fracht (_marge = h.margin_pct,
+      # wenn keine Fracht auf dem Stapel liegt)
+      "sellable = has_cost and round(_marge, 1) >= target" in _sr201
+      and "_marge = h.margin_pct" in _sr201
       and "at_price" not in _sr201)
 check("aa201 das Normalniveau lebt als Tooltip-Hinweis weiter",
       "da \u2013 \n" not in _pf201 and "there might be more" in _pf201)
@@ -9104,20 +9129,22 @@ with _TempDir200() as _d206b:
 # gute Idee"). Frueher startete JEDER neue Plan still mit offenem
 # Schloss; wer die Funktion nicht kannte, merkte es erst am Mangel.
 check("aa207 nach dem Speichern wird die Reservierung angeboten",
-      '_neu_res = (not new_entry.get("reserve")' in _src_txt
-      and 't("Reserve material?"), _txt9,' in _src_txt)
+      # emm315: die Bedingung steht in mw_helpers.reservierung_fragen
+      '_neu_res = _res_fragen9(new_entry, _multi_von9)' in _src_txt
+      and "box.setWindowTitle(t(\"Reserve material?\"))" in _src_txt
+      and "_box9 = self._reservierung_box(" in _src_txt)
 # Anker seit dem Multi-Bauplan um die Buendel-Bedingung erweitert
 # (aa380): gefragt wird nur, wenn es etwas zu schuetzen gibt UND der Plan
 # nicht schon in einem Buendel steckt.
 check("aa207 gefragt wird nur, wenn es etwas zu schuetzen gibt",
-      'and bool(new_entry.get("reserve_map"))\n                        and not _multi_von9)'
-      in _src_txt)
+      'and e.get("reserve_map") and not multi_von)' in _src_txt
+      and '_neu_res = _res_fragen9(new_entry, _multi_von9)' in _src_txt)
 check("aa207 kollidierende Plaene werden NAMENTLICH genannt",
       '_koll9.append(str(_p9.get("label")' in _src_txt
       and "need the same materials" in _src_txt
-      and '"\\n\\u2022 ".join(_koll9[:6])' in _src_txt)
+      and "for k in list(kollisionen)[:6])" in _src_txt)
 check("aa207 bei echter Kollision ist JA die Vorgabe",
-      "_QMB9.Yes if _koll9 else _QMB9.No)" in _src_txt)
+      "box.setDefaultButton(_QMB.Yes if kollisionen else _QMB.No)" in _src_txt)
 check("aa207 ein JA wird sofort gespeichert",
       'new_entry["reserve"] = True\n'
       '                    config.save_settings(self.settings)' in _src_txt)
@@ -9262,8 +9289,10 @@ check("aa209 scheitert das Nachladen, bleibt die ehrliche Nummer",
 check("aa210 der Reservierungs-Fall wird eigens erkannt",
       'getattr(self, "_bd_reserved_applied", None)' in _src_txt
       and "if _resv > 0:" in _src_txt)
-check("aa210 und heisst dann 'reserviert', nicht 'nicht vor Ort'",
-      '"0  \\u2013 " + t("reserved")' in _src_txt)
+# emm318: "0 - reserved" las der Nutzer als "nichts reserviert" -> nennt
+# jetzt, wer das Material haelt.
+check("aa210 und heisst dann 'von anderen Plaenen reserviert', nicht 'nicht vor Ort'",
+      '"0  \\u2013 " + t("reserved by other plans")' in _src_txt)
 check("aa210 der Tooltip stellt klar, dass es DA ist",
       "It IS there on site, but" in _src_txt)   # Sitzung 13: t()
 check("aa210 er nennt die blockierenden Plaene",
@@ -9300,8 +9329,9 @@ for _b211 in _erw211:
 # Sitzung 17: je -3 mit Handels-, Akkumulations- und Frachtplan, gezaehlt.
 # 22.09.2026: -2, die beiden Gold-Suche-Knoepfe sind auf Nutzer-Wunsch aus
 # den Werkzeug-Leisten von Daytrade und Swing Trade verschwunden.
-eq("aa211 GENAU 12 Knoepfe tragen gezeichnete Symbole",
-   _src_txt.count("_btn_icon(QPushButton("), 12)
+# emm357: +1 "Re-link" neben "Remove" im Charaktere-Tab (Nutzer-Wunsch).
+eq("aa211 GENAU 13 Knoepfe tragen gezeichnete Symbole",
+   _src_txt.count("_btn_icon(QPushButton("), 13)
 check("aa211 auch Menue-Aktionen tragen Symbole",
       'addAction(icons.icon("hammer"), t("Open build plan")' in _src_txt
       and 'addAction(icons.icon("trend_up"), t("Open price history")'
@@ -9709,6 +9739,10 @@ check("aa219 ein neuer Plan startet ohne alte Stempel",
 _sp219 = _fn_src("_save_plan")
 check("aa219 Speichern nagelt den Plan fest",
       "frozen_btn.setChecked(True)" in _sp219)
+# ... ABER NUR NACH NACHFRAGE (Nutzer 29.09.2026: "speichere ich einen
+# Multiplan, wird er automatisch eingefroren, das ist nicht gut").
+check("aa219 ... nur, wenn der Nutzer beim Speichern Ja sagt",
+      "if not _war_schon_fest and self._einfrieren_fragen(dlg, label):" in _sp219)
 check("aa219 ... aber nur, wenn er nicht schon fest ist",
       "_war_schon_fest" in _sp219
       and 'get("plan_snapshot")' in _sp219)
@@ -9729,7 +9763,7 @@ check("aa219 Alt-Plan ohne Verbrauchsliste wird benannt",
 # Text INNERHALB des Zweigs suchen, nicht irgendwo in der Funktion.
 check("aa219 Alt-Plan ohne Schnappschuss wird benannt",
       "the SELF-BUILT yet" in _tg219)
-_i219 = _tg219.find('elif on and not (p.get("frozen") or {}).get("plan_snapshot"):')
+_i219 = _tg219.find('elif (on and not (p.get("frozen") or {}).get("plan_snapshot")')
 check("aa219 der Hinweis haengt an der Schnappschuss-Bedingung",
       _i219 >= 0 and "the SELF-BUILT yet" in _tg219[_i219:])
 
@@ -12161,8 +12195,10 @@ eq("aa258 und das Budget ist restlos verteilt", _budget258, 0)
 # --- EINE WAHRHEIT: der Baum rechnet nicht selbst nach.
 _bt258 = open(os.path.join(_here222, "eve_trader", "ui",
                            "mw_bauplan_tabs.py"), encoding="utf-8").read()
+# seit emm278 verteilt `budget_eigene_zuerst` (eigene laufende Jobs zuerst)
 check("aa258 der Runplaner-Baum benutzt die Helfer",
-      "_mwh_rest(" in _bt258 and "_mwh_fertig(" in _bt258)
+      "_mwh_eigen(" in _bt258 and "_mwh_fertig(" in _bt258
+      and "R = max(0, R_plan - int(_gedeckt_v.get((cid, _welle, _tid_a), 0)))" in _bt258)
 # Der Materialien-Reiter rechnet die Restmenge aus DENSELBEN Zahlen wie
 # seine MISSING-Spalte (Benoetigt minus Bestand) - nicht mehr aus dem
 # eingefrorenen build_runs. Sonst widersprechen sich zwei Spalten derselben
@@ -12815,6 +12851,13 @@ def _starte_scans271():
                 [_sys271.executable, os.path.join(_ROOT, "tests", _sk), "--kurz"],
                 cwd=_here222, stdout=_sp271.PIPE, stderr=_sp271.DEVNULL,
                 text=True, encoding="utf-8", errors="replace")
+    # PYFLAKES GLEICH MIT (emm319, Tempo): lief bei aa288 einzeln und
+    # blockierte ~7 s; so laeuft es neben den Scannern her.
+    if "__pyflakes__" not in _laeufe271:
+        _laeufe271["__pyflakes__"] = _sp271.Popen(
+            [_sys271.executable, "-m", "pyflakes", "eve_trader/"], cwd=_here222,
+            stdout=_sp271.PIPE, stderr=_sp271.DEVNULL, text=True,
+            encoding="utf-8", errors="replace")
 
 
 def _scan271(skript):
@@ -13162,7 +13205,7 @@ check("aa300 ohne Volumen oder ohne Gewinn bleibt die Zelle leer",
       'if econ and econ.get("profit") is not None and _vol:' in _bpv300
       and '_pm3_txt = ("\\u2013", None)' in _bpv300)
 check("aa300 die Spalte faerbt sich wie Gewinn/Stueck (gruen/rot)",
-      'and j in (10, 11, 15):' in _bpv300)
+      'and j in (10, 11, 15, 17):' in _bpv300)
 
 
 # ---------------------------------------------------------------- (aa301)
@@ -13246,7 +13289,7 @@ check("aa302 Erfindungsmaterial wird als solches erkannt",
       '_p_inv.get("inv_buy")' in _rk302 and '_p_inv.get("inv_stock_used")' in _rk302)
 check("aa302 fuer diese Zeilen zaehlt die EIGENE Fehlmenge statt 0",
       'if _t in _inv_tids:' in _rk302
-      and 'return int(r.get("missing", 0) or 0)' in _rk302)
+      and 'return inv_kaufmenge(r.get("missing", 0)' in _rk302)
 check("aa302 Fertigungsmaterial bleibt beim Restbedarf (nicht zu viel kaufen)",
       'return int(_rest_fehlt.get(_t, 0) or 0)' in _rk302)
 # FUNKTIONAL: die Mengenwahl mit einer echten Zeilenliste nachspielen.
@@ -13278,13 +13321,13 @@ eq("aa302 ohne Haken bleibt es bei der vollen Planmenge",
 # Kuerzung nur AUSGENOMMEN, seine reservierten Einheiten aber ungeschuetzt -
 # fremde Plaene durften den Bestand bis auf Null aufbrauchen.
 _S303 = {"bau_saved_plans": [
-    {"id": "eigen", "label": "Ametat II x50", "reserve": True,
-     "reserve_map": {34: 1950}},
     {"id": "fremd1", "label": "Viator x20", "reserve": True,
      "reserve_map": {34: 9000}},
     {"id": "fremd2", "label": "Einherji II x330", "reserve": True,
      "reserve_map": {34: 9000}},
-]}
+    {"id": "eigen", "label": "Ametat II x50", "reserve": True,
+     "reserve_map": {34: 1950}},
+]}   # "eigen" steht hinten (Bau-Prioritaet: sieht die beiden davor)
 _eig303 = MW._reserved_by_this_plan(_S303, "eigen")
 eq("aa303 die eigene Reservierung wird gefunden", _eig303, {34: 1950})
 eq("aa303 ohne offenen Plan gibt es keinen Schutz",
@@ -14122,10 +14165,14 @@ eq("aa288 kein benutztes Modul ohne Import", _fehlt288, [])
 # fehlenden Zusatzpaket haengen.
 import subprocess as _sp288
 try:
-    _pf288 = _sp288.run([__import__("sys").executable, "-m", "pyflakes",
-                         "eve_trader/"], capture_output=True, text=True,
-                        timeout=120)
-    _undef288 = [_z for _z in _pf288.stdout.splitlines()
+    _pfp288 = _laeufe271.pop("__pyflakes__", None)    # bei aa271 gestartet
+    if _pfp288 is not None:
+        _pfaus288, _ = _pfp288.communicate(timeout=120)
+    else:
+        _pfaus288 = _sp288.run([__import__("sys").executable, "-m", "pyflakes",
+                                "eve_trader/"], capture_output=True, text=True,
+                               timeout=120).stdout
+    _undef288 = [_z for _z in (_pfaus288 or "").splitlines()
                  if "undefined name" in _z]
     eq(f"aa288 pyflakes findet keinen undefinierten Namen ({len(_undef288)})",
        _undef288[:3], [])
@@ -14834,8 +14881,14 @@ check("aa319 und in die Rechnung geschrieben, nicht nur ins Feld",
       "self._bd_me = _obc_me" in _obc319 and "self._bd_te = _obc_te" in _obc319)
 check("aa319 dabei feuert kein Signal (sonst Rebuild waehrend des Aufbaus)",
       _obc319.count("blockSignals(True)") >= 2)
+# seit emm298 mit Frost-Ausnahme: gesperrt, WEIL eingefroren, ist keine
+# Invention-Sperre - dort darf der Rueckfall den Wert nicht ueberschreiben.
 check("aa319 der Rueckfall haengt an der Sperre, nicht am Rebuild",
-      "if not me_spin.isEnabled():" in _obc319)
+      'if not me_spin.isEnabled() and not me_spin.property("emm_frost"):'
+      in _obc319)
+check("aa319 eine FROST-Sperre loest den Rueckfall nicht aus (ME und TE)",
+      'if not te_spin.isEnabled() and not te_spin.property("emm_frost"):'
+      in _obc319)
 _tabs319 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
 check("aa319 der Nutzer erfaehrt, wessen ME/TE gefragt sind",
       _tabs319.count("Own BPC: the invention settings above do not") >= 2)
@@ -15885,9 +15938,9 @@ check("aa347 auch ein Rest zeigt die Reservierung",
       "_resv_t = int((getattr(self, \"_bd_reserved_applied\", None)" in _ccf347
       and "{n} reserved" in _ccf347)
 # ACHTUNG: _fn_src schreibt `_txt(` als `t(` um (Falle aus der Uebergabe).
-check("aa347 der Null-Fall bleibt wie er war",
+check("aa347 der Null-Fall bleibt (seit emm318 mit 'by other plans')",
       "it.setText(3, " in _ccf347
-      and '+ t("reserved"))' in _ccf347)
+      and '+ t("reserved by other plans"))' in _ccf347)
 check("aa347 die Zeile nennt die anderen Plaene",
       "_bd_reserved_plans" in _ccf347)
 check("aa347 und sagt, wie man sie freigibt",
@@ -18368,13 +18421,15 @@ _sav380 = _fn_src("_save_plan") if "_save_plan" in _src_txt else _src_txt
 check("aa380 ein Plan in einem Buendel wird gar nicht erst gefragt",
       '_multi_von9 = self._multi_gehoert_zu(plans).get(new_entry["id"]) or []'
       in _src_txt
-      and "and not _multi_von9)" in _src_txt)
+      and "_res_fragen9(new_entry, _multi_von9)" in _src_txt)
 check("aa380 ... und seine Reservierung wird dabei ausdruecklich ausgeschaltet",
       'if _multi_von9:\n                new_entry["reserve"] = False' in _src_txt)
 check("aa380 ... und er erfaehrt, wer stattdessen reserviert",
       "and is reserved there." in _src_txt)
-check("aa380 die Frage nennt den Multi-Fall",
-      "plan into a multi build " in _src_txt)
+# ERSETZT 30.09.2026 (Nutzer: "weniger Text, zu viel Text verwirrt"): der
+# Multi-Satz ist raus; das Freigeben beim Buendeln passiert trotzdem (s. unten).
+check("aa380 die Frage kommt aus EINER Stelle (_reservierung_box)",
+      "_box9 = self._reservierung_box(self, label, len(_rm9), _koll9)" in _src_txt)
 # KEIN DRITTER KNOPF - und zwar aus dem Grund, den der NUTZER selbst genannt
 # hat (20.09.2026): "Nein, ich will einen Multiplan daraus machen" kaeme zum
 # falschen Zeitpunkt, denn man muss erst mehrere Plaene anlegen. Er waere auch
@@ -18383,12 +18438,11 @@ check("aa380 die Frage nennt den Multi-Fall",
 # Reservierung ohnehin auf. Das sagt der Text jetzt, statt eine dritte Wahl
 # anzubieten.
 check("aa380 es bleibt bei ZWEI Antworten (kein dritter Knopf)",
-      "_QMB9.Yes | _QMB9.No, _QMB9.Yes if _koll9 else _QMB9.No)" in _src_txt
+      "box.setStandardButtons(_QMB.Yes | _QMB.No)" in _src_txt
+      and "box.setDefaultButton(_QMB.Yes if kollisionen else _QMB.No)" in _src_txt
       and "bundle it in a multi build plan" not in _src_txt)
 check("aa380 die Frage sagt, dass die Antwort umkehrbar ist",
-      "You can change this any time with the lock on the plan's " in _src_txt)
-check("aa380 ... und was beim spaeteren Buendeln von selbst passiert",
-      "reservation is released automatically" in _src_txt)
+      "Changeable any time with the lock on the plan card." in _src_txt)
 # Und das ist keine leere Zusage: der Speicherer tut es wirklich (b86).
 # Seit 26.09.2026 ueber config.buendel_quellen_freigeben (EINE Stelle) - seit
 # dem Aufraeumen des Multi-Dialogs (26.09.2026) ruft sie nur noch `_save_plan`
@@ -18463,8 +18517,11 @@ check("aa382 _restbedarf_jetzt liest die SICHERE Karte",
       "_bd_runplan_delivered_sicher" in _aa382_rest)
 check("aa382 _restbedarf_jetzt liest die geratene NICHT mehr",
       '"_bd_runplan_delivered",' not in _aa382_rest)
+# seit 30.09.2026 ueber `_rest_geliefert_jetzt` - dieselbe Karte wie die
+# Einkaufsliste (die Haken zaehlen mit, der Deckel bleibt).
 check("aa382 _fehlbedarf_jetzt liest die SICHERE Karte",
-      "_bd_runplan_delivered_sicher" in _aa382_fehl)
+      "geliefert = self._rest_geliefert_jetzt()" in _aa382_fehl
+      and "_bd_runplan_delivered_sicher" in _fn_src("_rest_geliefert_jetzt"))
 check("aa382 _fehlbedarf_jetzt liest die geratene NICHT mehr",
       '"_bd_runplan_delivered",' not in _aa382_fehl)
 # Die Anzeige behaelt ihre Karte - sonst waere die Trennung nur ein
@@ -18840,8 +18897,15 @@ check("aa387 ... und das ist mehr als eine Zehntel-Verbesserung",
 
 # DIE REINE ENTSCHEIDUNG - ohne Fenster pruefbar (mw_helpers-Regel).
 from eve_trader.ui.mw_helpers import eigene_kopie_lage as _ekl387  # noqa: E402
-eq("aa387 getippte 'Runs/BPC' gewinnt vor allem anderen",
-   _ekl387(52, 10, 4, 13), {"copies": 6, "runs": 10})
+# GETAUSCHT 28.09.2026 (Nutzer, Flycatcher "10 x 1 Blueprint ... man will
+# IMMER die gesamte Blueprint verbrauchen"): kennt der Cache die Kopie, gilt
+# SIE - das Feld nur, wenn er sie nicht kennt.
+eq("aa387 die echte Kopiengroesse (ESI) gewinnt vor dem Feld",
+   _ekl387(52, 10, 4, 13), {"copies": 13, "runs": 4})
+eq("aa387 sein Fall: Feld 1, Kopien a 4 -> 13 Jobs a 4 Runs, nicht 13 x 1",
+   _ekl387(52, 1, 4, 13), {"copies": 13, "runs": 4})
+eq("aa387 kennt der Cache die Kopie nicht, gilt das Feld",
+   _ekl387(52, 10, 0, 0), {"copies": 6, "runs": 10})
 eq("aa387 sonst zaehlt die kleinste eigene Kopie aus dem Blaupausen-Cache",
    _ekl387(52, 0, 4, 13), {"copies": 13, "runs": 4})
 eq("aa387 Stork: 28 Runs, Kopien a 2", _ekl387(28, 0, 2, 14),
@@ -18858,6 +18922,9 @@ eq("aa387 Muell in den Feldern kippt nicht auf die alte Annahme zurueck",
    _ekl387(52, None, None, None), None)
 
 _mb387 = open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+check("aa387 kennt der Cache die Kopie, ist 'Runs/BPC' gesperrt",
+      "runs.setEnabled(bool(obpc.isChecked()) and _esi_je < 1)" in _mb387
+      and "self._bd_multi_esi_runs = {int(k): int(v) for k, v in _esi_runs.items()}" in _mb387)
 check("aa387 die alte Annahme steht nicht mehr im Code",
       "or 0) or noetig)" not in _mb387)
 check("aa387 der Multi-Bauplan fragt den Blaupausen-Cache, statt zu raten",
@@ -18886,13 +18953,14 @@ check("aa387 und der Unendlich-Fall sagt bei eigener Kopie, WAS fehlt",
 # EIN EINGEFRORENES BUENDEL WIRD NICHT STILL UMGEBAUT. Bis 26.09.2026 fragte
 # der Bearbeiten-Dialog vorher (Nutzer 21.09.2026: "Vorher fragen"); der
 # Dialog ist ausgebaut. Die Zusage lebt in den zwei neuen Wegen weiter:
-# HERAUSNEHMEN (x je Ende) verweigert bei eingefrorenem Fenster mit dem
-# Hinweis "erst auftauen" (b87 faehrt es), DAZUNEHMEN taut auf und SAGT es
+# HERAUSNEHMEN (x je Ende) fragt bei eingefrorenem Fenster mit einer
+# Warnung und taut erst bei Ja auf (emm332, b87 faehrt es), DAZUNEHMEN taut auf und SAGT es
 # (Nutzer 26.09.2026: eingefroren ist kein Hindernis, b87). Hier steht, dass
 # keine dritte, stille Variante im Code ist.
-check("aa388 Herausnehmen: eingefroren -> Hinweis, kein stiller Umbau",
+check("aa388 Herausnehmen: eingefroren -> Warnfrage (emm332), kein stiller Umbau",
       'if getattr(self, "_bd_frozen", None):' in _mb387
-      and 'Frozen plan \\u2013 unfreeze it first (Tools), then ' in _mb387)
+      and 'This plan is FROZEN \\u2013 the materials are bought.' in _mb387
+      and "Frozen plan \\u2013 unfreeze it first" not in _mb387)
 # SEIT 27.09.2026 (Nutzer: "gefrorene und gespeicherte Plaene sind dazu da,
 # dass ich im Profit-Overview immer weiss, wie viel Profit ich mache"):
 # DAZUNEHMEN veraendert einen eingefrorenen/reservierten/abgeschlossenen
@@ -19087,10 +19155,13 @@ check("aa391 der Ziel-Preis geht vom EINKAUFSPREIS aus, nicht vom Markt",
 # Die zweite Fundstelle im Fenster ist das PORTFOLIO (`opt_price`, eigene
 # Spalte, eigener Zweck) - die darf und muss bleiben.
 check("aa391 ... und in der Verkaufsliste rechnet ihn genau EINE Stelle",
+      # seit emm272: Kostenbasis = Einkauf + Fracht (`_basis`)
       _fn_src("_sell_zeilen_preis").count(
-          "self._optimal_sell_price(h.avg_buy)") == 1
-      and _src_txt.count("self._optimal_sell_price(h.avg_buy)") == 2
-      and "opt_price = self._optimal_sell_price(h.avg_buy)" in _src_txt)
+          "self._optimal_sell_price(_basis)") == 1
+      and _src_txt.count("self._optimal_sell_price(_basis)") == 1
+      # seit emm290 rechnet auch das Portfolio mit Einkauf + Fracht
+      and _src_txt.count("self._optimal_sell_price(h.avg_buy)") == 0
+      and "opt_price = (self._optimal_sell_price(self._kostenbasis(h))" in _src_txt)
 # DER KNOPF AM EINFUEGE-FELD heisst jetzt nach seiner Wirkung (Nutzer
 # 22.09.2026). Er arbeitet auf der eingefuegten Hangar-Liste und unterbietet
 # IMMER - er kennt den Ziel-Preis-Modus gar nicht, also ist der Name hier
@@ -19970,10 +20041,10 @@ _fs404 = _fn_src("_fill_bauplan_schedule")
 check("aa404 der Neuaufbau holt die erledigten Runs hervor",
       '_rest_erl = dict(getattr(self, "_bd_runplan_erledigt", None) or {})' in _fs404)
 check("aa404 ... und hakt damit die neue Zeile desselben Items ab",
-      "if (_ckey_item not in _checked_set and _runs_hier > 0" in _fs404
+      "if _ckey_item in _haken_neu and _ckey_item not in _checked_set:" in _fs404
       and "_checked_set.add(_ckey_item)" in _fs404)
 check("aa404 ... und verbraucht sie dabei, statt sie doppelt zu zaehlen",
-      "_rest_erl[_k_erl] = max(" in _fs404)
+      "_haken_neu = set(_mwh_haken(_zeilen_h, _checked_set, _rest_erl))" in _fs404)
 # DER ZEITSTEMPEL WANDERT MIT: ohne ihn duerfte die mitlaufende
 # Reservierung nichts freigeben (Sitzung 10).
 check("aa404 der wiederhergestellte Haken bekommt einen Zeitstempel",
@@ -20534,7 +20605,7 @@ _set414 = {"bau_saved_plans": [
      "reserve": False, "reserve_map": {str(_TC414): 300}},
     {"id": 1787425009551, "type_id": 11999, "label": "Vagabond \u00d720",
      "reserve": True, "reserve_map": {str(_TC414): 50}},
-]}
+], "bau_plan_reihenfolge": ["1787425009551", "1790001501385"]}   # Vagabond #1
 eq("aa414 die Mitglieder eines offenen Buendels sind bekannt",
    _H414.buendel_mitglieder(_set414), {"1789162106671", "1789162835294"})
 check("aa414 strittig ist TC fuer das Buendel nur noch durch den Vagabond",
@@ -20706,7 +20777,7 @@ eq("aa417 Beleg fuer ein Item, das der Plan nicht baut, aendert nichts",
 _src417 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_helpers.py"),
                encoding="utf-8").read()
 check("aa417 BEIDE Reservierungs-Leser reichen den Beleg weiter",
-      _src417.count("belegt=MainWindowHelpers._belegt_fuer_plan(p))") == 2)
+      _src417.count("belegt=MainWindowHelpers._belegt_fuer_plan(p),") == 2)
 _tabs417 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_bauplan_tabs.py"),
                 encoding="utf-8").read()
 check("aa417 der Runplaner zeigt DIESELBE Karte, die die Einkaufsliste rechnet",
@@ -20729,7 +20800,7 @@ _bps419 = [
 ]
 _jobs419 = [
     {"job_id": 1, "blueprint_id": 102, "activity_id": 4, "status": "active",
-     "end_date": "2026-09-30T14:00:00Z"},
+     "end_date": "2099-09-30T14:00:00Z"},
     {"job_id": 2, "blueprint_id": 103, "activity_id": 3, "status": "ready",
      "end_date": "2026-09-28T08:00:00Z"},
     {"job_id": 3, "blueprint_id": 101, "activity_id": 1, "status": "delivered",
@@ -20759,6 +20830,25 @@ eq("aa419 laufende FERTIGUNG sperrt nie, Invention mit demselben Job schon",
     for _a in (1, 8)],
    [[], [101]])
 eq("aa419 nur Fertigung (1) ist ausgenommen", _esi419.JOB_SPERRT_NICHT_AKTIVITAET, (1,))
+# ABHOLBEREIT ZAEHLT (Nutzer 30.09.2026, "sinnvoll"): CCP laesst fertige Jobs
+# auf 'active' stehen, nur end_date ist vorbei. Zeitpunkt fest vorgegeben.
+from datetime import datetime as _dt419
+_jetzt419 = _dt419.fromisoformat("2026-09-30T12:00:00+00:00").timestamp()
+_rj419 = [{"blueprint_id": 101, "status": "active", "activity_id": 5,
+           "end_date": "2026-09-30T11:59:00Z"},
+          {"blueprint_id": 102, "status": "active", "activity_id": 4,
+           "end_date": "2026-09-30T12:01:00Z"},
+          {"blueprint_id": 103, "status": "paused", "activity_id": 3,
+           "end_date": "2026-09-01T00:00:00Z"}]
+eq("aa419 abgelaufener 'active'-Job (abholbereit) gibt frei, laufender und "
+   "pausierter sperren",
+   sorted(b["item_id"] for b in _esi419.blaupausen_in_jobs(
+       _bps419, _rj419, now=_jetzt419)[1]),
+   [102, 103])
+eq("aa419 ... eine Minute vorher sperrt der Kopie-Job noch",
+   sorted(b["item_id"] for b in _esi419.blaupausen_in_jobs(
+       _bps419, _rj419[:1], now=_jetzt419 - 120)[1]),
+   [101])
 check("aa419 Eingabe bleibt unveraendert (Kopie statt Markierung im Original)",
       "in_job" not in _bps419[1] and _belegt419[0] is not _bps419[1])
 eq("aa419 ohne Jobs ist alles frei", _esi419.blaupausen_in_jobs(_bps419, None),
@@ -20885,6 +20975,1775 @@ check(f"aa423 kein Contract-Text verspricht mehr 'runs in the background' ({_hg4
 _bat423 = open("werkzeuge/messe_ladezeit.bat", "rb").read()
 check("aa423 werkzeuge\\messe_ladezeit.bat setzt EMM_LADEZEIT=1, CRLF",
       b"set EMM_LADEZEIT=1\r\n" in _bat423 and b"\n" not in _bat423.replace(b"\r\n", b""))
+
+# ---------------------------------------------------------------- (aa432)
+# VORSTUFEN OHNE OFFENEN VERBRAUCHER (Nutzer 28.09.2026, Phenolic: "wie kann
+# ich mehr Composite Reactions brauchen ... ich habe schon alle Komponenten").
+# Kette E <- K <- V <- R (E = Endprodukt, K Komponente, V Vorstufe, R Rohstufe).
+from eve_trader.ui.mw_helpers import vorstufen_erledigt as _ve432
+_br432 = {1: 10, 2: 40, 3: 40, 4: 5, 5: 7}
+_bm432 = {1: [[2, 400]], 2: [[3, 240], [99, 5]], 3: [[4, 30]], 5: [[3, 10]]}
+check("aa432 Verbraucher K fertig, V hat noch 5 (Item 5 offen) -> V bleibt offen",
+      _ve432(_br432, _bm432, {1: 10, 2: 40}) == {})
+check("aa432 ALLE Verbraucher fertig -> V und darunter R nicht mehr gebraucht",
+      _ve432(_br432, _bm432, {2: 40, 5: 7}) == {3: 40, 4: 5})
+check("aa432 ein Verbraucher halb fertig haelt die Vorstufe offen (Regel 3)",
+      _ve432(_br432, _bm432, {2: 39, 5: 7}) == {})
+check("aa432 das Endprodukt (kein Verbraucher im Plan) faellt die Regel nie an",
+      1 not in _ve432(_br432, _bm432, {2: 40, 3: 40, 4: 5, 5: 7}))
+check("aa432 Text-Schluessel und fehlende Werte stoeren nicht",
+      _ve432({"2": 40, "3": "40"}, {"2": [["3", 1]]}, {"2": "40"}) == {3: 40}
+      and _ve432(None, None, None) == {})
+check("aa432 Materialien/Einkaufsliste und Runplaner benutzen die Regel",
+      "vorstufen_erledigt(" in _fn_src("_rest_geliefert_jetzt")
+      and "_mwh_vorstufen(" in _fn_src("_fill_bauplan_schedule"))
+check("aa432 die Materialien-Zeile sagt 'not needed any more' fuer diese Items",
+      '"_bd_vorstufen_fertig"' in _fn_src("_fill_material_tab")
+      and 't("not needed any more \\u2713")' in _fn_src("_fill_material_tab"))
+
+# ---------------------------------------------------------------- (aa433)
+# BAU-PRIORITAET = KARTENREIHENFOLGE + ZWEI BEFUNDE AUS SEINEN DATEN
+# (Nutzer 28.09.2026: "welchen Plan man als erstes baut, als 2tes usw. ...
+# dann sind die Mats immer klar" -> "Kartenreihenfolge"; danach: "die 4
+# Runs sind immer noch da").
+from eve_trader.ui.mw_helpers import (MainWindowHelpers as _H433,  # noqa: E402
+                                      prio_jobs_zuteilen as _pjz433,
+                                      vorstufen_ins_budget as _vib433)
+_S433 = {"bau_saved_plans": [
+    {"id": 1, "label": "A"}, {"id": 2, "label": "B"},
+    {"id": 3, "label": "C", "done_manual": True},
+    {"id": 4, "label": "Buendel", "type_id": -1, "quellen": [5]},
+    {"id": 5, "label": "Mitglied"}]}
+eq("aa433 ohne gespeicherte Folge: Speicher-Reihenfolge, ohne Fertige und Mitglieder",
+   _H433.plan_rang(_S433), {"1": 1, "2": 2, "4": 3})
+# NUR DIE EIGENE FOLGE (Nutzer "ja alles bauen"): die Fortschritts-
+# Sortierung aendert die Prioritaet NICHT mehr von selbst.
+eq("aa433 nach Fortschritt sortiert: die Prioritaet bleibt",
+   _H433.plan_rang(dict(_S433, bau_plan_sortierung=["4", "2", "1"])),
+   {"1": 1, "2": 2, "4": 3})
+eq("aa433 eigene Folge (Arrange) gilt - auch wenn gerade nach Fortschritt angezeigt",
+   _H433.plan_rang(dict(_S433, bau_plan_sortierung=["4", "2", "1"],
+                        bau_plan_eigene_folge=False, bau_plan_reihenfolge=["2", "1"])),
+   {"2": 1, "1": 2, "4": 3})
+# Jobs: #1 wird zuerst satt, der Rest geht an #2; schon vergebene bleiben.
+_J433 = [{"job_id": 11, "product_type_id": 700, "runs": 30, "activity_id": 1, "_ts": 200.0},
+         {"job_id": 12, "product_type_id": 700, "runs": 30, "activity_id": 1, "_ts": 300.0},
+         {"job_id": 13, "product_type_id": 700, "runs": 5, "activity_id": 1, "_ts": 400.0},
+         {"job_id": 14, "product_type_id": 800, "runs": 9, "activity_id": 1, "_ts": 50.0}]
+_P433 = [{"id": "1", "runs": {700: 40, 800: 9}, "seit": 100.0, "belegt": {}},
+         {"id": "2", "runs": {700: 40}, "seit": 100.0, "belegt": {}}]
+_a433, _v433 = _pjz433(_J433, _P433, {13}, lambda _t: False)
+# GANZE JOBS (die Zuordnung wird gespeichert, ein Job gehoert EINEM Plan):
+# Job 11 (30) passt in #1 (Rest 10), Job 12 (30) nicht mehr -> #2.
+eq("aa433 #1 bekommt Job 11, Job 12 passt nur noch in #2; Job 13 war schon vergeben",
+   (_a433["1"].get(700), _a433["2"].get(700)), (30, 30))
+check("aa433 ein Job VOR dem Einfrieren zaehlt fuer niemanden (Job 14)",
+      not _a433["1"].get(800) and 14 not in _v433)
+eq("aa433 verteilte Jobs mit ihrem Plan (werden gespeichert)",
+   _v433, {11: "1", 12: "2"})
+_a433d, _v433d = _pjz433([dict(_J433[0], runs=50)], _P433, set(), lambda _t: False)
+check("aa433 ein Job, der in keinen Plan ganz passt, bleibt eine offene Frage",
+      not _v433d)
+_a433b, _ = _pjz433(_J433, [dict(_P433[0], belegt={700: 35}), _P433[1]], set(),
+                    lambda _t: False)
+eq("aa433 schon Belegtes zaehlt zur Kapazitaet: #1 (Rest 5) nimmt nur Job 13",
+   (_a433b["1"].get(700), _a433b["2"].get(700)), (5, 30))
+_a433c, _ = _pjz433(_J433, _P433, set(), lambda _t: True)
+eq("aa433 falsche Aktivitaet (Fertigung statt Reaktion) zaehlt nicht",
+   (_a433c["1"], _a433c["2"]), ({}, {}))
+# Befund 1 (seine planer_diagnose): Phenolic war im Budget 36, in `erledigt`
+# aber schon 40 (die Materialien-Seite wendet die Regel selbst an) - die
+# Regel meldete "erkannt: 0", der Runplaner zeigte weiter 4 Runs.
+_pr433 = {16680: 40, 11540: 19223}
+_bm433 = {11540: [[16680, 115338]], 16680: [[16671, 1]]}
+eq("aa433 Phenolic-Fall: schon als nicht mehr gebraucht gefuehrt -> 40 statt 36",
+   _vib433({16680: 36, 11540: 19223}, _pr433, _bm433,
+           {16680: 40, 11540: 19223}, {16680})[16680], 40)
+eq("aa433 ... und frisch erkannt ebenso",
+   _vib433({16680: 36, 11540: 19223}, _pr433, _bm433,
+           {16680: 36, 11540: 19223})[16680], 40)
+eq("aa433 offener Verbraucher: das Budget bleibt",
+   _vib433({16680: 36, 11540: 100}, _pr433, _bm433,
+           {16680: 36, 11540: 100})[16680], 36)
+check("aa433 der Runplaner nimmt die Items der Materialien-Seite mit",
+      "_mwh_vs_budget(" in _fn_src("_fill_bauplan_schedule")
+      and '"_bd_vorstufen_fertig"' in _fn_src("_fill_bauplan_schedule"))
+# Befund 2 (seine settings.json): gespeicherte Zuteilungen hatten NIE eine
+# type_id - kein Beleg, kein Haken konnte eine Reservierung verkleinern.
+# Multiplan 1: 129'375 Phenolic reserviert, mit Beleg 2'457.
+_plan433 = {"build_runs": {50: 10, 60: 4},
+            "build_mats": {50: [[34, 1000]], 60: [[35, 400]]}}
+_alt_asg433 = [{"char": "X", "item": "Ding", "runs": 10, "jobs": 1,
+                "stage": "component", "slots": 10, "char_done": 0}]
+eq("aa433 Zuteilung im alten Speicherformat: der Beleg gibt die Zutaten frei",
+   _H433._reserve_map_mitlaufend(_plan433, {34: 1000, 35: 400, 50: 10}, {},
+                                 _alt_asg433, 1000.0, belegt={50: 10}),
+   {35: 400, 50: 10})
+eq("aa433 ohne Zuteilungen, aber mit Plan-Runs: ebenso",
+   _H433._reserve_map_mitlaufend(_plan433, {34: 1000}, {}, [], 1000.0,
+                                 belegt={50: 5}), {34: 500})
+check("aa433 neue Zuteilungen speichern tid und char_id",
+      '"tid": a.get("tid"),' in _fn_src("_transform_schedule_result")
+      and '"char_id": cid,' in _fn_src("_transform_schedule_result"))
+check("aa433 mit Rang kein Eigenschutz (die Plaene davor gehen vor)",
+      "_eigen = {}" in _fn_src("_reservierungen_anwenden")
+      and "self.plan_rang(self.settings)" in _fn_src("_reservierungen_anwenden"))
+check("aa433 die Karte zeigt den Rang (#n) aus derselben Quelle",
+      "self.plan_rang(self.settings)" in _fn_src("_plan_rang_auffrischen")
+      and "self._plan_rang_auffrischen()" in _fn_src("_sortiere_plan_karten")
+      and "self._plan_rang_auffrischen()" in _fn_src("_plan_reihenfolge_merken"))
+check("aa433 die Prioritaets-Verteilung wird gespeichert (Quelle 'prioritaet')",
+      "self._prio_zuordnung_schreiben(_jobs)" in _fn_src("_job_zuordnung_nachfuehren")
+      and '"prioritaet"' in _fn_src("_prio_zuordnung_schreiben"))
+
+# ---------------------------------------------------------------- (aa434)
+# LAUFENDE JOBS WERDEN SCHON BEIM START ZUGEORDNET (Nutzer 28.09.2026: "Plan 1
+# Intermediates gebaut, Composites gestartet, mit Plan 2 die Intermediates
+# begonnen - geht das mit der Bestandsreservierung?" -> "ja genau so").
+# Die Zuordnung ist es, die `_reserve_map_mitlaufend` die Zutaten freigeben
+# laesst; vorher kam sie erst mit dem ABGELIEFERTEN Job.
+import eve_trader.store as _st434  # noqa: E402
+_alt434 = {k: getattr(_st434, k) for k in (
+    "run_klicks_fuer_plan", "job_zuordnung_alle", "job_zuordnung_setzen")}
+_gesetzt434 = []
+try:
+    _st434.run_klicks_fuer_plan = lambda *a, **k: []
+    _st434.job_zuordnung_alle = lambda: {}
+    _st434.job_zuordnung_setzen = lambda jid, pid, t, r, q, ts=None: \
+        _gesetzt434.append((int(jid), pid, int(t), int(r), q))
+
+    class _W434(MW):
+        def __init__(self):
+            self.settings = {"bau_saved_plans": [
+                {"id": 434, "label": "Plan 1", "reserve": True,
+                 "reserve_map": {"700": 10}}]}
+            self._bd_open_plan_id = 434
+            self._bd_delivered_jobs = []
+            self._bd_active_jobs_map = {700: [
+                {"job_id": 55, "start_date": "2026-09-28T10:00:00Z",
+                 "activity_id": 1, "product_type_id": 700, "runs": 10,
+                 "status": "active"},
+                {"job_id": 56, "start_date": "2026-09-01T10:00:00Z",
+                 "activity_id": 1, "product_type_id": 700, "runs": 4,
+                 "status": "active"}]}
+    _w434 = _W434()
+    _seit434 = MW._iso_job_ts("2026-09-20T00:00:00Z")
+    _w434._job_zuordnung_nachfuehren(
+        [{"tid": 700, "runs": 10, "stage": "component"}], _seit434)
+    check(f"aa434 laufender Job nach dem Einfrieren: gleich beim Start zugeordnet "
+          f"({_gesetzt434})", (55, 434, 700, 10, "eindeutig") in _gesetzt434)
+    check("aa434 ein Job, der VOR dem Einfrieren startete, bleibt draussen",
+          not any(_g[0] == 56 for _g in _gesetzt434))
+    # Strittig (ein zweiter Plan will dasselbe Item): nicht zuordnen - und
+    # auch NICHT fragen, solange der Job laeuft; gefragt wird beim Abliefern.
+    _w434b = _W434()
+    _w434b.settings["bau_saved_plans"].append(
+        {"id": 435, "label": "Plan 2", "reserve": True, "reserve_map": {"700": 5}})
+    _gesetzt434.clear()
+    _w434b._job_zuordnung_nachfuehren(
+        [{"tid": 700, "runs": 10, "stage": "component"}], _seit434)
+    # GEAENDERT 28.09.2026 (Nutzer "wir brauchen etwas, was fix haelt"):
+    # auch nach LAUFENDEN Jobs wird gefragt - dann ist der Job ab dem Start
+    # zugeordnet. Die Frage traegt die Marke "laeuft" (Dialog: "running since").
+    _fr434 = getattr(_w434b, "_bd_job_offen", None) or []
+    check(f"aa434 strittiger LAUFENDER Job: nicht geraten, sondern gefragt ({_fr434})",
+          not _gesetzt434 and len(_fr434) == 1 and _fr434[0].get("job_id") == 55
+          and _fr434[0].get("laeuft") is True)
+finally:
+    for _k, _v in _alt434.items():
+        setattr(_st434, _k, _v)
+check("aa434 der Bestandsabruf liefert Job-Nummer, Start und Aktivitaet mit",
+      open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read().count(
+          '"start_date": j.get("start_date"),') >= 2)
+
+# ---------------------------------------------------------------- (aa435)
+# DREI STELLEN, AN DENEN SICH DIE ZUORDNUNGEN IN DIE QUERE KAMEN (Nutzer
+# 28.09.2026 "ja alles bauen"): Prio-Verteilung gespeichert + pruefbar,
+# Prioritaet nur aus der eigenen Folge (aa433), letzter Klick gewinnt.
+from eve_trader.ui.mw_helpers import job_zuordnen as _jz435  # noqa: E402
+_job435 = [{"job_id": 90, "product_type_id": 700, "runs": 10,
+            "activity_id": 1, "start_ts": 5000.0}]
+_mein435 = [{"tid": 700, "runs": 10, "ts": 1000.0, "reaktion": False}]
+eq("aa435 nur mein Klick: der Job gehoert mir",
+   _jz435(_job435, _mein435, {}, "A", {700: 10}), {90: (700, 10)})
+eq("aa435 ein anderer Plan klickte SPAETER (vor dem Start): nicht meiner",
+   _jz435(_job435, _mein435, {}, "A", {700: 10},
+          fremde_klicks=[{"tid": 700, "runs": 10, "ts": 2000.0, "reaktion": False}]),
+   {})
+eq("aa435 der andere klickte FRUEHER: meiner (mein Klick ist der letzte)",
+   _jz435(_job435, _mein435, {}, "A", {700: 10},
+          fremde_klicks=[{"tid": 700, "runs": 10, "ts": 500.0, "reaktion": False}]),
+   {90: (700, 10)})
+eq("aa435 der andere klickte NACH dem Start: zaehlt nicht, meiner",
+   _jz435(_job435, _mein435, {}, "A", {700: 10},
+          fremde_klicks=[{"tid": 700, "runs": 10, "ts": 6000.0, "reaktion": False}]),
+   {90: (700, 10)})
+eq("aa435 andere Run-Zahl beim anderen: stoert nicht",
+   _jz435(_job435, _mein435, {}, "A", {700: 10},
+          fremde_klicks=[{"tid": 700, "runs": 7, "ts": 2000.0, "reaktion": False}]),
+   {90: (700, 10)})
+# Prio-Verteilung wird GESPEICHERT und ist danach pruefbar/umhaengbar.
+import eve_trader.store as _st435  # noqa: E402
+_alt435 = {k: getattr(_st435, k) for k in (
+    "job_zuordnung_fuer_plan", "job_zuordnung_alle", "job_zuordnung_setzen",
+    "job_zuordnung_mit_quelle", "job_zuordnung_umhaengen")}
+_db435 = {}
+try:
+    _st435.job_zuordnung_fuer_plan = lambda pid: {
+        j: e for j, e in _db435.items() if str(e["plan_id"]) == str(pid)}
+    _st435.job_zuordnung_alle = lambda: {j: e["plan_id"] for j, e in _db435.items()}
+
+    def _setzen435(jid, pid, t, r, q, ts=None):
+        if int(jid) in _db435:
+            return False
+        _db435[int(jid)] = {"plan_id": str(pid), "type_id": t, "runs": r,
+                            "quelle": q, "ts": 1.0}
+        return True
+    _st435.job_zuordnung_setzen = _setzen435
+    _st435.job_zuordnung_mit_quelle = lambda q: {
+        j: e for j, e in _db435.items() if e["quelle"] == q}
+
+    def _umh435(jid, pid):
+        if int(jid) not in _db435:
+            return False
+        _db435[int(jid)].update(plan_id=str(pid), quelle="nutzer")
+        return True
+    _st435.job_zuordnung_umhaengen = _umh435
+    _snap435 = MW._plan_snapshot_pack({"build_runs": {700: 10}})
+
+    class _W435(MW):
+        def __init__(self):
+            self.settings = {"bau_saved_plans": [
+                {"id": 1, "label": "Eins", "reserve_map": {"700": 1},
+                 "frozen": {"ts": 100.0, "plan_snapshot": _snap435}},
+                {"id": 2, "label": "Zwei", "reserve_map": {"700": 1},
+                 "frozen": {"ts": 100.0, "plan_snapshot": _snap435}}],
+                "bau_plan_reihenfolge": ["2", "1"]}
+            self._bd_open_plan_id = 1
+    _w435 = _W435()
+    _neu435 = _w435._prio_zuordnung_schreiben(
+        [{"job_id": 91, "product_type_id": 700, "runs": 10, "activity_id": 1,
+          "fertig_ts": 500.0}])
+    eq("aa435 strittiger Job geht an #1 der EIGENEN Folge (Plan 2) und wird gespeichert",
+       (_neu435, _db435.get(91, {}).get("quelle")), ({91: 2}, "prioritaet"))
+    _w435.settings["bau_plan_reihenfolge"] = ["1", "2"]
+    _w435._prio_zuordnung_schreiben(
+        [{"job_id": 91, "product_type_id": 700, "runs": 10, "activity_id": 1,
+          "fertig_ts": 500.0}])
+    check("aa435 Umsortieren verschiebt den schon verteilten Job NICHT mehr",
+          _db435.get(91, {}).get("plan_id") == "2")
+    _pr435 = _w435._prio_zur_pruefung({700: 10})
+    check(f"aa435 er steht zur Pruefung bereit, vorbelegt mit Plan 2 ({_pr435})",
+          len(_pr435) == 1 and str(_pr435[0]["prio_plan"]) == "2")
+    _w435._bd_job_offen = []
+    _w435._bd_job_prio = _pr435
+    _w435._job_frage_antworten({91: 1})
+    check("aa435 umgehaengt im Frage-Dialog: gehoert Plan 1, Quelle 'nutzer'",
+          _db435.get(91, {}).get("plan_id") == "1"
+          and _db435.get(91, {}).get("quelle") == "nutzer")
+    check("aa435 danach nichts mehr zu pruefen",
+          not _w435._prio_zur_pruefung({700: 10}))
+finally:
+    for _k, _v in _alt435.items():
+        setattr(_st435, _k, _v)
+check("aa435 'prioritaet' ist eine erlaubte Quelle",
+      "prioritaet" in _st435.JOB_QUELLEN)
+check("aa435 die Klick-Zuordnung kennt die Klicks der anderen Plaene",
+      "fremde_klicks=_st.run_klicks_andere(" in _fn_src("_job_zuordnung_nachfuehren"))
+
+# ---------------------------------------------------------------- (aa436)
+# HAND-HAKEN ALTER PLAENE GEBEN DIE RESERVIERUNG FREI (Nutzer 28.09.2026,
+# "ja genau"). Alte Zuteilungen ohne tid/char_id: der Schluessel-Abgleich
+# fand nichts; jetzt zaehlt `checked_runplan_runs` mit derselben ESI-Sperre.
+_pl436 = {"build_runs": {50: 10}, "build_mats": {50: [[34, 1000]]}}
+_alt436 = [{"char": "X", "item": "Ding", "runs": 10, "stage": "component"}]
+eq("aa436 alter Plan, 5 von 10 Runs abgehakt: halbe Zutat frei",
+   MW._reserve_map_mitlaufend(_pl436, {34: 1000}, {"component|7|50": 500.0},
+                              _alt436, 1000.0, haken_runs={"component|50": 5}),
+   {34: 500})
+eq("aa436 Haken juenger als der Bestand: noch nichts frei (ESI-Sperre)",
+   MW._reserve_map_mitlaufend(_pl436, {34: 1000}, {"component|7|50": 1500.0},
+                              _alt436, 1000.0, haken_runs={"component|50": 5}),
+   {34: 1000})
+eq("aa436 ohne Zeitstempel zum Haken: nichts frei",
+   MW._reserve_map_mitlaufend(_pl436, {34: 1000}, {"component|7|99": 500.0},
+                              _alt436, 1000.0, haken_runs={"component|50": 5}),
+   {34: 1000})
+check("aa436 beide Reservierungs-Leser geben die Haken-Runs mit",
+      _fn_src("_reserved_by_other_plans").count(
+          'haken_runs=p.get("checked_runplan_runs")') == 1
+      and _fn_src("_reserved_by_this_plan").count(
+          'haken_runs=p.get("checked_runplan_runs")') == 1)
+
+# ---------------------------------------------------------------- (aa437)
+# LAUFENDE JOBS ZAEHLEN NUR BEI IHREM PLAN (Nutzer 28.09.2026; gemessen mit
+# werkzeuge/szenario_prioritaet.py: lief ein Job von Plan A, zeigten auch B
+# und C seine Runs als erledigt).
+import eve_trader.store as _st437  # noqa: E402
+_alt437 = {k: getattr(_st437, k) for k in ("job_zuordnung_fuer_plan",
+                                           "job_zuordnung_alle")}
+try:
+    _st437.job_zuordnung_fuer_plan = lambda pid: (
+        {71: {"plan_id": "1"}} if str(pid) == "1" else {72: {"plan_id": "2"}})
+    _st437.job_zuordnung_alle = lambda: {71: "1", 72: "2"}
+
+    class _W437(MW):
+        def __init__(self, pid):
+            self.settings = {"bau_saved_plans": [
+                {"id": 1, "frozen": {"ts": MW._iso_job_ts("2026-09-20T00:00:00Z")}},
+                {"id": 2, "frozen": {"ts": MW._iso_job_ts("2026-09-20T00:00:00Z")}}]}
+            self._bd_open_plan_id = pid
+            self._bd_active_jobs_alle = {700: [
+                {"job_id": 71, "runs": 10, "start_date": "2026-09-25T00:00:00Z"},
+                {"job_id": 72, "runs": 4, "start_date": "2026-09-25T00:00:00Z"},
+                {"job_id": 73, "runs": 6, "start_date": "2026-09-25T00:00:00Z"},
+                {"job_id": 74, "runs": 3, "start_date": "2026-09-01T00:00:00Z"},
+                {"runs": 99}]}
+    _w437 = _W437(1)
+    _w437._aktive_jobs_filtern()
+    eq("aa437 Plan 1 zaehlt NUR seinen laufenden Job (71), nicht den von Plan 2",
+       [j["job_id"] for j in _w437._bd_active_jobs_map.get(700, [])], [71])
+    eq("aa437 niemandem zugeordnet und nach dem Einfrieren gestartet: extra (73)",
+       [j["job_id"] for j in _w437._bd_active_unzugeordnet.get(700, [])], [73])
+    check("aa437 vor dem Einfrieren gestartet (74) und ohne job_id: zaehlen nirgends",
+          not any(j.get("job_id") in (74, None)
+                  for js in (_w437._bd_active_jobs_map, _w437._bd_active_unzugeordnet)
+                  for j in js.get(700, [])))
+    _w437b = _W437(2)
+    _w437b._aktive_jobs_filtern()
+    eq("aa437 Plan 2 sieht nur seinen (72)",
+       [j["job_id"] for j in _w437b._bd_active_jobs_map.get(700, [])], [72])
+    _w437c = _W437(None)
+    _w437c._aktive_jobs_filtern()
+    eq("aa437 ungespeicherter Plan (keine Zuordnung moeglich): alles wie bisher",
+       len(_w437c._bd_active_jobs_map.get(700, [])), 5)
+finally:
+    for _k, _v in _alt437.items():
+        setattr(_st437, _k, _v)
+check("aa437 der Runplaner filtert nach dem Zuordnen, der Abruf gleich beim Laden",
+      "self._aktive_jobs_filtern()" in _fn_src("_fill_bauplan_schedule")
+      and "self._aktive_jobs_filtern()" in open(
+          "eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read())
+check("aa437 die Zuordnung selbst liest ALLE laufenden Jobs",
+      '"_bd_active_jobs_alle"' in _fn_src("_job_zuordnung_nachfuehren"))
+check("aa437 laufende Jobs gehen durch Prioritaet und Frage",
+      "self._prio_zuordnung_schreiben(_jobs)" in _fn_src("_job_zuordnung_nachfuehren"))
+check("aa437 die Zeile sagt 'laeuft, noch keinem Plan zugeordnet'",
+      '"_bd_active_unzugeordnet"' in _fn_src("_fill_bauplan_schedule"))
+# DAS SZENARIO (werkzeuge/szenario_prioritaet.py) als Pruefung: dieselben
+# echten Funktionen, eigene Temp-Datenbank.
+sys.path.insert(0, os.path.join(_ROOT, "werkzeuge"))
+try:
+    import szenario_prioritaet as _sz437
+    _z437 = _sz437.szenario(zeigen=False)
+except Exception as _e437:
+    _z437 = {}
+    check(f"aa437 Szenario laeuft ({_e437})", False)
+if _z437:
+    check("aa437 Szenario: laeuft As Job, bleiben B und C offen (Rest X 10)",
+          _z437["2"]["B"]["rest_X"] == 10 and _z437["2"]["C"]["rest_X"] == 10
+          and _z437["2"]["A"]["rest_X"] == 0)
+    check("aa437 Szenario: laufender Job ohne Klick geht per Prioritaet an B (#1 mit Platz)",
+          _z437["2b"]["B"]["jobs"] == [503] and not _z437["2b"]["B"]["laeuft_offen"])
+    check("aa437 Szenario: Zurueckschieben laesst jeden Job bei seinem Plan",
+          [_z437["4"][p]["jobs"] for p in "ABC"] == [_z437["3b"][p]["jobs"] for p in "ABC"])
+    check("aa437 Szenario: nach dem Zurueckschieben rechnet die Reservierung wie vorher",
+          (_z437["4"]["A"]["M_frei"], _z437["4"]["B"]["M_frei"])
+          == (_z437["2b"]["A"]["M_frei"], _z437["2b"]["B"]["M_frei"]))
+
+# ---------------------------------------------------------------- (aa438)
+# ERZ, DESSEN MINERALE SCHON DA SIND, IST NICHT MEHR NOETIG (Nutzer
+# 28.09.2026, Basilisk: "compressed Ore wird als nicht covered markiert,
+# dabei habe ich das compressed ore zu Mineralien verarbeitet").
+from eve_trader import reprocess as _rp438  # noqa: E402
+_st438 = [{"erz": 900, "menge": 8, "deckt": {34: 1000, 35: 200}},
+          {"erz": 901, "menge": 5, "deckt": {36: 50}},
+          {"erz": 902, "menge": 3, "deckt": {34: 10}, "gratis": True},
+          {"erz": 903, "menge": 3, "deckt": {37: 10}, "built": True}]
+_need438 = {34: 5000, 35: 900, 36: 400}
+eq("aa438 alle Minerale im Bestand: Erz nicht mehr noetig; eines fehlt: bleibt",
+   _rp438.schritte_durch_bestand(_st438, _need438, {34: 6000, 35: 900, 36: 399}),
+   {"repro|900"})
+eq("aa438 genau ein Stueck zu wenig: bleibt offen (Regel 3)",
+   _rp438.schritte_durch_bestand(_st438, _need438, {34: 4999, 35: 900, 36: 400}),
+   {"repro|901"})
+eq("aa438 Gratis- und Unrefined-Schritte fallen nie darunter",
+   _rp438.schritte_durch_bestand(_st438, {}, {34: 10 ** 9, 37: 10 ** 9}),
+   {"repro|900", "repro|901"})
+eq("aa438 ohne Bestand: nichts",
+   _rp438.schritte_durch_bestand(_st438, _need438, {}), set())
+_rest438 = _rp438.rest_anpassen({34: 5000, 35: 900}, _st438[:1], {"repro|900"})
+check("aa438 als erledigt gefuehrt: kein Erz auf der Liste",
+      900 not in _rest438)
+check("aa438 Einkaufsliste, Fehlbedarf, Materialien und Runplaner fragen dieselbe Stelle",
+      "self._erz_durch_bestand()" in _fn_src("_restbedarf_jetzt")
+      and "self._erz_durch_bestand()" in _fn_src("_fehlbedarf_jetzt")
+      and "self._erz_durch_bestand()" in _fn_src("_fill_material_tab")
+      and "self._erz_durch_bestand()" in _fn_src("_fill_bauplan_schedule"))
+
+# ---------------------------------------------------------------- (aa439)
+# KOPIER-MATERIAL JE INVENTION-VERSUCH (Nutzer 29.09.2026: "Mobile Warp
+# Disruptors brauchen noch zusaetzlich Materialien, um Blueprint Copys zu
+# machen ... haben wir im Bauplan nicht eingerechnet ... und sieht man im
+# Invention-Tab auch nicht"). An der ECHTEN SDE (Kopie, die Datei selbst
+# bleibt unberuehrt - _conn setzt WAL).
+import shutil as _sh439, tempfile as _tf439  # noqa: E402
+from eve_trader import industry as _I439  # noqa: E402
+_db439 = os.path.join(_ROOT, "sde_kompakt.db")
+if os.path.exists(_db439) and os.path.getsize(_db439) > 0:
+    _tmp439 = _tf439.mkdtemp(prefix="aa439_")
+    _sh439.copy(_db439, os.path.join(_tmp439, "sde.db"))
+    _alt439 = _I439._db_path
+    _I439._db_path = lambda: os.path.join(_tmp439, "sde.db")
+    try:
+        _r439 = _I439.Recipes()
+    except Exception as _e439:
+        _r439 = None
+        check(f"aa439 Rezepte aus der SDE-Kopie ({_e439})", False)
+    finally:
+        _I439._db_path = _alt439
+        _sh439.rmtree(_tmp439, ignore_errors=True)
+    if _r439 is not None:
+        _inv439 = _r439.invention_for_bpc.get(26889) or (None, None, None, [])
+        check(f"aa439 Large Warp Disruptor II: Datacores UND Kopier-Material je Versuch "
+              f"({_inv439[3]})",
+              (3812, 15) in list(_inv439[3]) and (20417, 9) in list(_inv439[3]))
+        eq("aa439 das Kopier-Material ist als solches gemerkt",
+           _r439.invention_copy_mats.get(26889), [(3812, 15)])
+        _mo439 = {}
+        _c439 = _I439._inv_cost(26889, 20, _r439,
+                                lambda t: {20417: 100.0, 20419: 100.0, 3812: 1000.0}.get(t),
+                                {"invention": True}, mats_out=_mo439)
+        _n439 = _mo439.get(20417, 0) // 9
+        check(f"aa439 Kosten und Einkaufsmenge enthalten es: {_n439} Versuche -> "
+              f"{_mo439.get(3812)} Stueck, {_c439:.0f} ISK",
+              _n439 > 0 and _mo439.get(3812) == 15 * _n439
+              and abs(_c439 - _n439 * (9 * 100 + 9 * 100 + 15 * 1000)) < 1e-6)
+        _mo439b = {}
+        _c439b = _I439._inv_cost(26889, 20, _r439, lambda t: 1.0,
+                                 {"invention": True,
+                                  "inv_manual_override": {26889: (0, 0)}},
+                                 mats_out=_mo439b)
+        check("aa439 eigene BPC: nichts kopiert, nichts gezaehlt",
+              _c439b == 0.0 and not _mo439b)
+else:
+    check("aa439 uebersprungen: sde_kompakt.db fehlt", True)
+
+# ---------------------------------------------------------------- (aa440)
+# FRACHT AUS DEN ECHTEN KAEUFEN (Nutzer 29.09.2026: "ich muss die
+# Frachtkosten VOR dem Verkauf auf die Marge obendrauf schlagen koennen" -
+# die Menge darf NICHT aus dem Warenkorb kommen). Rein gerechnet, von Hand
+# nachgerechnet: dieselbe FIFO wie `aggregate_holdings`, Lots mit Kaufort.
+from eve_trader import market as _M440  # noqa: E402
+_JITA440, _AMARR440 = 60003760, 60008494
+_tx440 = [
+    {"character_id": 1, "type_id": 34, "date": "2026-09-01", "is_buy": 1,
+     "quantity": 100, "unit_price": 10.0, "location_id": _JITA440},
+    {"character_id": 1, "type_id": 34, "date": "2026-09-02", "is_buy": 1,
+     "quantity": 50, "unit_price": 12.0, "location_id": _AMARR440},
+    {"character_id": 1, "type_id": 34, "date": "2026-09-03", "is_buy": 0,
+     "quantity": 30, "unit_price": 20.0, "location_id": _JITA440},
+    # alte Daten ohne Ort: nie Fracht
+    {"character_id": 1, "type_id": 35, "date": "2026-09-01", "is_buy": 1,
+     "quantity": 10, "unit_price": 5.0, "location_id": 0},
+]
+_v440 = {34: 2.0, 35: 1.0}
+_f440 = _M440.fracht_je_item(_tx440, {_JITA440}, 500, _v440)
+# FIFO: der Verkauf von 30 frisst das AELTERE Jita-Lot -> 70 Jita + 50 Amarr
+eq("aa440 Hub Jita: nur die 50 Amarr-Stueck tragen Fracht",
+   (_f440.get(34) or {}).get("menge_fracht"), 50)
+eq("aa440 ... Fracht = 50 x 2 m3 x 500 ISK = 50'000",
+   (_f440.get(34) or {}).get("fracht"), 50000.0)
+_agg440 = _M440.aggregate_holdings(_tx440)
+check("aa440 ... je Stueck ueber ALLE 120 liegenden gemittelt (wie avg_buy)",
+      abs((_f440.get(34) or {}).get("je_stueck", 0) - 50000.0 / 120) < 1e-9
+      and _agg440[34]["quantity"] == (_f440.get(34) or {}).get("menge"))
+check("aa440 unbekannter Kaufort (alte Daten) -> keine Fracht", 35 not in _f440)
+eq("aa440 Hub Amarr: jetzt tragen die 70 Jita-Stueck Fracht",
+   (_M440.fracht_je_item(_tx440, {_AMARR440}, 500, _v440).get(34) or {}).get("fracht"),
+   70000.0)
+eq("aa440 Satz 0 -> keine Fracht", _M440.fracht_je_item(_tx440, {_JITA440}, 0, _v440), {})
+check("aa440 Rechtsklick 'keine Fracht' -> Item faellt raus",
+      34 not in _M440.fracht_je_item(_tx440, {_JITA440}, 500, _v440, ohne=[34]))
+check("aa440 unbekanntes Volumen -> keine Fracht (nie geraten)",
+      34 not in _M440.fracht_je_item(_tx440, {_JITA440}, 500, {35: 1.0}))
+# ZIEL-PREIS: haengt linear an der Kostenbasis -> +Fracht/Einkauf in Prozent
+_avg440 = _agg440[34]["avg_buy"]
+_je440 = _f440[34]["je_stueck"]
+_ziel0 = _avg440 * 1.12 / (1 - 0.08)
+_ziel1 = (_avg440 + _je440) * 1.12 / (1 - 0.08)
+check(f"aa440 Ziel-Preis steigt um genau Fracht/Einkauf ({(_ziel1/_ziel0-1)*100:.4f} % "
+      f"= {_je440/_avg440*100:.4f} %)",
+      abs((_ziel1 / _ziel0 - 1) - _je440 / _avg440) < 1e-12)
+# DIE VERDRAHTUNG: Ziel-Preis, Sortierung, Gewinn und "bereit" rechnen
+# mit Einkauf + Fracht; die Kiste zeigt es; ein Satz fuer beide Felder.
+check("aa440 Ziel-Preis der Verkaufsliste auf Einkauf + Fracht",
+      "_basis = self._kostenbasis(h)" in _fn_src("_sell_zeilen_preis"))
+check("aa440 Gewinn (Anzeige + Sortierung) mit Fracht",
+      "cost = self._kostenbasis(h) * qty" in _fn_src("_render_sell_list")
+      and "cost = self._kostenbasis(h) * h.quantity" in _fn_src("_sell_sort_value"))
+check("aa440 'bereit zum Verkauf' zaehlt die Marge MIT Fracht",
+      "_basis = h.avg_buy + _fr" in _fn_src("_sell_ready"))
+check("aa440 Kiste neben dem Item (Symbol + Prozent + Tooltip)",
+      "_fk = self._fracht_kiste(h)" in _fn_src("_render_sell_list")
+      and 'icons.html("package"' in _fn_src("_fracht_kiste"))
+check("aa440 Fracht-Satz: ein gespeicherter Wert, beide Felder setzen ihn",
+      "self._fracht_satz_setzen(v)" in _src_txt
+      and _src_txt.count("_fracht_satz_setzen(v)") == 2
+      and '"fracht_isk_m3"' in _fn_src("_fracht_satz_setzen"))
+for _g440, _soll440 in (("Freight Container", True), ("Cargo Container", True),
+                        ("Secure Cargo Container", True),
+                        ("Audit Log Secure Container", True),
+                        ("Container Blueprints", False), ("Mineral", False), (None, False)):
+    eq(f"aa440 ist_container({_g440!r})", _M440.ist_container(_g440), _soll440)
+check("aa440 Container fallen im Programm UND im Pruefwerkzeug aus der Fracht",
+      "market.ist_container(_g)" in _fn_src("_fracht_volumen")
+      and "market.ist_container(g)" in open(os.path.join(
+          _ROOT, "werkzeuge", "pruefe_fracht.py"), encoding="utf-8").read())
+check("aa440 Kaufort gegen den AKTIVEN Hub",
+      "self._active_hub()" in _fn_src("_fracht_karte")
+      and "market.fracht_je_item(" in _fn_src("_fracht_karte"))
+
+# ---------------------------------------------------------------- (aa441)
+# RECHTSKLICK "COPY" IN JEDER TABELLE (Nutzer 29.09.2026: "ueberall jede
+# Column muss per Rechtsklick -> Copy gehen, verstanden?"). EIN Mechanismus
+# (`mw_basis.kopier_menue`); hier festgenagelt, dass keine Tabelle ihn
+# umgeht - auch keine, die spaeter dazukommt.
+from eve_trader.ui import mw_basis as _MB441  # noqa: E402
+for _roh441, _soll441 in (("1'234'567 ISK", "1234567"), ("Tritanium", "Tritanium"),
+                          ("12.5 %", "12.5 %"), ("0.45", "0.45"), ("-3'400", "-3400"),
+                          ("", "")):
+    eq(f"aa441 kopier_wert({_roh441!r})", _MB441.kopier_wert(_roh441), _soll441)
+import ast as _ast441  # noqa: E402
+import io as _io441  # noqa: E402
+
+
+def _seg_macher441(quelle):
+    """Wie ast.get_source_segment, aber die Zeilen nur EINMAL zerlegt.
+    TEMPO (emm319, Nutzer 01.10.2026: "muss mehr als doppelt so schnell
+    gehen"): get_source_segment zerlegt bei JEDEM Aufruf die ganze Datei -
+    916 Funktionen in main_window.py kosteten 24 s, gut ein Drittel der
+    aa-Suite. Gleiche Zeilenregel (\\n, \\r\\n, \\r), gleiche Spalten
+    (UTF-8-Bytes) - gegen das Original verglichen."""
+    _z = _io441.StringIO(quelle, newline="").readlines()
+
+    def _seg(node):
+        _a, _b = node.lineno - 1, node.end_lineno - 1
+        if _a == _b:
+            return _z[_a].encode()[node.col_offset:node.end_col_offset].decode()
+        return (_z[_a].encode()[node.col_offset:].decode() + "".join(_z[_a + 1:_b])
+                + _z[_b].encode()[:node.end_col_offset].decode())
+    return _seg
+
+
+for _dat441 in ("eve_trader/ui/main_window.py", "eve_trader/ui/mw_bauplan_tabs.py"):
+    _q441 = open(os.path.join(_ROOT, _dat441), encoding="utf-8").read()
+    _baum441 = _ast441.parse(_q441)
+    _seg441 = _seg_macher441(_q441)
+    _fehlt441, _direkt441, _qmenu441 = [], [], []
+    _handler441 = set()
+    for _fn441 in _ast441.walk(_baum441):
+        if not isinstance(_fn441, (_ast441.FunctionDef, _ast441.AsyncFunctionDef)):
+            continue
+        _fq441 = _seg441(_fn441) or ""
+        for _n441 in _ast441.walk(_fn441):
+            # jede neue Tabelle -> kopier_menue(<derselbe Name>) in derselben Funktion
+            if (isinstance(_n441, _ast441.Assign) and isinstance(_n441.value, _ast441.Call)
+                    and getattr(_n441.value.func, "id", "") in ("QTableWidget", "QTreeWidget")):
+                _ziel441 = _seg441(_n441.targets[0])
+                if f"kopier_menue({_ziel441}" not in _fq441:
+                    _fehlt441.append(f"{_fn441.name}:{_ziel441}")
+            if (isinstance(_n441, _ast441.Call)
+                    and getattr(_n441.func, "id", "") == "kopier_menue"
+                    and len(_n441.args) > 1):
+                _handler441.add(_seg441(_n441.args[1]))
+    eq(f"aa441 {_dat441}: jede Tabelle haengt an kopier_menue", _fehlt441, [])
+    # direkte Menue-Verbindungen nur noch fuer Nicht-Tabellen (Hub-Box,
+    # EVE-Daten-Knopf, Plan-Karten) und den Blaupausen-Reiter im Bauplan-Fenster
+    _erlaubt441 = ("self.g_hub.", "self.g_sde_btn.", "card.", "tbl.customContextMenuRequested.connect(_bp_tab_menu)")
+    for _z441 in _q441.splitlines():
+        if ("customContextMenuRequested.connect(" in _z441
+                and not any(_e in _z441 for _e in _erlaubt441)
+                and not _z441.strip().startswith("#")):
+            _direkt441.append(_z441.strip())
+    eq(f"aa441 {_dat441}: kein Tabellen-Menue am Mechanismus vorbei", _direkt441, [])
+    # ein Handler, der ein nacktes QMenu baut, bekaeme kein "Copy" - und
+    # darunter gaebe der Verteiler ein ZWEITES Menue auf
+    for _h441 in sorted(_handler441):
+        _name441 = _h441.split(".")[-1].split("(")[0].strip()
+        if _h441.startswith("lambda"):
+            _name441 = _h441.split("self.")[-1].split("(")[0]
+        _hs441 = _fn_src(_name441)
+        if not _hs441:
+            for _fn441 in _ast441.walk(_baum441):
+                if isinstance(_fn441, _ast441.FunctionDef) and _fn441.name == _name441:
+                    _hs441 = _seg441(_fn441) or ""
+        if not _hs441 or "QMenu(" in _hs441 or "kontext_menue(" not in _hs441:
+            _qmenu441.append(_name441)
+    eq(f"aa441 {_dat441}: jeder Handler baut sein Menue mit kontext_menue", _qmenu441, [])
+
+# ---------------------------------------------------------------- (aa442)
+# FREMDER PUNKT UND FREMDER HAKEN (Nutzer 29.09.2026, Basilisk-Screenshot):
+# Nonlinear Metamaterials 34 Runs bei Banana Motor UND 34 bei Peanut Motor.
+# Nur Peanut hat gebaut und abgehakt - Banana bekam trotzdem den blauen
+# Punkt und einen gruenen Haken. Nachgestellt mit seinen Zahlen.
+from eve_trader.ui import mw_helpers as _H442  # noqa: E402
+_zb442 = [("banana", 900, 34, "Banana Motor"), ("peanut", 900, 34, "Peanut Motor")]
+_g442, _r442 = _H442.budget_eigene_zuerst(
+    _zb442, {900: 34}, {900: {"Peanut Motor": 34}})
+eq("aa442 Peanut faehrt 34 Runs: sie decken PEANUTS Zeile, nicht Bananas",
+   (_g442.get("peanut", 0), _g442.get("banana", 0), _r442[900]), (34, 0, 0))
+_g442b, _ = _H442.budget_eigene_zuerst(
+    _zb442, {900: 68}, {900: {"Peanut Motor": 34}})
+eq("aa442 ... 34 geliefert + 34 laufend: beide Zeilen gedeckt",
+   (_g442b.get("peanut"), _g442b.get("banana")), (34, 34))
+_g442c, _ = _H442.budget_eigene_zuerst(_zb442, {900: 34}, {})
+eq("aa442 ... ohne Charakter-Angabe (geliefert) bleibt es bei der Reihenfolge",
+   (_g442c.get("banana"), _g442c.get("peanut", 0)), (34, 0))
+_g442d, _r442d = _H442.budget_eigene_zuerst(
+    _zb442, {900: 50}, {900: {"Peanut Motor": 100}})
+check("aa442 ... nie mehr verteilt als das Budget, nie mehr als die Zeile",
+      sum(_g442d.values()) == 50 and _g442d.get("peanut") == 34
+      and _g442d.get("banana") == 16 and _r442d[900] == 0)
+_zh442 = [("s|1|900", "s|900", 34), ("s|2|900", "s|900", 34)]
+eq("aa442 Haken bei Peanut (2): Banana (1) bekommt KEINEN nachgetragen",
+   _H442.haken_nachtragen(_zh442, {"s|2|900"}, {"s|900": 34}), [])
+eq("aa442 ... nach Umverteilung (alter Schluessel weg) wandert er an die erste Zeile",
+   _H442.haken_nachtragen(_zh442, {"s|7|900"}, {"s|900": 34}), ["s|1|900"])
+eq("aa442 ... 68 abgehakt, einer davon sichtbar: der andere kommt nach",
+   _H442.haken_nachtragen(_zh442, {"s|2|900"}, {"s|900": 68}), ["s|1|900"])
+eq("aa442 ... nur ganze Zeilen (20 von 34 reicht nicht)",
+   _H442.haken_nachtragen(_zh442, set(), {"s|900": 20}), [])
+
+# ---------------------------------------------------------------- (aa443)
+# NEUE PLAENE UEBER DIE FERTIGEN (Nutzer 29.09.2026, Screenshot "Linsen
+# Multiplan 1 #6" ganz unten): mit seiner Folge nachgestellt - 1 und 2 von
+# Hand angeordnet und angefangen, dahinter nur Abgeschlossene.
+from eve_trader.ui.mw_helpers import MainWindowHelpers as _H443  # noqa: E402
+_s443 = {"bau_saved_plans": [
+    {"id": 1, "label": "Basilisk"}, {"id": 2, "label": "Multi-Bubbles"},
+    {"id": 3, "label": "fertig A", "done_manual": True},
+    {"id": 4, "label": "fertig B", "done_manual": True},
+    {"id": 5, "label": "fertig ungeordnet", "done_manual": True},
+    {"id": 6, "label": "Linsen (neu)"}],
+    "bau_plan_reihenfolge": ["1", "2", "3", "4"]}
+eq("aa443 neuer Plan steht VOR dem ersten fertigen, eigene Folge bleibt",
+   _H443.plan_folge(_s443), ["1", "2", "6", "3", "4", "5"])
+eq("aa443 ... und bekommt Rang 3 statt ganz hinten",
+   _H443.plan_rang(_s443), {"1": 1, "2": 2, "6": 3})
+eq("aa443 ... ohne fertige Plaene: ans Ende der offenen",
+   _H443.plan_folge({"bau_saved_plans": [{"id": 1}, {"id": 2}],
+                     "bau_plan_reihenfolge": ["2"]}), ["2", "1"])
+eq("aa443 ... geloeschte ids fallen aus der Folge",
+   _H443.plan_folge({"bau_saved_plans": [{"id": 1}],
+                     "bau_plan_reihenfolge": ["9", "1"]}), ["1"])
+# RANG = KARTEN-FOLGE, auch wenn ein offener Plan hinter einem fertigen steht
+_s443b = {"bau_saved_plans": [{"id": 1}, {"id": 2}, {"id": 3, "done_manual": True},
+                              {"id": 6}],
+          "bau_plan_reihenfolge": ["1", "3", "2"]}
+eq("aa443 ... der Rang folgt genau der Karten-Folge (keine zweite Reihenfolge)",
+   _H443.plan_rang(_s443b), {"1": 1, "6": 2, "2": 3})
+check("aa443 die Karten nehmen dieselbe Folge (keine zweite Rechnung)",
+      "_letzte = self.plan_folge(self.settings)" in _fn_src("_reload_saved_plans")
+      or "_letzte = self.plan_folge(self.settings)" in _src_txt)
+# MIGRATION: Mitglieder eines VOR emm269 abgeschlossenen Buendels
+import copy as _cp443  # noqa: E402
+import eve_trader.config as _cfg443  # noqa: E402
+_alt443 = _cfg443.save_settings
+_cfg443.save_settings = lambda d: None
+try:
+    _d443 = _cfg443._nach_migrationen({"bau_saved_plans": [
+        {"id": 10, "type_id": -1, "done_manual": True, "quellen": [11, 12]},
+        {"id": 11, "reserve": True}, {"id": 12, "done_manual": True},
+        {"id": 13, "type_id": -1, "quellen": [14]}, {"id": 14}]})
+    _p443 = {p["id"]: p for p in _d443["bau_saved_plans"]}
+    check("aa443 Migration: offenes Mitglied eines fertigen Buendels wird mit abgeschlossen",
+          _p443[11].get("done_manual") is True and _p443[11].get("done_durch_buendel") == 10
+          and _p443[11].get("reserve") is False)
+    check("aa443 ... schon fertiges bekommt keinen Merker, offenes Buendel bleibt unberuehrt",
+          "done_durch_buendel" not in _p443[12] and not _p443[14].get("done_manual"))
+    _p443[11]["done_manual"] = False               # Nutzer oeffnet es selbst
+    _d443b = _cfg443._nach_migrationen(_cp443.deepcopy(_d443))
+    check("aa443 ... EINMAL: ein danach selbst geoeffnetes Mitglied bleibt offen",
+          not {p["id"]: p for p in _d443b["bau_saved_plans"]}[11].get("done_manual"))
+finally:
+    _cfg443.save_settings = _alt443
+
+# ---------------------------------------------------------------- (aa444)
+# RIGS ALS EIGENE KATEGORIE IN MY BLUEPRINTS (Nutzer 29.09.2026: "Category
+# Modules gewaehlt, da werden aber Rigs aufgelistet, und den Filter Rigs gibts
+# im Dropdown nicht" -> "ja sehr gerne"). Rein gerechnet + an der SDE-Kopie.
+from eve_trader import industry as _I444  # noqa: E402
+_R444 = {773, 774}
+check("aa444 Rig unter Rigs sichtbar",
+      _I444.bp_kategorie_passt(_I444.RIGS_KAT, 7, 773, _R444))
+check("aa444 Rig NICHT mehr unter seiner SDE-Kategorie (Module)",
+      not _I444.bp_kategorie_passt(7, 7, 773, _R444))
+check("aa444 normales Modul bleibt unter Module, nicht unter Rigs",
+      _I444.bp_kategorie_passt(7, 7, 55, _R444)
+      and not _I444.bp_kategorie_passt(_I444.RIGS_KAT, 7, 55, _R444))
+check("aa444 'Alle Kategorien' zeigt alles, andere Kategorie filtert weiter",
+      _I444.bp_kategorie_passt(None, 7, 773, _R444)
+      and not _I444.bp_kategorie_passt(6, 7, 55, _R444)
+      and _I444.bp_kategorie_passt(6, 6, None, _R444))
+check("aa444 ohne Rig-Gruppen (keine SDE) filtert wie vorher",
+      _I444.bp_kategorie_passt(7, 7, 773, set())
+      and not _I444.bp_kategorie_passt(_I444.RIGS_KAT, 7, 773, set()))
+check("aa444 Rig-Gruppe am Namen erkannt, 'Rigging' o. ae. nicht",
+      _I444.ist_rig_gruppe("Rig Armor") and not _I444.ist_rig_gruppe("Rigging")
+      and not _I444.ist_rig_gruppe(None))
+_db444 = os.path.join(_ROOT, "sde_kompakt.db")
+if os.path.exists(_db444) and os.path.getsize(_db444) > 0:
+    import shutil as _sh444, tempfile as _tf444, sqlite3 as _sq444
+    _tmp444 = _tf444.mkdtemp(prefix="aa444_")
+    _sh444.copy(_db444, os.path.join(_tmp444, "sde.db"))
+    _alt444 = _I444._db_path
+    _I444._db_path = lambda: os.path.join(_tmp444, "sde.db")
+    try:
+        _rg444 = _I444.rig_gruppen()
+        _c444 = _sq444.connect(os.path.join(_tmp444, "sde.db"))
+        _nav444 = [r[0] for r in _c444.execute(
+            "SELECT group_id FROM group_name WHERE name='Rig Navigation'")]
+        _kat444 = {r[0] for r in _c444.execute(
+            "SELECT DISTINCT category_id FROM item_cat WHERE group_id IN (%s)"
+            % ",".join(str(int(g)) for g in _rg444))} if _rg444 else set()
+        _c444.close()
+    finally:
+        _I444._db_path = _alt444
+        _sh444.rmtree(_tmp444, ignore_errors=True)
+    check(f"aa444 SDE: Rig-Gruppen gefunden ({len(_rg444)}), 'Rig Navigation' dabei, "
+          f"alle in EINER Kategorie ({_kat444})",
+          len(_rg444) >= 10 and bool(_nav444) and _nav444[0] in _rg444
+          and len(_kat444) == 1)
+else:
+    check("aa444 SDE-Teil uebersprungen: sde_kompakt.db fehlt", True)
+_src444 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+               encoding="utf-8").read()
+# ---------------------------------------------------------------- (aa447)
+# DER LOESCHEN-KNOPF DER PLAN-KARTE FRAGT ERST (Nutzer 30.09.2026).
+_src447 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+               encoding="utf-8").read()
+check("aa447 Loeschen-Knopf geht ueber die Rueckfrage",
+      'self._delete_saved_plan_fragen(pid))' in _src447
+      and 'de.clicked.connect(lambda *_a, pid=p["id"]: self._delete_saved_plan(pid))'
+      not in _src447)
+
+# ---------------------------------------------------------------- (aa453)
+# 0xC0000409 DER b-SUITE BEIM NUTZER (Windows, nach der Ergebniszeile) -
+# hier nicht nachstellbar (Linux: Rueckgabewert 0, stderr ohne Qt-Meldung).
+# pruefe.py zeigt deshalb den Rueckgabewert auch bei Gruen, mit stderr und
+# faulthandler; die b-Suite setzt vor os._exit eine Marke auf stderr.
+_pr453 = open("pruefe.py", encoding="utf-8").read()
+_lauf453 = _pr453[_pr453.find("def lauf("):_pr453.find("def _warte(")]
+check("aa453 pruefe.py zeigt einen Rueckgabewert != 0 auch bei gruener Zeile",
+      "    if p.returncode != 0:\n        print(f\"  WARNUNG Rueckgabewert" in _lauf453
+      and _lauf453.find("if p.returncode != 0:") < _lauf453.find("if not _ok:"))
+check("aa453 ... mit stderr-Zeilen und faulthandler",
+      "for z in _err[-10:]:" in _lauf453
+      and 'u.setdefault("PYTHONFAULTHANDLER", "1")' in _lauf453)
+_b453 = open("tests/test_bauplan_aufbau.py", encoding="utf-8").read()
+check("aa453 b-Suite: Marke auf stderr direkt vor os._exit",
+      'f"{_haengt_b} nach 5 s nicht fertig), Prozess endet",\n'
+      '      file=sys.stderr, flush=True)\n' in _b453
+      and _b453.rstrip().endswith("os._exit(_code_b)"))
+check("aa455 b-Suite endet unter Windows per TerminateProcess (emm311)",
+      "_k32_b.TerminateProcess(_k32_b.GetCurrentProcess(), _code_b)" in _b453
+      and _b453.find("TerminateProcess(") > _b453.find("Prozess endet")
+      and _b453.find("TerminateProcess(") < _b453.find("os._exit(_code_b)"))
+# emm363: ohne restype wird das Pseudo-Handle -1 auf 64 bit zu 0xFFFFFFFF,
+# TerminateProcess scheitert still und der Lauf faellt doch in os._exit.
+check("aa455 TerminateProcess mit 64-bit-Handle (restype/argtypes gesetzt)",
+      "_k32_b.GetCurrentProcess.restype = _wt_b.HANDLE" in _b453
+      and "_k32_b.TerminateProcess.argtypes = [_wt_b.HANDLE, _wt_b.UINT]" in _b453
+      and _b453.find("GetCurrentProcess.restype") < _b453.find("TerminateProcess("))
+# emm310 (Windows-Lauf 01.10.2026: access violation IN os._exit): laufende
+# Worker werden vorher abgebrochen und abgewartet.
+check("aa454 b-Suite wartet vor os._exit auf laufende Hintergrund-Jobs",
+      "    for _w in _laufend_b:\n        _w.cancel()\n" in _b453
+      and "if not _w.wait(5000))" in _b453
+      and _b453.find("if not _w.wait(5000))") < _b453.find("os._exit(_code_b)"))
+# pruefe.py Fassung 6: fehlendes pyflakes ist NICHT gruen, eine nicht
+# gelaufene Pruefung haelt die Freigabe an.
+check("aa454 pruefe.py: fehlendes pyflakes steht nicht auf OK",
+      '_pf_da = subprocess.run([PY, "-c", "import pyflakes"],' in _pr453
+      and 'and "No module named" not in a)' in _pr453
+      and 'ergebnis["pyflakes (undefinierte Namen)"] = None' in _pr453)
+check("aa454 pruefe.py: eine nicht gelaufene Pruefung haelt die Freigabe an",
+      "schlecht = [k for k, v in ergebnis.items() if v is not True]" in _pr453)
+
+# ---------------------------------------------------------------- (aa462)
+# INVENTION-REGLER JE PLAN GEMERKT (emm328, Nutzer 02.10.2026: "es soll
+# speichern wo es war. Ein neuer Plan startet aber immer ganz links").
+from eve_trader.ui.mw_bauplan_tabs import BauplanTabs as _BT462
+eq("aa462 gespeicherter Stand wird gelesen, Muell verworfen",
+   _BT462._inv_split_aus_plan({"inv_split": {"5": 3, "6": "x", "7": 0, "8": "2"}}),
+   {5: 3, 8: 2})
+eq("aa462 alter Plan ohne Feld -> leer (ganz links)", _BT462._inv_split_aus_plan({}), {})
+_mw462 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+_fe462 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+check("aa462 Laden setzt den Stand, neuer Plan leert ihn, Speichern schreibt ihn",
+      "self._bd_inv_split = self._inv_split_aus_plan(p)" in _mw462
+      and "self._bd_inv_split = {}         # neuer Plan" in _mw462
+      and '"inv_split": self._inv_split_fuer_plan(),' in _fe462)
+
+# ---------------------------------------------------------------- (aa463)
+# KARTEN-REIHENFOLGE "HANDLUNGSBEDARF ZUERST" (emm331, Nutzer-Wahl).
+from eve_trader.ui.mw_helpers import jobs_karten_folge as _jkf463
+def _c463(name, fertig=0, frei=None, enden=()):
+    zeilen = [{"ready": True, "ende": 0.0, "paused": False}] * fertig
+    zeilen += [{"ready": False, "ende": e, "paused": False} for e in enden]
+    return {"name": name, "ueb": {"zeilen": zeilen,
+                                  "frei": None if frei is None else {"mfg": frei, "react": 0, "sci": 0}}}
+_ch463 = {1: _c463("Voll spaet", frei=0, enden=(900.0,)),
+          2: _c463("Frei wenig", frei=2),
+          3: _c463("Fertig eins", fertig=1, frei=5),
+          4: _c463("Voll frueh", frei=0, enden=(100.0, 950.0)),
+          5: _c463("Fertig vier", fertig=4, frei=0),
+          6: _c463("Frei viel", frei=9),
+          7: _c463("Leer ohne Skills", frei=None)}
+eq("aa463 erst Abliefern (meiste zuerst), dann freie Slots (meiste zuerst), "
+   "dann voll nach naechstem Ende, ohne Job/Maximum hinten",
+   _jkf463(_ch463), [5, 3, 6, 2, 4, 1, 7])
+_tb463 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa463 die Karten werden in dieser Reihenfolge gezeichnet",
+      "for cid in jobs_karten_folge(_chars):" in _tb463)
+
+# ---------------------------------------------------------------- (aa474)
+# AUSGABE AUF WINDOWS (pruefe.py 02.10.2026, Python 3.14, cp1252): ein Fehltext
+# mit "\u25b8" liess print() sterben, die roten Pruefungen kamen nie heraus.
+# Beide Suiten stellen ihre Stroeme VOR der ersten Ausgabe auf
+# backslashreplace, pruefe.py laesst das Kind UTF-8 schreiben.
+def _vor_erstem_print474(pfad):
+    _q = open(pfad, encoding="utf-8").read()
+    _r = _q.find('_strom.reconfigure(errors="backslashreplace")')
+    _p = _q.find("\nprint(")
+    return _r >= 0 and (_p < 0 or _r < _p)
+
+
+check("aa474 beide Suiten: Ausgabe stirbt nie an einem Zeichen (vor dem ersten print)",
+      _vor_erstem_print474("tests/test_bauplan_aufbau.py")
+      and _vor_erstem_print474("tests/test_bestand_herkunft.py"))
+_pf474 = open("pruefe.py", encoding="utf-8").read()
+check("aa474 pruefe.py: das Kind schreibt UTF-8 (so wird auch gelesen)",
+      'u["PYTHONIOENCODING"] = "utf-8"' in _pf474
+      and _pf474.find('u["PYTHONIOENCODING"]') < _pf474.find("p = subprocess.run(befehl"))
+
+# ---------------------------------------------------------------- (aa473)
+# MULTIBUY "Could not be interpreted: ⚠ Curator I 166" (emm359): Anzeige-
+# Marker gehoeren nie in den Item-Namen - beim Speichern und beim Kopieren.
+import eve_trader.store as _st473
+eq("aa473 Marker vorn weg, Name bleibt (auch mehrere, auch mit Leerzeichen)",
+   [_st473.item_name_rein(x) for x in ("\u26a0 Curator I", "\u2605 \u26a0 Hammerhead II",
+                                        " Curator I ", "Zainou 'Deadeye' GP-801", None)],
+   ["Curator I", "Hammerhead II", "Curator I", "Zainou 'Deadeye' GP-801", ""])
+_mw473 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa473 Swing -> Einkaufsliste nimmt den reinen Namen, Kopieren auch",
+      "items.append((tid, store.item_name_rein(cell.text())))" in _mw473
+      and 'nm = store.item_name_rein(r.get("name"))' in _mw473
+      and "    name = item_name_rein(name)\n    init_shopping()" in
+      open("eve_trader/store.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa472)
+# FEHLENDE ESI-RECHTE (emm355, Nutzer: "re-link oben sieht kein Mensch, da muss
+# beim Login ein Popup kommen"). Rein: unbekannt meldet nichts, publicData nie.
+from eve_trader.ui.mw_helpers import fehlende_scopes as _fs472
+eq("aa472 nur Charaktere mit Luecke, sortiert; None (unbekannt) still; publicData nie",
+   _fs472(["publicData", "a", "b", "c"],
+          {1: {"a", "b", "c"}, 2: {"a"}, 3: None, 4: set()}),
+   {2: ["b", "c"], 4: ["a", "b", "c"]})
+eq("aa472 nichts gewuenscht -> nichts fehlt", _fs472([], {1: set()}), {})
+check("aa472 der Start prueft die Rechte (Timer nach der Tutorial-Frage)",
+      "QTimer.singleShot(4000, self._scope_check_beim_start)" in
+      open("eve_trader/ui/main_window.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa471)
+# MARGE IN MY BLUEPRINTS (emm354): Gewinn / Baukosten wie im Bauplan.
+from eve_trader.ui.mw_helpers import bp_marge as _bm471
+eq("aa471 Marge = Gewinn / Baukosten x 100, ohne Kosten oder Gewinn keine",
+   [_bm471(25.0, 100.0), _bm471(-10.0, 200.0), _bm471(5.0, 0), _bm471(None, 10.0)],
+   [25.0, -5.0, None, None])
+_mw471 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa471 die Tabelle nutzt bp_marge mit Gewinn und Baukosten der Zeile",
+      '_bp_marge(econ.get("profit"), econ.get("cost_unit"))' in _mw471)
+
+# ---------------------------------------------------------------- (aa470)
+# FEHLKLICK-HAKEN (emm350, Nutzer: "ESI trackt keinen Job zu diesem Item -
+# dann habe ich missklickt"; "anderer verknuepfter Charakter ist okay").
+from eve_trader.ui.mw_helpers import haken_ohne_job as _hoj470
+_T0_470 = 1_790_000_000.0
+_h470 = {"component|5|100": _T0_470, "component|5|101": _T0_470,
+         "component|5|102": _T0_470, "component|5|104": _T0_470,
+         "component|5|103|w2": _T0_470, "char|5": _T0_470, "repro|5|100": _T0_470,
+         "end|5|105": _T0_470 + 600}
+import datetime as _dt470
+def _iso470(ts):
+    return _dt470.datetime.fromtimestamp(ts, _dt470.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+_gel470 = [{"product_type_id": 102, "completed_date": _iso470(_T0_470 - 86400)},
+           {"product_type_id": 104, "completed_date": _iso470(_T0_470 - 5 * 86400)}]
+eq("aa470 30 Min nach dem Haken: ohne Job weg (auch mit Wellen-Zusatz), laufend bei "
+   "IRGENDEINEM Charakter bleibt, geliefert bis 3 Tage vorher bleibt, Charakter-/"
+   "Reprocessing-Zeilen nie, juengerer Haken noch nicht",
+   _hoj470(_h470, {101}, _gel470, _T0_470 + 1800),
+   ["component|5|100", "component|5|103|w2", "component|5|104"])
+eq("aa470 vor Ablauf der 30 Minuten: nichts", _hoj470(_h470, set(), [], _T0_470 + 1799), [])
+eq("aa470 ohne Abrufzeit: nichts", _hoj470(_h470, set(), [], None), [])
+eq("aa470 ... spaeter auch der juengere", "end|5|105" in _hoj470(_h470, set(), [], _T0_470 + 2400), True)
+
+# ---------------------------------------------------------------- (aa469)
+# ABSATZ (emm349, Nutzer: "die Marge ist erschreckend zu gut" / "das
+# Handelsvolumen in einer Spalte"). Reine Funktionen, feste Zahlen.
+from eve_trader.ui.mw_helpers import (tagesvolumen as _tv469,
+                                      tage_bis_verkauft as _tbv469,
+                                      absatz_stufe as _as469)
+_rows469 = [{"date": "2026-10-01", "volume": 30}, {"date": "2026-09-20", "volume": 30},
+            {"date": "2026-09-02", "volume": 30}, {"date": "2026-09-01", "volume": 999}]
+eq("aa469 Ø ueber 30 Tage bis zum juengsten Tag, fehlende Tage = 0, aelter faellt raus",
+   _tv469(_rows469), 3.0)
+eq("aa469 ... mit festem 'heute' verschiebt sich das Fenster",
+   _tv469(_rows469, heute="2026-10-30"), 1.0)
+eq("aa469 keine Historie = unbekannt (None), nicht 0", (_tv469([]), _tv469(None)), (None, None))
+eq("aa469 Tage bis verkauft", (_tbv469(40, 2.0), _tbv469(5, None), _tbv469(5, 0.0)),
+   (20.0, None, float("inf")))
+eq("aa469 Stufen: bis 7 ok, bis 30 langsam, darueber duenn, None unbekannt",
+   [_as469(x) for x in (None, 7.0, 7.1, 30.0, 30.5, float("inf"))],
+   ["unknown", "ok", "slow", "slow", "thin", "thin"])
+
+# ---------------------------------------------------------------- (aa468)
+# SLOT-KACHELN (emm346, Nutzer: "den Text oben mehr in eine Grafik ... wie
+# viele Slots frei sind"). Reine Funktion, feste Zahlen.
+from eve_trader.ui.mw_helpers import jobs_kapazitaet as _jk468
+_r468 = _jk468({
+    1: {"ueb": {"belegt": {"mfg": 3, "react": 0, "sci": 2},
+                "max": {"mfg": 5, "react": 10, "sci": 2},
+                "zeilen": [{"art": "mfg", "ready": True}, {"art": "mfg", "ready": False},
+                           {"art": "mfg", "ready": False}, {"art": "sci", "ready": True},
+                           {"art": "sci", "ready": False}]}},
+    2: {"ueb": {"belegt": {"mfg": 7, "react": 1, "sci": 0},
+                "max": {"mfg": 5, "react": 10, "sci": 1}, "zeilen": []}},
+    3: {"ueb": {"belegt": {"mfg": 4, "react": 0, "sci": 0}, "max": None,
+                "zeilen": [{"art": "mfg", "ready": True}]}}})
+eq("aa468 je Art laufend/fertig/Slots/frei, ueberbelegt = 0 frei, ohne Maximum zaehlt nicht",
+   _r468, {"mfg": {"running": 9, "ready": 1, "max": 10, "free": 2},
+           "react": {"running": 1, "ready": 0, "max": 20, "free": 19},
+           "sci": {"running": 1, "ready": 1, "max": 3, "free": 1}})
+eq("aa468 leer", _jk468(None)["mfg"], {"running": 0, "ready": 0, "max": 0, "free": 0})
+
+# ---------------------------------------------------------------- (aa467)
+# INDUSTRY JOBS KOMPLETT (emm341, Nutzer: "ja komplette Anzeige genau",
+# Fortschritt als Dropdown). JEDER laufende Job eine eigene Zeile mit eigenem
+# Ende/Fortschritt; fertige bleiben gruppiert. Reine Funktion, feste Zahlen.
+from eve_trader.ui.mw_helpers import jobs_einzeln as _je467
+_z467 = [dict(activity_id=1, tid=5, art="mfg", runs=10, ende=200, rest=100,
+              start=0, ready=False, paused=False),
+         dict(activity_id=1, tid=5, art="mfg", runs=10, ende=150, rest=50,
+              start=0, ready=False, paused=False),
+         dict(activity_id=8, tid=7, art="sci", runs=4, ende=None, rest=None,
+              start=None, ready=False, paused=True),
+         dict(activity_id=1, tid=9, art="mfg", runs=3, ende=90, rest=0,
+              start=0, ready=True, paused=False),
+         dict(activity_id=1, tid=9, art="mfg", runs=3, ende=80, rest=0,
+              start=0, ready=True, paused=False)]
+_r467 = _je467(_z467, 100)
+eq("aa467 gleiche Produkte NICHT zusammengefasst, kuerzeste Restzeit zuerst, pausiert hinten",
+   [(g["tid"], g["n"], g["runs"], g["ende"], g["enden"]) for g in _r467["laufend"]],
+   [(5, 1, 10, 150, [150]), (5, 1, 10, 200, [200]), (7, 1, 4, None, [])])
+eq("aa467 eigener Fortschritt je Job",
+   [None if g["fortschritt"] is None else round(g["fortschritt"], 3)
+    for g in _r467["laufend"]], [0.667, 0.5, None])
+eq("aa467 fertige bleiben gruppiert",
+   [(g["tid"], g["n"]) for g in _r467["ready"]], [(9, 2)])
+eq("aa467 leer bleibt leer", _je467(None, 1), {"ready": [], "laufend": []})
+check("aa467 die Karte nutzt jobs_einzeln",
+      "gr = jobs_einzeln(u[\"zeilen\"], jetzt)"
+      in open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa466)
+# DREI OFFENE PUNKTE (emm336, Nutzer: "das 1-ISK-Problem loesen ... die
+# anderen Punkte finde ich alle dringend"). Reine Helfer, feste Zahlen.
+from eve_trader.ui.mw_helpers import (fracht_als_isk as _fai466,
+                                      erledigt_ts_aus_haken as _eth466,
+                                      snapshot_ohne_ende as _soe466)
+# (1) 1-ISK-Kauf: Fracht 2'500/Stk auf 1 ISK Einkauf -> ISK statt Prozent;
+#     gleich viel bleibt Prozent (+100 %), normaler Fall Prozent.
+eq("aa466 Fracht in ISK, sobald sie den Einkauf uebersteigt",
+   [_fai466(2500, 1), _fai466(5, 1), _fai466(1, 1), _fai466(46.95, 427363.38),
+    _fai466(10, 0), _fai466(0, 1)],
+   [True, True, False, False, True, False])
+_mw466 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa466 das Kisten-Abzeichen fragt fracht_als_isk",
+      '_als_isk = fracht_als_isk(info["je_stueck"], h.avg_buy)' in _mw466)
+# (2) Haken-Zeitpunkt je Item = juengster Haken, Sammel-/Erz-Zeilen fallen weg.
+eq("aa466 erledigt_ts aus Haken: juengster je stufe|tid",
+   _eth466({"reaction_1|9|500": 100.0, "reaction_1|7|500|w2": 300.0,
+            "end|9|600": 50.0, "char|reaction_1|9": 999.0, "repro|77": 999.0,
+            "kaputt": 1.0}),
+   {"reaction_1|500": 300.0, "end|600": 50.0})
+check("aa466 beim Oeffnen gesetzt, beim Haken gepflegt",
+      "self._bd_runplan_erledigt_ts = erledigt_ts_aus_haken(self._bd_runplan_ts)" in _mw466
+      and "_ets[_k] = max(float(_ets.get(_k, 0) or 0), _t_erl.time())"
+      in open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read())
+# (3) Datacores des entfernten Endes: erst aus inv_buy, Rest aus inv_stock_used,
+#     nie unter 0; ohne Angabe unveraendert; Ende-in-Ende (X bleibt) nichts.
+_p466 = {"buendel_enden": {1: 10, 2: 5}, "build_runs": {1: 10, 2: 5},
+         "build_mats": {1: [(50, 10)], 2: [(51, 5)]},
+         "inv_buy": {301: 4, 302: 2}, "inv_stock_used": {301: 3}}
+_n466 = _soe466(_p466, 2, inv_mats_weg={301: 6, 302: 9, 303: 1})[0]
+eq("aa466 Invention-Material des Endes faellt raus (buy zuerst, dann Bestand)",
+   (_n466["inv_buy"], _n466["inv_stock_used"]), ({}, {301: 1}))
+eq("aa466 ohne Angabe bleibt es stehen",
+   _soe466(_p466, 2)[0]["inv_buy"], {301: 4, 302: 2})
+_p466b = dict(_p466, build_mats={1: [(50, 10), (2, 1)], 2: [(51, 5)]})
+eq("aa466 Ende wird noch gebraucht: Invention-Material bleibt",
+   _soe466(_p466b, 2, inv_mats_weg={301: 6})[0]["inv_buy"], {301: 4, 302: 2})
+_mb466 = open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+check("aa466 Abzug nur, wenn die Rechnung die Schnappschuss-Kosten trifft",
+      "if abs(float(ist) - soll) > 0.01 * soll:" in _mb466
+      and "inv_mats_weg=self._inv_mats_des_endes(_alt_plan, tid)" in _mb466)
+
+# (4) Historien gebuendelt lesen (emm336): dasselbe Ergebnis wie je Item,
+#     AUSGEFUEHRT gegen die echte SQLite in .smoke_home (eigene Region,
+#     vorher und hinterher geraeumt).
+from eve_trader import store as _st466
+_reg466 = 99000466
+with _st466._conn() as _c466:
+    _c466.execute("DELETE FROM history WHERE region=?", (_reg466,))
+    _c466.executemany("INSERT INTO history VALUES (?,?,?,?,?,?,?,?)",
+                      [(7001, _reg466, "2026-09-02", 2.0, 3.0, 1.0, 20, 2),
+                       (7001, _reg466, "2026-09-01", 1.0, 2.0, 0.5, 10, 1),
+                       (7002, _reg466, "2026-09-01", 5.0, 6.0, 4.0, 50, 5)])
+    _c466.commit()
+try:
+    _g466 = _st466.get_histories([7002, 7001, 7003, 7001], _reg466)
+    eq("aa466 get_histories == get_history je Item (sortiert, leere Items als [])",
+       _g466, {t: _st466.get_history(t, _reg466) for t in (7001, 7002, 7003)})
+finally:
+    with _st466._conn() as _c466:
+        _c466.execute("DELETE FROM history WHERE region=?", (_reg466,))
+        _c466.commit()
+check("aa466 der Scan liest gecachte Historien vorab gebuendelt",
+      "_hist_vorab = store.get_histories(_ids_vorab, region)"
+      in open("eve_trader/scanner.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa465)
+# INDUSTRY JOBS UEBERSICHTLICHER + CHARAKTERE AN/AUS (emm334, Nutzer:
+# "immer noch nicht uebersichtlich genug", "verlinkte Charaktere ... per
+# On/Off, standardmaessig alle On"). Reine Helfer, feste Zahlen.
+from eve_trader.ui.mw_helpers import (jobs_dauer_kurz as _jdk465,
+                                      jobs_sichtbar as _js465,
+                                      jobs_summe as _jsu465,
+                                      job_anzeigename as _jan465)
+eq("aa465 Restzeit kurz, zwei Einheiten",
+   [_jdk465(x) for x in (0, 59, 60, 7199, 7200, 86400 + 5 * 3600 + 13 * 60)],
+   ["< 1 m", "< 1 m", "1 m", "1 h 59 m", "2 h 0 m", "1 T 5 h"])
+_ch465 = {1: {"name": "A"}, 2: {"name": "B"}, 3: {"name": "C"}}
+eq("aa465 aus-geschaltete fallen weg (Text oder Zahl), ohne Liste alle",
+   (sorted(_js465(_ch465, ["2"])), sorted(_js465(_ch465, [3])), sorted(_js465(_ch465, None))),
+   ([1, 3], [1, 2], [1, 2, 3]))
+_su465 = _jsu465({
+    1: {"name": "A", "ueb": {"frei": {"mfg": 2, "react": 0, "sci": 1}, "zeilen": [
+        {"ready": True, "paused": False, "ende": 50.0},
+        {"ready": False, "paused": False, "ende": 1600.0},
+        {"ready": False, "paused": True, "ende": 1100.0}]}},
+    2: {"name": "B", "ueb": {"frei": None, "zeilen": [
+        {"ready": False, "paused": False, "ende": 1300.0}]}}}, 1000.0)
+eq("aa465 Gesamt: fertig, freie Slots (nur bekanntes Maximum), naechster ohne Pausierte",
+   _su465, {"ready": 1, "free": {"mfg": 2, "react": 0, "sci": 1}, "no_max": 1,
+            "next": (300, "B")})
+eq("aa465 ' Blueprint' faellt nur bei Science-Jobs weg",
+   [_jan465("X Blueprint", 8), _jan465("X Blueprint", 1), _jan465("X Blueprint", 9),
+    _jan465("Y", 3)],
+   ["X", "X Blueprint", "X Blueprint", "Y"])
+_tb465 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa465 Karten zeigen nur eingeschaltete Charaktere",
+      '_chars = jobs_sichtbar(alle, self.settings.get("jobs_chars_aus"))' in _tb465)
+
+# ---------------------------------------------------------------- (aa464)
+# ENDE AUS DEM EINGEFRORENEN BUENDEL, DIE UEBRIGEN RUNS BLEIBEN (emm333,
+# Nutzer 02.10.2026: "die Runs im Runplaner duerfen sich nicht veraendern,
+# sonst stimmen die Materialien nicht mehr" -> "Alles bleibt"). Handrechnung:
+# Enden E1 (10) und X (5); I nur fuer X, S geteilt (E1 20 + X 10 = 30 Runs);
+# m1/m3 nur fuer X bzw. I, m2 geteilt.
+import copy as _cp464
+from eve_trader.ui.mw_helpers import snapshot_ohne_ende as _soe464
+_E1, _X, _I, _S, _m1, _m2, _m3 = 101, 102, 103, 104, 201, 202, 203
+_p464 = {
+    "buendel_enden": {_E1: 10, _X: 5},
+    "build_runs": {_E1: 10, _X: 5, _I: 5, _S: 30},
+    "build_made": {_E1: 10, _X: 5, _I: 5, _S: 30},
+    "build_mats": {_E1: [(_S, 20), (_m2, 100)],
+                   _X: [(_S, 10), (_I, 5), (_m1, 50), (_m2, 30)],
+                   _I: [(_m3, 40)], _S: [(_m2, 60)]},
+    "build_seq": [[_I, 5], [_S, 30], [_X, 5], [_E1, 10]],
+    "decision": {_E1: "build", _X: "build", _I: "build", _S: "build",
+                 _m1: "buy", _m2: "buy", _m3: "buy"},
+    "buy": {_m1: 50, _m2: 190, _m3: 40}, "stock_used": {_m1: 10},
+    "surplus": {},
+    "job_cost_items": {_E1: 100.0, _X: 50.0, _I: 20.0, _S: 30.0}, "job_cost": 200.0,
+    "job_cost_parts": {"index": 100.0, "tax": 60.0, "scc": 40.0},
+    "inv_cost_items": {_X: 70.0}, "inv_cost": 70.0,
+    "buy_cost_items": {_m1: 500.0, _m2: 1900.0, _m3: 400.0}, "mat_cost": 2800.0,
+    "stock_cost_items": {_m1: 100.0}, "stock_cost": 100.0,
+    "total_cost": 3170.0, "inv_buy": {301: 4}, "nicht_kaufbar": [_m3]}
+_vorher464 = _cp464.deepcopy(_p464)
+_n464, _weg464 = _soe464(_p464, _X)
+eq("aa464 weg sind genau das Ende und seine eigene Vorstufe", _weg464, {_X, _I})
+eq("aa464 die uebrigen Runs bleiben EXAKT (geteiltes S behaelt 30)",
+   _n464["build_runs"], {_E1: 10, _S: 30})
+eq("aa464 ... was X von S gebraucht haette, ist Ueberschuss", _n464["surplus"], {_S: 10})
+eq("aa464 nur Material, das allein X/I brauchte, verlaesst Kauf und Bestand",
+   (_n464["buy"], _n464["stock_used"]), ({_m2: 190}, {}))
+eq("aa464 Ende-Liste, Folge, Entscheidung, nicht kaufbar",
+   (_n464["buendel_enden"], _n464["build_seq"], sorted(_n464["decision"]),
+    _n464["nicht_kaufbar"]),
+   ({_E1: 10}, [[_S, 30], [_E1, 10]], sorted([_E1, _S, _m2]), []))
+check("aa464 Kosten: Posten raus, Summe der Posten == Gesamt",
+      _n464["job_cost"] == 130.0 and _n464["inv_cost"] == 0.0
+      and _n464["mat_cost"] == 1900.0 and _n464["stock_cost"] == 0.0
+      and _n464["total_cost"] == 2030.0
+      and abs(sum(_n464["job_cost_parts"].values()) - 130.0) < 1e-9
+      and _n464["total_cost"] == _n464["job_cost"] + _n464["inv_cost"]
+      + _n464["mat_cost"] + _n464["stock_cost"])
+check("aa464 Invention-Material bleibt stehen, Eingabe unberuehrt",
+      _n464["inv_buy"] == {301: 4} and _p464 == _vorher464)
+_p464b = _cp464.deepcopy(_vorher464)
+_p464b["build_mats"][_E1] = [(_S, 20), (_m2, 100), (_X, 2)]
+_n464b, _weg464b = _soe464(_p464b, _X)
+check("aa464 Ende-in-Ende: X wird noch gebraucht -> alle Runs bleiben, Ende-Menge Ueberschuss",
+      _weg464b == set() and _n464b["build_runs"] == _p464b["build_runs"]
+      and _n464b["buy"] == _p464b["buy"] and _n464b["buendel_enden"] == {_E1: 10}
+      and _n464b["surplus"] == {_X: 5})
+_n464c, _weg464c = _soe464(_cp464.deepcopy(_vorher464), 999)
+check("aa464 unbekanntes Ende: nichts aendert sich",
+      _weg464c == set() and _n464c == _vorher464)
+_mb464 = open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+check("aa464 der eingefrorene Zweig taut NICHT auf, er schneidet den Schnappschuss",
+      "_neu_plan = snapshot_ohne_ende(\n                    _alt_plan, tid, inv_mats_weg=" in _mb464
+      and "_auftauen_ohne_frage" not in _mb464
+      and "setChecked(False)" not in _mb464[_mb464.find("def _multi_ende_entfernen"):
+                                             _mb464.find("def _multi_eintrag_felder")])
+
+# ---------------------------------------------------------------- (aa461)
+# INDUSTRY-JOB-UEBERSICHT (emm327, Discord-Wunsch: "welcher Char welche Slots
+# belegt hat mit was und wie lange"). Rein gerechnet, fester Zeitpunkt.
+from eve_trader.ui.mw_helpers import jobs_uebersicht as _ju461, job_slot_art as _jsa461
+from datetime import datetime as _dt461, timezone as _tz461
+_jetzt461 = _dt461(2026, 10, 2, 12, 0, tzinfo=_tz461.utc).timestamp()
+_jobs461 = [
+    {"activity_id": 1, "product_type_id": 11, "runs": 10, "status": "active",
+     "end_date": "2026-10-02T15:30:00Z"},
+    {"activity_id": 9, "product_type_id": 22, "runs": 40, "status": "active",
+     "end_date": "2026-10-02T11:00:00Z"},          # abgelaufen = fertig
+    {"activity_id": 8, "product_type_id": 33, "runs": 4, "status": "ready",
+     "end_date": "2026-10-02T13:00:00Z"},
+    {"activity_id": 5, "product_type_id": 44, "runs": 16, "status": "paused",
+     "end_date": "2026-10-03T12:00:00Z"},
+]
+_u461 = _ju461(_jobs461, (10, 5, 6), _jetzt461)
+eq("aa461 Slot-Typen wie fetch_industry_jobs (1 Fertigung, 9/11 Reaktion, Rest Science)",
+   [_jsa461(a) for a in (1, 9, 11, 3, 4, 5, 8)],
+   ["mfg", "react", "react", "sci", "sci", "sci", "sci"])
+eq("aa461 belegt zaehlt fertige, nicht abgelieferte Jobs mit",
+   _u461["belegt"], {"mfg": 1, "react": 1, "sci": 2})
+eq("aa461 frei = max - belegt", _u461["frei"], {"mfg": 9, "react": 4, "sci": 4})
+eq("aa461 Reihenfolge nach Ende, Restzeit in Sekunden, fertig erkannt",
+   [(z["tid"], z["rest"], z["ready"]) for z in _u461["zeilen"]],
+   [(22, 0, True), (33, 0, True), (11, 12600, False), (44, 86400, False)])
+check("aa461 pausierter Job ist als pausiert markiert",
+      [z["paused"] for z in _u461["zeilen"]] == [False, False, False, True])
+from eve_trader.ui.mw_helpers import jobs_gruppen as _jg461, job_fortschritt as _jf461
+_jobs461g = _jobs461 + [
+    {"activity_id": 1, "product_type_id": 11, "runs": 5, "status": "active",
+     "start_date": "2026-10-02T11:00:00Z", "end_date": "2026-10-02T13:00:00Z"},
+    {"activity_id": 1, "product_type_id": 12, "runs": 3, "status": "active",
+     "end_date": "2026-10-02T14:00:00Z"}]
+_g461 = _jg461(_ju461(_jobs461g, (10, 5, 6), _jetzt461)["zeilen"], _jetzt461)
+eq("aa461 gleiche Jobs werden EINE Gruppe, die zuerst fertige zeigt Rest und Fortschritt",
+   [(g["tid"], g["n"], g["runs"], g["rest"], round(g["fortschritt"] or 0, 2), g["paused"])
+    for g in _g461["laufend"]],
+   [(11, 2, 15, 3600, 0.5, False), (12, 1, 3, 7200, 0.0, False),
+    (44, 1, 16, 86400, 0.0, True)])
+eq("aa461 fertige getrennt gezaehlt",
+   sorted((g["tid"], g["n"]) for g in _g461["ready"]), [(22, 1), (33, 1)])
+check("aa461 Fortschritt ohne Startzeit ist None (nicht geraten)",
+      _jf461(None, 100.0, 50.0) is None and _jf461(0.0, 100.0, 150.0) == 1.0)
+_u461b = _ju461(_jobs461, None, _jetzt461)
+check("aa461 ohne Skills keine geratene Freizahl",
+      _u461b["max"] is None and _u461b["frei"] is None
+      and _u461b["belegt"]["sci"] == 2)
+
+# ---------------------------------------------------------------- (aa460)
+# SCIENCE-JOBZEITEN GEGEN ZWEI INGAME-FENSTER DES NUTZERS (emm325, 01.10.2026).
+import eve_trader.industry as _ind460
+_kopie460 = _ind460.science_jobzeit(960, "copy", 15.0, 20.0 * 2.1, 5, 5) * 16
+check(f"aa460 Kopieren 4x4 Ultraviolet XL im Raitaru (Null, Copy-Rig I): "
+      f"{_kopie460:.0f} s ~ ingame 1:20:27 = 4827 s",
+      abs(_kopie460 - 4827) <= 2)
+eq("aa460 Invention ohne Anlage: 20 h x Advanced Industry 5 = 17:00:00",
+   round(_ind460.science_jobzeit(72000, "invention", 0, 0, 5)), 61200)
+check("aa460 Science wirkt nur aufs Kopieren, nicht auf Invention",
+      _ind460.science_jobzeit(100, "invention", 0, 0, 0, 5) == 100.0
+      and _ind460.science_jobzeit(100, "copy", 0, 0, 0, 5) == 75.0)
+_tb460 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa460 Invention-Karte: Rolle + Rig x Sicherheit + Skills, Kopierdauer angezeigt",
+      "_inv_struct_pct = ((self._struct_extra_rig_pct(inv_struct, \"invention\")" in _tb460
+      and "_adv_i, _sci_i = self._inv_zeit_skills(_skill_char)" in _tb460
+      and "copy_secs_per_attempt=_copy_time_per_run):" in _tb460
+      and 't("Copy job: \\u2248{d}")' in _tb460)
+
+# ---------------------------------------------------------------- (aa459)
+# EIGENE ORDER MIT DEM PREIS AUS DEM ORDERBUCH (emm321).
+from eve_trader.ui.mw_helpers import eigener_preis_live as _epl459
+eq("aa459 Buch kennt die order_id -> dessen Preis, sonst der ESI-Wert",
+   (_epl459(900, 901000.0, {"ids": {900: 901400.0}}),
+    _epl459(900, 901000.0, {"ids": {1: 5.0}}),
+    _epl459(None, 7.0, {"ids": {900: 1.0}}),
+    _epl459(900, 7.0, {"buy": []})),
+   (901400.0, 901000.0, 7.0, 7.0))
+
+import eve_trader.esi as _esi459
+
+
+class _Antw459:
+    status_code = 200
+    headers = {"X-Pages": "1"}
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return [{"order_id": 900, "price": 901400.0, "volume_remain": 1,
+                 "is_buy_order": True, "location_id": 60003760},
+                {"order_id": 5, "price": 9.0, "volume_remain": 1,
+                 "is_buy_order": False, "location_id": 60003760},
+                {"order_id": 6, "price": 1.0, "volume_remain": 1,
+                 "is_buy_order": True, "location_id": 123}]
+_alt459 = _esi459._get_with_retry
+try:
+    _esi459._get_with_retry = lambda *a, **k: _Antw459()
+    _b459 = _esi459.fetch_type_orders(34, 60003760, 10000002)
+finally:
+    _esi459._get_with_retry = _alt459
+eq("aa459 Orderbuch merkt order_ids (nur am Hub)", _b459.get("ids"),
+   {900: 901400.0, 5: 9.0})
+# ... und das Struktur-Orderbuch je Item (emm322)
+
+
+class _AntwS459(_Antw459):
+    def json(self):
+        return [{"order_id": 900, "type_id": 34, "price": 901400.0,
+                 "volume_remain": 1, "is_buy_order": True},
+                {"order_id": 901, "type_id": 34, "price": 901300.0,
+                 "volume_remain": 5, "is_buy_order": True},
+                {"order_id": 5, "type_id": 35, "price": 9.0,
+                 "volume_remain": 1, "is_buy_order": False}]
+_alt459b = (_esi459._get_with_retry, _esi459._auth_headers)
+try:
+    _esi459._get_with_retry = lambda *a, **k: _AntwS459()
+    _esi459._auth_headers = lambda *a, **k: {}
+    _s459 = _esi459.fetch_structure_orders_full("c", 7, 1035466617946)
+finally:
+    _esi459._get_with_retry, _esi459._auth_headers = _alt459b
+eq("aa459 Struktur-Orderbuch merkt order_ids je Item",
+   {_t: _b.get("ids") for _t, _b in _s459.items()},
+   {34: {900: 901400.0, 901: 901300.0}, 35: {5: 9.0}})
+
+# ---------------------------------------------------------------- (aa458)
+# RESERVIERUNGSFRAGE BEIM SPEICHERN NUR NACH FREEZE (emm315, Nutzer
+# 01.10.2026: "muss nicht gefragt werden ... OHNE zu freezen, dann gibt's
+# auch nichts zu reservieren"). Nach Freeze fragt der Knopf selbst (b149).
+from eve_trader.ui.mw_helpers import reservierung_fragen as _rf458
+eq("aa458 Speichern fragt nur eingefroren, unreserviert, mit Material, ohne Buendel",
+   (_rf458({"frozen": {"ts": 1}, "reserve": False, "reserve_map": {"1": 2}}),
+    _rf458({"frozen": None, "reserve": False, "reserve_map": {"1": 2}}),
+    _rf458({"reserve_map": {"1": 2}}),
+    _rf458({"frozen": {"ts": 1}, "reserve": True, "reserve_map": {"1": 2}}),
+    _rf458({"frozen": {"ts": 1}, "reserve_map": {}}),
+    _rf458({"frozen": {"ts": 1}, "reserve_map": {"1": 2}}, ["Multi"]),
+    _rf458(None)),
+   (True, False, False, False, False, False, False))
+_fb458 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+check("aa458 der Speichern-Knopf entscheidet ueber reservierung_fragen",
+      "_neu_res = _res_fragen9(new_entry, _multi_von9)" in _fb458)
+
+# ---------------------------------------------------------------- (aa457)
+# STANDORT-HINWEIS (emm313, Nutzer 01.10.2026): Hub-Ort und "am Hub?" rein;
+# eigener Scope, Standard AUS, nur mit Schalter beim Verlinken angefragt.
+from eve_trader.ui.mw_helpers import (hub_ort_id as _hoi457,
+                                      standort_am_hub as _sah457)
+import eve_trader.config as _cfg457
+eq("aa457 Hub-Ort: NPC-Region -> Station, Struktur-dict -> structure_id, sonst None",
+   (_hoi457(10000002), _hoi457(10000043), _hoi457({"structure_id": 1035466617946,
+                                                    "region_id": 10000060}),
+    _hoi457(None), _hoi457(12345), _hoi457({"region_id": 1})),
+   (60003760, 60008494, 1035466617946, None, None, None))
+eq("aa457 am Hub nur, wenn GENAU dort angedockt (Station oder Struktur)",
+   (_sah457({"solar_system_id": 30000142, "station_id": 60003760}, 60003760),
+    _sah457({"solar_system_id": 30000142, "structure_id": 1035466617946},
+            1035466617946),
+    _sah457({"solar_system_id": 30000142}, 60003760),
+    _sah457({"solar_system_id": 30002187, "station_id": 60008494}, 60003760),
+    _sah457({}, 60003760), _sah457({"station_id": 60003760}, None)),
+   (True, True, False, False, None, None))
+_mw457 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa457 Scope-Name, Standard AN (emm316), beim Verlinken nur mit Schalter",
+      _cfg457.LOCATION_SCOPE == "esi-location.read_location.v1"
+      and _cfg457.DEFAULT_SETTINGS.get("use_location") is True
+      and _cfg457.LOCATION_SCOPE not in _cfg457.DEFAULT_SCOPES
+      and '        if self.settings.get("use_location"):\n'
+          '            scopes.append(config.LOCATION_SCOPE)' in _mw457)
+
+# STANDARD AN -> der Einrichtungs-Assistent muss den Scope mit auflisten,
+# sonst traegt ihn ein neuer Nutzer nicht in seine EVE-App ein und das
+# Verlinken scheitert (emm316).
+check("aa457 der Einrichtungs-Assistent listet den Standort-Scope",
+      "config.LOCATION_SCOPE])))" in open("eve_trader/ui/setup_wizard.py",
+                                          encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa456)
+# JOB-FRAGE GRUPPIERT (emm312, Nutzer 01.10.2026 "enorm viele Fragen"):
+# Prioritaets-Jobs je Item+Plan eine Zeile, offene Jobs je Job eine Zeile.
+from eve_trader.ui.mw_helpers import job_fragen_gruppieren as _jfg456
+_z456 = _jfg456(
+    [{"job_id": 1, "type_id": 5, "runs": 2, "fertig_ts": 10.0},
+     {"job_id": 2, "type_id": 5, "runs": 3, "fertig_ts": 11.0}],
+    [{"job_id": 3, "type_id": 7, "runs": 4, "fertig_ts": 30.0, "prio_plan": "A"},
+     {"job_id": 4, "type_id": 7, "runs": 6, "fertig_ts": 20.0, "prio_plan": "A"},
+     {"job_id": 5, "type_id": 7, "runs": 1, "fertig_ts": 25.0, "prio_plan": "B"},
+     {"job_id": 6, "type_id": 8, "runs": 2, "fertig_ts": 25.0, "prio_plan": "A"}])
+eq("aa456 offene je Job, Prioritaet je Item+Plan, Reihenfolge bleibt",
+   [(_z["type_id"], _z["job_ids"], _z["runs"]) for _z in _z456],
+   [(5, [1], 2), (5, [2], 3), (7, [3, 4], 10), (7, [5], 1), (8, [6], 2)])
+eq("aa456 Zeitspanne einer Gruppe (frueheste bis spaeteste Lieferung)",
+   (_z456[2]["ts_von"], _z456[2]["ts_bis"]), (20.0, 30.0))
+eq("aa456 nichts zu fragen -> keine Zeilen", _jfg456(None, []), [])
+
+# ---------------------------------------------------------------- (aa452)
+# JEDER DIRECTOR SIEHT DIE CORP-BLAUPAUSEN (Nutzer 01.10.2026: "jeden
+# Charakter mit Director-Rolle im Dropdown waehlen und dann Corp-Blueprints
+# einsehen"). Abgerufen wird weiter EINMAL je Corp (abrufplan), die Zeile
+# steht aber unter allen Directors (_via_cids).
+from eve_trader import corp as _corp452
+from eve_trader.ui.mw_helpers import bp_besitzer_passt as _bp452
+_ch452 = [{"character_id": 1}, {"character_id": 2}, {"character_id": 3},
+          {"character_id": 4}]
+_cv452 = {1: 900, 2: 900, 3: 900, 4: 800}
+_rv452 = {1: {"Director"}, 2: set(), 3: {"Director", "Factory_Manager"},
+          4: {"Director"}}
+eq("aa452 alle Directors je Corp, Reihenfolge der Liste",
+   _corp452.alle_mit_rolle(_ch452, _cv452, _rv452, _corp452.ROLLE_ASSETS),
+   {900: [1, 3], 800: [4]})
+eq("aa452 der Abruf bleibt EINER je Corp",
+   _corp452.abrufplan(_ch452, _cv452, _rv452, _corp452.ROLLE_ASSETS)[0],
+   {900: 1, 800: 4})
+eq("aa452 ohne Rolle / ohne Corp / Rollen unbekannt: niemand",
+   _corp452.alle_mit_rolle([{"character_id": 5}, {"character_id": 6}],
+                           {5: None, 6: 700}, {5: {"Director"}, 6: None},
+                           _corp452.ROLLE_ASSETS), {})
+check("aa452 Filter: Corp-Zeile unter JEDEM Director der Liste, nicht bei anderen",
+      _bp452(900, 3, [1, 3]) and _bp452(900, 1, [1, 3])
+      and not _bp452(900, 2, [1, 3]) and _bp452(900, "all", [1, 3])
+      and _bp452(2, 2, [1, 3]) and _bp452(900, 1, (1,)))
+_fb452 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+check("aa452 Verdrahtung: _corp_rollen merkt alle Directors, jede Corp-"
+      "Blaupause traegt sie, My Blueprints gibt sie an den Filter",
+      'out["directors"] = _corp.alle_mit_rolle(' in _fb452
+      and '_b["_via_cids"] = list(out["directors"].get(corp_id) or [cid])' in _fb452
+      and 'it.setData(Qt.UserRole + 15, b.get("_via_cids"))' in _fn_src("_reload_my_blueprints"))
+
+# ---------------------------------------------------------------- (aa451)
+# CORP-ROLLEN NICHT DOPPELT, NACH 420 KEINE WEITEREN (Nutzer-fehler.log
+# 30.09.2026 19:42:50: zweimal "420" fuer alle neun Charaktere in derselben
+# Sekunde - Bestands-Job und Blaupausen-Cache fragten gleichzeitig).
+import eve_trader.ui.mw_bauplan_fenster as _mbf451
+import eve_trader.esi as _esi451
+import eve_trader.config as _cfg451
+_alt451 = {k: getattr(_esi451, k) for k in (
+    "fetch_character_corporation", "granted_scopes", "fetch_character_roles",
+    "fetch_corporation_name")}
+_ruf451 = []
+_modus451 = {"limit": False}
+
+
+class _Antw451:
+    status_code = 420
+
+
+class _Fehler451(Exception):
+    response = _Antw451()
+
+
+def _rollen451(client_id, cid):
+    _ruf451.append(cid)
+    if _modus451["limit"]:
+        raise _Fehler451("420 Client Error")
+    return {"Director"}
+
+
+class _F451:
+    _corp_rollen = MW._corp_rollen
+    _corp_rollen_holen = MW._corp_rollen_holen
+
+    def _log_exception(self, *a):
+        pass
+
+
+try:
+    _esi451.fetch_character_corporation = lambda cid: 900
+    _esi451.granted_scopes = lambda client_id, cid: set(_cfg451.CORP_SCOPES)
+    _esi451.fetch_character_roles = _rollen451
+    _esi451.fetch_corporation_name = lambda corp: "C"
+    _mbf451._ROLLEN_STAND.clear()
+    _ch451 = [{"character_id": 1, "character_name": "A"},
+              {"character_id": 2, "character_name": "B"},
+              {"character_id": 3, "character_name": "D"}]
+
+    def _out451():
+        return {"relink": [], "failed": [], "ohne_rolle": []}
+    _F451()._corp_rollen("c451", _ch451, _out451())
+    _plan451 = _F451()._corp_rollen("c451", _ch451, _out451())[1]
+    check(f"aa451 zweiter Abruf kurz danach fragt ESI nicht noch einmal ({_ruf451})",
+          _ruf451 == [1, 2, 3] and _plan451 == {900: 1})
+    _mbf451._ROLLEN_STAND.clear()
+    _ruf451.clear()
+    _modus451["limit"] = True
+    _o451 = _out451()
+    _F451()._corp_rollen("c451", _ch451, _o451)
+    check(f"aa451 nach dem ersten 420 wird kein weiterer Charakter gefragt "
+          f"({_ruf451}, {len(_o451['failed'])} gemeldet)",
+          _ruf451 == [1] and len(_o451["failed"]) == 3)
+    check("aa451 ein Fehlschlag wird nicht gemerkt",
+          not _mbf451._ROLLEN_STAND)
+finally:
+    for _k, _v in _alt451.items():
+        setattr(_esi451, _k, _v)
+    _mbf451._ROLLEN_STAND.clear()
+
+# ---------------------------------------------------------------- (aa450)
+# ZUTATEN VERBRAUCHT, ERZEUGNIS NOCH NICHT DA (Nutzer 30.09.2026: "kann man
+# die Nebenwirkung verhindern?"). Reaktion C (10 Runs x 100 Stueck, braucht
+# 1'000 I), Komponente K braucht 1'000 C. C ist abgehakt (delivered), ESI
+# kennt den Job noch nicht (im_bestand leer, kein C im Lager).
+from eve_trader.ui.mw_helpers import fehlbedarf_vorschau as _fv450
+_br450 = {1: 10, 2: 5}
+_bm450 = {1: [(9, 1000)], 2: [(1, 1000)]}
+_oq450 = {1: 100, 2: 1}
+_f450a = {m for m, *_ in _fv450(_br450, _bm450, _oq450, {1: 10}, {}, im_bestand={})}
+check(f"aa450 abgehakt, ESI kennt ihn nicht: weder Zutat noch Erzeugnis fehlen ({_f450a})",
+      _f450a == set())
+_f450b = {m for m, *_ in _fv450(_br450, _bm450, _oq450, {1: 10}, {1: 1000},
+                                im_bestand={1: 10})}
+check(f"aa450 ESI sieht den Job (Output in der Pipeline): gedeckt, nicht doppelt ({_f450b})",
+      _f450b == set())
+_f450c = {m for m, *_ in _fv450(_br450, _bm450, _oq450, {1: 10}, {},
+                                im_bestand={1: 10})}
+check(f"aa450 ESI sieht den Job, aber der Output ist weg: C fehlt ({_f450c})",
+      _f450c == {1})
+check("aa450 ohne im_bestand wie bisher (eine Karte fuer beides)",
+      {m for m, *_ in _fv450(_br450, _bm450, _oq450, {1: 10}, {})} == {1})
+
+# ---------------------------------------------------------------- (aa449)
+# "#26378" IST KEIN NAME (Nutzer 30.09.2026: Vorschlags-Fenster "nur
+# Nummern ... und dann kommen sie auch so in den Runplaner"). Ein Platzhalter
+# darf nie als bekannter Name gelten, sonst holt ihn niemand nach; und My
+# Blueprints loest die PRODUKT-Namen mit auf (vorher nur die Blaupausen).
+from eve_trader.ui.mw_helpers import ist_platzhalter_name as _ph449
+check("aa449 Platzhalter erkannt, echte Namen nicht",
+      _ph449("#26378") and _ph449("") and _ph449(None) and _ph449(" #1 ")
+      and not _ph449("Templar II") and not _ph449("#1 Fan") and not _ph449("Item #3"))
+_mb449 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_multi_bauplan.py"),
+              encoding="utf-8").read()
+check("aa449 Einfuegen merkt keinen Platzhalter, ersetzt ihn aber durch echte Namen",
+      "not ist_platzhalter_name(x.get(\"name\"))" in _mb449
+      and "names.setdefault(_tid, str(x[\"name\"]))" not in _mb449)
+check("aa449 Namen nachholen: Platzhalter gelten als unbekannt",
+      "_bekannt = {k for k, v in names.items() if not ist_platzhalter_name(v)}" in _mb449)
+check("aa449 My Blueprints loest die Produkt-Namen mit auf",
+      'tids += [int(e["product_id"]) for e in profit_by_bp.values()' in
+      _fn_src("_reload_my_blueprints"))
+
+# ---------------------------------------------------------------- (aa448)
+# MULTIPLAN-VORSCHLAG (Nutzer 30.09.2026: "T1-Plan -> T1-Vorschlaege, T2 ->
+# T2, nur eigene Blaupausen, lohnend, und sie duerfen die Marge nicht nach
+# unten ziehen"). Rein gerechnet.
+from eve_trader.ui.mw_helpers import (vorschlag_kandidaten as _vk448,
+                                      vorschlag_tech as _vt448,
+                                      gemeinsam_anteil as _ga448)
+_e448 = {
+    1: {"product_id": 101, "category": "end", "meta": 1, "cost_unit": 100.0, "profit": 30.0},
+    2: {"product_id": 102, "category": "end", "meta": 1, "cost_unit": 100.0, "profit": 10.0},
+    3: {"product_id": 103, "category": "end", "meta": 2, "cost_unit": 100.0, "profit": 50.0},
+    4: {"product_id": 104, "category": "component", "meta": 1, "cost_unit": 10.0, "profit": 9.0},
+    5: {"product_id": 105, "category": "end", "meta": 1, "cost_unit": 100.0, "profit": -5.0},
+    6: {"product_id": 106, "category": "end", "meta": 0, "cost_unit": 100.0, "profit": 20.0},
+    7: {"product_id": 107, "category": "end", "meta": 1, "cost_unit": None, "profit": None},
+}
+eq("aa448 T1-Plan (Marge 15 %): nur T1-Enden mit Marge >= 15, ohne das eigene",
+   [k["tid"] for k in _vk448(_e448, {"T1"}, {106}, 15.0)], [101])
+eq("aa448 ... ohne Plan-Marge alle lohnenden T1-Enden, nach Marge sortiert",
+   [k["tid"] for k in _vk448(_e448, {"T1"}, set(), None)], [101, 106, 102])
+eq("aa448 T2-Plan: nur T2", [k["tid"] for k in _vk448(_e448, {"T2"}, set(), 20.0)], [103])
+eq("aa448 Tech-Stufen: 2 -> T2, 14 -> T3, 0/1/None -> T1",
+   [_vt448(2), _vt448(14), _vt448(1), _vt448(0), _vt448(None)],
+   ["T2", "T3", "T1", "T1", "T1"])
+# Marge kann nicht sinken: Plan 1000 Kosten / 150 Gewinn (15 %), dazu 101
+# (100 / 30) -> 180 / 1100 = 16,4 % >= 15.
+check("aa448 Buendel-Marge sinkt mit einem Kandidaten nicht",
+      (150 + 30) / (1000 + 100) * 100 >= 15.0)
+_pr448 = {1: 10.0, 2: 5.0, 3: 100.0}.get
+eq("aa448 Gemeinsam % wertgewichtet: (10x10 + 0) / (10x10 + 4x5 + 1x100)",
+   round(_ga448({1: 10, 2: 4, 3: 1}, {1: 99, 9: 1}, _pr448), 4),
+   round(100 / 220 * 100, 4))
+check("aa448 ohne Preis kein Anteil", _ga448({5: 3}, {5: 1}, lambda t: None) is None)
+_srcf448 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_bauplan_fenster.py"),
+                encoding="utf-8").read()
+check("aa448 der Eintrag steht im Tools-Menue des Bauplans",
+      '_txt("Suggest end products for this plan")' in _srcf448
+      and "self._multi_vorschlag_fenster()" in _srcf448)
+
+# ---------------------------------------------------------------- (aa446)
+# PROFITS UND PORTFOLIO MIT FRACHT (Nutzer 30.09.2026: "Portfolio-Marge und
+# Profits-Tab rechnen noch ohne Fracht - muessen wir noch machen, und Fracht
+# mit einem Symbol anzeigen, kein Emoji"). Von Hand: 10 gekauft an Ort 1 zu
+# 100, 4 verkauft an Ort 2 zu 200, Steuer 5 %, 2 m3, 10 ISK/m3:
+# netto (200 x 0,95 - 100) x 4 = 360, Fracht 4 x 2 x 10 = 80 -> 280.
+from eve_trader import market as _M446  # noqa: E402
+_tx446 = [
+    {"date": "2026-09-01", "type_id": 5, "is_buy": True, "quantity": 10,
+     "unit_price": 100.0, "location_id": 1, "character_id": 7},
+    {"date": "2026-09-02", "type_id": 5, "is_buy": False, "quantity": 4,
+     "unit_price": 200.0, "location_id": 2, "character_id": 7}]
+_e446 = _M446.realized_trades(_tx446, 0.05, 0.0, fracht_satz=10, volumen={5: 2.0})
+eq("aa446 Fracht je Verkauf und Netto nach Fracht",
+   [(round(e["fracht"], 2), round(e["net"], 2)) for e in _e446], [(80.0, 280.0)])
+_t446, _r446 = _M446.realized_summary(_e446)
+eq("aa446 Summe traegt die Fracht, Marge auf Einkauf + Fracht (280 / 480)",
+   (round(_t446["fracht"], 2), round(_r446[0]["margin"], 4)), (80.0, round(280 / 480 * 100, 4)))
+_tx446b = [dict(_tx446[0]), dict(_tx446[1], location_id=1)]
+eq("aa446 am selben Ort gekauft und verkauft: keine Fracht",
+   [round(e["fracht"], 2) for e in _M446.realized_trades(
+       _tx446b, 0.05, 0.0, fracht_satz=10, volumen={5: 2.0})], [0.0])
+eq("aa446 Rechtsklick 'keine Fracht', Ort unbekannt, ohne Satz: keine",
+   [round(e["fracht"], 2) for e in
+    _M446.realized_trades(_tx446, 0.05, 0.0, fracht_satz=10, volumen={5: 2.0}, ohne={5})
+    + _M446.realized_trades([dict(_tx446[0], location_id=0), _tx446[1]], 0.05, 0.0,
+                            fracht_satz=10, volumen={5: 2.0})
+    + _M446.realized_trades(_tx446, 0.05, 0.0)],
+   [0.0, 0.0, 0.0])
+_src446 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+               encoding="utf-8").read()
+check("aa446 Portfolio: Marge und Ziel-Preis auf Einkauf + Fracht",
+      "_pf_marge = (h.net_unit - _pf_b) / _pf_b * 100.0" in _src446
+      and "self._optimal_sell_price(self._kostenbasis(h))" in _src446)
+
+# ---------------------------------------------------------------- (aa445)
+# "RECALCULATE" RAEUMT DIE HAKEN - UND IHRE ERLEDIGTEN RUNS MIT (Nutzer
+# 29.09.2026: fremde gruene Haken im neuen Multiplan). Blieben die Runs
+# stehen, setzte `haken_nachtragen` die Haken beim naechsten Aufbau zurueck.
+_src445 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_bauplan_fenster.py"),
+               encoding="utf-8").read()
+# SEIT emm298 raeumt nur noch der Neu-Zweig von open_build_detail (Reset
+# oeffnet frisch) - dort muessen Haken UND erledigte Runs zusammen fallen.
+_src445m = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+                encoding="utf-8").read()
+_i445 = _src445m.find("self._bd_runplan_erledigt = {}")
+check("aa445 der Neu-Zweig leert mit den Haken auch die erledigten Runs",
+      _i445 >= 0 and "self._bd_runplan_checked" in _src445m[_i445 - 1500:_i445 + 400]
+      and "self._bd_runplan_erledigt = {}" not in _src445)
+# NUR KATEGORIEN DEINER BLAUPAUSEN (Nutzer 30.09.2026: "unnoetige
+# Kategorien ... Asteroid, Celestial, Commodity").
+_o444 = [(25, "Asteroid"), (7, "Module"), (22, "Deployable"), (6, "Ship")]
+eq("aa444 nur Kategorien der Tabelle, Rigs als eigener Eintrag",
+   _I444.bp_kategorien_zeigen(_o444, [(22, 361), (7, 773), (None, None)],
+                              {773}, "Rigs"),
+   [(22, "Deployable"), (_I444.RIGS_KAT, "Rigs")])
+eq("aa444 Module bleibt, wenn neben Rigs echte Module in der Tabelle stehen",
+   [n for _c, n in _I444.bp_kategorien_zeigen(_o444, [(7, 773), (7, 55)],
+                                              {773}, "Rigs")],
+   ["Module", "Rigs"])
+eq("aa444 ohne Tabelle (None) alle baubaren + Rigs, alphabetisch",
+   [n for _c, n in _I444.bp_kategorien_zeigen(_o444, None, {773}, "Rigs")],
+   ["Asteroid", "Deployable", "Module", "Rigs", "Ship"])
+check("aa444 nach 'Load blueprints' wird das Dropdown neu gefuellt",
+      "self._bp_myb_cat_fuellen()      # nur Kategorien deiner Blaupausen\n"
+      "            self._apply_bp_filter()" in _src444)
+check("aa444 Tabellen-Filter UND Fehlende-Liste fragen bp_kategorie_passt",
+      _src444.count("industry.bp_kategorie_passt(") == 2
+      and "if row_cat_id != want_cat" not in _src444)
+
+# ---------------------------------------------------------------- (aa431)
+# ME/TE/OWN BPC JE ENDE WERDEN SOFORT GEMERKT (Nutzer 28.09.2026: "es
+# speichert nicht, wenn ich die ME/TE oben veraendere ... beim Schliessen
+# und wieder Oeffnen ist der Own-Haken weg und die Ametat II Copy wieder auf
+# 2/4"). Ausgefuehrt an einem Minimal-Objekt mit dem echten Mixin: nur die
+# vier Felder wandern in den gespeicherten Plan, Enden/Menge/Einfrier-Stand
+# nicht; ein ungespeichertes Buendel schreibt nichts.
+import eve_trader.config as _cfg431
+from eve_trader.ui.mw_multi_bauplan import MultiBauplan as _MB431
+from eve_trader import industry as _ind431
+
+
+class _F431(_MB431):
+    def __init__(self):
+        self.settings = {"bau_saved_plans": [
+            {"id": 7, "type_id": _ind431.BUENDEL_ID, "enden": [[100, 50]],
+             "frozen": {"ts": 1.0}, "me_je_ende": {"100": 2.0},
+             "own_bpc_je_ende": {"100": False}}]}
+        self._bd_open_plan_id = 7
+        self._bd_buendel_enden = [(100, 99)]       # Menge im Fenster geaendert
+        self._bd_buendel_quellen = []
+        self._bd_me_je_ende = {100: 5.0}
+        self._bd_te_je_ende = {100: 10.0}
+        self._bd_own_bpc_je_ende = {100: True}
+        self._bd_own_bpc_runs_je_ende = {100: 10}
+
+
+_alt431 = _cfg431.save_settings_async
+_gesp431 = []
+_cfg431.save_settings_async = lambda s: _gesp431.append(1)
+try:
+    _f431 = _F431()
+    _ok431 = _f431._multi_je_ende_merken()
+    _p431 = _f431.settings["bau_saved_plans"][0]
+    check(f"aa431 Own BPC + ME/TE/Runs je Ende landen sofort im gespeicherten Plan "
+          f"({_p431.get('own_bpc_je_ende')}, {_p431.get('me_je_ende')})",
+          _ok431 is True and _gesp431
+          and _p431.get("own_bpc_je_ende") == {"100": True}
+          and _p431.get("me_je_ende") == {"100": 5.0}
+          and _p431.get("te_je_ende") == {"100": 10.0}
+          and _p431.get("own_bpc_runs_je_ende") == {"100": 10})
+    check("aa431 ... Enden/Menge und Einfrier-Stand bleiben unberuehrt",
+          _p431.get("enden") == [[100, 50]] and _p431.get("frozen") == {"ts": 1.0})
+    _f431b = _F431()
+    _f431b._bd_open_plan_id = None
+    check("aa431 ... ein ungespeichertes Buendel schreibt nichts",
+          _f431b._multi_je_ende_merken() is False
+          and _f431b.settings["bau_saved_plans"][0]["me_je_ende"] == {"100": 2.0})
+finally:
+    _cfg431.save_settings_async = _alt431
+check("aa431 die Endprodukte-Karte merkt vor dem Neurechnen",
+      "self._multi_je_ende_merken()" in
+      open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa430)
+# CORP-BLAUPAUSEN IN MY BLUEPRINTS (1.1.0, Discord 27.09.2026: Blaupausen im
+# Corp-Hangar). Reine Helfer: Filter (Corp ODER Charakter, Nutzer: "man
+# waehlt Corp oder Charakter"), Ort-Text (Corp + Hangar statt "#<Buero>"), Statuszusatz (nennt
+# Corp und beim Namen, warum eine fehlt).
+from eve_trader.ui.mw_helpers import (bp_besitzer_passt as _bp430,
+                                      corp_bp_ort as _ort430,
+                                      corp_bp_hinweis as _hw430)
+# SEIT emm301: keine Corp im Dropdown; die Corp-Zeile steht beim Director,
+# ueber den sie geladen wurde (via), und unter "All".
+check("aa430 Filter: alle sehen alles, sonst der Besitzer; Corp-Zeile beim Director",
+      _bp430(900, "all") and _bp430(11, None)
+      and _bp430(11, 11) and _bp430(900, 11, 11)
+      and not _bp430(900, 11) and not _bp430(900, 12, 11)
+      and not _bp430(12, 11, None))
+check("aa430 Ort: Corp + Hangar, gemischt 'several', Charakter-Blaupause None",
+      "Test Corp" in (_ort430({"_corp_name": "Test Corp", "division": 3}) or "")
+      and "3" in (_ort430({"_corp_name": "Test Corp", "division": 3}) or "")
+      and _ort430({"_corp_name": "C", "division": 3, "_ort_gemischt": True})
+      != _ort430({"_corp_name": "C", "division": 3})
+      and _ort430({"location_id": 60003760}) is None)
+check("aa430 Hinweis: Schalter aus -> leer, sonst Corp + Anzahl (Stueck)",
+      _hw430({"aktiv": False, "relink": ["A"]}) == ""
+      and "Test Corp" in _hw430({"aktiv": True, "corps": [{"name": "Test Corp"}],
+                                 "blueprints": [{"quantity": 3}, {"quantity": 2}]})
+      and "5" in _hw430({"aktiv": True, "corps": [{"name": "Test Corp"}],
+                         "blueprints": [{"quantity": 3}, {"quantity": 2}]}))
+_h430 = _hw430({"aktiv": True, "relink": ["Alpha"], "ohne_rolle": ["Rote Corp"],
+                "failed": ["Corp blueprints: X"]})
+check(f"aa430 Hinweis nennt neu verlinken, fehlende Rolle, Fehler ({_h430!r})",
+      "Alpha" in _h430 and "Rote Corp" in _h430 and "Corp blueprints: X" in _h430)
+check("aa430 Hinweis: kein Hangar gewaehlt wird gesagt",
+      _hw430({"aktiv": True, "keine_division": True}) != "")
+# VERDRAHTUNG: der Bauplan-Cache und My Blueprints holen die Corp-Blaupausen
+# ueber DIESELBE Stelle; beide Corp-Abrufe teilen Scopes/Rollen.
+_fb430 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+check("aa430 _corp_bau_daten und _corp_blaupausen teilen _corp_rollen",
+      _fb430.count("= self._corp_rollen(client_id, chars, out)") == 2)
+check("aa430 Bauplan-Cache haengt die Corp-Blaupausen an",
+      "self._corp_blaupausen(client_id, chars)" in
+      _fn_src("_bd_fetch_all_owned_blueprints"))
+check("aa430 My Blueprints: Corp-Blaupausen mit Jobs markiert, Filter ueber Besitzer",
+      "self._corp_blaupausen(client_id, chars, mit_belegten=True)" in
+      _fn_src("_reload_my_blueprints")
+      and "bp_besitzer_passt(" in _fn_src("_apply_bp_filter"))
+check("aa430 der Filter bekommt die Directors (UserRole+15, aus _via_cids)",
+      "cell.data(Qt.UserRole + 15)" in _fn_src("_apply_bp_filter")
+      and '_b["_via_cids"] = ' in _fb430)
+check("aa430 My Blueprints Rechtsklick heisst 'New build plan' (oeffnet frisch)",
+      'a_plan = menu.addAction(" " + t("New build plan"))' in _src_txt
+      and 't("Add to build plan")' not in _src_txt)
+check("aa430 keine Corp mehr im Charakter-Dropdown (emm301)",
+      "_bp_corp_eintraege" not in _fn_src("_reload_character_combos")
+      and "def _bp_corp_eintraege" not in _src_txt
+      and "def _bp_corp_vorab" not in _src_txt)
+
+# ---------------------------------------------------------------- (aa429)
+# MISSING-SPALTE = WAS FUER DIESEN PLAN FEHLT (Nutzer 27.09.2026, Basilisk:
+# Mexallon "Missing -", Status "counted 0 - 748'440 missing"). Zeigt sie
+# "genug", kauft niemand nach, der nur die Spalte liest.
+from eve_trader.ui.mw_helpers import fehlt_spalte as _fs429
+check("aa429 fehlt_spalte: Hangar voll, Plan fehlt 748'440 -> Spalte 748'440 (live)",
+      _fs429(0, 748440) == (748440, True))
+check("aa429 ... Hangar fehlt mehr als live -> Hangar-Zahl bleibt",
+      _fs429(500, 100) == (500, False) and _fs429(0, 0) == (0, False))
+check("aa429 ... der Materialien-Reiter benutzt sie (und faerbt dann nicht gruen)",
+      "fehlt_spalte(" in _fn_src("_fill_material_tab")
+      and "elif _gedeckt and not _miss_live:" in _fn_src("_fill_material_tab"))
+
+# ---------------------------------------------------------------- (aa428)
+# DATACORES/DECRYPTOREN AUS DEM BESTAND (Nutzer 27.09.2026: "ich habe hier
+# Decryptoren als Bestand, aber das Tool legt mir diese in die
+# Einkaufsliste" - Einkaufsfenster: 105 benoetigt, 1'000 besessen, 105
+# fehlend). Der eingefrorene inv_buy stammte aus einem Moment ohne Bestand.
+from eve_trader.ui.mw_helpers import inv_kaufmenge as _ik428
+check("aa428 inv_kaufmenge: Bestand deckt alles -> nichts kaufen (105/105/1000)",
+      _ik428(105, 105, 1000) == 0)
+check("aa428 ... teilweise gedeckt -> nur der Rest (105/105/50 -> 55)",
+      _ik428(105, 105, 50) == 55)
+check("aa428 ... kein Bestand -> voller Bedarf, nie mehr als der Plan sagt",
+      _ik428(105, 105, 0) == 105 and _ik428(10, 105, 0) == 10 and _ik428(0, 105, 0) == 0)
+check("aa428 ... die Einkaufsliste (nur Fehlendes) rechnet Invention-Zeilen damit",
+      "return inv_kaufmenge(r.get(\"missing\", 0), r.get(\"total\", 0)" in
+      open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa427)
+# KEIN LESEN EINES NIE GESETZTEN ATTRIBUTS (Nutzer 27.09.2026, Optimierer am
+# Multiplan: "da sollen aber Namen stehen und keine Zahlen" - das Dropdown
+# zeigte #26888/#26890/#26892). Drei Stellen lasen `_bd_names`, das es
+# nirgends gibt; die Namensliste des Bauplans heisst `_bd_names_ref`. Das
+# `getattr(..., None) or {}` verschluckte es still: Optimierer zeigte
+# Nummern, "Buy missing again" schrieb die Nummer als Namen auf die
+# Einkaufsliste, "Check shortfall" nannte #IDs. Jede `getattr(self, "_bd_*")`-
+# Lesung braucht eine Zuweisung irgendwo in eve_trader (auch Tupel/setattr).
+# Die fruehere Ausnahme `_bd_runplan_erledigt_ts` ist seit emm336 weg - sie
+# wird jetzt gesetzt (beim Oeffnen aus den Haken, beim Haken gepflegt).
+import ast as _ast427, glob as _gl427
+_lese427, _setze427 = {}, set()
+for _p427 in _gl427.glob("eve_trader/**/*.py", recursive=True):
+    _baum427 = _ast427.parse(open(_p427, encoding="utf-8").read())
+    for _k427 in _ast427.walk(_baum427):
+        if (isinstance(_k427, _ast427.Attribute) and isinstance(_k427.ctx, _ast427.Store)
+                and _k427.attr.startswith("_bd_")):
+            _setze427.add(_k427.attr)
+        if (isinstance(_k427, _ast427.Call) and isinstance(_k427.func, _ast427.Name)
+                and _k427.func.id in ("getattr", "setattr") and len(_k427.args) >= 2
+                and isinstance(_k427.args[1], _ast427.Constant)
+                and isinstance(_k427.args[1].value, str)
+                and _k427.args[1].value.startswith("_bd_")):
+            if _k427.func.id == "setattr":
+                _setze427.add(_k427.args[1].value)
+            else:
+                _lese427.setdefault(_k427.args[1].value, _p427)
+_nie427 = sorted(n for n in _lese427 if n not in _setze427)
+check("aa427 jede getattr(self, \"_bd_*\")-Lesung hat irgendwo eine Zuweisung"
+      + (f" - nie gesetzt: {_nie427}" if _nie427 else ""),
+      len(_lese427) > 100 and not _nie427)
+check("aa427 ... der Optimierer holt die Enden-Namen aus _bd_names_ref",
+      '_namen_b = getattr(self, "_bd_names_ref", None)' in
+      open("eve_trader/ui/mw_optimizer.py", encoding="utf-8").read())
 
 # ---------------------------------------------------------------- (aa426)
 # VOR JEDER VEROEFFENTLICHUNG LAEUFT pruefe.py (Nutzer 27.09.2026: "vor

@@ -380,6 +380,34 @@ def schritt_key(schritt) -> str:
     return f"repro|{int((schritt or {}).get('erz') or 0)}"
 
 
+def schritte_durch_bestand(schritte, need, stock) -> set:
+    """Schluessel der Erz-Schritte, deren Minerale der Bestand SCHON deckt.
+
+    NUTZER 28.09.2026 (Basilisk): "compressed Ore wird als nicht covered
+    markiert, dabei habe ich das compressed ore zu Mineralien verarbeitet".
+    Bisher galt ein Erz-Schritt nur durch den Hand-Haken in Stufe 0 als
+    erledigt; ohne Haken stand das Erz als fehlend da, obwohl ALLE seine
+    Minerale laengst im Hangar lagen.
+
+    REGEL: liegt von JEDEM Mineral, das der Schritt decken soll, mindestens
+    der ganze Restbedarf (`need`, ohne Erz-Gutschrift) im fuer diesen Plan
+    zaehlenden Bestand (`stock`), ist das Erz ueberfluessig - gleich, ob der
+    Nutzer es reprocesst oder die Minerale anders beschafft hat. Fehlt auch
+    nur eines, bleibt der Schritt offen (Regel 3). Unrefined-Schritte (Weg A,
+    `built`) und Gratis-Erz fallen nicht darunter."""
+    aus = set()
+    for st in (schritte or []):
+        if st.get("built") or st.get("gratis") or not st.get("erz"):
+            continue
+        deckt = st.get("deckt") or {}
+        if not deckt:
+            continue
+        if all(int((stock or {}).get(int(m), 0) or 0)
+               >= int((need or {}).get(int(m), 0) or 0) for m in deckt):
+            aus.add(schritt_key(st))
+    return aus
+
+
 def rest_anpassen(need: dict, schritte, abgehakt) -> dict:
     """Restbedarf {tid: Menge} um NICHT abgehakte Schritte anpassen: die
     gedeckten Minerale sinken (nie unter 0, 0 faellt raus), das Erz kommt

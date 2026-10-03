@@ -3,7 +3,11 @@ r"""Sprache -> Text (Deutsch) fuer die YouTube-Tutorials (19.09.2026).
 Aufruf:  python werkzeuge\transkribiere.py "C:\Pfad\video.mp4" [weitere ...]
 oder:    Datei(en) auf werkzeuge\transkribiere.bat ziehen.
 
-Schreibt neben jede Datei SECHS Dateien (Fassung 4, 20.09.2026):
+SEIT FASSUNG 6 (02.10.2026) NUR NOCH <name>.de.txt - der Rest unten ist
+Geschichte (die Helfer fuer SRT/CSV/Englisch stehen noch im Code, werden
+aber nicht mehr aufgerufen).
+
+Frueher schrieb es neben jede Datei SECHS Dateien (Fassung 4, 20.09.2026):
   <name>.de.txt       Fliesstext mit Zeitmarken je Absatz (zum Lesen)
   <name>.de.srt       Untertitel (fuer YouTube)
   <name>.en.txt       englische Fassung, gleiche Absaetze   <- NEU
@@ -55,7 +59,7 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "0")
 warnings.filterwarnings("ignore")
 
 MODELL = os.environ.get("MOMA_WHISPER", "medium")
-FASSUNG = 5
+FASSUNG = 6
 # Name in der Spalte `speaker`. Dubbing Studio trennt danach die Stimmen;
 # bei einem Sprecher ist nur wichtig, dass ueberall dasselbe steht.
 SPRECHER = os.environ.get("MOMA_SPRECHER", "Peanut Motor")
@@ -220,6 +224,10 @@ def schreibe_sprechskript(pfad, bl, kopf=""):
 
 
 def transkribiere(pfad):
+    """NUR NOCH DEUTSCHER TEXT (Fassung 6, 02.10.2026, Nutzer: "die
+    transkribiere.bat muss nur noch auf Deutsch txt raushauen, sonst
+    nichts"). Ein Durchlauf, eine Datei: <name>.de.txt neben dem Video.
+    Kein Englisch, kein SRT, keine CSV, kein Sprechskript mehr."""
     from faster_whisper import WhisperModel
     t0 = time.time()
     print(f"Modell {MODELL} laden (beim ersten Mal ~1,5 GB Download, ohne Anzeige - bitte warten) ...", flush=True)
@@ -227,67 +235,22 @@ def transkribiere(pfad):
     print(f"  {time.time() - t0:.0f} s. Transkribiere {os.path.basename(pfad)} ...", flush=True)
     segmente, info = modell.transcribe(pfad, language="de", beam_size=5,
                                        vad_filter=True)
-    basis = os.path.splitext(pfad)[0]
-    srt, gesammelt = [], []
-    for i, seg in enumerate(segmente, 1):
+    gesammelt = []
+    for seg in segmente:
         text = seg.text.strip()
         if not text:
             continue
-        srt.append(f"{i}\n{_srt_zeit(seg.start)} --> {_srt_zeit(seg.end)}\n{text}\n")
         gesammelt.append(seg)
         print(f"  {_srt_zeit(seg.start)}  {text[:80]}", flush=True)
     bl = bloecke(gesammelt)
-    # ZWEITER LAUF: dasselbe Modell, aber task="translate" -> Englisch.
-    en_texte, en_srt = None, []
-    if MIT_EN:
-        print("  Englische Fassung (zweiter Durchlauf, task=translate) ...",
-              flush=True)
-        en_seg, _ = modell.transcribe(pfad, language="de", beam_size=5,
-                                      vad_filter=True, task="translate")
-        en_gesammelt = []
-        for i, seg in enumerate(en_seg, 1):
-            text = seg.text.strip()
-            if not text:
-                continue
-            en_srt.append(f"{i}\n{_srt_zeit(seg.start)} --> "
-                          f"{_srt_zeit(seg.end)}\n{text}\n")
-            en_gesammelt.append(seg)
-        en_texte = zuordnen_en(bl, en_gesammelt)
-    kopf = (f"# Transkript (Deutsch) - {os.path.basename(pfad)} - "
-            f"Modell {MODELL} - Fassung {FASSUNG} - Dauer {info.duration:.0f} s")
-    with open(basis + ".de.txt", "w", encoding="utf-8") as f:
-        f.write(kopf + "\n\n")
+    ziel = os.path.splitext(pfad)[0] + ".de.txt"
+    with open(ziel, "w", encoding="utf-8") as f:
+        f.write(f"# Transkript (Deutsch) - {os.path.basename(pfad)} - "
+                f"Modell {MODELL} - Fassung {FASSUNG} - Dauer {info.duration:.0f} s\n\n")
         f.write("\n\n".join(
             f"[{int(b['start'] // 60):02d}:{int(b['start'] % 60):02d}] {b['text']}"
             for b in bl) + "\n")
-    with open(basis + ".de.srt", "w", encoding="utf-8") as f:
-        f.write("\n".join(srt))
-    dateien = [".de.txt", ".de.srt"]
-    if en_texte is not None:
-        with open(basis + ".en.txt", "w", encoding="utf-8") as f:
-            f.write(kopf.replace("(Deutsch)", "(English, machine translation)")
-                    + "\n\n")
-            f.write("\n\n".join(
-                f"[{int(b['start'] // 60):02d}:{int(b['start'] % 60):02d}] {tx}"
-                for b, tx in zip(bl, en_texte) if tx) + "\n")
-        with open(basis + ".en.srt", "w", encoding="utf-8") as f:
-            f.write("\n".join(en_srt))
-        dateien += [".en.txt", ".en.srt"]
-    schreibe_dub_csv(basis + ".dub.csv", bl, en=en_texte)
-    schreibe_sprechskript(basis + ".sprech.txt", bl, kopf)
-    dateien += [".dub.csv", ".sprech.txt"]
-    print(f"FERTIG ({time.time() - t0:.0f} s):", flush=True)
-    for e in dateien:
-        print(f"  {basis}{e}", flush=True)
-    print("  -> .dub.csv in ElevenLabs Dubbing Studio (Manual Dub) laden.",
-          flush=True)
-    if en_texte is not None:
-        print("  -> Das Englisch ist MASCHINELL. EVE-Begriffe (Blueprint,\n"
-              "     Invention, ISK, Strukturnamen) vorher durchsehen.",
-              flush=True)
-    else:
-        print("  -> Ohne Englisch gelaufen (MOMA_EN=0): die Spalte\n"
-              "     'translation' ist leer.", flush=True)
+    print(f"FERTIG ({time.time() - t0:.0f} s):  {ziel}", flush=True)
 
 
 if __name__ == "__main__":

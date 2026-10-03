@@ -198,6 +198,41 @@ class MainWindowHelpers:
                           "activity_id": _j.get("activity_id"),
                           "start_ts": _ts,
                           "fertig_ts": _fts})
+        # LAUFENDE JOBS GLEICH BEIM START ZUORDNEN (Nutzer 28.09.2026: "wenn
+        # ich Plan 1 Intermediates gebaut habe und die Composites starte,
+        # dann mit Plan 2 die Intermediates beginne - geht das mit der
+        # Bestandsreservierung?" -> "ja genau so"). Das Material eines
+        # gestarteten Jobs ist im Spiel weg; bisher hielt Plan 1 seinen
+        # Anspruch darauf, bis der Job ABGELIEFERT war, und die frischen
+        # Intermediates von Plan 2 galten so lange als Plan 1s. Mit der
+        # Zuordnung gibt `_reserve_map_mitlaufend` (ueber `_belegt_fuer_plan`)
+        # die Zutaten ab dem naechsten Bestandsabruf frei. Als "fertig" gilt
+        # hier der START - er muss nach dem Einfrieren liegen. Fortschritt
+        # zaehlt weiter NUR, was abgeliefert ist (`_belegt_s` liest die
+        # gelieferten Jobs). SEIT 28.09.2026 (Nutzer "ja, wenn das eine gute
+        # Loesung ist ... wir brauchen etwas, was fix haelt"): auch LAUFENDE
+        # Jobs gehen durch Prioritaet und Frage - dann ist ein Job ab dem
+        # Start zugeordnet, nicht erst beim Abliefern.
+        _laufend = []
+        _schon_da = {int(_j["job_id"]) for _j in _jobs}
+        _roh = getattr(self, "_bd_active_jobs_alle", None)
+        if _roh is None:
+            _roh = getattr(self, "_bd_active_jobs_map", None) or {}
+        for _lj in [_x for _xs in (_roh or {}).values()
+                    for _x in (_xs or [])]:
+            _ts = MainWindowHelpers._iso_job_ts(_lj.get("start_date"))
+            if _lj.get("job_id") is None or _ts is None:
+                continue
+            if int(_lj["job_id"]) in _schon_da:
+                continue
+            _laufend.append({"job_id": _lj.get("job_id"),
+                             "product_type_id": _lj.get("product_type_id"),
+                             "runs": _lj.get("runs"),
+                             "activity_id": _lj.get("activity_id"),
+                             "start_ts": _ts,
+                             "fertig_ts": _ts,
+                             "laeuft": True})
+        _jobs = _jobs + _laufend
         if not _jobs:
             return
         _plan_runs = {}
@@ -214,7 +249,9 @@ class MainWindowHelpers:
         _klicks = _st.run_klicks_fuer_plan(
             _pid, aelter_als=_time_jz.time() - KLICK_FENSTER_SEK)
         _neu = job_zuordnen(_jobs, _klicks, _st.job_zuordnung_alle(),
-                            _pid, _plan_runs)
+                            _pid, _plan_runs,
+                            fremde_klicks=_st.run_klicks_andere(
+                                _pid, aelter_als=_time_jz.time() - KLICK_FENSTER_SEK))
         for _jid, (_t, _r) in _neu.items():
             _st.job_zuordnung_setzen(_jid, _pid, _t, _r, "klick")
         if seit_ts is None:
@@ -226,6 +263,12 @@ class MainWindowHelpers:
             seit_ts, umstritten_seit=_um_seit)
         for _jid, (_t, _r) in _eind.items():
             _st.job_zuordnung_setzen(_jid, _pid, _t, _r, "eindeutig")
+        # BAU-PRIORITAET (Kartenreihenfolge): was jetzt noch niemandem
+        # gehoert, verteilt die Rangfolge - gespeichert, s. dort.
+        try:
+            self._prio_zuordnung_schreiben(_jobs)
+        except Exception as _pe:
+            self._log_exception("Bau-Prioritaet: Jobs", str(_pe))
         # WAS DANACH NOCH OFFEN IST, wird EINMAL gefragt (Stufe C, Teil 2).
         # Hier wird nur GESAMMELT - gefragt wird ueber die Zeile im
         # Runplaner, nie von selbst. `_bd_job_offen` ist transient wie
@@ -236,6 +279,132 @@ class MainWindowHelpers:
                 _jobs, _plan_runs, _is_react, _st.job_zuordnung_alle(),
                 self._umstrittene_items(getattr(self, "settings", None), _pid),
                 seit_ts, umstritten_seit=_um_seit)]
+        try:
+            self._bd_job_prio = self._prio_zur_pruefung(_plan_runs)
+        except Exception as _pp:
+            self._bd_job_prio = []
+            self._log_exception("Bau-Prioritaet: Pruefliste", str(_pp))
+
+    def _aktive_jobs_filtern(self):
+        """Laufende Jobs NUR fuer den Plan, dem sie gehoeren (Nutzer
+        28.09.2026, gemessen mit werkzeuge/szenario_prioritaet.py: lief ein
+        Job von Plan A, zeigten auch B und C seine Runs als erledigt - der
+        Runplaner zaehlte `_bd_active_jobs_map` ungeteilt fuer JEDEN Plan).
+
+        Quelle ist `job_zuordnung` - dieselbe wie bei abgelieferten Jobs:
+          * zugeordnet zu DIESEM Plan -> `_bd_active_jobs_map` (zaehlt),
+          * zugeordnet zu einem ANDEREN Plan -> nirgends,
+          * noch NIEMANDEM zugeordnet (und nach dem Einfrieren gestartet) ->
+            `_bd_active_unzugeordnet`: zaehlt NICHT als erledigt, die Zeile
+            sagt "laeuft, noch keinem Plan zugeordnet" (Regel 3 - lieber
+            eine offene Zeile als Material, das doppelt abgebucht wird).
+        Ungespeicherter Plan (keine Plan-Id): wie bisher alles, er kann
+        keine Zuordnung haben. Die Rohliste bleibt in `_bd_active_jobs_alle`
+        (die Zuordnung selbst braucht ALLE Jobs)."""
+        from .. import store as _st
+        alle = getattr(self, "_bd_active_jobs_alle", None)
+        if alle is None:
+            alle = dict(getattr(self, "_bd_active_jobs_map", None) or {})
+            self._bd_active_jobs_alle = alle
+        pid = getattr(self, "_bd_open_plan_id", None)
+        if pid is None:
+            self._bd_active_jobs_map = dict(alle)
+            self._bd_active_unzugeordnet = {}
+            return
+        zu = _st.job_zuordnung_fuer_plan(pid) or {}
+        verg = _st.job_zuordnung_alle() or {}
+        seit = None
+        for _p in ((getattr(self, "settings", None) or {}).get("bau_saved_plans") or []):
+            if str(_p.get("id")) == str(pid):
+                seit = (_p.get("frozen") or {}).get("ts")
+                break
+        mein, offen = {}, {}
+        for _t, _js in (alle or {}).items():
+            for _j in (_js or []):
+                try:
+                    _jid = int(_j.get("job_id"))
+                except (TypeError, ValueError):
+                    continue          # ohne job_id kein Beleg - zaehlt nicht
+                if _jid in zu:
+                    mein.setdefault(_t, []).append(_j)
+                elif _jid not in verg:
+                    _st_ts = MainWindowHelpers._iso_job_ts(_j.get("start_date"))
+                    if seit is None or (_st_ts is not None and _st_ts >= float(seit)):
+                        offen.setdefault(_t, []).append(_j)
+        self._bd_active_jobs_map = mein
+        self._bd_active_unzugeordnet = offen
+
+    def _prio_zuordnung_schreiben(self, jobs_geliefert):
+        """Noch niemandem gehoerende gelieferte Jobs nach BAU-PRIORITAET
+        (Kartenreihenfolge, Nutzer 28.09.2026) verteilen und SPEICHERN
+        (Quelle "prioritaet"). Gespeichert, weil Umsortieren sonst schon
+        gebaute Jobs rueckwirkend verschob; der Nutzer bestaetigt oder
+        haengt sie im Frage-Dialog um (dann "nutzer").
+
+        Gerechnet ueber ALLE offenen, eingefrorenen Plaene mit Rang, damit
+        #1 zuerst satt wird (`prio_jobs_zuteilen`, rein). `jobs_geliefert`
+        im Format von `_job_zuordnung_nachfuehren` (fertig_ts). Rueckgabe:
+        {job_id: plan_id} der neu geschriebenen."""
+        from .. import store as _st
+        _s = getattr(self, "settings", None) or {}
+        _rang = MainWindowHelpers.plan_rang(_s)
+        _jobs = [dict(_j, _ts=_j.get("fertig_ts")) for _j in (jobs_geliefert or [])
+                 if _j.get("fertig_ts") is not None and _j.get("job_id") is not None]
+        if not _rang or not _jobs:
+            return {}
+        _nach_id = {str(p.get("id")): p for p in (_s.get("bau_saved_plans") or [])}
+        _plaene = []
+        for _pid_s, _r in sorted(_rang.items(), key=lambda kv: kv[1]):
+            _p = _nach_id.get(_pid_s) or {}
+            _frz = _p.get("frozen") or {}
+            _snap = _frz.get("plan_snapshot")
+            if not _snap or not _frz.get("ts"):
+                continue
+            _seit = float(_frz["ts"])
+            _runs = MainWindowHelpers._plan_snapshot_unpack(_snap).get("build_runs") or {}
+            _bel = {}
+            _zu = _st.job_zuordnung_fuer_plan(_p.get("id")) or {}
+            for _jid_z, _e in _zu.items():
+                try:
+                    _t = int(_e.get("type_id") or 0)
+                    _bel[_t] = _bel.get(_t, 0) + int(_e.get("runs") or 0)
+                except (TypeError, ValueError):
+                    continue
+            _plaene.append({"id": _p.get("id"), "runs": _runs, "seit": _seit,
+                            "belegt": _bel})
+        _rp = set(getattr(getattr(self, "_bd_recipes", None),
+                          "reaction_products", None) or ())
+        _, _verteilt = prio_jobs_zuteilen(
+            _jobs, _plaene, _st.job_zuordnung_alle().keys(),
+            lambda _t: int(_t) in _rp)
+        _nach_job = {int(_j["job_id"]): _j for _j in _jobs}
+        _neu = {}
+        for _jid, _pid in _verteilt.items():
+            _j = _nach_job.get(int(_jid)) or {}
+            if _st.job_zuordnung_setzen(int(_jid), _pid, _j.get("product_type_id"),
+                                        _j.get("runs"), "prioritaet"):
+                _neu[int(_jid)] = _pid
+        return _neu
+
+    def _prio_zur_pruefung(self, plan_runs):
+        """Nach Prioritaet verteilte, noch nicht bestaetigte Jobs, die DIESEN
+        Plan betreffen (sein Item) - fuer den Frage-Dialog, vorbelegt mit dem
+        Plan, dem sie jetzt gehoeren. Format wie `_bd_job_offen`."""
+        from .. import store as _st
+        _pr = {int(t) for t, r in (plan_runs or {}).items() if int(r or 0) > 0}
+        aus = []
+        for _jid, _e in sorted((_st.job_zuordnung_mit_quelle("prioritaet") or {}).items()):
+            try:
+                _t = int(_e.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if _t not in _pr:
+                continue
+            aus.append({"job_id": int(_jid), "type_id": _t,
+                        "runs": int(_e.get("runs") or 0),
+                        "fertig_ts": _e.get("ts"), "prio_plan": _e.get("plan_id"),
+                        "kandidaten": self._job_plan_kandidaten(_t)})
+        return aus
 
     def _job_plan_kandidaten(self, type_id):
         """Welche gespeicherten Plaene kommen fuer diesen Job in Frage?
@@ -301,7 +470,8 @@ class MainWindowHelpers:
         """
         from .. import store as _st
         _offen = {int(_f["job_id"]): _f
-                  for _f in (getattr(self, "_bd_job_offen", None) or [])}
+                  for _f in (list(getattr(self, "_bd_job_offen", None) or [])
+                             + list(getattr(self, "_bd_job_prio", None) or []))}
         _n = 0
         for _jid, _plan in (antworten or {}).items():
             _f = _offen.get(int(_jid))
@@ -577,7 +747,7 @@ class MainWindowHelpers:
 
     @staticmethod
     def _reserve_map_mitlaufend(plan, reserve_map, checked_ts, assignments,
-                                stock_seen_ts, belegt=None):
+                                stock_seen_ts, belegt=None, haken_runs=None):
         """Reservierung, die dem Baufortschritt FOLGT statt beim Speichern
         stehenzubleiben.
 
@@ -615,7 +785,8 @@ class MainWindowHelpers:
         Gibt eine NEUE Karte zurueck, die Eingaben bleiben unangetastet.
         """
         out = {int(t): int(q) for t, q in (reserve_map or {}).items()}
-        if (not checked_ts and not belegt) or not assignments:
+        _br_plan = (plan or {}).get("build_runs") or {}
+        if (not checked_ts and not belegt) or (not assignments and not _br_plan):
             return out
         # Geplante und erledigte Runs je Item aus den Zuteilungen.
         geplant, erledigt = {}, {}
@@ -635,6 +806,49 @@ class MainWindowHelpers:
             if stock_seen_ts is None or float(_ts) > float(stock_seen_ts):
                 continue          # ESI hat den Verbrauch noch nicht gesehen
             erledigt[_tid] = erledigt.get(_tid, 0) + _runs
+        # GESPEICHERTE ZUTEILUNGEN TRUGEN NIE EINE type_id (Befund 28.09.2026,
+        # GEMESSEN in der settings.json des Nutzers: alle 17 Plaene haben nur
+        # char/item/runs/jobs/seconds/stage/slots/char_done). `geplant` blieb
+        # dadurch leer, jeder Beleg fiel oben durch - Multiplan 1 hielt 129'375
+        # Phenolic reserviert, obwohl alle Verbraucher laengst gebaut waren
+        # (mit Beleg: 2'457), und der Basilisk sah seinen Hangar als leer.
+        # Rueckfall: die Plan-Runs aus dem Schnappschuss (`build_runs` ist
+        # die Summe der Zuteilungen je Item - dieselbe Zahl).
+        for _t_b, _r_b in _br_plan.items():
+            try:
+                _t_b, _r_b = int(_t_b), int(_r_b or 0)
+            except (TypeError, ValueError):
+                continue
+            if _r_b > 0 and _t_b not in geplant:
+                geplant[_t_b] = _r_b
+        # HAND-HAKEN ALTER PLAENE (Nutzer 28.09.2026, "ja genau"): ihre
+        # Zuteilungen tragen keine tid/char_id, der Schluessel-Abgleich oben
+        # findet also nichts. `haken_runs` (= `checked_runplan_runs`,
+        # {"stufe|tid": erledigte Runs}) kennt die Runs je Item; der Haken
+        # zaehlt erst, wenn der Bestand juenger ist als der JUENGSTE Haken
+        # dieses Items (dieselbe ESI-Sperre). Ohne Stempel: nichts.
+        _h_ts = {}
+        for _k_h, _ts_h in (checked_ts or {}).items():
+            _teile = str(_k_h).split("|")
+            if len(_teile) != 3:
+                continue
+            try:
+                _sch = (_teile[0], int(_teile[2]))
+                _h_ts[_sch] = max(_h_ts.get(_sch, 0.0), float(_ts_h))
+            except (TypeError, ValueError):
+                continue
+        for _k_h, _n_h in (haken_runs or {}).items():
+            _st_h, _, _t_h = str(_k_h).rpartition("|")
+            try:
+                _t_h, _n_h = int(_t_h), int(_n_h or 0)
+            except (TypeError, ValueError):
+                continue
+            _ts_h = _h_ts.get((_st_h, _t_h))
+            if _n_h <= 0 or _t_h not in geplant or _ts_h is None:
+                continue
+            if stock_seen_ts is None or _ts_h > float(stock_seen_ts):
+                continue          # ESI hat den Verbrauch noch nicht gesehen
+            erledigt[_t_h] = min(geplant[_t_h], max(erledigt.get(_t_h, 0), _n_h))
         for _tid, _n in (belegt or {}).items():
             try:
                 _tid = int(_tid)
@@ -662,6 +876,69 @@ class MainWindowHelpers:
                 if out[_m] == 0:
                     out.pop(_m, None)
         return out
+
+    @staticmethod
+    def plan_rang(settings):
+        """BAU-PRIORITAET = Reihenfolge der Karten in "My build plans"
+        (Nutzer-Entscheid 28.09.2026: "vielleicht koennen wir eine Art
+        Zuordnung machen, welchen Plan man als erstes baut, als 2tes usw. ...
+        und dementsprechend sind die Mats immer klar" -> "Kartenreihenfolge").
+
+        {str(plan_id): Rang 1..n} fuer die OFFENEN Plaene (nicht
+        abgeschlossen, kein Buendel-Mitglied). Die Folge ist die eigene
+        (Arrange, `bau_plan_reihenfolge`); Plaene, die dort noch fehlen,
+        haengen in Speicher-Reihenfolge hinten an. Rang 1 bekommt Bestand und strittige
+        Jobs zuerst. Rein und ohne Fenster pruefbar."""
+        s = settings or {}
+        plaene = list(s.get("bau_saved_plans") or [])
+        _mitgl = MainWindowHelpers.buendel_mitglieder(s)
+        # NUR DEINE EIGENE FOLGE (Nutzer 28.09.2026, "ja alles bauen"): die
+        # Sortierung nach Fortschritt aenderte die Prioritaet von selbst -
+        # Material wanderte zwischen Plaenen, ohne dass er etwas tat. Jetzt
+        # zaehlt die zuletzt von Hand angeordnete Folge, auch wenn die
+        # Karten gerade nach Fortschritt angezeigt werden (die "#n" auf der
+        # Karte sagt dann, was gilt).
+        folge = MainWindowHelpers.plan_folge(s)
+        _pos = {str(p): i for i, p in enumerate(folge)}
+        offen = [p for p in plaene
+                 if p.get("id") is not None and not p.get("done_manual")
+                 and str(p.get("id")) not in _mitgl]
+        offen.sort(key=lambda p: (_pos.get(str(p.get("id")), 10 ** 6),
+                                  plaene.index(p)))
+        return {str(p.get("id")): i + 1 for i, p in enumerate(offen)}
+
+    @staticmethod
+    def plan_folge(settings):
+        """Die eigene Karten-Folge VOLLSTAENDIG: jeder gespeicherte Plan hat
+        einen Platz.
+
+        NEUE PLAENE UEBER DIE FERTIGEN (Nutzer 29.09.2026: "neu erstellte
+        Bauplaene sollten nicht ganz unten gelistet werden ... sondern ueber
+        den bereits fertigen, in meinem Fall auf Position 3, weil Pos. 1 und
+        2 schon angefangen und von mir fixiert wurden"). Vorher bekam ein
+        Plan, der noch nicht in `bau_plan_reihenfolge` stand, den Platz
+        10**6 - ganz unten, unter allen abgeschlossenen, mit Rang #6.
+        Jetzt: fehlende OFFENE Plaene (in Speicher-Reihenfolge) direkt VOR
+        den ersten abgeschlossenen, fehlende abgeschlossene ans Ende. Die
+        Plaene, die er selbst angeordnet hat, bleiben wo sie sind.
+        Rein; aendert die Einstellungen nicht."""
+        s = settings or {}
+        plaene = [p for p in (s.get("bau_saved_plans") or []) if p.get("id") is not None]
+        ids = [str(p.get("id")) for p in plaene]
+        _da = set(ids)
+        folge = []
+        for x in (s.get("bau_plan_reihenfolge") or []):
+            if str(x) in _da and str(x) not in folge:
+                folge.append(str(x))
+        _drin = set(folge)
+        fertig = {str(p.get("id")) for p in plaene if p.get("done_manual")}
+        fehlt = [i for i in ids if i not in _drin]
+        if not fehlt:
+            return folge
+        neu_offen = [i for i in fehlt if i not in fertig]
+        neu_fertig = [i for i in fehlt if i in fertig]
+        k = next((n for n, x in enumerate(folge) if x in fertig), len(folge))
+        return folge[:k] + neu_offen + folge[k:] + neu_fertig
 
     @staticmethod
     def buendel_mitglieder(settings):
@@ -1080,7 +1357,8 @@ class MainWindowHelpers:
                         p.get("checked_runplan_ts") or {},
                         p.get("assignments") or [],
                         (p.get("frozen") or {}).get("stock_seen_ts"),
-                        belegt=MainWindowHelpers._belegt_fuer_plan(p))
+                        belegt=MainWindowHelpers._belegt_fuer_plan(p),
+                        haken_runs=p.get("checked_runplan_runs"))
                 except Exception:
                     rm = p.get("reserve_map") or {}
             return {int(t): int(q or 0) for t, q in (rm or {}).items()}
@@ -1117,10 +1395,21 @@ class MainWindowHelpers:
         agg = {}
         labels = []
         _mitgl = MainWindowHelpers.buendel_mitglieder(settings)
+        # BAU-PRIORITAET (28.09.2026, Nutzer-Entscheid "Kartenreihenfolge"):
+        # ein Plan sieht nur die Reservierungen der Plaene VOR ihm. Ein
+        # neuerer Plan weiter unten kann ihm also kein Material mehr
+        # "wegnehmen"; ein Plan ohne Rang (ungespeichert, abgeschlossen)
+        # steht hinten und sieht wie bisher alle.
+        _rang = MainWindowHelpers.plan_rang(settings)
+        _mein = (_rang.get(str(exclude_plan_id))
+                 if exclude_plan_id is not None else None)
         for p in (settings or {}).get("bau_saved_plans", []) or []:
             if not p.get("reserve"):
                 continue
             if exclude_plan_id is not None and p.get("id") == exclude_plan_id:
+                continue
+            _sein = _rang.get(str(p.get("id")))
+            if _mein is not None and _sein is not None and _sein > _mein:
                 continue
             # Buendel-Mitglied: reserviert nicht noch einmal neben dem Buendel.
             if str(p.get("id")) in _mitgl:
@@ -1171,7 +1460,8 @@ class MainWindowHelpers:
                         p.get("checked_runplan_ts") or {},
                         p.get("assignments") or [],
                         (p.get("frozen") or {}).get("stock_seen_ts"),
-                        belegt=MainWindowHelpers._belegt_fuer_plan(p))
+                        belegt=MainWindowHelpers._belegt_fuer_plan(p),
+                        haken_runs=p.get("checked_runplan_runs"))
                 except Exception:
                     rm = p.get("reserve_map") or {}
             if not rm:
@@ -1348,7 +1638,7 @@ def stufe_ist_reaktion(stage) -> bool:
 
 
 def job_zuordnen(jobs, klicks, vergeben, plan_id, plan_runs,
-                 fenster_sek=KLICK_FENSTER_SEK):
+                 fenster_sek=KLICK_FENSTER_SEK, fremde_klicks=None):
     """Welche ESI-Jobs gehoeren DIESEM Plan - belegt durch deine Klicks?
 
     DIE LOGIK, und sie ist bewusst herum (Skizze 21.09.2026, Punkt 2.1):
@@ -1382,9 +1672,22 @@ def job_zuordnen(jobs, klicks, vergeben, plan_id, plan_runs,
       klicks  [{tid, runs, ts, reaktion}]
       plan_runs {tid: geplante Runs}   - der Deckel
     Rueckgabe: {job_id: (type_id, runs)} - die neu zuzuordnenden Jobs.
+
+    DER LETZTE KLICK VOR DEM JOBSTART GEWINNT (Nutzer 28.09.2026, "ja alles
+    bauen"): `fremde_klicks` sind die Klicks der ANDEREN Plaene. Hat dort
+    jemand dasselbe Item mit derselben Run-Zahl SPAETER (aber noch vor dem
+    Start) geklickt, gehoert der Job dem anderen Plan - vorher bekam ihn
+    der Plan, den man zuerst oeffnete.
     """
     if not jobs or not klicks or plan_id is None:
         return {}
+    _fremd = []
+    for k in (fremde_klicks or []):
+        try:
+            _fremd.append((int(k["tid"]), int(k["runs"]), float(k["ts"]),
+                           bool(k.get("reaktion"))))
+        except (KeyError, TypeError, ValueError):
+            continue
     _pr = {int(t): int(r or 0) for t, r in (plan_runs or {}).items()}
     # Runs, die dieser Lauf dem Item schon zugeteilt hat - gegen den Deckel.
     # Was FRUEHERE Laeufe zugeteilt haben, steckt in `vergeben`: jene Jobs
@@ -1433,6 +1736,7 @@ def job_zuordnen(jobs, klicks, vergeben, plan_id, plan_runs,
             continue
         if _schon.get(tid, 0) + runs > _grenze:
             continue
+        _mein = None
         for k_tid, k_runs, k_ts, k_reaktion in _klicks:
             if k_tid != tid or k_runs != runs:
                 continue
@@ -1442,9 +1746,15 @@ def job_zuordnen(jobs, klicks, vergeben, plan_id, plan_runs,
             # nichts belegen, was vorher schon lief.
             if jts < k_ts or jts - k_ts > float(fenster_sek):
                 continue
-            aus[jid] = (tid, runs)
-            _schon[tid] = _schon.get(tid, 0) + runs
-            break
+            _mein = k_ts if _mein is None else max(_mein, k_ts)
+        if _mein is None:
+            continue
+        if any(f_tid == tid and f_runs == runs and f_re == ist_reaktion
+               and _mein < f_ts <= jts
+               for f_tid, f_runs, f_ts, f_re in _fremd):
+            continue          # ein anderer Plan hat danach geklickt
+        aus[jid] = (tid, runs)
+        _schon[tid] = _schon.get(tid, 0) + runs
     return aus
 
 
@@ -1670,7 +1980,7 @@ def offene_job_fragen(jobs, plan_runs, is_react, vergeben, umstritten,
         if fts < _seit:
             continue
         raus.append({"job_id": jid, "type_id": tid, "runs": runs,
-                     "fertig_ts": fts})
+                     "fertig_ts": fts, "laeuft": bool(j.get("laeuft"))})
     raus.sort(key=lambda d: (d["fertig_ts"], d["job_id"]))
     return raus
 
@@ -1735,6 +2045,41 @@ def delivered_sicher(geliefert, plan_runs, umstritten, belegt=None):
     return aus
 
 
+def fehlt_spalte(fehlt_hangar, fehlt_live):
+    """Zahl fuer die Spalte "Missing" im Materialien-Reiter: (menge, von_live).
+
+    Nutzer 27.09.2026 (Basilisk x28): Mexallon "Owned 1.98M, Missing -",
+    daneben rot "counted 0 - 748'440 missing for the remaining runs". Die
+    Spalte rechnete Benoetigt minus HANGAR, der Status mit dem Bestand, der
+    fuer DIESEN Plan zaehlt (andere Plaene haben reserviert). Die Spalte log
+    also in die gefaehrliche Richtung - "genug da" -, waehrend die
+    Einkaufsliste richtig kaufte. Jetzt zeigt sie mindestens den
+    Live-Fehlbedarf; `von_live` sagt, dass die Zahl von dort kommt.
+    """
+    _h = max(0, int(fehlt_hangar or 0))
+    _l = max(0, int(fehlt_live or 0))
+    if _l > _h:
+        return _l, True
+    return _h, False
+
+
+def inv_kaufmenge(plan_fehlt, benoetigt, bestand):
+    """Kaufmenge fuer Datacores/Decryptoren auf der Einkaufsliste.
+
+    Nutzer 27.09.2026: "ich habe hier Decryptoren als Bestand, aber das Tool
+    legt mir diese in die Einkaufsliste" (Einkaufsfenster: Datacore 105
+    benoetigt, 1'000 besessen, 105 fehlend). `plan_fehlt` ist `inv_buy` des
+    Plans - beim EINGEFRORENEN Plan der Stand vom Einfrier-Tag; war der
+    Bestand da nicht geladen, bleibt dort fuer immer der volle Bedarf stehen.
+    Jetzt zaehlt zusaetzlich der Bestand, den der Materialien-Reiter zeigt:
+    gekauft wird hoechstens, was nach Abzug des Bestands wirklich fehlt -
+    und nie mehr, als der Plan sagt.
+    """
+    _f = max(0, int(plan_fehlt or 0))
+    _rest = max(0, int(benoetigt or 0) - int(bestand or 0))
+    return min(_f, _rest)
+
+
 def restbedarf_map(build_runs, build_mats, delivered=None):
     """Was die NOCH OFFENEN Runs an Material brauchen.
 
@@ -1767,7 +2112,7 @@ def restbedarf_map(build_runs, build_mats, delivered=None):
 
 
 def fehlbedarf_vorschau(build_runs, build_mats, out_qty_map, delivered,
-                        live_stock):
+                        live_stock, im_bestand=None):
     """Was wird beim Abarbeiten der RESTLICHEN Runs fehlen? (pur, testbar)
 
     NUTZER-VORFAELLE (Sitzung 8): 290 Ferrofluid, 805 Ferrogel, dann Hexite
@@ -1791,9 +2136,19 @@ def fehlbedarf_vorschau(build_runs, build_mats, out_qty_map, delivered,
     Rueckgabe: [(type_id, fehlt, rest_bedarf, da, rest_produktion)],
     absteigend nach Fehlmenge; leer = alles deckt sich."""
     rem, need = restbedarf_map(build_runs, build_mats, delivered)
+    # ZWEI ERLEDIGT-BEGRIFFE (Nutzer 30.09.2026: "kann man die Nebenwirkung
+    # verhindern?"). `delivered` (inkl. Hand-Haken) sagt, welche Runs ihre
+    # ZUTATEN schon verbraucht haben. Ob ihr ERZEUGNIS schon im Bestand
+    # steht, sagt nur ESI: `im_bestand` = Runs, deren Output geliefert oder
+    # als Pipeline in `live_stock` steckt. Ein abgehakter Run, den ESI noch
+    # nicht kennt, zaehlt deshalb weiter als kommende Produktion - sonst
+    # fehlte sein Erzeugnis kurz, bis der naechste Abruf ihn sieht.
+    # Ohne `im_bestand`: wie bisher dieselbe Karte fuer beides.
+    rem_p = (restbedarf_map(build_runs, {}, im_bestand)[0]
+             if im_bestand is not None else rem)
     out = []
     for m, bedarf in need.items():
-        prod = rem.get(m, 0) * int((out_qty_map or {}).get(m, 1) or 1)
+        prod = rem_p.get(m, 0) * int((out_qty_map or {}).get(m, 1) or 1)
         da = int((live_stock or {}).get(m, 0) or 0)
         bilanz = da + prod - bedarf
         if bilanz < 0:
@@ -1902,6 +2257,74 @@ def rest_und_budget(runs, budget):
     return r - weg, b - weg
 
 
+def budget_eigene_zuerst(zeilen, budget, eigene_lauf):
+    """Erledigt-Budget auf die Runplaner-Zeilen verteilen - LAUFENDE JOBS
+    ZUERST BEI DEM CHARAKTER, DER SIE FAEHRT.
+
+    Nutzer 29.09.2026 (Screenshot Basilisk): Nonlinear Metamaterials, 34 Runs
+    bei Banana Motor UND 34 bei Peanut Motor. Nur Peanut Motor hatte gebaut -
+    trotzdem bekam Banana Motors Zeile den blauen Lauf-Punkt. Das Budget war
+    je ITEM und wurde der Reihe nach verbraucht; Banana stand in der Liste
+    vor Peanut und nahm sich die 34 laufenden Runs von Peanut.
+
+    `zeilen` = [(schluessel, tid, plan_runs, charakter_name)] in der
+    Reihenfolge des Baums, `budget` = {tid: gedeckte Runs (geliefert +
+    laufend)}, `eigene_lauf` = {tid: {charakter_name: laufende Runs}}.
+    Rueckgabe ({schluessel: gedeckte Runs}, Rest-Budget).
+    Runde 1: jeder Charakter bekommt seine EIGENEN laufenden Runs.
+    Runde 2: der Rest (geliefert, ohne Charakter) der Reihe nach wie bisher.
+    Die Summe bleibt exakt wie vorher - es wird nur anders zugeteilt.
+    """
+    rest = {int(t): max(0, int(v or 0)) for t, v in (budget or {}).items()}
+    eigen = {int(t): {str(c): max(0, int(r or 0)) for c, r in (m or {}).items()}
+             for t, m in (eigene_lauf or {}).items()}
+    gedeckt = {}
+    for sk, tid, runs, cname in zeilen:
+        tid = int(tid)
+        own = eigen.get(tid, {}).get(str(cname), 0)
+        take = min(own, max(0, int(runs or 0)), rest.get(tid, 0))
+        if take > 0:
+            gedeckt[sk] = take
+            rest[tid] -= take
+            eigen[tid][str(cname)] = own - take
+    for sk, tid, runs, _cname in zeilen:
+        tid = int(tid)
+        offen = max(0, int(runs or 0)) - gedeckt.get(sk, 0)
+        take = min(offen, rest.get(tid, 0))
+        if take > 0:
+            gedeckt[sk] = gedeckt.get(sk, 0) + take
+            rest[tid] -= take
+    return gedeckt, rest
+
+
+def haken_nachtragen(zeilen, gehakt, erledigt):
+    """Welche Zeilen bekommen einen Haken ZURUECK (nach einer Umverteilung)?
+
+    Nutzer 29.09.2026: er hakte Peanut Motors Nonlinear-Zeile ab - und
+    Banana Motors Zeile bekam einen gruenen Haken, den er nie gesetzt hatte.
+    Die Regel "abgehakte Runs je Item ueberleben eine Umverteilung" gab die
+    gemerkten Runs der ERSTEN offenen Zeile, bevor die Zeile, die den Haken
+    wirklich traegt, sie verbraucht hatte.
+
+    `zeilen` = [(schluessel, item_schluessel, runs)], `gehakt` = Menge der
+    gesetzten Haken, `erledigt` = {item_schluessel: abgehakte Runs}.
+    Erst verbrauchen die WIRKLICH gehakten Zeilen ihre Runs, nur was dann
+    uebrig ist, wandert an offene Zeilen (nur ganze Zeilen). Rueckgabe: die
+    Schluessel, die nachgetragen werden.
+    """
+    rest = {k: max(0, int(v or 0)) for k, v in (erledigt or {}).items()}
+    for sk, ik, runs in zeilen:
+        if sk in gehakt:
+            rest[ik] = max(0, rest.get(ik, 0) - max(0, int(runs or 0)))
+    neu = []
+    for sk, ik, runs in zeilen:
+        r = max(0, int(runs or 0))
+        if sk not in gehakt and r > 0 and rest.get(ik, 0) >= r:
+            neu.append(sk)
+            rest[ik] -= r
+    return neu
+
+
 def plan_fortschritt_runs(plan_runs, geliefert, laufend=None, fremd=None,
                           plan_id=None, laufend_gewicht=0.5):
     """Fortschritt eines Bauplans in RUNS statt in Positionen.
@@ -1990,12 +2413,21 @@ def eigene_kopie_lage(noetig, user_runs, esi_runs, esi_kopien=None):
 
     DIE REGEL DAHINTER (Sitzung 21.09.2026): eine geratene Zahl darf die
     Anzeige steuern, nie die Rechnung. Hier wird nichts mehr geraten:
-      1. was der Nutzer getippt hat, gilt (`user_runs`);
-      2. sonst die kleinste eigene Kopie aus dem ESI-Cache (`esi_runs`,
-         dieselbe Quelle, aus der `_bpc_runs_by_tid` schon den Runs-Deckel
-         nimmt - EINE Wahrheit);
+      1. die kleinste eigene Kopie aus dem ESI-Cache (`esi_runs`, dieselbe
+         Quelle, aus der `_bpc_runs_by_tid` schon den Runs-Deckel nimmt -
+         EINE Wahrheit);
+      2. nur wenn der Cache sie NICHT kennt: das Feld "Runs/BPC"
+         (`user_runs`);
       3. sonst None: unbekannt heisst unbegrenzt (wie bei T1/BPO), NICHT
          "eine Riesenkopie".
+
+    REIHENFOLGE GETAUSCHT (Nutzer 28.09.2026, Multiplan 1, Flycatcher: der
+    Runplaner wollte 10 x 1 Run je Welle, im Hangar liegen 13 Kopien a 4
+    Runs): "man will IMMER die gesamte Blueprint verbrauchen ... ALLE Runs
+    durchziehen ... beim Endprodukt, NUR beim Endprodukt". GEMESSEN in
+    seiner settings.json: `own_bpc_runs_je_ende` Flycatcher = 1, Stork = 1 -
+    das Feld schlug die echte Kopiengroesse, daraus wurde "13 x 1". Kennt
+    der Cache die Kopie, gilt jetzt SIE; das Feld ist dann gesperrt.
     Die Kopienzahl ist, was der Plan braucht (`ceil`), gedeckelt auf die
     Stueckzahl, die wirklich im Hangar liegt (`esi_kopien`) - mehr Jobs
     als Blaupausen kann niemand fahren.
@@ -2006,9 +2438,9 @@ def eigene_kopie_lage(noetig, user_runs, esi_runs, esi_kopien=None):
         except (TypeError, ValueError):
             return 0
     n = max(1, _i(noetig))
-    je = _i(user_runs)
+    je = _i(esi_runs)
     if je < 1:
-        je = _i(esi_runs)
+        je = _i(user_runs)
     if je < 1:
         return None
     kop = -(-n // je)                     # ceil
@@ -2058,3 +2490,980 @@ def sell_preis_ziel_modus(ziel_preis, undercut_preis):
     if u > z:
         return u, "markt_statt_ziel"
     return z, "ziel"
+
+
+# ---- Corp-Blaupausen in My Blueprints (1.1.0) -------------------------------
+# Discord-Wunsch 27.09.2026 ("Blueprints im Corp-Hangar"). Rein, ohne Qt -
+# die aa-Suite prueft sie direkt.
+
+def eigener_preis_live(order_id, preis, buch):
+    """Preis der EIGENEN Order, wie das Orderbuch ihn gerade zeigt (emm321).
+
+    Nutzer-Meldung 01.10.2026 (Screenshots): nach dem Aendern im Spiel
+    meldete das Order-Update "ueberboten" - der "beste Buy" war seine EIGENE
+    neue Order (901'400, im Spiel mit Personen-Symbol), "deine Order" stand
+    noch auf dem alten Preis (901'000). Die eigenen Orders kommen von einem
+    langsamer aufgefrischten ESI-Endpunkt als das Orderbuch. Steht die
+    order_id im Orderbuch, gilt dessen Preis; sonst der ESI-Wert."""
+    try:
+        _p = ((buch or {}).get("ids") or {}).get(int(order_id))
+    except (TypeError, ValueError):
+        _p = None
+    return float(_p) if _p is not None else float(preis or 0.0)
+
+
+def reservierung_fragen(eintrag, multi_von=None):
+    """Beim SPEICHERN nach der Reservierung fragen? (emm315)
+
+    Nutzer 01.10.2026: "Dafuer muss nicht gefragt werden, nachdem wir einen
+    Bauplan schliessen/speichern OHNE zu freezen, dann gibt's auch nichts zu
+    reservieren." Gefragt wird nur, wenn der Plan EINGEFROREN ist, noch
+    nicht reserviert, etwas zu reservieren hat und kein Mitglied eines
+    Multi-Bauplans ist (dort reserviert das Buendel). ERSETZT "jedes
+    Speichern fragt" (30.09.2026)."""
+    e = eintrag or {}
+    return bool(e.get("frozen") and not e.get("reserve")
+                and e.get("reserve_map") and not multi_von)
+
+
+def hub_ort_id(hub_daten):
+    """Ort-Nummer des gewaehlten Hubs (emm313): Struktur-Hub = structure_id
+    (die Hub-Box traegt dort ein dict), NPC-Hub = Station aus hubs.NPC_HUBS
+    (die Hub-Box traegt die Region). None, wenn nicht bestimmbar."""
+    from .. import hubs as _hubs
+    if isinstance(hub_daten, dict):
+        try:
+            return int(hub_daten.get("structure_id") or 0) or None
+        except (TypeError, ValueError):
+            return None
+    try:
+        _reg = int(hub_daten)
+    except (TypeError, ValueError):
+        return None
+    for _k, _lbl, _rid, _sid in _hubs.NPC_HUBS:
+        if int(_rid) == _reg:
+            return int(_sid)
+    return None
+
+
+def standort_am_hub(ort, hub_id):
+    """Steht der Charakter am Hub? (emm313, Nutzer 01.10.2026: Meldung,
+    wenn der Trading-Charakter woanders ist als der gewaehlte Hub.)
+    True = angedockt genau dort; False = woanders (auch: im All, selbst im
+    Hub-System - Orders gehen dorthin, wo man angedockt ist); None = nicht
+    zu sagen (kein Standort oder kein Hub) - dann KEINE Meldung."""
+    if not ort or not hub_id:
+        return None
+    _hier = ort.get("structure_id") or ort.get("station_id")
+    try:
+        return bool(_hier) and int(_hier) == int(hub_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def job_fragen_gruppieren(offen, prio):
+    """Zeilen fuer "Which build plan do these jobs belong to?" (emm312).
+
+    Nutzer 01.10.2026: "es kommen enorm viele Fragen" - 4x Item 16679, 2x
+    16678 ... je EIN Job eine Zeile, alle schon per Bau-Prioritaet demselben
+    Plan gegeben. Prioritaets-Jobs (`prio`) desselben Items und desselben
+    Plans werden deshalb EINE Zeile (Runs summiert, eine Antwort fuer alle).
+    NICHT zugeordnete (`offen`) bleiben je Job eine Zeile: dort kann jeder
+    Job zu einem anderen Plan gehoeren.
+    Rueckgabe: [{type_id, runs, job_ids, ts_von, ts_bis, laeuft, prio_plan,
+    kandidaten}] - offene zuerst, dann die Gruppen in Reihenfolge des
+    ersten Auftretens."""
+    def _ts(_f):
+        try:
+            return float(_f.get("fertig_ts"))
+        except (TypeError, ValueError):
+            return None
+    zeilen = []
+    for _f in (offen or []):
+        zeilen.append({"type_id": int(_f["type_id"]),
+                       "runs": int(_f.get("runs") or 0),
+                       "job_ids": [int(_f["job_id"])],
+                       "ts_von": _ts(_f), "ts_bis": _ts(_f),
+                       "laeuft": bool(_f.get("laeuft")),
+                       "prio_plan": _f.get("prio_plan"),
+                       "name": _f.get("name"),
+                       "kandidaten": list(_f.get("kandidaten") or [])})
+    gruppen = {}
+    for _f in (prio or []):
+        _k = (int(_f["type_id"]), str(_f.get("prio_plan")), bool(_f.get("laeuft")))
+        _z = gruppen.get(_k)
+        if _z is None:
+            _z = gruppen[_k] = {"type_id": int(_f["type_id"]), "runs": 0,
+                                "job_ids": [], "ts_von": None, "ts_bis": None,
+                                "laeuft": bool(_f.get("laeuft")),
+                                "prio_plan": _f.get("prio_plan"),
+                                "name": _f.get("name"),
+                                "kandidaten": list(_f.get("kandidaten") or [])}
+            zeilen.append(_z)
+        _z["runs"] += int(_f.get("runs") or 0)
+        _z["job_ids"].append(int(_f["job_id"]))
+        _t = _ts(_f)
+        if _t is not None:
+            _z["ts_von"] = _t if _z["ts_von"] is None else min(_z["ts_von"], _t)
+            _z["ts_bis"] = _t if _z["ts_bis"] is None else max(_z["ts_bis"], _t)
+    return zeilen
+
+
+def ist_platzhalter_name(name):
+    """"#26378" ist KEIN Name, sondern der Ersatz, wenn keiner da war (Nutzer
+    30.09.2026: "nur Nummern ... und dann kommen sie auch so in den
+    Runplaner"). Wer Namen sammelt, darf so etwas nicht als bekannt merken -
+    sonst holt ihn niemand mehr nach."""
+    _s = str(name or "").strip()
+    return not _s or (_s.startswith("#") and _s[1:].isdigit())
+
+
+def bp_besitzer_passt(besitzer, want_char, via=None):
+    """Filter in My Blueprints: "All" zeigt alles, sonst die Zeilen des
+    gewaehlten Charakters. Eine Corp-Zeile (Besitzer = Corp-Nummer) steht
+    zusaetzlich beim Charakter, ueber den sie geladen wurde (`via`, der
+    Director). SEIT emm301 (Nutzer 30.09.2026) steht die Corp nicht mehr
+    selbst im Dropdown - ERSETZT "man waehlt Corp oder Charakter".
+    SEIT emm306 darf `via` eine LISTE sein: die Corp-Zeile steht unter JEDEM
+    Director der Corp (Nutzer 01.10.2026)."""
+    if want_char in (None, "all"):
+        return True
+    if besitzer == want_char:
+        return True
+    if isinstance(via, (list, tuple, set, frozenset)):
+        return want_char in via
+    return via is not None and via == want_char
+
+
+def corp_bp_ort(b, loc_names=None):
+    """Ort-Spalte einer Corp-Blaupause: "<Corp> · Corp hangar N" bzw.
+    "<Corp> · several hangars". None fuer eine Charakter-Blaupause. Die
+    location_id einer Corp-Blaupause ist das BUERO (ein Item), kein Ort mit
+    Namen - ohne Assets-Abruf nicht aufloesbar; deshalb nennt die Zeile Corp
+    und Hangar statt "#<Nummer>"."""
+    from ..sprache import t as _txt
+    _corp = (b or {}).get("_corp_name")
+    if not _corp:
+        return None
+    if b.get("_ort_gemischt"):
+        return _txt("{corp} · several hangars").format(corp=_corp)
+    _div = int(b.get("division") or 0)
+    if _div:
+        return _txt("{corp} · Corp hangar {n}").format(corp=_corp, n=_div)
+    return str(_corp)
+
+
+def corp_bp_hinweis(cb):
+    """Kurzer Zusatz fuer die Statuszeile von My Blueprints aus dem Ergebnis
+    von `_corp_blaupausen`: wie viele Corp-Blaupausen aus welcher Corp, und
+    beim Namen, warum eine Corp fehlt (neu verlinken, keine Director-Rolle,
+    Abruf gescheitert, kein Hangar gewaehlt). Leer, wenn der Corp-Schalter
+    aus ist - dann gibt es nichts zu sagen."""
+    from ..sprache import t as _txt
+    cb = cb or {}
+    if not cb.get("aktiv"):
+        return ""
+    if cb.get("keine_division"):
+        return _txt("Corp blueprints: no corp hangar selected in the settings")
+    teile = []
+    _corps = [str(c.get("name")) for c in (cb.get("corps") or []) if c.get("name")]
+    if _corps:
+        _n = sum(int(b.get("quantity", 1) or 1) for b in (cb.get("blueprints") or []))
+        teile.append(_txt("{n} corp blueprint(s) from {corps}").format(
+            n=_n, corps=", ".join(_corps)))
+    if cb.get("relink"):
+        teile.append(_txt("re-link for corp access: {names}").format(
+            names=", ".join(str(x) for x in cb["relink"])))
+    if cb.get("ohne_rolle"):
+        teile.append(_txt("no Director role in: {corps}").format(
+            corps=", ".join(str(x) for x in cb["ohne_rolle"])))
+    teile.extend(str(x) for x in (cb.get("failed") or []))
+    return " · ".join(teile)
+
+
+def vorstufen_erledigt(build_runs, build_mats, erledigt):
+    """Vorstufen, die NICHT MEHR GEBRAUCHT werden: {type_id: Plan-Runs}.
+
+    NUTZER 28.09.2026 (Multiplan 1, Phenolic Composites): "wie kann ich mehr
+    Composite Reactions brauchen ... ich habe schon alle Komponenten, die
+    ich benoetige?" Gemessen: 36 von 40 Runs geliefert, und ALLE Verbraucher
+    im Plan (Quantum Microprocessor, Fusion Thruster, Magpulse Thruster) waren
+    fertig - den Rest hatte der Hangar gedeckt. Das Werkzeug zeigte trotzdem
+    4 offene Runs und rechnete ihr Material in die Einkaufsliste.
+
+    REGEL: ein Bau-Item, von dem JEDER Verbraucher im Plan erledigt ist
+    (geliefert, laufend oder abgehakt - `erledigt` >= Plan-Runs), wird
+    selbst nicht mehr gebraucht. Weiter nach unten (die Vorstufe der
+    Vorstufe), bis sich nichts mehr aendert. Items OHNE Verbraucher im Plan
+    (das Endprodukt, die Buendel-Enden) faellt die Regel nie an - dort gibt
+    es nichts, woran sie sich halten koennte. Ein einziger offener
+    Verbraucher haelt die Vorstufe offen (Regel 3).
+
+    Rein und ohne Fenster pruefbar. Schluessel werden als int gelesen.
+    """
+    runs = {}
+    for _t, _r in (build_runs or {}).items():
+        try:
+            if int(_r or 0) > 0:
+                runs[int(_t)] = int(_r)
+        except (TypeError, ValueError):
+            continue
+    verbraucher = {}
+    for _c, _mats in (build_mats or {}).items():
+        try:
+            _c = int(_c)
+        except (TypeError, ValueError):
+            continue
+        if _c not in runs:
+            continue
+        for _m in (_mats or []):
+            try:
+                _mid = int(_m[0])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if _mid in runs and _mid != _c:
+                verbraucher.setdefault(_mid, set()).add(_c)
+    _erl = {}
+    for _t, _n in (erledigt or {}).items():
+        try:
+            _erl[int(_t)] = int(_n or 0)
+        except (TypeError, ValueError):
+            continue
+    fertig = {t for t, r in runs.items() if _erl.get(t, 0) >= r}
+    neu = {}
+    geaendert = True
+    while geaendert:
+        geaendert = False
+        for _t, _vs in verbraucher.items():
+            if _t in fertig or not _vs:
+                continue
+            if all(_v in fertig for _v in _vs):
+                fertig.add(_t)
+                neu[_t] = runs[_t]
+                geaendert = True
+    return neu
+
+
+def vorstufen_ins_budget(rest_budget, plan_runs, build_mats, erledigt, schon_fertig=()):
+    """Runplaner-Budget {type_id: erledigte Runs} um die Vorstufen-Regel
+    ergaenzen - gibt eine NEUE Karte zurueck.
+
+    NUTZER 28.09.2026, nach emm259: "die 4 Runs sind immer noch da".
+    GEMESSEN (planer_diagnose, Abschnitt VORSTUFEN-REGEL): Phenolic 40/40
+    erledigt, alle drei Verbraucher fertig - und trotzdem "erkannt: 0". Die
+    Regel lieferte nur NEU erkannte Items; Phenolic stand in `erledigt`
+    aber schon auf 40, weil `_rest_geliefert_jetzt` die Regel selbst
+    anwendet. Das Budget des Runplaners (nur ESI: 36) wurde darum nie
+    angehoben. Jetzt zaehlt jedes Item, das die Regel hier ODER dort
+    (`schon_fertig` = `_bd_vorstufen_fertig`) als nicht mehr gebraucht
+    fuehrt; es bekommt seine vollen Plan-Runs.
+    """
+    out = dict(rest_budget or {})
+    try:
+        _neu = set(vorstufen_erledigt(plan_runs, build_mats, erledigt))
+    except Exception:
+        _neu = set()
+    for _t in _neu | {int(x) for x in (schon_fertig or ())}:
+        if _t in out:
+            out[_t] = max(int(out.get(_t, 0) or 0),
+                          int((plan_runs or {}).get(_t, 0) or 0))
+    return out
+
+
+def prio_jobs_zuteilen(jobs, plaene, vergeben, ist_reaktion):
+    """Strittige, noch NIEMANDEM zugeordnete gelieferte Jobs nach BAU-
+    PRIORITAET verteilen (Nutzer-Entscheid 28.09.2026, Kartenreihenfolge).
+
+    `plaene` in Rang-Folge: [{"id", "runs": {tid: Plan-Runs},
+    "seit": Einfrier-Zeitpunkt, "belegt": {tid: schon belegte Runs}}].
+    `jobs`: gelieferte Jobs mit `job_id`, `product_type_id`, `runs`,
+    `activity_id`, `_ts` (Fertig-Zeitpunkt). `vergeben`: job_ids, die schon
+    in `job_zuordnung` stehen (Klick, eindeutig, deine Antwort - auch "zu
+    keinem") - die bleiben unangetastet. `ist_reaktion(tid)` sagt, ob das
+    Item per Reaktion (9/11) oder Fertigung (1) entsteht.
+
+    Aelteste Jobs zuerst; jeder Plan bekommt hoechstens seine offenen Runs
+    (Plan - belegt), nur Jobs, die NACH seinem Einfrieren fertig wurden.
+    GANZE JOBS (28.09.2026, weil die Zuordnung jetzt GESPEICHERT wird und
+    ein Job nur einem Plan gehoeren kann): ein Job geht an den ersten Plan
+    in der Rangfolge, in den er ganz passt; passt er nirgends ganz, bleibt
+    er eine offene Frage. Rueckgabe ({plan_id: {tid: Runs}},
+    {job_id: plan_id}).
+    """
+    rest = {}
+    for p in plaene or []:
+        _b = p.get("belegt") or {}
+        rest[p["id"]] = {int(t): max(0, int(r or 0) - int(_b.get(int(t), 0) or 0))
+                         for t, r in (p.get("runs") or {}).items()}
+    out = {p["id"]: {} for p in (plaene or [])}
+    verteilt = {}
+    _verg = set()
+    for _j in (vergeben or ()):
+        try:
+            _verg.add(int(_j))
+        except (TypeError, ValueError):
+            continue
+
+    def _schluessel(j):
+        return (float(j.get("_ts") or 0.0), int(j.get("job_id") or 0))
+    for j in sorted([j for j in (jobs or []) if j.get("job_id") is not None],
+                    key=_schluessel):
+        try:
+            jid = int(j["job_id"])
+            tid = int(j.get("product_type_id") or 0)
+            n = int(j.get("runs") or 0)
+        except (TypeError, ValueError):
+            continue
+        if jid in _verg or n <= 0 or j.get("_ts") is None:
+            continue
+        _act = j.get("activity_id")
+        if ist_reaktion(tid):
+            if _act not in (9, 11):
+                continue
+        elif _act != 1:
+            continue
+        for p in plaene or []:
+            if float(j["_ts"]) < float(p.get("seit") or 0.0):
+                continue
+            cap = rest[p["id"]].get(tid, 0)
+            if cap < n:
+                continue
+            out[p["id"]][tid] = out[p["id"]].get(tid, 0) + n
+            rest[p["id"]][tid] = cap - n
+            verteilt[jid] = p["id"]
+            break
+    return out, verteilt
+
+
+# ---------------------------------------------------------------------------
+# MULTIPLAN-VORSCHLAG (Nutzer 30.09.2026: "T1-Plan -> nur T1-Vorschlaege, T2-
+# Plan -> nur T2, nur Blaupausen, die wir haben, lohnenswert, und sie duerfen
+# die Marge nicht nach unten ziehen, nur erhoehen oder gleich halten").
+def vorschlag_tech(meta):
+    """Tech-Stufe aus meta_group_id: 2 -> "T2", 14 -> "T3", sonst "T1"."""
+    try:
+        m = int(meta) if meta is not None else 0
+    except (TypeError, ValueError):
+        m = 0
+    return "T2" if m == 2 else ("T3" if m == 14 else "T1")
+
+
+def vorschlag_kandidaten(econ, techs, vorhanden, plan_marge):
+    """Kandidaten aus der Wirtschaftlichkeit von My Blueprints.
+
+    `econ` = {bp_type: entry} (entry: category, meta, product_id, cost_unit,
+    profit, isk_h, opt_qty); `techs` = Tech-Stufen der Plan-Enden;
+    `vorhanden` = Produkte, die schon im Plan sind; `plan_marge` = Marge des
+    Plans in % (Gewinn / Kosten) oder None.
+    Nur Endprodukte mit Gewinn > 0, passender Tech-Stufe und eigener Marge
+    >= Plan-Marge: dann kann die Buendel-Marge (Summe Gewinn / Summe Kosten)
+    rechnerisch nicht sinken. Sortiert nach Marge absteigend."""
+    out, gesehen = [], set()
+    vorhanden = {int(x) for x in (vorhanden or ())}
+    for bp, e in (econ or {}).items():
+        pid = e.get("product_id")
+        cost, prof = e.get("cost_unit"), e.get("profit")
+        if pid is None or cost is None or prof is None:
+            continue
+        if e.get("category") != "end" or float(cost) <= 0 or float(prof) <= 0:
+            continue
+        if int(pid) in vorhanden or int(pid) in gesehen:
+            continue
+        if vorschlag_tech(e.get("meta")) not in set(techs or ()):
+            continue
+        marge = float(prof) / float(cost) * 100.0
+        if plan_marge is not None and marge < float(plan_marge):
+            continue
+        gesehen.add(int(pid))
+        out.append({"bp": bp, "tid": int(pid), "marge": marge,
+                    "profit": float(prof), "cost": float(cost),
+                    "isk_h": e.get("isk_h"), "opt_qty": e.get("opt_qty")})
+    out.sort(key=lambda x: (-x["marge"], x["tid"]))
+    return out
+
+
+def gemeinsam_anteil(kand_buy, plan_buy, preis):
+    """Anteil (%) des Einkaufswerts eines Kandidaten, dessen Materialien auch
+    der Plan einkauft - wertgewichtet (Menge x Preis). Ohne Preis/Menge None."""
+    ges = gem = 0.0
+    plan = {int(t) for t, q in (plan_buy or {}).items() if q}
+    for t, q in (kand_buy or {}).items():
+        try:
+            w = float(q or 0) * float(preis(int(t)) or 0)
+        except Exception:
+            w = 0.0
+        if w <= 0:
+            continue
+        ges += w
+        if int(t) in plan:
+            gem += w
+    return (gem / ges * 100.0) if ges > 0 else None
+
+
+# INDUSTRY-JOB-UEBERSICHT (emm327, Discord-Wunsch ueber den Nutzer 01.10.2026:
+# "Uebersicht ueber alle Indu-Jobs ... welcher Char welche Slots belegt hat mit
+# was und wie lange"). Die Anzeige-Namen der Aktivitaeten stehen in
+# `_jobs_art_name` (mw_bauplan_tabs), dort mit t().
+
+
+def job_slot_art(activity_id):
+    """Welcher Slot-Typ ein Job belegt - dieselbe Einteilung wie
+    `esi.fetch_industry_jobs` (1 Fertigung, 9/11 Reaktion, Rest Science)."""
+    a = int(activity_id or 0)
+    if a == 1:
+        return "mfg"
+    if a in (9, 11):
+        return "react"
+    return "sci"
+
+
+def jobs_uebersicht(jobs, slots_max, now):
+    """Ein Charakter: belegte/maximale/freie Slots je Typ und seine Jobs,
+    nach Ende sortiert (zuerst fertig). Rein, ohne Qt.
+
+    jobs: Eintraege wie `esi.fetch_active_jobs` (active/paused/ready).
+    slots_max: (mfg, react, sci) aus `industry.job_slots` oder None (Skills
+    unbekannt -> keine Freiezahl, nie eine geratene).
+    Ein fertiger, nicht abgelieferter Job belegt den Slot WEITER (erst das
+    Abliefern gibt ihn frei) - er zaehlt also mit, Restzeit 0, fertig=True.
+    """
+    from datetime import datetime as _dt
+    belegt = {"mfg": 0, "react": 0, "sci": 0}
+    zeilen = []
+    for j in jobs or []:
+        art = job_slot_art(j.get("activity_id"))
+        belegt[art] += 1
+        try:
+            ende = _dt.fromisoformat(
+                str(j.get("end_date")).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError):
+            ende = None
+        try:
+            start = _dt.fromisoformat(
+                str(j.get("start_date")).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError):
+            start = None
+        st = j.get("status")
+        fertig = st == "ready" or (st == "active" and ende is not None
+                                   and ende <= now)
+        rest = None if ende is None else max(0, int(ende - now))
+        if fertig:
+            rest = 0
+        zeilen.append({"art": art, "activity_id": int(j.get("activity_id") or 0),
+                       "tid": int(j.get("product_type_id") or 0),
+                       "runs": int(j.get("runs") or 0), "status": st,
+                       "ende": ende, "start": start, "rest": rest, "ready": fertig,
+                       "paused": st == "paused"})
+    zeilen.sort(key=lambda z: (z["ende"] is None,
+                               z["ende"] if z["ende"] is not None else 0,
+                               z["tid"]))
+    mx = frei = None
+    if slots_max:
+        mx = {"mfg": int(slots_max[0]), "react": int(slots_max[1]),
+              "sci": int(slots_max[2])}
+        frei = {k: max(0, mx[k] - belegt[k]) for k in mx}
+    return {"belegt": belegt, "max": mx, "frei": frei, "zeilen": zeilen}
+
+
+def job_fortschritt(start, ende, now):
+    """Anteil 0..1 eines laufenden Jobs; ohne Zeiten None (kein geratener Wert)."""
+    if start is None or ende is None or ende <= start:
+        return None
+    return max(0.0, min(1.0, (now - start) / (ende - start)))
+
+
+def jobs_gruppen(zeilen, now):
+    """Gleiche Jobs zusammenfassen (emm330, Nutzer: "kein Excel-Tabellen-
+    Simulator ... mit wenigen Blicken verstaendlich"): je (Aktivitaet, Item)
+    EINE Zeile "5x Scalar Capacitor Unit". Fertige stehen getrennt ("ready"),
+    pausierte bekommen eine eigene Gruppe. Eine laufende Gruppe zeigt den
+    Job, der ZUERST fertig wird (Restzeit, Fortschritt); alle Enden stehen in
+    `enden`. Rein, ohne Qt.
+    -> {"ready": [...], "laufend": [...]}, laufend nach Restzeit sortiert."""
+    ready, lauf = {}, {}
+    for z in zeilen or []:
+        key = (z["activity_id"], z["tid"])
+        if z["ready"]:
+            g = ready.setdefault(key, {"activity_id": z["activity_id"], "tid": z["tid"],
+                                       "art": z["art"], "n": 0, "runs": 0})
+            g["n"] += 1
+            g["runs"] += int(z["runs"] or 0)
+            continue
+        key = key + (bool(z["paused"]),)
+        g = lauf.setdefault(key, {"activity_id": z["activity_id"], "tid": z["tid"],
+                                  "art": z["art"], "paused": bool(z["paused"]),
+                                  "n": 0, "runs": 0, "enden": [], "rest": None,
+                                  "ende": None, "start": None})
+        g["n"] += 1
+        g["runs"] += int(z["runs"] or 0)
+        if z["ende"] is not None:
+            g["enden"].append(z["ende"])
+            if g["ende"] is None or z["ende"] < g["ende"]:
+                g["ende"], g["start"], g["rest"] = z["ende"], z["start"], z["rest"]
+    for g in lauf.values():
+        g["enden"].sort()
+        g["fortschritt"] = job_fortschritt(g["start"], g["ende"], now)
+    _r = sorted(ready.values(), key=lambda g: (-g["n"], g["tid"]))
+    _l = sorted(lauf.values(), key=lambda g: (g["paused"], g["rest"] is None,
+                                              g["rest"] or 0, g["tid"]))
+    return {"ready": _r, "laufend": _l}
+
+
+def jobs_karten_folge(chars):
+    """Reihenfolge der Charakter-Karten (emm331, Nutzer: Vorschlag
+    "Handlungsbedarf zuerst" gewaehlt). chars: {cid: {"name", "ueb"}} wie
+    `_jobs_laden` sie liefert. -> [cid, ...]
+      0. fertige Jobs zum Abliefern (die meisten zuerst),
+      1. freie Slots (die meisten zuerst),
+      2. der Rest - voll belegt oder Maximum unbekannt - nach dem naechsten
+         fertigen Job; ohne laufenden Job ganz hinten.
+    Gleichstand: Name. Rein, ohne Qt."""
+    def _key(kv):
+        cid, e = kv
+        u = e.get("ueb") or {}
+        zeilen = u.get("zeilen") or []
+        name = str(e.get("name") or "").lower()
+        fertig = sum(1 for z in zeilen if z.get("ready"))
+        if fertig:
+            return (0, -fertig, 0.0, name)
+        frei = sum((u.get("frei") or {}).values()) if u.get("frei") else 0
+        if frei:
+            return (1, -frei, 0.0, name)
+        enden = [z["ende"] for z in zeilen
+                 if z.get("ende") is not None and not z.get("paused")]
+        return (2, 0, min(enden) if enden else float("inf"), name)
+    return [cid for cid, _e in sorted((chars or {}).items(), key=_key)]
+
+
+def snapshot_ohne_ende(plan, tid, inv_mats_weg=None):
+    """EIN ENDE AUS DEM EINGEFRORENEN BUENDEL NEHMEN, OHNE DIE UEBRIGEN RUNS
+    ANZUFASSEN (emm333, Nutzer 02.10.2026: "die Runs im Runplaner duerfen
+    sich nicht veraendern, sonst stimmen die Materialien nicht mehr" ->
+    Rueckfrage "geteilte Vorstufen?" -> "Alles bleibt").
+
+    Rein, rechnet NICHT neu (kein production_plan): aus dem Schnappschuss
+    fallen nur das Ende und die Vorstufen, die AUSSCHLIESSLICH (auch ueber
+    mehrere Stufen) von ihm verbraucht wurden, dazu Kauf-/Bestandsmaterial,
+    das nur diese brauchten. Alles, was ein uebriges Ende braucht, behaelt
+    seine Runs EXAKT; was das entfernte Ende davon verbraucht haette, steht
+    als Ueberschuss in `surplus` (Regel 3: lieber zu viel). Wird das Ende
+    selbst noch von einem anderen Bau-Item verbraucht (Ende-in-Ende), bleibt
+    es als Bau-Item stehen - nur die Ende-Menge faellt weg.
+    Kosten: die Posten der entfernten Items werden aus den Summen gezogen
+    (Summe der Posten == Gesamt bleibt). Invention-Material (`inv_buy`) ist
+    nicht je Item aufgeschluesselt: `inv_mats_weg` {type: Menge} nennt, was
+    die Invention des entfernten Endes braucht (emm336, Nutzer: "alle Punkte
+    dringend"); das faellt zuerst aus `inv_buy`, der Rest aus
+    `inv_stock_used` - nie unter 0. Ohne Angabe bleibt beides stehen.
+
+    Liefert (neuer_plan, {entfernte Bau-Items}). Die Eingabe bleibt unberuehrt."""
+    import copy
+    p = copy.deepcopy(plan or {})
+    tid = int(tid)
+    enden = {int(k): v for k, v in (p.get("buendel_enden") or {}).items()}
+    if tid not in enden:
+        return p, set()
+    enden.pop(tid)
+    p["buendel_enden"] = enden
+    bm = {int(k): v for k, v in (p.get("build_mats") or {}).items()}
+    verbr = {}
+    for _b, _mats in bm.items():
+        for _m, _q in (_mats or []):
+            verbr.setdefault(int(_m), {})
+            verbr[int(_m)][_b] = verbr[int(_m)].get(_b, 0) + int(_q or 0)
+    weg = set()
+    if not verbr.get(tid):
+        weg.add(tid)
+        _neu = True
+        while _neu:
+            _neu = False
+            for _b in bm:
+                if _b in weg or _b in enden:
+                    continue
+                _v = verbr.get(_b)
+                if _v and set(_v) <= weg:
+                    weg.add(_b)
+                    _neu = True
+
+    def _pop(key, k):
+        d = p.get(key)
+        if isinstance(d, dict):
+            for _k in (k, str(k)):
+                if _k in d:
+                    return d.pop(_k)
+        return None
+
+    def _abzug(item_key, summe_key, k):
+        c = float(_pop(item_key, k) or 0.0)
+        if c:
+            p[summe_key] = float(p.get(summe_key) or 0.0) - c
+        return c
+
+    abzug = 0.0
+    _job_alt = float(p.get("job_cost") or 0.0)
+    for k in weg:
+        for key in ("build_runs", "build_mats", "build_made", "decision", "surplus"):
+            _pop(key, k)
+        abzug += _abzug("job_cost_items", "job_cost", k)
+        abzug += _abzug("inv_cost_items", "inv_cost", k)
+    # Job-Kosten-Aufschluesselung im selben Verhaeltnis (index+tax+scc == job_cost)
+    _teile = p.get("job_cost_parts")
+    if isinstance(_teile, dict) and _job_alt > 0:
+        _f = float(p.get("job_cost") or 0.0) / _job_alt
+        p["job_cost_parts"] = {kk: float(vv or 0.0) * _f for kk, vv in _teile.items()}
+
+    def _nur_weg(m):
+        v = verbr.get(int(m))
+        return bool(v) and set(v) <= weg
+
+    for _key, _items, _summe in (("buy", "buy_cost_items", "mat_cost"),
+                                 ("stock_used", "stock_cost_items", "stock_cost")):
+        d = p.get(_key)
+        if not isinstance(d, dict):
+            continue
+        for _m in [m for m in list(d) if _nur_weg(m)]:
+            d.pop(_m)
+            abzug += _abzug(_items, _summe, int(_m))
+            if _key == "buy" and (p.get("decision") or {}).get(int(_m)) == "buy":
+                _pop("decision", int(_m))
+    nk = p.get("nicht_kaufbar")
+    if isinstance(nk, (list, set)):
+        _bleibt = set(int(x) for x in (p.get("buy") or {})) | set(
+            int(x) for x in (p.get("decision") or {}))
+        p["nicht_kaufbar"] = [x for x in nk if int(x) in _bleibt]
+    if abzug:
+        p["total_cost"] = float(p.get("total_cost") or 0.0) - abzug
+    # Was die entfernten Items von GEBLIEBENEN Bau-Items verbraucht haetten,
+    # wird Ueberschuss - die Runs bleiben, wie sie sind.
+    sp = p.get("surplus")
+    if not isinstance(sp, dict):
+        sp = p["surplus"] = {}
+    for _m, _v in verbr.items():
+        if _m in weg or _m not in bm:
+            continue
+        _q = sum(q for b, q in _v.items() if b in weg)
+        if _q > 0:
+            sp[_m] = int(sp.get(_m, 0) or 0) + _q
+    if tid not in weg and tid in bm:
+        # Ende-in-Ende: die Ende-Menge wird jetzt Ueberschuss
+        _alt_menge = int((plan.get("buendel_enden") or {}).get(
+            tid, (plan.get("buendel_enden") or {}).get(str(tid), 0)) or 0)
+        if _alt_menge > 0:
+            sp[tid] = int(sp.get(tid, 0) or 0) + _alt_menge
+    seq = p.get("build_seq")
+    if isinstance(seq, list):
+        p["build_seq"] = [x for x in seq if int(x[0]) not in weg]
+    if tid in weg:
+        for _m, _q in (inv_mats_weg or {}).items():
+            _rest = int(_q or 0)
+            for _key in ("inv_buy", "inv_stock_used"):
+                d = p.get(_key)
+                if _rest <= 0 or not isinstance(d, dict):
+                    continue
+                _k = int(_m) if int(_m) in d else (str(_m) if str(_m) in d else None)
+                if _k is None:
+                    continue
+                _ab = min(_rest, int(d[_k] or 0))
+                d[_k] = int(d[_k] or 0) - _ab
+                _rest -= _ab
+                if d[_k] <= 0:
+                    d.pop(_k)
+    return p, weg
+
+
+def jobs_dauer_kurz(sek):
+    """Restzeit fuer die Job-Karten in den ZWEI groessten Einheiten (emm334,
+    Nutzer: "immer noch nicht uebersichtlich genug" - "1 T 5 h 13 m" wurde in
+    der Zeile abgeschnitten). Gleiche Buchstaben wie `_fmt_dur` (T/h/m).
+    Rein: 0 -> "< 1 m"."""
+    s = max(0, int(sek or 0))
+    d, s = divmod(s, 86400)
+    h, s = divmod(s, 3600)
+    m = s // 60
+    if d:
+        return f"{d} T {h} h"
+    if h:
+        return f"{h} h {m} m"
+    return f"{m} m" if m else "< 1 m"
+
+
+def jobs_sichtbar(chars, aus):
+    """Nur die eingeschalteten Charaktere (emm334, Nutzer: "verlinkte
+    Charaktere ... per On/Off zu- und ausschalten, standardmaessig alle On").
+    aus: gespeicherte Liste der AUSgeschalteten (Text oder Zahl). Rein."""
+    _aus = {str(x) for x in (aus or ())}
+    return {cid: e for cid, e in (chars or {}).items() if str(cid) not in _aus}
+
+
+def jobs_summe(chars, now):
+    """Gesamt-Leiste ueber die gezeigten Charaktere (emm334): fertige Jobs,
+    freie Slots je Art (nur Charaktere mit bekanntem Maximum; `ohne_max`
+    zaehlt die anderen), naechster fertig werdender Job (Restzeit, Name).
+    Pausierte zaehlen nicht als "naechster". Rein."""
+    fertig = 0
+    frei = {"mfg": 0, "react": 0, "sci": 0}
+    ohne_max = 0
+    naechst = None
+    for _cid, e in (chars or {}).items():
+        u = e.get("ueb") or {}
+        zeilen = u.get("zeilen") or []
+        fertig += sum(1 for z in zeilen if z.get("ready"))
+        if u.get("frei"):
+            for k in frei:
+                frei[k] += int(u["frei"].get(k, 0) or 0)
+        else:
+            ohne_max += 1
+        for z in zeilen:
+            if z.get("ready") or z.get("paused") or z.get("ende") is None:
+                continue
+            rest = max(0, int(z["ende"] - now))
+            if naechst is None or rest < naechst[0]:
+                naechst = (rest, str(e.get("name") or ""))
+    return {"ready": fertig, "free": frei, "no_max": ohne_max,
+            "next": naechst}
+
+
+def jobs_kapazitaet(chars):
+    """Slot-Auslastung ueber die gezeigten Charaktere je Art (emm346, Nutzer:
+    "den Text oben mehr in eine Grafik umwandeln, damit man schoen sieht,
+    wie viele Slots frei sind"): {art: {"running", "ready", "max", "free"}}.
+    Nur Charaktere mit bekanntem Maximum - sonst stimmte "frei" nicht. Ein
+    fertiger Job belegt seinen Slot weiter (zaehlt als "ready"). Rein."""
+    out = {k: {"running": 0, "ready": 0, "max": 0, "free": 0}
+           for k in ("mfg", "react", "sci")}
+    for _cid, e in (chars or {}).items():
+        u = e.get("ueb") or {}
+        mx = u.get("max")
+        if not mx:
+            continue
+        bel = u.get("belegt") or {}
+        for k in out:
+            _rd = sum(1 for z in (u.get("zeilen") or [])
+                      if z.get("ready") and z.get("art") == k)
+            _b = int(bel.get(k, 0) or 0)
+            out[k]["ready"] += _rd
+            out[k]["running"] += max(0, _b - _rd)
+            out[k]["max"] += int(mx.get(k, 0) or 0)
+            out[k]["free"] += max(0, int(mx.get(k, 0) or 0) - _b)
+    return out
+
+
+def fehlende_scopes(gewuenscht, erteilt_je_char):
+    """{cid: sortierte fehlende Scopes} - nur Charaktere, bei denen etwas
+    fehlt (emm355, Nutzer: "wenn ein ESI-Scope fehlt, steht oben re-link -
+    das sieht kein Mensch, da muss beim Login ein Popup kommen").
+    `erteilt_je_char`: {cid: set | None}; None = unbekannt (Token nicht
+    lesbar) -> dieser Charakter wird NICHT gemeldet (lieber still als
+    falsch). "publicData" zaehlt nie. Rein."""
+    soll = {str(s) for s in (gewuenscht or ()) if s and s != "publicData"}
+    out = {}
+    for cid, hat in (erteilt_je_char or {}).items():
+        if hat is None:
+            continue
+        fehlt = sorted(soll - {str(s) for s in hat})
+        if fehlt:
+            out[cid] = fehlt
+    return out
+
+
+def bp_marge(profit, cost_unit):
+    """Marge in % wie im Bauplan: Gewinn / Baukosten (emm354, Spalte "Margin %"
+    in My Blueprints). None ohne Gewinn oder ohne positive Kosten. Rein."""
+    try:
+        p, c = float(profit), float(cost_unit)
+    except (TypeError, ValueError):
+        return None
+    if c <= 0:
+        return None
+    return p / c * 100.0
+
+
+HAKEN_FRIST = 1800.0       # so lange nach dem Haken bekommt ESI Zeit
+HAKEN_RUECK = 3 * 86400.0  # gelieferte Jobs bis so weit VOR dem Haken zaehlen
+
+
+def _iso_ts(s):
+    from datetime import datetime as _dt
+    try:
+        return _dt.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def haken_ohne_job(haken_ts, aktiv_tids, geliefert, abruf_ts,
+                   frist=HAKEN_FRIST, rueck=HAKEN_RUECK):
+    """Hand-Haken im Runplaner, zu denen ESI KEINEN Job kennt -> Fehlklick
+    (emm350, Nutzer: "habe ich selbst abgehakt und ESI trackt keinen Job zu
+    diesem Item, darf der Bauplan meinen Haken wieder entfernen, dann habe
+    ich offensichtlich missklickt"; "ein nicht verknuepfter Charakter ist
+    ein falscher Charakter"; "der Job kann auf einem ANDEREN verknuepften
+    Charakter gestartet worden sein - das ist okay").
+
+    Je ITEM, nicht je Charakter: ein Job irgendeines verknuepften
+    Charakters (oder der Corp) zaehlt. Geprueft wird ein Haken erst, wenn
+    der Job-Abruf mindestens `frist` Sekunden NACH dem Haken lag. Es zaehlt
+    jeder laufende/fertige Job (`aktiv_tids`) und jeder gelieferte, der
+    hoechstens `rueck` vor dem Haken endete. Nur Job-Stufen
+    ("stufe|cid|tid"), keine Charakter- oder Reprocessing-Zeilen. Haken
+    ohne Zeitstempel bleiben unberuehrt. -> sortierte Schluessel. Rein."""
+    if abruf_ts is None:
+        return []
+    gel = {}
+    for j in geliefert or []:
+        try:
+            pid = int(j.get("product_type_id") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        ts = _iso_ts(j.get("completed_date")) or _iso_ts(j.get("end_date")) \
+            or _iso_ts(j.get("start_date"))
+        if pid and ts is not None:
+            gel.setdefault(pid, []).append(ts)
+    aktiv = set()
+    for t in aktiv_tids or ():
+        try:
+            aktiv.add(int(t))
+        except (TypeError, ValueError):
+            continue
+    out = []
+    for key, ts in (haken_ts or {}).items():
+        teile = str(key).split("|")
+        if len(teile) < 3 or teile[0] in ("char", "repro") or not teile[2].isdigit():
+            continue
+        try:
+            ts = float(ts)
+        except (TypeError, ValueError):
+            continue
+        if float(abruf_ts) < ts + float(frist):
+            continue
+        tid = int(teile[2])
+        if tid in aktiv:
+            continue
+        if any(g >= ts - float(rueck) for g in gel.get(tid, [])):
+            continue
+        out.append(key)
+    return sorted(out, key=str)
+
+
+ABSATZ_TAGE = 30           # Fenster fuer das Tagesvolumen
+ABSATZ_LANGSAM = 7.0       # ab hier "langsam" (Tage bis verkauft)
+ABSATZ_DUENN = 30.0        # ab hier Warnung "Markt zu duenn"
+
+
+def tagesvolumen(rows, heute=None, tage=ABSATZ_TAGE):
+    """Durchschnittlich verkaufte Stueck je Tag am Hub (emm349, Nutzer: "das
+    Handelsvolumen haette ich gerne in einer Spalte, damit ich sehen kann,
+    ob etwas, das ich baue, auch gekauft wird"). Grundlage: die Markt-
+    Historie (je Tag eine Zeile, Tage ohne Handel fehlen bei ESI - sie
+    zaehlen als 0). Ueber die letzten `tage` Tage bis `heute` (Datum
+    "YYYY-MM-DD", sonst der juengste Tag der Historie). None = keine
+    Historie bekannt (nicht: kein Handel). Rein."""
+    import datetime as _d
+    zeilen = [r for r in (rows or []) if r.get("date")]
+    if not zeilen:
+        return None
+    try:
+        ende = _d.date.fromisoformat(str(heute or max(str(r["date"]) for r in zeilen))[:10])
+    except ValueError:
+        return None
+    start = ende - _d.timedelta(days=int(tage) - 1)
+    summe = 0.0
+    for r in zeilen:
+        try:
+            tag = _d.date.fromisoformat(str(r["date"])[:10])
+        except ValueError:
+            continue
+        if start <= tag <= ende:
+            summe += float(r.get("volume") or 0)
+    return summe / float(tage)
+
+
+def tage_bis_verkauft(menge, vol):
+    """Wie viele Tage der Markt braucht, um `menge` aufzunehmen (wenn man
+    ALLES selbst verkauft, Konkurrenz nicht mitgerechnet). None = Volumen
+    unbekannt, inf = es wird nichts gehandelt. Rein."""
+    if vol is None:
+        return None
+    if vol <= 0:
+        return float("inf")
+    return float(menge or 0) / float(vol)
+
+
+def absatz_stufe(tage):
+    """"unknown" / "ok" (<= 7 Tage) / "slow" (<= 30) / "thin" (> 30). Rein."""
+    if tage is None:
+        return "unknown"
+    if tage <= ABSATZ_LANGSAM:
+        return "ok"
+    if tage <= ABSATZ_DUENN:
+        return "slow"
+    return "thin"
+
+
+def job_anzeigename(name, activity_id):
+    """Bei Science-Jobs (alles ausser Fertigung/Reaktion) ist das Produkt
+    eine Blaupause - das Kuerzel davor sagt es schon, " Blueprint" am Ende
+    faellt weg (emm334: Zeilen wurden abgeschnitten). Rein."""
+    n = str(name or "")
+    if int(activity_id or 0) not in (1, 9, 11) and n.endswith(" Blueprint"):
+        return n[:-len(" Blueprint")]
+    return n
+
+
+def fracht_als_isk(je_stueck, einkauf):
+    """Fracht-Abzeichen in ISK statt Prozent? (emm336, Nutzer: "das 1-ISK-
+    Problem loesen" - fuer 1 ISK gekaufte Items stand "+250000.00 %").
+    Ja, sobald die Fracht je Stueck groesser ist als der Einkauf je Stueck
+    (also ueber +100 %) oder kein Einkaufspreis bekannt ist. Rein."""
+    try:
+        j, e = float(je_stueck or 0), float(einkauf or 0)
+    except (TypeError, ValueError):
+        return False
+    if j <= 0:
+        return False
+    return e <= 0 or j > e
+
+
+def erledigt_ts_aus_haken(haken_ts):
+    """Zeitstempel je "stufe|tid" aus den gespeicherten Haken-Stempeln
+    (emm336; offen seit emm252: `_bd_runplan_erledigt_ts` wurde nie gesetzt,
+    ein nachgetragener Haken bekam "jetzt"). Je Item der JUENGSTE Haken -
+    dieselbe Regel wie die ESI-Sperre der Reservierung (emm265): frei wird
+    erst, wenn der Bestand juenger ist als der letzte Haken. Schluessel
+    "stufe|cid|tid[|w2]"; Charakter-Sammelzeilen ("char|...") und Erz-Zeilen
+    ("repro|...") tragen kein Item und fallen weg. Rein."""
+    out = {}
+    for k, ts in (haken_ts or {}).items():
+        teile = str(k).split("|")
+        if len(teile) < 3 or teile[0] in ("char", "repro") or not teile[2].isdigit():
+            continue
+        try:
+            v = float(ts)
+        except (TypeError, ValueError):
+            continue
+        key = f"{teile[0]}|{int(teile[2])}"
+        if v > out.get(key, 0.0):
+            out[key] = v
+    return out
+
+
+def jobs_einzeln(zeilen, now):
+    """JEDER laufende Job eine Zeile (emm338, Nutzer: "komplette Anzeige" -
+    "9x Sensor Booster II" war 9 Jobs in einer Zeile, er hat die 10/10
+    Science-Jobs darunter nicht wiedergefunden). Fertige bleiben
+    zusammengefasst (`jobs_gruppen`). Laufende tragen dieselben Schluessel
+    wie eine Gruppe mit n=1 und sind nach Restzeit sortiert, pausierte
+    hinten. Rein."""
+    gr = jobs_gruppen(zeilen, now)
+    lauf = []
+    for z in zeilen or []:
+        if z.get("ready"):
+            continue
+        ende = z.get("ende")
+        lauf.append({"activity_id": z["activity_id"], "tid": z["tid"], "art": z["art"],
+                     "paused": bool(z.get("paused")), "n": 1,
+                     "runs": int(z.get("runs") or 0),
+                     "enden": [ende] if ende is not None else [],
+                     "rest": z.get("rest"), "ende": ende, "start": z.get("start"),
+                     "fortschritt": job_fortschritt(z.get("start"), ende, now)})
+    lauf.sort(key=lambda g: (g["paused"], g["rest"] is None, g["rest"] or 0, g["tid"]))
+    return {"ready": gr["ready"], "laufend": lauf}

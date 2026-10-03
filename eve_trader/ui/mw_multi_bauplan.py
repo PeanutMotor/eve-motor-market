@@ -59,10 +59,15 @@ from .. import config, esi, industry
 from ..sprache import t
 from . import icons, theme
 from .mw_basis import NumericItem, isk
-from .mw_helpers import eigene_kopie_lage
+from .mw_helpers import eigene_kopie_lage, ist_platzhalter_name, snapshot_ohne_ende
 
 
 class MultiBauplan:
+    # Ziel "der gerade OFFENE, noch nicht gespeicherte Bauplan" im Untermenue
+    # "Add to multi build plan" (Nutzer 29.09.2026). Keine Plan-ID - ein
+    # ungespeicherter Plan hat keine.
+    OFFENER_PLAN = "__offener_plan__"
+
     """Mixin fuer MainWindow - alles rund um den Multi-Bauplan (Buendel)."""
 
     # ------------------------------------------------------------ Daten
@@ -425,6 +430,9 @@ class MultiBauplan:
         _cache = getattr(self, "_bd_owned_bp_cache", None) or []
         _esi_runs = self._bpc_runs_by_tid(_cache, runs_von, p2b) if _cache else {}
         _esi_kop = self._bp_copies_by_tid(_cache, runs_von, p2b) if _cache else {}
+        # Welche Enden kennt der Cache? Dort sperrt die Karte "Runs/BPC"
+        # (die echte Kopiengroesse gilt, eigene_kopie_lage).
+        self._bd_multi_esi_runs = {int(k): int(v) for k, v in _esi_runs.items()}
         aus = {}
         for tid in sorted(enden):
             tid = int(tid)
@@ -591,6 +599,14 @@ class MultiBauplan:
                     continue
             # Gespeicherte Wahl gilt als bewusst getroffen (keine Warnung).
             self._bd_dec_bestaetigt = set(self._bd_decryptor_map)
+            # BAU-ODER-KAUF-WAHL MITNEHMEN (emm317): der Neuer-Plan-Zweig in
+            # open_build_detail setzt sie zurueck - deshalb als Pending, das
+            # NACH dem Zuruecksetzen eingesetzt wird.
+            if "owned_bp" in eintrag or "force" in eintrag:
+                self._bd_wahl_pending = {
+                    "owned_bp": eintrag.get("owned_bp"),
+                    "force": bool(eintrag.get("force", False)),
+                    "prefer": bool(eintrag.get("prefer_build_if_owned", True))}
             self._bd_manual_attempts = {}
             for k, v in (eintrag.get("manual_attempts") or {}).items():
                 try:
@@ -777,6 +793,9 @@ class MultiBauplan:
         offenes Fenster, das speichern koennte), Karten auffrischen und den
         Plan oeffnen. items = [{tid, name, qty|None, vorgabe, me?, te?,
         own_bpc?, own_bpc_runs?}]; fehlt eine Menge, fragt der Dialog."""
+        if plan_id == self.OFFENER_PLAN:
+            self._multi_offen_ungespeichert_zu(items)
+            return
         plans = self.settings.get("bau_saved_plans", []) or []
         p = next((x for x in plans if x.get("id") == plan_id), None)
         if p is None or not self._multi_ende_anhaengbar(p):
@@ -849,6 +868,8 @@ class MultiBauplan:
         if not _offen_gleich and not self._multi_jetzt_oeffnen_fragen(
                 str(neu.get("label") or "")):
             return
+        # Lager des offenen Fensters mitnehmen (emm308)
+        self._bd_bestand_pending = self._bd_bestand_mitnehmen()
         _d = self._offener_bauplan()
         if _d is not None:
             _d.close()
@@ -920,6 +941,8 @@ class MultiBauplan:
                  [{"item_name": x["name"]} for x in _m])}
         for x in _m[1:]:
             e = self._multi_ende_anhaengen(e, int(x["tid"]), int(x["qty"]))
+        # Lager des offenen Fensters mitnehmen (emm308)
+        self._bd_bestand_pending = self._bd_bestand_mitnehmen()
         _d = self._offener_bauplan()
         if _d is not None:
             _d.close()
@@ -953,12 +976,71 @@ class MultiBauplan:
             a_add.setEnabled(False)
             a_add.setText(t("Add build plan\u2026") + "  "
                           + t("(part of a multi build plan)"))
+        # UMBENENNEN (emm334, Nutzer 02.10.2026: "per Rechtsklick auf einen
+        # Buildplan wuerde ich gerne Rename machen koennen"). Gesperrt, solange
+        # GENAU dieser Plan im Bauplan-Fenster offen ist - dessen Speichern
+        # sucht den Plan ueber den Namen und legte sonst ein Duplikat an.
+        a_ren = menu.addAction(t("Rename\u2026"))
+        if self._plan_offen_im_fenster(plan_id):
+            a_ren.setEnabled(False)
+            a_ren.setText(t("Rename\u2026") + "  " + t("(close the plan first)"))
+        # AUS DEM GEWINN-TOTAL (emm343): ein Klick fuer den ganzen Plan,
+        # beim Buendel alle Enden - dieselben Haken wie in der Uebersicht.
+        _gk = self._gewinn_schluessel(p)
+        _gaus = bool(_gk) and all(str(k) in self._gewinn_aus() for k in _gk)
+        a_gew = menu.addAction(t("Include in profit total") if _gaus
+                               else t("Exclude from profit total"))
+        a_gew.setEnabled(bool(_gk))
         self._plan_karten_menu = menu            # b-Suite
         chosen = menu.exec(card.mapToGlobal(pos))
         if chosen is a_open:
             self._open_saved_plan(plan_id)
         elif chosen is a_add and a_add.isEnabled():
             self._plan_karte_ende_dazu(plan_id)
+        elif chosen is a_ren and a_ren.isEnabled():
+            self._plan_umbenennen(plan_id)
+        elif chosen is a_gew and a_gew.isEnabled():
+            self._gewinn_schalten(_gk, _gaus)
+
+    def _plan_offen_im_fenster(self, plan_id):
+        """Ist GENAU dieser gespeicherte Plan gerade im Bauplan-Fenster offen?"""
+        dlg = getattr(self, "_bd_dialog", None)
+        try:
+            offen = dlg is not None and dlg.isVisible()
+        except RuntimeError:
+            offen = False
+        return bool(offen) and getattr(self, "_bd_open_plan_id", None) == plan_id
+
+    def _plan_umbenennen(self, plan_id, neu=None):
+        """Namen eines gespeicherten Plans aendern (emm334). Nur `label` -
+        Endprodukt, Menge, Schnappschuss und Zuordnungen haengen an der id.
+        Leer, unveraendert oder schon von einem ANDEREN Plan belegt -> nichts
+        (Speichern im Fenster findet Plaene ueber den Namen). `neu` nur fuer
+        die b-Suite, sonst fragt ein Eingabefeld. -> True, wenn umbenannt."""
+        plans = self.settings.get("bau_saved_plans", []) or []
+        p = next((x for x in plans if x.get("id") == plan_id), None)
+        if p is None or self._plan_offen_im_fenster(plan_id):
+            return False
+        alt = str(p.get("label") or "")
+        if neu is None:
+            from PySide6.QtWidgets import QInputDialog
+            neu, ok = QInputDialog.getText(
+                self._tool_parent(), t("Rename build plan"),
+                t("New name of the build plan:"), text=alt)
+            if not ok:
+                return False
+        neu = config.plan_name_bereinigen(str(neu or ""))
+        if not neu or neu == alt:
+            return False
+        if any(x.get("label") == neu for x in plans if x.get("id") != plan_id):
+            self._flash_tip(t("A build plan named \u201e{name}\u201c already "
+                              "exists \u2013 choose another name.").format(name=neu))
+            return False
+        p["label"] = neu
+        config.save_settings(self.settings)
+        self._reload_saved_plans()
+        self._flash_tip(t("Renamed to \u201e{name}\u201c \u2713").format(name=neu))
+        return True
 
     def _plan_karte_ende_dazu(self, plan_id):
         """"Add build plan..." einer Karte: Endprodukt waehlen (derselbe Dialog
@@ -1079,6 +1161,15 @@ class MultiBauplan:
                       "te": int(getattr(self, "_bd_te", 0) or 0),
                       "own_bpc": bool(getattr(self, "_bd_own_bpc", False)),
                       "own_bpc_runs": int(getattr(self, "_bd_own_bpc_runs", 0) or 0)})
+        # DIE BAU-ODER-KAUF-WAHL DES FENSTERS GEHOERT DAZU (emm317, Nutzer
+        # 01.10.2026: "Multibauplan ignoriert die Production Depth"): wer das
+        # Fenster ueber diesen Eintrag neu oeffnet (Ende anhaengen, Kopie),
+        # behaelt Fertigungstiefe, "Ignore cost" und "Use what you have" so,
+        # wie sie gerade stehen - nicht den Stand des letzten Speicherns.
+        e["owned_bp"] = (list(self._bd_owned_bp)
+                         if getattr(self, "_bd_owned_bp", None) is not None else None)
+        e["force"] = bool(getattr(self, "_bd_force", False))
+        e["prefer_build_if_owned"] = bool(getattr(self, "_bd_prefer_owned", False))
         if not e.get("label"):
             _d = self._offener_bauplan()
             _titel = str(_d.windowTitle() if _d is not None else "")
@@ -1124,6 +1215,8 @@ class MultiBauplan:
             me=wahl.get("me"), te=wahl.get("te"),
             own_bpc=bool(wahl.get("own_bpc", False)),
             own_bpc_runs=int(wahl.get("own_bpc_runs", 0) or 0))
+        # Lager des offenen Fensters mitnehmen (emm308)
+        self._bd_bestand_pending = self._bd_bestand_mitnehmen()
         _d = self._offener_bauplan()
         if _d is not None:
             _d.close()
@@ -1135,6 +1228,72 @@ class MultiBauplan:
         else:
             self._flash_tip(t("\u201e{name}\u201c \u00d7 {n} added \u2013 save the plan to "
                               "keep it.").format(name=name, n=qty))
+
+    def _multi_offen_ungespeichert(self):
+        """Label des offenen Bauplan-Fensters, wenn es NICHT gespeichert und
+        nicht eingefroren ist - sonst None. Genau dieses Fenster bietet das
+        Untermenue als erstes Ziel an (Nutzer 29.09.2026: "einen Plan oeffnen
+        ohne Speichern, einen anderen hinzufuegen, dann hat man einen offenen
+        Multiplan, den man DANN speichert - sonst erstellt man immer ein
+        Duplikat")."""
+        if self._offener_bauplan() is None:
+            return None
+        if getattr(self, "_bd_open_plan_id", None) is not None:
+            return None
+        if getattr(self, "_bd_frozen", None):
+            return None
+        if not int(getattr(self, "_bd_type", 0) or 0):
+            return None
+        try:
+            return str(self._multi_offenen_plan_eintrag().get("label") or "")
+        except Exception:
+            return str(getattr(self, "_bd_name", "") or "")
+
+    def _multi_offen_ungespeichert_zu(self, items):
+        """Enden an den OFFENEN, ungespeicherten Plan haengen - NICHTS wird
+        gespeichert. Ein offenes Buendel nimmt sie direkt auf (Fenster
+        bleibt); ein Einzelplan wird zum Buendel und das Fenster oeffnet
+        ungespeichert neu - derselbe Weg wie der Knopf "+ Add build plan"
+        im Fenster. Gespeichert wird danach mit "Save build plan", EINMAL."""
+        if self._multi_offen_ungespeichert() is None:
+            return
+        items = [dict(x) for x in (items or [])]
+        if not items:
+            return
+        if any(x.get("qty") is None for x in items):
+            _m = self._multi_mengen_dialog(
+                [x for x in items if x.get("qty") is None],
+                t("Add to multi build plan"))
+            if _m is None:
+                return
+            _it = iter(_m)
+            for x in items:
+                if x.get("qty") is None:
+                    x["qty"] = next(_it)["qty"]
+        if len(items) == 1:
+            _msg = t("„{name}“ × {n} added – save the plan to "
+                     "keep it.").format(name=str(items[0]["name"]), n=int(items[0]["qty"]))
+        else:
+            _msg = t("{n} end products added – save the plan to keep it.").format(
+                n=len(items))
+        if self._multi_offen_einfuegbar(None, auch_ungespeichert=True):
+            self._multi_offen_einfuegen(items)
+            self._flash_tip(_msg)
+            return
+        _neu_e = self._multi_offenen_plan_eintrag()
+        for x in items:
+            _neu_e = self._multi_ende_anhaengen(
+                _neu_e, int(x["tid"]), int(x["qty"]),
+                me=x.get("me"), te=x.get("te"),
+                own_bpc=bool(x.get("own_bpc", False)),
+                own_bpc_runs=int(x.get("own_bpc_runs", 0) or 0))
+        # Lager des offenen Fensters mitnehmen (emm308)
+        self._bd_bestand_pending = self._bd_bestand_mitnehmen()
+        _d = self._offener_bauplan()
+        if _d is not None:
+            _d.close()
+        self._multi_plan_oeffnen(_neu_e, plan_id=None)   # ungespeichert
+        self._flash_tip(_msg)
 
     def _multi_untermenue(self, menu, tid, name, titel=None):
         """Untermenue "Add to multi build plan >": ein Eintrag je gespeichertem Plan,
@@ -1150,6 +1309,21 @@ class MultiBauplan:
         plans = [p for p in (self.settings.get("bau_saved_plans", []) or [])
                  if self._multi_ende_anhaengbar(p) and str(p.get("id")) not in _mitgl]
         sub = menu.addMenu(icons.icon("package"), titel or t("Add to multi build plan"))
+        # DER OFFENE, UNGESPEICHERTE PLAN ZUERST (Nutzer 29.09.2026): so
+        # entsteht ein Multiplan, ohne erst Einzelplaene zu speichern (die
+        # beim Speichern einfrieren und dann nur noch als Kopie taugen).
+        _offen_lbl = self._multi_offen_ungespeichert()
+        if _offen_lbl is not None:
+            a = sub.addAction(icons.icon("plus"), t(
+                "Open build plan „{plan}“ (not saved yet)").format(plan=_offen_lbl))
+            _f = a.font()
+            _f.setBold(True)
+            a.setFont(_f)
+            aktionen[a] = self.OFFENER_PLAN
+            if plans:
+                sub.addSeparator()
+        if not plans and _offen_lbl is not None:
+            return aktionen
         if not plans:
             # KEIN STILLES VERSCHWINDEN (Nutzer 26.09.2026: "Rechtsklick-
             # Funktion ist weg" - alle seine Plaene waren eingefroren,
@@ -1178,6 +1352,207 @@ class MultiBauplan:
                 a.setFont(_f)
             aktionen[a] = p.get("id")
         return aktionen
+
+    # ------------------------------------------------------ Vorschlag
+    VORSCHLAG_RECHNEN = 40      # "Gemeinsam %" nur fuer die besten 40 (Rechenzeit)
+
+    def _multi_vorschlag_daten(self):
+        """(Kandidaten, Plan-Marge, Techs, Fehlergrund) fuer den OFFENEN Plan -
+        rein aus gemerkten Daten (My Blueprints + Fenster), ohne Netz."""
+        econ = (getattr(self, "_bp_econ_stand", None) or {}).get("profit_by_bp")
+        if not econ:
+            return [], None, set(), "keine_bp"
+        plan = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
+        typ = int(getattr(self, "_bd_type", 0) or 0)
+        enden = ([int(t) for t, _q in (getattr(self, "_bd_buendel_enden", None) or [])]
+                 if typ == industry.BUENDEL_ID else [typ])
+        catmap = industry.item_category_map() or {}
+        from .mw_helpers import vorschlag_tech, vorschlag_kandidaten
+        techs = {vorschlag_tech((catmap.get(t) or (None, None, None))[2])
+                 for t in enden if t}
+        marge = getattr(self, "_bd_marge_stand", None)
+        return (vorschlag_kandidaten(econ, techs, set(enden), marge),
+                marge, techs, None if plan else "kein_plan")
+
+    def _multi_vorschlag_fenster(self):
+        """MULTIPLAN-VORSCHLAG (Nutzer 30.09.2026): "ein Fenster, das aussieht
+        wie Meine Baupläne, einfach in klein ... per Rechtsklick zu Multiplan
+        hinzufuegen". Kandidaten aus der Wirtschaftlichkeit von My Blueprints
+        (gleiche Tech-Stufe, eigene Blaupausen, Marge >= Plan-Marge);
+        "Gemeinsam %" = Anteil des Einkaufswerts, den der Plan auch kauft
+        (im Hintergrund, fuer die besten VORSCHLAG_RECHNEN)."""
+        from PySide6.QtWidgets import QDialog
+        from .mw_basis import kopier_menue, kontext_menue
+        from .mw_helpers import gemeinsam_anteil
+        from .. import workers as _wk
+        kand, marge, techs, grund = self._multi_vorschlag_daten()
+        names = dict((getattr(self, "_bp_econ_stand", None) or {}).get("names") or {})
+        # NAMEN DER PRODUKTE (Nutzer 30.09.2026, Screenshot "nur Nummern in
+        # diesem Fenster"): `names` von My Blueprints kennt nur die
+        # BLAUPAUSEN. Erst Plan-Namen und Namens-Cache, der Rest kommt im
+        # Hintergrund per ESI (`_fehlende_namen`).
+        names.update(getattr(self, "_bd_names_ref", None) or {})
+        _fehlende_namen = [k["tid"] for k in kand if not names.get(k["tid"])]
+        if _fehlende_namen:
+            try:
+                from .. import store as _st
+                names.update(_st.cached_names(_fehlende_namen) or {})
+            except Exception as _ne:
+                self._log_exception("Multiplan-Vorschlag: Namen", str(_ne))
+            _fehlende_namen = [x for x in _fehlende_namen if not names.get(x)]
+        dlg = QDialog(self._tool_parent())   # emm353: ueber dem Bauplan, nicht dahinter
+        dlg.setWindowTitle(t("Suggestions for this plan"))
+        dlg.resize(820, 520)
+        lay = QVBoxLayout(dlg)
+        info = QLabel("")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        tbl = QTableWidget(0, 6)
+        tbl.setHorizontalHeaderLabels(
+            [t("End product"), t("Margin") + " (%)", t("Profit/unit"),
+             t("Build cost/unit"), t("ISK/h"), t("Shared") + " (%)"])
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+        tbl.setSelectionBehavior(QTableWidget.SelectRows)
+        tbl.setSelectionMode(QTableWidget.ExtendedSelection)
+        hh = tbl.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.Stretch)
+        for c in range(1, 6):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        lay.addWidget(tbl)
+        self._bd_vorschlag_dlg = dlg          # fuer die b-Suite
+        self._bd_vorschlag_tbl = tbl
+        if grund == "keine_bp":
+            info.setText(t("Load your blueprints in \u201eMy Blueprints\u201c first "
+                           "\u2013 the suggestions come from their profit calculation."))
+        elif not kand:
+            info.setText(t("No end product of your blueprints fits: same tech level "
+                           "({tech}), profitable and a margin of at least {m} %."
+                           ).format(tech=", ".join(sorted(techs)) or "\u2013",
+                                    m=f"{marge:.1f}" if marge is not None else "\u2013"))
+        else:
+            info.setText(t("{n} end products from your blueprints, tech level {tech}, "
+                           "margin at least {m} % (this plan) \u2013 so the bundle "
+                           "margin cannot drop. Right-click adds them to this plan."
+                           ).format(n=len(kand), tech=", ".join(sorted(techs)),
+                                    m=f"{marge:.1f}" if marge is not None else "\u2013"))
+        tbl.setSortingEnabled(False)
+        tbl.setRowCount(len(kand))
+        for r, k in enumerate(kand):
+            it = QTableWidgetItem(str(names.get(k["tid"]) or f"#{k['tid']}"))
+            it.setData(Qt.UserRole, k["tid"])
+            it.setData(Qt.UserRole + 1, int(k.get("opt_qty") or 1))
+            tbl.setItem(r, 0, it)
+            _mi = NumericItem(f"{k['marge']:+.1f} %", k["marge"])
+            _mi.setForeground(QColor(theme.GREEN))
+            tbl.setItem(r, 1, _mi)
+            tbl.setItem(r, 2, NumericItem(isk(k["profit"], suffix=False), k["profit"]))
+            tbl.setItem(r, 3, NumericItem(isk(k["cost"], suffix=False), k["cost"]))
+            _ih = k.get("isk_h")
+            tbl.setItem(r, 4, NumericItem(isk(_ih, suffix=False) if _ih else "\u2014",
+                                          float(_ih or 0)))
+            tbl.setItem(r, 5, NumericItem("\u2026", -1.0))
+        tbl.setSortingEnabled(True)
+
+        def _zeilen_items(row):
+            rows = sorted({ix.row() for ix in tbl.selectionModel().selectedRows()})
+            if row not in rows:
+                rows = [row]
+            out = []
+            for r in rows:
+                it = tbl.item(r, 0)
+                if it is None:
+                    continue
+                out.append({"tid": int(it.data(Qt.UserRole)), "name": it.text(),
+                            "qty": None, "vorgabe": int(it.data(Qt.UserRole + 1) or 1)})
+            return out
+
+        def _menue(pos):
+            r = tbl.rowAt(pos.y())
+            if r < 0:
+                return
+            items = _zeilen_items(r)
+            m = kontext_menue(tbl)
+            a = m.addAction(icons.icon("package"),
+                            t("Add to this build plan ({n})").format(n=len(items)))
+            if m.exec(tbl.viewport().mapToGlobal(pos)) is a:
+                self._multi_vorschlag_hinzufuegen(items)
+        kopier_menue(tbl, _menue)
+
+        # "Gemeinsam %" im Hintergrund fuer die besten Kandidaten.
+        plan_buy = dict(((getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {})
+                        .get("buy") or {})
+        pm = dict(getattr(self, "_bd_pricemap", None) or {})
+        # Dieselben Plan-Optionen wie das Fenster (Strukturen, ME, Tiefe) -
+        # nur ohne Bestand: gefragt ist, was der Kandidat EINKAUFEN wuerde.
+        _opts = dict(getattr(self, "_bd_opts", None) or {})
+        _opts.pop("stock", None)
+        _opts["invention"] = True
+        _liste = [k["tid"] for k in kand[:self.VORSCHLAG_RECHNEN]]
+
+        def job():
+            _namen = {}
+            if _fehlende_namen:
+                try:
+                    _namen = esi.resolve_names(_fehlende_namen) or {}
+                except Exception:
+                    _namen = {}
+            rec = industry.recipes_cached() if _liste else None
+            out = {}
+            for tid in _liste:
+                try:
+                    bpi = rec.product_to_bp.get(tid)
+                    n = int(bpi[2]) if bpi and len(bpi) >= 3 and bpi[2] else 1
+                    pl = industry.production_plan(tid, n, pm.get, rec, dict(_opts))
+                    out[tid] = gemeinsam_anteil(pl.get("buy") or {}, plan_buy, pm.get)
+                except Exception:
+                    out[tid] = None
+            return {"gemeinsam": out, "namen": _namen}
+
+        def done(erg):
+            if getattr(self, "_bd_vorschlag_tbl", None) is not tbl:
+                return
+            res = (erg or {}).get("gemeinsam") or {}
+            _nm = (erg or {}).get("namen") or {}
+            tbl.setSortingEnabled(False)
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                if it is None:
+                    continue
+                tid = int(it.data(Qt.UserRole))
+                if _nm.get(tid):
+                    it.setText(str(_nm[tid]))
+                if not _liste:
+                    continue
+                if tid not in res:
+                    tbl.setItem(r, 5, NumericItem("\u2014", -1.0))
+                    continue
+                v = res.get(tid)
+                tbl.setItem(r, 5, NumericItem(f"{v:.0f} %" if v is not None else "\u2014",
+                                              float(v) if v is not None else -1.0))
+            tbl.setSortingEnabled(True)
+            if _liste:
+                tbl.sortItems(5, Qt.DescendingOrder)
+        if _liste or _fehlende_namen:
+            self._run(_wk.Worker(job), done,
+                      fail_cb=lambda _m: self._log_exception(
+                          "Multiplan-Vorschlag", str(_m)),
+                      overlay=False)
+        dlg.show()
+        return dlg
+
+    def _multi_vorschlag_hinzufuegen(self, items):
+        """Vorschlaege in den OFFENEN Plan: ungespeichert -> direkt ins Fenster
+        (kein Duplikat), gespeichert -> derselbe Weg wie der Rechtsklick in
+        My Blueprints auf genau diesen Plan."""
+        if not items:
+            return
+        if self._multi_offen_ungespeichert() is not None:
+            self._multi_offen_ungespeichert_zu(items)
+            return
+        pid = getattr(self, "_bd_open_plan_id", None)
+        if pid is not None:
+            self._multi_enden_zu_plan(pid, items)
 
     def _multi_offen_einfuegbar(self, plan_id, auch_ungespeichert=False):
         """Kann ein Ende DIREKT ins offene Fenster (ohne Neu-Oeffnen)? Nur
@@ -1231,17 +1606,58 @@ class MultiBauplan:
         hub_je = getattr(self, "_bd_hub_sell_je_ende", None)
         for x in items:
             _tid = int(x["tid"])
-            if names is not None and x.get("name"):
-                names.setdefault(_tid, str(x["name"]))
+            # Platzhalter "#123" nie als Namen merken (s. ist_platzhalter_name)
+            if (names is not None and not ist_platzhalter_name(x.get("name"))
+                    and ist_platzhalter_name(names.get(_tid))):
+                names[_tid] = str(x["name"])
             # Anderer Verkaufs-Hub gewaehlt: fuer das neue Ende gibt es dort
             # noch keinen Preis - bis zum naechsten Hub-Abruf der Scan-Preis.
             if hub_je and _tid not in hub_je and pm.get(_tid):
                 hub_je[_tid] = pm.get(_tid)
+        # NEUE ITEMS IN DER KETTE -> FENSTER NEU AUFBAUEN (emm317, Nutzer
+        # 01.10.2026: "Multibauplan ignoriert die Production Depth" - b150
+        # nachgestellt). Fertigungstiefe (never_build), Blacklist, ME-Karten,
+        # Strukturwahl und Jobkosten je Item entstehen beim OEFFNEN fuer genau
+        # die Items, die es damals gab. Ein Ende mit neuer Kette (Reaktionen,
+        # Komponenten) fiel durch alle diese Karten - "From components" baute
+        # trotzdem seine Reaktionen. Dann also derselbe Weg wie beim Oeffnen,
+        # mit Bestand und Bau-oder-Kauf-Wahl des Fensters (s. oben). Kennt
+        # das Fenster die ganze Kette schon, bleibt es wie bisher stehen.
+        if self._multi_kette_neu([int(x["tid"]) for x in items]):
+            self._bd_bestand_pending = self._bd_bestand_mitnehmen()
+            _pid_r = getattr(self, "_bd_open_plan_id", None)
+            _d_r = self._offener_bauplan()
+            if _d_r is not None:
+                _d_r.close()
+            self._multi_plan_oeffnen(e, plan_id=_pid_r)
+            return
         self._bd_plan_cache = None
         self._bd_tree_cache = None
         self._bd_reaction_stages = None
         self._bd_full_rebuild()
         self._multi_namen_nachholen()
+
+    def _multi_kette_neu(self, tids):
+        """Bringen diese Enden Items mit, die das offene Fenster beim Oeffnen
+        nicht kannte? (emm317) Die Enden selbst zaehlen nicht
+        (`alle_items_der_kette` liefert nur die Materialien) - fuer sie gelten
+        die Werte je Ende (ME/TE der Karte), und sie werden nie ausgeschlossen.
+        Ohne bekannte Item-Liste: ja (lieber neu aufbauen)."""
+        _bekannt = getattr(self, "_bd_all_ids", None)
+        if not _bekannt:
+            return True
+        _rec = (getattr(self, "_bd_recipes_basis", None)
+                or getattr(self, "_bd_recipes", None))
+        if _rec is None:
+            return True
+        _neu = set()
+        for _t in tids:
+            try:
+                _neu |= set(industry.alle_items_der_kette(int(_t), _rec))
+            except Exception as _ke:
+                self._log_exception("Buendel: Kette eines neuen Endes", str(_ke))
+                return True
+        return bool(_neu - set(int(_x) for _x in _bekannt))
 
     def _multi_namen_nachholen(self):
         """Namen + Gruppen fuer Items, die das offene Buendel neu braucht
@@ -1256,7 +1672,7 @@ class MultiBauplan:
         if names is None or rec is None:
             return
         _keys = tuple(getattr(self, "PLAN_QTY_KEYS", ()) or ())
-        _bekannt = set(names)
+        _bekannt = {k for k, v in names.items() if not ist_platzhalter_name(v)}
         _gruppen_bekannt = set(groups or {})
 
         def job():
@@ -1278,7 +1694,9 @@ class MultiBauplan:
                 return
             if getattr(self, "_bd_names_ref", None) is not names:
                 return                      # inzwischen anderer Plan offen
-            names.update({k: v for k, v in n_neu.items() if k not in names})
+            names.update({k: v for k, v in n_neu.items()
+                          if not ist_platzhalter_name(v)
+                          and ist_platzhalter_name(names.get(k))})
             if groups is not None:
                 groups.update(g_neu)
             _fn = getattr(self, "_bd_full_rebuild", None)
@@ -1308,9 +1726,16 @@ class MultiBauplan:
         des Endes verlaesst `_bd_buendel_quellen` mit (er ist danach wieder
         frei). Gespeichert wird NICHT hier, sondern mit "Save build plan".
 
-        GRENZEN: eingefroren -> erst auftauen (das Material ist gekauft,
-        dieselbe Regel wie beim Bearbeiten-Dialog, aa388); unter zwei Enden
-        -> kein Buendel mehr, dafuer gibt es "Edit" in "Meine Bauplaene".
+        EINGEFROREN (emm332/333, Nutzer 02.10.2026: "bei eingefrorenen
+        Plaenen Endprodukte oben loeschen sollte dennoch moeglich sein, mit
+        Klick aufs rote X, aber mit Popup-Nachfrage" und "die Runs im
+        Runplaner duerfen sich nicht veraendern, sonst stimmen die
+        Materialien nicht mehr"): EINE Warnfrage (Vorgabe Nein). Ja -> der
+        Plan BLEIBT eingefroren, `snapshot_ohne_ende` nimmt nur das Ende und
+        seine eigenen Vorstufen aus dem Schnappschuss; alle uebrigen Runs
+        bleiben exakt (geteilte Vorstufen: Rest wird Ueberschuss).
+        GRENZE: unter zwei Enden -> kein Buendel mehr, dafuer gibt es "Edit"
+        in "Meine Bauplaene".
         """
         tid = int(tid)
         enden = [(int(a), int(b)) for a, b in
@@ -1319,21 +1744,43 @@ class MultiBauplan:
             return
         namen = getattr(self, "_bd_names_ref", None) or {}
         name = str(namen.get(tid) or tid)
-        if getattr(self, "_bd_frozen", None):
-            self._flash_tip(t("Frozen plan \u2013 unfreeze it first (Tools), then "
-                              "remove \u201e{name}\u201c.").format(name=name))
-            return
         if len(enden) <= 2:
             self._flash_tip(t("A bundle needs at least two end products \u2013 "
                               "use \u201eEdit\u201c in My build plans to dissolve it."))
             return
-        r = QMessageBox.question(
-            self._tool_parent(), t("Multi build plan"),
-            t("Remove \u201e{name}\u201c from this bundle?\n\nNothing is saved until you "
-              "click \u201eSave build plan\u201c.").format(name=name),
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if r != QMessageBox.Yes:
-            return
+        _fz = getattr(self, "_bd_frozen", None)
+        if _fz:
+            r = QMessageBox.warning(
+                self._tool_parent(), t("Multi build plan"),
+                t("This plan is FROZEN \u2013 the materials are bought.\n\n"
+                  "Remove \u201e{name}\u201c anyway? The plan stays frozen: only this "
+                  "end product and the pre-stages only it needs are dropped. All "
+                  "other runs in the run planner stay exactly as they are \u2013 what "
+                  "it would have used of shared pre-stages becomes surplus."
+                  ).format(name=name),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return
+            # NICHT auftauen, NICHT neu rechnen (Nutzer 02.10.2026: "die Runs
+            # im Runplaner duerfen sich nicht veraendern"): der Schnappschuss
+            # verliert nur das Ende und seine eigenen Vorstufen. Zeitstempel
+            # bleibt (ESI-Jobs zaehlen weiter ab dem Einfrieren), der Cache
+            # des entpackten Plans haengt am Zeitstempel -> leeren.
+            if _fz.get("plan_snapshot"):
+                _alt_plan = self._frozen_snapshot_plan()
+                _neu_plan = snapshot_ohne_ende(
+                    _alt_plan, tid, inv_mats_weg=self._inv_mats_des_endes(_alt_plan, tid))[0]
+                self._bd_frozen = dict(_fz)
+                self._bd_frozen["plan_snapshot"] = self._plan_snapshot_pack(_neu_plan)
+                self._bd_frozen_plan_cache = None
+        else:
+            r = QMessageBox.question(
+                self._tool_parent(), t("Multi build plan"),
+                t("Remove \u201e{name}\u201c from this bundle?\n\nNothing is saved until you "
+                  "click \u201eSave build plan\u201c.").format(name=name),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return
         plans = self.settings.get("bau_saved_plans", []) or []
         by_id = {x.get("id"): x for x in plans}
         # Der Quellplan dieses Endes geht mit - und nur er.
@@ -1357,6 +1804,32 @@ class MultiBauplan:
             _fn()
         self._flash_tip(t("\u201e{name}\u201c removed from the bundle \u2013 save the "
                           "plan to keep it.").format(name=name))
+
+    def _inv_mats_des_endes(self, plan, tid):
+        """Datacores/Decryptoren, die die Invention des Endes `tid` im
+        eingefrorenen Plan braucht (emm336) - fuer `snapshot_ohne_ende`.
+        Dieselbe Rechnung wie production_plan (`industry._inv_cost`). NUR
+        wenn deren Kosten die im Schnappschuss gemerkten Invention-Kosten des
+        Endes auf 1 % treffen: sonst rechnete sie mit anderen Annahmen als
+        beim Einfrieren, und es bleibt lieber alles stehen (Regel 3)."""
+        try:
+            rec = getattr(self, "_bd_recipes", None)
+            bp = ((rec.product_to_bp.get(int(tid)) if rec else None) or (None,))[0]
+            runs = int(((plan or {}).get("build_runs") or {}).get(int(tid), 0) or 0)
+            soll = float(((plan or {}).get("inv_cost_items") or {}).get(int(tid), 0) or 0)
+            if not bp or runs <= 0 or soll <= 0:
+                return {}
+            pm = dict(getattr(self, "_bd_pricemap", None) or {})
+            mats = {}
+            ist = industry._inv_cost(bp, runs, rec, pm.get,
+                                     dict(getattr(self, "_bd_opts", None) or {}),
+                                     mats_out=mats)
+            if abs(float(ist) - soll) > 0.01 * soll:
+                return {}
+            return mats
+        except Exception as e:
+            self._log_exception("Multi: Invention-Material des Endes", str(e))
+            return {}
 
     def _multi_eintrag_felder(self, existing=None):
         """Die Buendel-Felder fuer den Speicherer im Bauplan-Dialog: aus dem
@@ -1385,6 +1858,35 @@ class MultiBauplan:
                 "own_bpc_runs_je_ende": {
                     str(k): int(v) for k, v in
                     (getattr(self, "_bd_own_bpc_runs_je_ende", None) or {}).items()}}
+
+    # Die vier Felder, die je Ende sofort gemerkt werden (s. unten).
+    JE_ENDE_SOFORT = ("me_je_ende", "te_je_ende", "own_bpc_je_ende",
+                      "own_bpc_runs_je_ende")
+
+    def _multi_je_ende_merken(self):
+        """ME, TE, Own BPC und Runs/BPC je Ende SOFORT in den gespeicherten
+        Buendel-Plan schreiben (Nutzer 28.09.2026: "es speichert nicht, wenn
+        ich die ME/TE oben veraendere ... beim Schliessen und wieder Oeffnen
+        ist der Own-Haken weg und die Ametat II Copy wieder auf 2/4").
+
+        Bisher landeten sie nur mit "Save build plan" im Plan - beim
+        eingefrorenen Plan drueckt man den aber nicht, und nichts warnte.
+        NUR DIESE VIER FELDER: Mengen, Enden und der eingefrorene
+        Schnappschuss bleiben dem Knopf vorbehalten (ein eingefrorener Plan
+        darf seine Einkaufsliste nicht still aendern). Ein ungespeichertes
+        Buendel hat noch keinen Eintrag - dann nichts. True = geschrieben."""
+        pid = getattr(self, "_bd_open_plan_id", None)
+        if pid is None:
+            return False
+        felder = self._multi_eintrag_felder()
+        for p in (self.settings.get("bau_saved_plans", []) or []):
+            if p.get("id") != pid or not self._multi_ist_plan(p):
+                continue
+            for k in self.JE_ENDE_SOFORT:
+                p[k] = felder[k]
+            config.save_settings_async(self.settings)
+            return True
+        return False
 
     def _multi_hinweis_einzelplan(self, pid):
         """Beim Oeffnen eines Einzelplans, der in einem Multi-Bauplan steckt:
@@ -1531,6 +2033,31 @@ class MultiBauplan:
             tbl.setColumnWidth(_c, int(_br))
         hh.setSectionResizeMode(0, _HV.Stretch)
 
+    def _einzel_absatz_zeigen(self, tid, lbl, nachladen=True):
+        """Eine Zeile "Verkauft/Tag ... Tage bis verkauft" fuer das Ende eines
+        Einzelplans (emm349). Fehlt die Historie: einmal nachladen."""
+        from .mw_helpers import tage_bis_verkauft, absatz_stufe
+        _region = self._absatz_region(getattr(self, "_bd_sell_hub", None))
+        v = self._absatz_je_typ([tid], _region).get(int(tid))
+        menge = max(1, int(getattr(self, "_bd_qty", 1) or 1))
+        tage = tage_bis_verkauft(menge, v)
+        stufe = absatz_stufe(tage)
+        if v is None:
+            lbl.setText(t("Sold/day: ? \u2013 market history not loaded yet."))
+        else:
+            lbl.setText(t("Sold/day: {v} \u00b7 {q} units \u2248 {d} days to sell").format(
+                v=f"{v:,.1f}".replace(",", "'"), q=menge,
+                d=("\u221e" if tage == float("inf") else f"{tage:,.0f}".replace(",", "'")))
+                + ("  \u26a0 " + t("thin market") if stufe == "thin" else ""))
+        lbl.setStyleSheet(f"font-size:{theme.FS_SMALL}; color:"
+                          + {"ok": theme.MUTED, "slow": theme.AMBER,
+                             "thin": theme.RED}.get(stufe, theme.MUTED) + ";")
+        if v is None and nachladen:
+            self._absatz_nachladen(
+                [tid], _region,
+                fertig=lambda: (self._einzel_absatz_zeigen(tid, lbl, nachladen=False)
+                                if getattr(self, "_bd_einzel_absatz_lbl", None) is lbl else None))
+
     def _multi_enden_karte(self, type_id, names, parent_layout):
         """Karte "Endprodukte" im Bauplan-Dialog - nur fuer ein Buendel.
 
@@ -1576,6 +2103,12 @@ class MultiBauplan:
                 _h1.addWidget(_eb)
                 _h1.addStretch()
                 _v1.addLayout(_h1)
+                # MARKT-CHECK AUCH BEIM EINZELPLAN (emm349).
+                _al = QLabel("")
+                _al.setWordWrap(True)
+                _v1.addWidget(_al)
+                self._bd_einzel_absatz_lbl = _al         # b-Suite
+                self._einzel_absatz_zeigen(int(type_id), _al)
                 parent_layout.addWidget(_k1)
                 self._bd_ende_karte_einzel = _k1        # b-Suite
             return None
@@ -1638,6 +2171,14 @@ class MultiBauplan:
         _warn.setVisible(False)
         _bv.addWidget(_warn)
         self._bd_multi_warn_lbl = _warn
+        # MARKT ZU DUENN (emm349): eigene Zeile, damit sie nicht mit den
+        # Decryptor-/Kopie-Hinweisen um den Platz streitet.
+        _mwarn = QLabel("")
+        _mwarn.setStyleSheet(f"color:{theme.AMBER}; font-weight:700;")
+        _mwarn.setWordWrap(True)
+        _mwarn.setVisible(False)
+        _bv.addWidget(_mwarn)
+        self._bd_multi_markt_lbl = _mwarn
         # ISK EINMAL IN DIE KOPFZEILE statt dreimal je Zeile (Nutzer-Befund
         # 20.09.2026: Spalten zu schmal, Text abgeschnitten) - " ISK" hinter
         # jeder Zahl kostet rund 45 px je Geldspalte, hier also 135.
@@ -1651,6 +2192,15 @@ class MultiBauplan:
                    # braucht sie rund ein Drittel weniger Platz.
                    t("Cost/unit") + "\n(ISK)", t("Sell/unit") + "\n(ISK)",
                    t("Profit/unit, net") + "\n(ISK)",
+                   # MARGE JE ENDE (Nutzer 29.09.2026: "multiplan sehe ich
+                   # zwar den profit aber die einzelmarge waere noch schoen
+                   # zu wissen"). Dieselbe Formel wie die grosse "Margin"
+                   # oben: Gewinn netto / (Kosten + Anteil Fracht/Extra).
+                   t("Margin") + "\n(%)",
+                   # MARKT-CHECK JE ENDE (emm349, Nutzer: "die Marge ist
+                   # erschreckend zu gut"): Ø verkaufte Stueck/Tag am Hub und
+                   # wie viele Tage die Menge braucht, bis sie weg ist.
+                   t("Sold/day") + "\n" + t("(days)"),
                    # HERAUSNEHMEN (Nutzer 26.09.2026: "einige Endprodukte
                    # lohnen sich nicht ... wir brauchen einen Knopf, um diese
                    # aus dem Multiplan wieder entfernen zu koennen").
@@ -1662,6 +2212,18 @@ class MultiBauplan:
         tbl.setSelectionMode(QTableWidget.NoSelection)
         # Mehr als ENDEN_SICHTBAR Enden: Bildlaufleiste rechts, zeilenweise.
         tbl.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # BILDLAUFLEISTE GUT SICHTBAR (Nutzer 30.09.2026: "den Hinweis fuers
+        # Scrollen finde ich daemlich, mach lieber die Scrollbar
+        # ersichtlicher"): 12 px breit, Griff in Cyan auf dunkler Bahn.
+        tbl.verticalScrollBar().setStyleSheet(
+            f"QScrollBar:vertical{{width:12px; background:{theme.PANEL2}; "
+            f"border-left:1px solid {theme.BORDER}; margin:0px;}}"
+            f"QScrollBar::handle:vertical{{background:{theme.CYAN}; "
+            f"min-height:28px; border-radius:4px; margin:2px;}}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
+            f"{{height:0px;}}"
+            f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
+            f"{{background:none;}}")
         tbl.setVerticalScrollMode(QTableWidget.ScrollPerPixel)
         hh = tbl.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -1752,6 +2314,13 @@ class MultiBauplan:
         _anstoss = QTimer(tbl); _anstoss.setSingleShot(True); _anstoss.setInterval(250)
 
         def _neu_rechnen():
+            # ME/TE/Own BPC/Runs je Ende SOFORT im gespeicherten Plan merken
+            # (Nutzer 28.09.2026) - vor dem Neurechnen, damit ein Fehler dort
+            # die Eingabe nicht verliert.
+            try:
+                self._multi_je_ende_merken()
+            except Exception as _me:
+                self._log_exception("Multi-Bauplan: je Ende merken", str(_me))
             _fn = getattr(self, "_bd_full_rebuild", None)
             if _fn is not None:
                 _fn()
@@ -1842,7 +2411,7 @@ class MultiBauplan:
             _wr = QWidget(); _hr = QHBoxLayout(_wr)
             _hr.setContentsMargins(4, 0, 4, 0); _hr.addWidget(raus)
             _hr.setAlignment(Qt.AlignHCenter)
-            tbl.setCellWidget(r, 10, _wr)
+            tbl.setCellWidget(r, 12, _wr)
             w.update({"menge": menge, "me": me, "te": te, "obpc": obpc,
                       "runs": runs, "deckel": _deckel, "raus": raus})
 
@@ -1879,10 +2448,25 @@ class MultiBauplan:
             w["breiten"] = _breiten
 
             def _sperren():
-                """ME/TE nur frei, wenn KEINE Invention regiert."""
+                """ME/TE nur frei, wenn KEINE Invention regiert - und alles
+                gesperrt, solange der PLAN eingefroren ist (Nutzer
+                30.09.2026). Erst die Frost-Sperre loesen, dann frisch
+                rechnen, zuletzt ggf. wieder sperren."""
+                _alle = (menge, me, te, obpc, runs, raus)
+                self._frost_widgets(_alle, False)
                 _frei = not _invention_regiert(tid)
                 me.setEnabled(_frei); te.setEnabled(_frei)
-                runs.setEnabled(bool(obpc.isChecked()))
+                _esi_je = int((getattr(self, "_bd_multi_esi_runs", None) or {}).get(
+                    int(tid), 0) or 0)
+                runs.setEnabled(bool(obpc.isChecked()) and _esi_je < 1)
+                if _esi_je >= 1:
+                    runs.setToolTip(t(
+                        "Your copies in the hangar have {n} runs each (ESI) – "
+                        "every job uses a whole copy.").format(n=_esi_je))
+                else:
+                    runs.setToolTip(t(
+                        "How many runs does ONE of your own BPCs of this product have? "
+                        "The run planner never puts more than this into a single job."))
                 if not _frei:
                     me.setToolTip(t(
                         "Comes from the invention (2 % base plus decryptor) \u2013 an "
@@ -1894,6 +2478,12 @@ class MultiBauplan:
                                     "of this end product (0\u201310 %)."))
                     te.setToolTip(t("Time efficiency of YOUR blueprint copy of "
                                     "this end product (0\u201320 %)."))
+                if self._bd_plan_fest():
+                    # Das rote X bleibt frei (emm333): Entfernen fragt selbst
+                    # und laesst die uebrigen Runs unangetastet.
+                    self._frost_widgets((menge, me, te, obpc, runs), True, t(
+                        "Plan frozen \u2013 this would change the plan. "
+                        "Unfreeze first ( button)."))
             w["sperren"] = _sperren
 
             def _menge_geaendert(v, _tid=tid):
@@ -2009,8 +2599,9 @@ class MultiBauplan:
             # "Eigene BPC" ohne getippten Wert zeigte das Feld seine 1,
             # waehrend die Spalte daneben "1 x 52 runs" meldete (Nutzer-
             # Befund 21.09.2026, zwei Zahlen fuer dieselbe Sache). Jetzt
-            # steht dort die Kopiengroesse aus dem Blaupausen-Cache; tippt
-            # der Nutzer eine eigene, gewinnt seine (eigene_kopie_lage).
+            # steht dort die Kopiengroesse aus dem Blaupausen-Cache; kennt
+            # der Cache sie, gilt SIE (28.09.2026, eigene_kopie_lage) und
+            # das Feld ist gesperrt, sonst die getippte Zahl.
             if bpd and int(bpd.get("runs", 0) or 0) >= 1:
                 _ru = int(bpd["runs"])
             for _w, _v in ((w["menge"], max(1, _mg)), (w["me"], int(_me or 0)),
@@ -2022,6 +2613,62 @@ class MultiBauplan:
             _br = w.get("breiten")
             if _br is not None:
                 _br()
+
+        def _absatz_fuellen(nachladen=True):
+            """Spalte 11 (Ø/Tag und Tage bis verkauft) und die Warnzeile.
+            Fehlt eine Historie, wird sie EINMAL im Hintergrund geholt und
+            die Spalte danach neu gefuellt."""
+            from .mw_helpers import tage_bis_verkauft, absatz_stufe, ABSATZ_DUENN
+            je = getattr(self, "_bd_multi_je", None) or {}
+            reihen = getattr(self, "_bd_multi_reihen", None) or []
+            _region = self._absatz_region(getattr(self, "_bd_sell_hub", None))
+            vol = self._absatz_je_typ(reihen, _region)
+            self._bd_multi_absatz = dict(vol)            # b-Suite
+            duenn = []
+            for r, tid in enumerate(reihen):
+                if r >= tbl.rowCount():
+                    break
+                v = vol.get(int(tid))
+                menge = int((je.get(tid) or je.get(int(tid)) or {}).get("menge") or 0)
+                tage = tage_bis_verkauft(menge, v)
+                stufe = absatz_stufe(tage)
+                if v is None:
+                    _txt_a = "?"
+                elif tage == float("inf"):
+                    _txt_a = "0 \u00b7 \u221e"
+                else:
+                    _txt_a = "{v} \u00b7 {d}".format(
+                        v=(f"{v:.1f}" if v < 10 else f"{v:,.0f}".replace(",", "'")),
+                        d=(f"{tage:.1f}" if tage < 10 else f"{tage:,.0f}".replace(",", "'")))
+                it = NumericItem(_txt_a, -1.0 if tage is None else min(tage, 1e9))
+                it.setForeground(QColor({"ok": theme.TEXT, "slow": theme.AMBER,
+                                         "thin": theme.RED}.get(stufe, theme.MUTED)))
+                if v is None:
+                    it.setToolTip(t("Market history not loaded yet \u2013 it is "
+                                    "fetched in the background."))
+                else:
+                    it.setToolTip(t("\u00d8 {v} sold per day at the hub (last 30 days). "
+                                    "{q} units \u2248 {d} days until all are sold \u2013 "
+                                    "if you are the only seller.").format(
+                        v=f"{v:,.1f}".replace(",", "'"), q=menge,
+                        d=("\u221e" if tage == float("inf") else f"{tage:,.0f}".replace(",", "'"))))
+                tbl.setItem(r, 11, it)
+                if stufe == "thin":
+                    duenn.append(names.get(tid, f"#{tid}"))
+            _ml = getattr(self, "_bd_multi_markt_lbl", None)
+            if _ml is not None:
+                _ml.setText(t("\u26a0 Thin market for {items}: at the current daily "
+                              "volume the quantity takes more than {d} days to sell "
+                              "\u2013 the profit assumes it all sells at today\u2019s "
+                              "price.").format(items=", ".join(duenn), d=int(ABSATZ_DUENN))
+                            if duenn else "")
+                _ml.setVisible(bool(duenn))
+            _fehlt = [int(t_) for t_, v_ in vol.items() if v_ is None]
+            if _fehlt and nachladen:
+                self._absatz_nachladen(
+                    _fehlt, _region,
+                    fertig=lambda: (_absatz_fuellen(nachladen=False)
+                                    if tbl is getattr(self, "_bd_multi_tbl", None) else None))
 
         def _refresh(plan):
             je = industry.buendel_kosten_je_ende(plan or {})
@@ -2052,8 +2699,8 @@ class MultiBauplan:
                 if _ohne_dec:
                     _warn_teile.append(t(
                         "\u26a0 No decryptor chosen yet for: {items}. Invention tab: "
-                        "pick one or press \u201eBest Decryptor for all "
-                        "Blueprints\u201c; building from your own copy? Tick "
+                        "pick one or press \u201eAuto-Decryptor\u201c; "
+                        "building from your own copy? Tick "
                         "\u201eOwn BPC\u201c and enter its ME/TE.").format(
                             items=", ".join(names.get(tid, f"#{tid}")
                                             for tid in _ohne_dec)))
@@ -2116,12 +2763,15 @@ class MultiBauplan:
                 # als ihre Ueberschrift.
                 if tbl.item(r, 9) is None:
                     tbl.setItem(r, 9, NumericItem("\u2014", 0.0))
+                if tbl.item(r, 10) is None:
+                    tbl.setItem(r, 10, NumericItem("\u2014", 0.0))
             # Hoehe aus den echten Zeilen (geschaetzte 34 px liessen unter der
             # letzten Zeile einen leeren Streifen stehen) - GEDECKELT auf
             # ENDEN_SICHTBAR Zeilen, darueber laeuft die Tabelle mit eigener
             # Bildlaufleiste (Nutzer 26.09.2026, elf Enden: "wir koennen
             # nicht scrollen ... maximal 5 Endprodukte, dafuer eine
             # Scrollleiste rechts, so wie unten im Planer selbst").
+            _absatz_fuellen()
             _zh = tbl.rowHeight(0) if tbl.rowCount() else 30
             _n_sicht = max(1, min(tbl.rowCount(), self.ENDEN_SICHTBAR))
             tbl.setFixedHeight(tbl.horizontalHeader().height()
@@ -2167,6 +2817,7 @@ class MultiBauplan:
                 sell = hub_je.get(tid) or pm.get(tid)
                 if not sell or not k:
                     tbl.setItem(r, 9, NumericItem("\u2014", 0.0))
+                    tbl.setItem(r, 10, NumericItem("\u2014", 0.0))
                     fehlt += 1
                     continue
                 menge = max(1, int(k.get("menge") or 1))
@@ -2187,6 +2838,22 @@ class MultiBauplan:
                     "products, is the total profit above.").format(
                         pct=f"{float(satz or 0.0) * 100:.2f}"))
                 tbl.setItem(r, 9, it)
+                # MARGE: Gewinn je Stueck durch die Kosten je Stueck MIT dem
+                # Anteil an Fracht/Extra - genau der Nenner der grossen
+                # Marge (prof / (total + Fracht + Extra)); Summe ueber die
+                # Enden gewichtet = die Marge oben.
+                _kost_st = _je_st + (_zuschlag * anteil / menge)
+                if _kost_st > 0:
+                    _mg = g / _kost_st * 100.0
+                    it_m = NumericItem(f"{_mg:+.1f} %", _mg)
+                    it_m.setForeground(QColor(theme.GREEN if _mg >= 0 else theme.RED))
+                    it_m.setToolTip(_txt(
+                        "Net profit per unit divided by this product's cost per "
+                        "unit (incl. its share of freight and extra costs) \u2013 "
+                        "the same formula as the margin above."))
+                else:
+                    it_m = NumericItem("\u2014", 0.0)
+                tbl.setItem(r, 10, it_m)
             if lbl is not None:
                 if fehlt:
                     lbl.setText(_txt(

@@ -59,7 +59,7 @@ _BERICHT = open(os.path.join("berichte", "pruefe_bericht.txt"), "w",
 sys.stdout = _Doppelt(sys.stdout, _BERICHT)
 sys.stderr = _Doppelt(sys.stderr, _BERICHT)
 import datetime as _dt
-print(f"pruefe.py Fassung 4 - {_dt.datetime.now():%Y-%m-%d %H:%M:%S} - "
+print(f"pruefe.py Fassung 7 - {_dt.datetime.now():%Y-%m-%d %H:%M:%S} - "
       f"Python {sys.version.split()[0]}")
 
 
@@ -78,6 +78,12 @@ sys.excepthook = _haken
 def lauf(titel, befehl, umgebung=None, muster_ok=None):
     u = dict(os.environ)
     u.update(umgebung or {})
+    # FASSUNG 5 (01.10.2026): stuerzt Python selbst ab, schreibt der
+    # faulthandler wenigstens noch, WO (Zugriffsverletzung u. a.).
+    u.setdefault("PYTHONFAULTHANDLER", "1")
+    # FASSUNG 7 (02.10.2026): das Kind schreibt UTF-8 - gelesen wird ohnehin
+    # UTF-8 (unten). Vorher schrieb es auf Windows cp1252 und starb an "\u25b8".
+    u["PYTHONIOENCODING"] = "utf-8"
     print(f"\n=== {titel} " + "=" * max(0, 56 - len(titel)))
     # ZEICHENTABELLE FESTNAGELN: Windows liest sonst mit cp1252, und ein
     # Umlaut in der Ausgabe kann den ganzen Text verschlucken (Sitzung 16:
@@ -97,6 +103,19 @@ def lauf(titel, befehl, umgebung=None, muster_ok=None):
             print("  " + (z.strip() if "FEHLER" in z else z.strip()[:110]))
     if not _zeilen:
         print("  (keine Ausgabe - lief die Pruefung ueberhaupt?)")
+    # RUECKGABEWERT AUCH BEI GRUEN ZEIGEN (Fassung 5, 01.10.2026). Beim
+    # Nutzer endete die b-Suite einmal mit 3221226505 (0xC0000409) NACH der
+    # Ergebniszeile - gesehen nur, weil sie rot war. Ob das auch bei gruenem
+    # Lauf passiert und was Qt/Python davor auf stderr schreibt, war nicht
+    # zu erkennen. Am Urteil aendert das nichts (es zaehlt die Ergebniszeile).
+    if p.returncode != 0:
+        print(f"  WARNUNG Rueckgabewert {p.returncode} "
+              f"(0x{p.returncode & 0xFFFFFFFF:08X})")
+        _err = [z for z in (p.stderr or "").splitlines() if z.strip()
+                and "DeprecationWarning" not in z
+                and "does not support raise" not in z]
+        for z in _err[-10:]:
+            print("  ! " + z.rstrip()[:160])
     _ok = muster_ok(aus) if muster_ok is not None else (p.returncode == 0)
     if not _ok:
         # BEI ROT DEN ECHTEN TEXT ZEIGEN (Sitzung 16): sonst steht da nur
@@ -153,16 +172,26 @@ ergebnis["Lint (Reihenfolge)"] = lauf(
     "Lint", [PY, os.path.join("tests", "lint_order.py")] + _dateien + ["main.py"],
     muster_ok=lambda a: "0 Befund" in a)
 
-try:
+# PYFLAKES MUSS WIRKLICH LAUFEN (Fassung 6, 01.10.2026): in der .venv des
+# Nutzers fehlte es - "No module named pyflakes" enthaelt kein "undefined
+# name", und die Zeile stand auf OK, obwohl gar nichts geprueft wurde.
+_pf_da = subprocess.run([PY, "-c", "import pyflakes"],
+                        capture_output=True).returncode == 0
+if _pf_da:
     ergebnis["pyflakes (undefinierte Namen)"] = lauf(
         "pyflakes", [PY, "-m", "pyflakes", "eve_trader/"],
-        muster_ok=lambda a: "undefined name" not in a)
-except FileNotFoundError:                            # pragma: no cover
-    print("  pyflakes fehlt - mit `pip install pyflakes` nachruesten")
+        muster_ok=lambda a: "undefined name" not in a
+        and "No module named" not in a)
+else:
+    print("\n=== pyflakes " + "=" * 48)
+    print("  pyflakes fehlt - einmal nachruesten:  "
+          ".venv\\Scripts\\python -m pip install pyflakes")
     ergebnis["pyflakes (undefinierte Namen)"] = None
 
 print("\n" + "=" * 62)
-schlecht = [k for k, v in ergebnis.items() if v is False]
+# Eine Pruefung, die NICHT lief (None), sagt nichts - sie darf die
+# Freigabe nicht durchwinken (Fassung 6).
+schlecht = [k for k, v in ergebnis.items() if v is not True]
 for k, v in ergebnis.items():
     print(f"  {'OK  ' if v else 'FEHLT' if v is None else 'ROT '}  {k}")
 if schlecht:

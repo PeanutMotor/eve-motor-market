@@ -8,8 +8,8 @@ Industry and trading tool for EVE Online - for players who build and trade acros
 
 ## What it does
 
-- **Build** - full recipe tree down to ore and reactions, ME/TE from your own blueprints, multi build plans with several end products, invention with decryptor choice, a run planner that spreads jobs across your characters, shopping list with order-book prices. Saved plans reserve their material, so you never buy the same stack twice.
-- **Trade** - trade journal with real profit after your own tax and fees; daytrade, swing and regional deal finders; order update shows which orders were undercut.
+- **Build** - full recipe tree down to ore and reactions, ME/TE from your own blueprints, multi build plans with several end products, invention with decryptor choice, a run planner that spreads jobs across your characters, shopping list with order-book prices. Saved plans reserve their material in your build priority, so you never buy the same stack twice; an industry jobs page shows every character's slots at a glance.
+- **Trade** - trade journal with real profit after your own tax, fees and freight; daytrade, swing and regional deal finders; order update shows which orders were undercut.
 - **Multi-character** - wallets, orders, assets, skills and industry jobs of all linked characters in one view.
 
 ![A build plan: recipe tree with buy-or-build per item, build cost, total profit and margin](docs/screenshot-build-plan.png)
@@ -28,8 +28,8 @@ Full source in this repository and as a zip on every release (GPL-3.0). `eve_tra
 
 The calculations are guarded, not trusted:
 
-- two test suites, 4'604 and 1'814 checks, run with `python pruefe.py`
-- a mutation harness (`tests/rotprobe.py`) that breaks the code on purpose, 1'486 mutations, to prove the checks catch a regression
+- two test suites, 4'885 and 2'073 checks, run with `python pruefe.py`
+- a mutation harness (`tests/rotprobe.py`) that breaks the code on purpose, 1'759 mutations, to prove the checks catch a regression
 - source-order lint, `pyflakes`, and six scanners that keep the English and German texts in step
 
 ## Community

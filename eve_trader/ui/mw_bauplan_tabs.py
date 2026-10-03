@@ -22,11 +22,250 @@ from PySide6.QtWidgets import (
     QTableWidget, QVBoxLayout, QWidget,
 )
 
-from .. import esi, hubs, industry, reprocess, store
+from .. import config, esi, hubs, industry, reprocess, store
+from ..workers import Worker
 from . import icons, theme
 from ..sprache import t
 from .mw_basis import (KEIN_DECRYPTOR, ROLLE_KOPIERNAME, NumericItem,
-                       dec_anzeige, isk, ohne_mausrad)
+                       dec_anzeige, isk, kopier_menue, ohne_mausrad)
+
+
+class SlotKaestchen(QWidget):
+    """Job-Slots als Kaestchen (emm330): fertig gruen, laufend in der Farbe
+    der Aktivitaet, frei nur umrandet. Ohne bekanntes Maximum nur die belegten."""
+    GROESSE, ABSTAND = 11, 3
+
+    def __init__(self, laufend, fertig, maximum, farbe, parent=None, breite=None,
+                 abstand=None):
+        super().__init__(parent)
+        if abstand is not None:
+            self.ABSTAND = int(abstand)
+        self.laufend, self.fertig = int(laufend or 0), int(fertig or 0)
+        self.maximum = None if maximum is None else int(maximum)
+        self.farbe = farbe
+        n = self.anzahl()
+        # emm334: drei Slot-Arten NEBENEINANDER - die Kaestchen passen sich
+        # der gegebenen Breite an (mindestens 4 px), statt je 11 px zu nehmen.
+        self._g = self.GROESSE
+        if breite:
+            self._g = max(4, min(self.GROESSE, int(breite) // max(1, n) - self.ABSTAND))
+        self.setFixedSize(max(1, n) * (self._g + self.ABSTAND), self._g + 2)
+
+    def anzahl(self):
+        belegt = self.laufend + self.fertig
+        return max(belegt, self.maximum) if self.maximum is not None else belegt
+
+    def paintEvent(self, _ev):
+        from PySide6.QtGui import QPainter, QPen
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        g = self._g
+        for i in range(self.anzahl()):
+            x = i * (g + self.ABSTAND)
+            if i < self.fertig:
+                p.setPen(Qt.NoPen); p.setBrush(QColor(theme.GREEN))
+            elif i < self.fertig + self.laufend:
+                p.setPen(Qt.NoPen); p.setBrush(QColor(self.farbe))
+            else:
+                p.setPen(QPen(QColor(theme.BORDER), 1)); p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(x + 0.5, 1.5, g - 1, g - 1, 2, 2)
+        p.end()
+
+
+class KapazitaetsBalken(QWidget):
+    """Ein Balken ueber ALLE Slots einer Art (emm346): fertig gruen, laufend
+    in der Farbe der Aktivitaet, der Rest frei (dunkel mit Rand)."""
+
+    def __init__(self, farbe, parent=None):
+        super().__init__(parent)
+        self.farbe = farbe
+        self.laufend = self.fertig = self.maximum = 0
+        self.setFixedHeight(10)
+        self.setMinimumWidth(60)
+
+    def setze(self, laufend, fertig, maximum):
+        self.laufend, self.fertig = int(laufend or 0), int(fertig or 0)
+        self.maximum = int(maximum or 0)
+        self.update()
+
+    def paintEvent(self, _ev):
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainter, QPen
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(QPen(QColor(theme.BORDER), 1)); p.setBrush(QColor(theme.BG))
+        p.drawRoundedRect(r, 4, 4)
+        gesamt = max(self.maximum, self.laufend + self.fertig, 1)
+        x = r.left()
+        p.setPen(Qt.NoPen)
+        for n, farbe in ((self.fertig, theme.GREEN), (self.laufend, self.farbe)):
+            if n <= 0:
+                continue
+            w = r.width() * n / gesamt
+            p.setBrush(QColor(farbe))
+            p.drawRoundedRect(QRectF(x, r.top(), w, r.height()), 4, 4)
+            x += w
+        p.end()
+
+
+class KurzLabel(QLabel):
+    """Einzeiliger Text, der bei Platzmangel mit "..." gekuerzt wird statt
+    abgeschnitten (emm334: "Plasma Pulse Generator Blueprint \u00b7 TE rese").
+    Der volle Text steht im Tooltip und in `voller_text()`."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self._voll = str(text)
+        self.setToolTip(self._voll)
+        self.setMinimumWidth(30)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        QLabel.setText(self, self._voll)
+
+    def voller_text(self):
+        return self._voll
+
+    def setText(self, text):
+        # Neuer Text: voll merken, Tooltip nachziehen, sofort gekuerzt zeigen.
+        self._voll = str(text)
+        self.setToolTip(self._voll)
+        QLabel.setText(self, self.fontMetrics().elidedText(
+            self._voll, Qt.ElideRight, max(10, self.width())))
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        QLabel.setText(self, self.fontMetrics().elidedText(
+            self._voll, Qt.ElideRight, max(10, self.width())))
+
+
+class JobZeile(QFrame):
+    """Eine Job-Gruppe in EINER Zeile (emm334, Nutzer: "immer noch nicht
+    uebersichtlich genug"): Kuerzel der Aktivitaet, "9x Name", Restzeit. Der
+    Fortschritt fuellt den Hintergrund der Zeile in der Farbe der Art - keine
+    eigene Balken-Zeile mehr. value()/setValue() 0..1000 wie ein Balken."""
+
+    def __init__(self, kuerzel, text, rest, farbe, parent=None):
+        super().__init__(parent)
+        self._farbe = QColor(farbe)
+        self._wert = 0
+        h = QHBoxLayout(self)
+        h.setContentsMargins(6, 3, 8, 3)
+        h.setSpacing(6)
+        self.tag = QLabel(kuerzel)
+        self.tag.setAlignment(Qt.AlignCenter)
+        self.tag.setMinimumWidth(40)
+        self.tag.setStyleSheet(
+            f"color:{farbe}; border:1px solid {farbe}; border-radius:3px; "
+            f"padding:0px 3px; font-size:{theme.FS_SMALL}; font-weight:700; "
+            f"background:transparent;")
+        h.addWidget(self.tag)
+        self.name = KurzLabel(text)
+        self.name.setStyleSheet("font-weight:700; background:transparent;")
+        h.addWidget(self.name, 1)
+        self.rest = QLabel(rest)
+        self.rest.setStyleSheet(f"font-family:{theme.MONO}; background:transparent;")
+        h.addWidget(self.rest)
+
+    def setValue(self, v):
+        self._wert = max(0, min(1000, int(v or 0)))
+        self.update()
+
+    def value(self):
+        return self._wert
+
+    def paintEvent(self, ev):
+        from PySide6.QtGui import QPainter
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(theme.PANEL2))
+        p.drawRoundedRect(self.rect(), 4, 4)
+        if self._wert > 0:
+            _c = QColor(self._farbe)
+            _c.setAlpha(70)
+            p.setBrush(_c)
+            _r = self.rect()
+            _r.setWidth(int(_r.width() * self._wert / 1000))
+            p.drawRoundedRect(_r, 4, 4)
+        p.end()
+        super().paintEvent(ev)
+
+
+class KartenRaster(QWidget):
+    """Kacheln nebeneinander, so viele Spalten wie in die Breite passen
+    (emm330: "Charaktere nebeneinander, nicht untereinander").
+
+    emm342 (Nutzer: "wenn man ein Dropdown aufmacht, sollen die Karten rechts
+    oder links davon nicht mitrutschen"): SPALTEN statt Zeilen-Raster. Karte i
+    steht in Spalte i % n (Lesereihenfolge bleibt zeilenweise), jede Spalte
+    stapelt fuer sich - waechst eine Karte, rutscht nur ihre eigene Spalte."""
+
+    def __init__(self, breite=340, parent=None):
+        super().__init__(parent)
+        self._breite = int(breite)
+        self._karten = []
+        self._spalten = 0
+        self._reihe = QHBoxLayout(self)
+        self._reihe.setContentsMargins(0, 0, 0, 0)
+        self._reihe.setSpacing(12)
+        self._spalten_lay = []
+
+    def spalten(self):
+        return max(1, (self.width() + 12) // (self._breite + 12))
+
+    def _spalte(self, c):
+        # Spalten-Layouts werden nur angelegt, nie geloescht; eine leere
+        # Spalte (nur Stretch) zaehlt fuer Qt als leer - kein Abstand.
+        while len(self._spalten_lay) <= c:
+            v = QVBoxLayout()
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(12)
+            v.addStretch(1)
+            self._reihe.addLayout(v, 0)
+            self._spalten_lay.append(v)
+        return self._spalten_lay[c]
+
+    def _abhaengen(self, karten):
+        for v in self._spalten_lay:
+            for k in karten:
+                v.removeWidget(k)
+
+    def setze(self, karten):
+        self._abhaengen(self._karten)
+        for k in self._karten:
+            k.deleteLater()
+        self._karten = list(karten)
+        self._anordnen(neu=True)
+
+    def lage(self):
+        """[(Platz in der Spalte, Spalte)] je Karte, aus dem echten Layout."""
+        out = []
+        for k in self._karten:
+            for c, v in enumerate(self._spalten_lay):
+                i = v.indexOf(k)
+                if i >= 0:
+                    out.append((i, c))
+                    break
+            else:
+                out.append(None)
+        return out
+
+    def _anordnen(self, neu=False):
+        n = self.spalten()
+        if n == self._spalten and not neu:
+            return
+        self._spalten = n
+        self._abhaengen(self._karten)
+        for i, k in enumerate(self._karten):
+            v = self._spalte(i % n)
+            v.insertWidget(v.count() - 1, k)
+        self._spalte(n - 1)
+        for c in range(len(self._spalten_lay)):
+            self._reihe.setStretch(c, 1 if c < n else 0)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._anordnen()
 
 
 class BauplanTabs:
@@ -138,6 +377,612 @@ class BauplanTabs:
         except Exception as _err:
             self._log_exception("Runplaner: Fuel-Erkennung", str(_err))
             return False
+    # REGLER "INVENTION JOBS AT ONCE" BLEIBT STEHEN (emm328, Nutzer 02.10.2026:
+    # "Regler nach rechts geschoben, Plan zugemacht und wieder aufgemacht, dann
+    # waren die Regler wieder ganz links - es soll speichern wo es war. Ein
+    # neuer Plan startet aber immer ganz links"). Gemerkt je Blaupause im
+    # gespeicherten Plan ("inv_split"), SOFORT beim Ziehen - wie die Felder je
+    # Ende (`_multi_je_ende_merken`): beim eingefrorenen Plan drueckt man
+    # "Save" nicht. Der Regler aendert nur die Aufteilung der Kopien, nie die
+    # Einkaufsliste - darum darf er auch am eingefrorenen Plan geschrieben werden.
+    @staticmethod
+    def _inv_split_aus_plan(p):
+        out = {}
+        for k, v in ((p or {}).get("inv_split") or {}).items():
+            try:
+                if int(v) >= 1:
+                    out[int(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _inv_split_fuer_plan(self):
+        """Regler-Stand als speicherbares {"bp_id": Kopien}."""
+        d = getattr(self, "_bd_inv_split", None)
+        return {str(int(k)): int(v) for k, v in
+                (d if isinstance(d, dict) else {}).items()}
+
+    # ENTPRELLT (emm330, Nutzer 02.10.2026: "der Regler laeuft nicht mehr
+    # fluessig, fuehlt sich laggy an"). emm328 schrieb bei JEDEM Reglerschritt
+    # die ganze settings.json: `save_settings_async` erzeugt den JSON-Text im
+    # UI-Faden (json.dumps mit indent ohne C-Beschleuniger, emm239 gemessen
+    # 4 x 0,77 s). Jetzt: Stand sofort im Speicher, geschrieben erst 800 ms
+    # nach der letzten Bewegung - einmal je Zug statt je Schritt.
+    INV_SPLIT_MERK_MS = 800
+
+    def _inv_split_merken_spaeter(self):
+        tm = getattr(self, "_inv_split_timer", None)
+        if tm is None:
+            tm = QTimer(self)
+            tm.setSingleShot(True)
+            tm.timeout.connect(lambda: self._inv_split_merken())
+            self._inv_split_timer = tm
+        tm.start(self.INV_SPLIT_MERK_MS)
+
+    def _inv_split_merken(self):
+        """Regler-Stand in den gespeicherten Plan schreiben. Ungespeichert ->
+        nichts (kommt mit "Save build plan"). True = geschrieben."""
+        pid = getattr(self, "_bd_open_plan_id", None)
+        if pid is None:
+            return False
+        stand = self._inv_split_fuer_plan()
+        for p in (self.settings.get("bau_saved_plans", []) or []):
+            if p.get("id") != pid:
+                continue
+            if p.get("inv_split") != stand:
+                p["inv_split"] = stand
+                from .. import config as _cfg
+                _cfg.save_settings_async(self.settings)
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # INDUSTRY JOBS (emm327, Discord-Wunsch ueber den Nutzer 01.10.2026:
+    # "wo man sieht welcher Charakter was baut ... welche Slots belegt hat mit
+    # was und wie lange"; Ort laut Nutzer: neuer Knopf in der Leiste unter
+    # PRODUCTION). Nur Anzeige - liest ESI, schreibt nichts in die Settings.
+    # ------------------------------------------------------------------
+    def _jobs_art_name(self, activity_id):
+        return {1: t("Manufacturing"), 3: t("TE research"), 4: t("ME research"),
+                5: t("Copying"), 7: t("Reverse engineering"), 8: t("Invention"),
+                9: t("Reaction"), 11: t("Reaction")}.get(
+                    int(activity_id or 0), f"#{activity_id}")
+
+    # KARTEN STATT TABELLE (emm330, Nutzer 02.10.2026: "kein Excel-Tabellen-
+    # Simulator bitte, mehr Uebersicht, mit wenigen Blicken verstaendlich, mit
+    # Farben arbeiten, Charaktere nebeneinander" -> Vorschlag "Karten
+    # nebeneinander" gewaehlt). Je Charakter eine Kachel: drei Slot-Leisten
+    # (Fertigung cyan, Reaktion violett, Science amber; fertig gruen), darunter
+    # gleiche Jobs zusammengefasst mit Fortschrittsbalken.
+    _JOB_FARBE = {"mfg": "CYAN", "react": "VIOLET", "sci": "AMBER"}
+
+    def _jobs_farbe(self, art):
+        return getattr(theme, self._JOB_FARBE.get(art, "CYAN"))
+
+    def _jobs_seite_bauen(self):
+        from PySide6.QtWidgets import QScrollArea
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(14, 10, 14, 10)
+        v.setSpacing(8)
+        kopf = QHBoxLayout(); kopf.setSpacing(10)
+        titel = QLabel(t("INDUSTRY JOBS"))
+        titel.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
+                            f"color:{theme.GREEN};")
+        kopf.addWidget(titel)
+        # Legende in EIGENER Zeile (pruefe.py 02.10.2026, Windows: Titel +
+        # Legende + Knopf in einer Zeile machten die Seite 1'306 px breit,
+        # b66 rot - Texte sind dort ~1,6x breiter als offscreen hier).
+        legende = QHBoxLayout(); legende.setSpacing(10)
+        # Legende: dieselben Farben wie in den Karten.
+        for _art, _txt_l in (("mfg", t("Manufacturing")), ("react", t("Reaction")),
+                             ("sci", t("Science"))):
+            _lg = QLabel(f'<span style="color:{self._jobs_farbe(_art)};">\u25a0</span> {_txt_l}')
+            _lg.setStyleSheet(f"color:{theme.MUTED}; font-size:{theme.FS_SMALL};")
+            legende.addWidget(_lg)
+        _lgf = QLabel(f'<span style="color:{theme.GREEN};">\u25a0</span> '
+                      + t("ready to deliver \u2713"))
+        _lgf.setStyleSheet(f"color:{theme.MUTED}; font-size:{theme.FS_SMALL};")
+        legende.addWidget(_lgf)
+        legende.addStretch()
+        kopf.addStretch()
+        self._jobs_stand_lbl = QLabel("")
+        self._jobs_stand_lbl.setObjectName("Muted")
+        kopf.addWidget(self._jobs_stand_lbl)
+        self._jobs_refresh_btn = QPushButton(t("Refresh"))
+        self._jobs_refresh_btn.setIcon(icons.icon("refresh"))
+        self._jobs_refresh_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        self._jobs_refresh_btn.clicked.connect(lambda: self._jobs_laden())
+        kopf.addWidget(self._jobs_refresh_btn)
+        v.addLayout(kopf)
+        v.addLayout(legende)
+        hinweis = QLabel(t("All linked characters: busy and free job slots, and every "
+                           "running job with what it builds and how long it still "
+                           "takes. A finished job keeps its slot until you deliver it."))
+        hinweis.setObjectName("Muted"); hinweis.setWordWrap(True)
+        v.addWidget(hinweis)
+        # GESAMT-LEISTE (emm334): fertige Jobs, freie Slots, naechster Job -
+        # ueber alle EINGESCHALTETEN Charaktere, auf einen Blick. emm346
+        # (Nutzer: "den Text mehr in eine Grafik umwandeln, damit man schoen
+        # sieht, wie viele Slots frei sind"): KACHELN - fertig, je Slot-Art
+        # die freie Zahl gross mit Balken ueber alle Slots, naechster Job.
+        self._jobs_summe_box = QWidget()
+        _sb = QHBoxLayout(self._jobs_summe_box)
+        _sb.setContentsMargins(0, 0, 0, 0); _sb.setSpacing(10)
+        self._jobs_kacheln = {}
+
+        def _kachel(titel, farbe):
+            k = QFrame(); k.setObjectName("Card")
+            k.setStyleSheet(f"QFrame#Card{{background:{theme.PANEL2}; "
+                            f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
+            kv = QVBoxLayout(k)
+            kv.setContentsMargins(12, 8, 12, 8); kv.setSpacing(3)
+            tl = QLabel(titel)
+            tl.setStyleSheet(f"color:{farbe}; font-size:{theme.FS_SMALL}; "
+                             f"font-weight:800; letter-spacing:1px; background:transparent;")
+            kv.addWidget(tl)
+            zl = QLabel("\u2013")
+            zl.setTextFormat(Qt.RichText)
+            zl.setWordWrap(True)          # "n free slots" bricht um statt zu draengen
+            zl.setStyleSheet(f"font-size:{theme.FS_KPI}; font-weight:800; "
+                             f"background:transparent;")
+            kv.addWidget(zl)
+            return k, kv, zl
+        for _schl, _titel, _farbe in (("ready", t("READY"), theme.GREEN),
+                                      ("mfg", t("MANUFACTURING"), self._jobs_farbe("mfg")),
+                                      ("react", t("REACTIONS"), self._jobs_farbe("react")),
+                                      ("sci", t("SCIENCE"), self._jobs_farbe("sci")),
+                                      ("next", t("NEXT DONE"), theme.CYAN)):
+            _k, _kv, _zl = _kachel(_titel, _farbe)
+            _bal = None
+            if _schl in ("mfg", "react", "sci"):
+                _bal = KapazitaetsBalken(_farbe)
+                _kv.addWidget(_bal)
+            # Unterzeile gekuerzt mit "..." (der naechste Job traegt einen
+            # Item-Namen beliebiger Laenge - er darf die Seite nie verbreitern).
+            _ul = KurzLabel("")
+            _ul.setObjectName("Muted")
+            _ul.setStyleSheet(f"font-size:{theme.FS_SMALL}; background:transparent;")
+            _kv.addWidget(_ul)
+            _sb.addWidget(_k, 1)
+            self._jobs_kacheln[_schl] = {"rahmen": _k, "zahl": _zl, "balken": _bal,
+                                         "unter": _ul}
+        v.addWidget(self._jobs_summe_box)
+        self._jobs_summe_lbl = QLabel("")
+        self._jobs_summe_lbl.setTextFormat(Qt.RichText)
+        self._jobs_summe_lbl.setWordWrap(True)
+        self._jobs_summe_lbl.setStyleSheet(f"font-size:{theme.FS_SMALL};")
+        v.addWidget(self._jobs_summe_lbl)
+        body = QHBoxLayout(); body.setSpacing(12)
+        self._jobs_raster = KartenRaster(breite=380)
+        _sc = QScrollArea(); _sc.setWidgetResizable(True)
+        _sc.setFrameShape(QScrollArea.NoFrame)
+        _sc.setWidget(self._jobs_raster)
+        body.addWidget(_sc, 1)
+        # CHARAKTERE AN/AUS (emm334, Nutzer: "verlinkte Charaktere, die man
+        # nicht sehen moechte, ausblenden ... rechts eine Charakter-Uebersicht
+        # mit On/Off, standardmaessig alle On"). Gemerkt in
+        # settings["jobs_chars_aus"] (die AUSgeschalteten) - neue Charaktere
+        # sind damit von selbst an.
+        panel = QFrame(); panel.setObjectName("Card")
+        panel.setFixedWidth(230)
+        pv = QVBoxLayout(panel)
+        pv.setContentsMargins(10, 10, 10, 10); pv.setSpacing(6)
+        _pt = QLabel(t("CHARACTERS"))
+        _pt.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
+                          f"color:{theme.CYAN};")
+        pv.addWidget(_pt)
+        self._jobs_schalter_box = QVBoxLayout(); self._jobs_schalter_box.setSpacing(4)
+        pv.addLayout(self._jobs_schalter_box)
+        self._jobs_alle_btn = QPushButton(t("All on"))
+        self._jobs_alle_btn.clicked.connect(lambda: self._jobs_alle_an())
+        pv.addWidget(self._jobs_alle_btn)
+        pv.addStretch()
+        body.addWidget(panel)
+        v.addLayout(body, 1)
+        self._jobs_daten = None          # {"chars": {...}} nach dem ersten Laden
+        self._jobs_stand_ts = 0.0
+        self._jobs_laeuft = False
+        self._jobs_karten = {}           # {cid: Karte} - b-Suite
+        self._jobs_schalter = {}         # {cid: Knopf} - b-Suite
+        self._jobs_uhr_teile = []        # [(Gruppe, Restzeit-Label, JobZeile)]
+        # DIE RESTZEIT LAEUFT MIT, OHNE NEUEN ABRUF: einmal je Minute werden
+        # Restzeit und Balken aus dem gemerkten Ende neu gerechnet.
+        self._jobs_uhr = QTimer(page)
+        self._jobs_uhr.setInterval(60_000)
+        self._jobs_uhr.timeout.connect(lambda: self._jobs_rest_auffrischen())
+        self._jobs_uhr.start()
+        return page
+
+    def _jobs_seite_gezeigt(self):
+        """Aus _bau_nav(4): beim ersten Zeigen und wenn der Stand aelter als
+        5 min ist, im Hintergrund neu laden (ESI cacht Jobs ohnehin ~5 min)."""
+        import time as _t
+        if self._jobs_daten is None or _t.time() - self._jobs_stand_ts > 300:
+            self._jobs_laden()
+
+    def _jobs_laden(self):
+        if getattr(self, "_jobs_laeuft", False):
+            return
+        client_id = self.settings.get("client_id")
+        chars = store.list_characters()
+        if not client_id or not chars:
+            self._jobs_stand_lbl.setText(t("No characters linked."))
+            return
+        slots_alt = dict(self.settings.get("bau_char_slots") or {})
+
+        def job():
+            from .mw_helpers import jobs_uebersicht
+            import time as _t
+            out, tids = {}, set()
+            jetzt = _t.time()
+            for ch in chars:
+                cid = int(ch["character_id"])
+                e = {"name": ch.get("character_name") or ch.get("name") or str(cid),
+                     "fehler": None, "ueb": None}
+                mx = None
+                try:
+                    mx = industry.job_slots(esi.fetch_skills(client_id, cid))
+                except Exception:
+                    mx = slots_alt.get(str(cid))   # zuletzt geladene Slots
+                try:
+                    jobs = esi.fetch_active_jobs(client_id, cid)
+                except Exception as ex:
+                    e["fehler"] = str(ex)[:120]
+                    jobs = []
+                e["ueb"] = jobs_uebersicht(jobs, mx, jetzt)
+                tids.update(z["tid"] for z in e["ueb"]["zeilen"] if z["tid"])
+                out[cid] = e
+            try:
+                namen = esi.resolve_names(list(tids)) if tids else {}
+            except Exception:
+                namen = store.cached_names(list(tids)) if tids else {}
+            return {"chars": out, "namen": namen, "ts": jetzt}
+
+        def done(res):
+            self._jobs_laeuft = False
+            self._jobs_daten = res
+            self._jobs_stand_ts = res.get("ts") or 0.0
+            self._jobs_zeichnen()
+
+        def fail(_err):
+            self._jobs_laeuft = False
+            self._jobs_stand_lbl.setText(t("Loading jobs failed."))
+
+        self._jobs_laeuft = True
+        self._jobs_stand_lbl.setText(t("Loading jobs …"))
+        self._run(Worker(job), done, fail, overlay=False)
+
+    def _jobs_ende_text(self, ende):
+        if not ende:
+            return "—"
+        from datetime import datetime as _dt
+        return _dt.fromtimestamp(ende).strftime("%d.%m. %H:%M")
+
+    def _jobs_rest_text(self, g):
+        from .mw_helpers import jobs_dauer_kurz
+        if g.get("ready"):
+            return t("ready to deliver \u2713")
+        if g.get("paused"):
+            return t("paused")
+        if g.get("rest") is None:
+            return "\u2014"
+        return jobs_dauer_kurz(g["rest"])
+
+    # Kuerzel je Aktivitaet in der Job-Zeile (emm334); der volle Name steht
+    # im Tooltip.
+    _JOB_KUERZEL = {1: "Mfg.", 3: "TE", 4: "ME", 5: "Copy", 7: "RE", 8: "Inv",
+                    9: "React.", 11: "React."}
+
+    def _jobs_slot_gruppe(self, label, art, belegt, fertig, maximum):
+        box = QVBoxLayout(); box.setSpacing(2)
+        zahl = f"{belegt}/{maximum}" if maximum is not None else str(belegt)
+        _frei = (maximum is not None and belegt < maximum)
+        lb = QLabel(f'{label} <span style="font-family:{theme.MONO}; color:'
+                    f'{theme.GREEN if _frei else theme.MUTED};">{zahl}</span>')
+        lb.setTextFormat(Qt.RichText)
+        lb.setStyleSheet(f"color:{theme.MUTED}; font-size:13px;")
+        box.addWidget(lb)
+        # GROESSER (emm338, Nutzer: "dafuer etwas groesser und sichtbarer"):
+        # Kaestchen bis 10 px bei 2 px Abstand, Zahl in normaler Groesse.
+        sk = SlotKaestchen(belegt - fertig, fertig, maximum, self._jobs_farbe(art),
+                           breite=104, abstand=2)
+        box.addWidget(sk)
+        return box, sk
+
+    def _jobs_karte(self, cid, e, namen, jetzt):
+        from .mw_helpers import jobs_einzeln, job_anzeigename
+        card = QFrame(); card.setObjectName("Card")
+        card.setMinimumWidth(360)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(12, 10, 12, 10); v.setSpacing(5)
+        u = e["ueb"]
+        gr = jobs_einzeln(u["zeilen"], jetzt)
+        card._gruppen = gr
+        kopf = QHBoxLayout(); kopf.setSpacing(8)
+        name = QLabel(str(e["name"]))
+        name.setStyleSheet(f"color:{theme.CYAN}; font-weight:800; font-size:{theme.FS_H2};")
+        kopf.addWidget(name)
+        kopf.addStretch()
+        _n_fertig = sum(g["n"] for g in gr["ready"])
+        if _n_fertig:
+            _badge = QLabel(f"\u2713 {_n_fertig}")
+            _badge.setToolTip(t("\u2713 {n} ready to deliver").format(n=_n_fertig))
+            _badge.setStyleSheet(f"background:{theme.GREEN}; color:{theme.BG}; "
+                                 f"font-weight:800; border-radius:4px; padding:1px 7px;")
+            kopf.addWidget(_badge)
+        v.addLayout(kopf)
+        _fertig_je = {"mfg": 0, "react": 0, "sci": 0}
+        for z in u["zeilen"]:
+            if z["ready"]:
+                _fertig_je[z["art"]] += 1
+        card._slots = {}
+        slots = QHBoxLayout(); slots.setSpacing(12)
+        for art, lab in (("mfg", t("Mfg.")), ("react", t("React.")), ("sci", t("Science"))):
+            _mx = (u["max"] or {}).get(art) if u["max"] else None
+            box, sk = self._jobs_slot_gruppe(lab, art, u["belegt"][art],
+                                             _fertig_je[art], _mx)
+            card._slots[art] = sk
+            slots.addLayout(box)
+        slots.addStretch()
+        v.addLayout(slots)
+        if e["fehler"]:
+            fz = QLabel(t("ESI error: {e}").format(e=e["fehler"]))
+            fz.setWordWrap(True)
+            fz.setStyleSheet(f"color:{theme.RED};")
+            v.addWidget(fz)
+        if gr["ready"]:
+            rk = QLabel(t("\u2713 {n} ready to deliver").format(n=_n_fertig))
+            rk.setStyleSheet(f"color:{theme.GREEN}; font-weight:700; padding-top:4px;")
+            v.addWidget(rk)
+            rl = QLabel(" \u00b7 ".join(
+                f"{g['n']}\u00d7 {namen.get(g['tid']) or '#' + str(g['tid'])}"
+                for g in gr["ready"]))
+            rl.setWordWrap(True)
+            rl.setStyleSheet(f"color:{theme.GREEN}; font-size:{theme.FS_SMALL}; "
+                             f"padding-left:14px;")
+            v.addWidget(rl)
+        # JOBS ZUM AUSKLAPPEN (emm338, Nutzer: "die Fortschrittsbalken als
+        # Dropdown zum Ausklappen, damit man standardmaessig nur die Compact-
+        # Ansicht von jedem Char hat"). Zustand je Charakter gemerkt
+        # (`jobs_karten_offen`, die AUFgeklappten) - Standard zu.
+        card._jobs_body = None
+        card._jobs_pfeil = None
+        if gr["laufend"]:
+            _offen = str(cid) in {str(x) for x in
+                                  (self.settings.get("jobs_karten_offen") or [])}
+            pf = QPushButton()
+            pf.setCheckable(True)
+            pf.setChecked(_offen)
+            # KLICKBAR ERKENNEN (emm347, Nutzer: "beim Mouseover soll man
+            # erkennen, dass es etwas zum Anklicken ist"): Hand-Cursor, beim
+            # Darueberfahren cyan Rand + hellere Flaeche, Tooltip.
+            pf.setCursor(Qt.PointingHandCursor)
+            pf.setToolTip(t("Click to show or hide the running jobs"))
+            pf.setStyleSheet(
+                f"QPushButton{{text-align:left; background:{theme.PANEL2}; "
+                f"color:{theme.TEXT}; border:1px solid {theme.BORDER}; "
+                f"border-radius:4px; padding:3px 8px; font-weight:700;}}"
+                f"QPushButton:hover{{background:{theme.CYAN_FILL}; "
+                f"border:1px solid {theme.CYAN}; color:{theme.CYAN};}}"
+                f"QPushButton:checked{{border:1px solid {theme.CYAN};}}"
+                f"QPushButton:checked:hover{{background:{theme.CYAN_FILL_HOVER};}}")
+            _n_lauf = len(gr["laufend"])
+
+            def _pfeil_text(on, _n=_n_lauf, _b=pf):
+                _b.setText(("\u25be " if on else "\u25b8 ")
+                           + t("{n} running job(s)").format(n=_n))
+            _pfeil_text(_offen)
+            v.addWidget(pf)
+            body = QWidget()
+            bv = QVBoxLayout(body)
+            bv.setContentsMargins(0, 2, 0, 0); bv.setSpacing(4)
+            for g in gr["laufend"]:
+                farbe = self._jobs_farbe(g["art"])
+                nm = job_anzeigename(namen.get(g["tid"]) or f"#{g['tid']}", g["activity_id"])
+                zeile = JobZeile(t(self._JOB_KUERZEL.get(int(g["activity_id"] or 0), "?")),
+                                 t("{name} ({n} runs)").format(name=nm, n=g["runs"]),
+                                 self._jobs_rest_text(g), farbe)
+                zeile.setMinimumHeight(26)
+                _tip = [str(namen.get(g["tid"]) or g["tid"]),
+                        self._jobs_art_name(g["activity_id"]),
+                        t("{n} job(s) \u00b7 {r} runs").format(n=g["n"], r=g["runs"])]
+                _tip += [self._jobs_ende_text(_e) for _e in g["enden"]]
+                zeile.setToolTip("\n".join(_tip))
+                zeile.name.setToolTip("\n".join(_tip))
+                if g["paused"]:
+                    zeile.rest.setStyleSheet(f"font-family:{theme.MONO}; color:{theme.AMBER}; "
+                                             f"background:transparent;")
+                zeile.setValue(int(round((g.get("fortschritt") or 0.0) * 1000)))
+                bv.addWidget(zeile)
+                self._jobs_uhr_teile.append((g, zeile.rest, zeile))
+            v.addWidget(body)
+            body.setVisible(_offen)          # erst im Layout, dann schalten (b8)
+            pf.toggled.connect(lambda on, _c=cid, _bd=body, _f=_pfeil_text:
+                               self._jobs_karte_klappen(_c, on, _bd, _f))
+            card._jobs_body = body
+            card._jobs_pfeil = pf
+        if not gr["ready"] and not gr["laufend"] and not e["fehler"]:
+            lz = QLabel(t("no running jobs"))
+            lz.setStyleSheet(f"color:{theme.MUTED};")
+            v.addWidget(lz)
+        v.addStretch()
+        return card
+
+    def _jobs_karte_klappen(self, cid, on, body, pfeil_text):
+        body.setVisible(bool(on))
+        pfeil_text(bool(on))
+        offen = {str(x) for x in (self.settings.get("jobs_karten_offen") or [])}
+        if on:
+            offen.add(str(cid))
+        else:
+            offen.discard(str(cid))
+        self.settings["jobs_karten_offen"] = sorted(offen)
+        config.save_settings_async(self.settings)
+
+    def _jobs_aus(self):
+        return {str(x) for x in (self.settings.get("jobs_chars_aus") or [])}
+
+    def _jobs_schalter_stil(self, btn, an):
+        btn.setText(t("On") if an else t("Off"))
+        btn.setStyleSheet(
+            f"QPushButton{{background:{theme.GREEN}; color:{theme.BG}; font-weight:800; "
+            f"border:1px solid {theme.GREEN}; border-radius:4px; padding:2px 6px;}}"
+            if an else
+            f"QPushButton{{background:transparent; color:{theme.MUTED}; "
+            f"border:1px solid {theme.BORDER}; border-radius:4px; padding:2px 6px;}}")
+
+    def _jobs_schalter_bauen(self, chars):
+        """Eine Zeile je verlinktem Charakter: Name + An/Aus-Knopf."""
+        box = self._jobs_schalter_box
+        while box.count():
+            it = box.takeAt(0)
+            _w = it.widget()
+            if _w is not None:
+                _w.deleteLater()
+            elif it.layout() is not None:
+                while it.layout().count():
+                    _x = it.layout().takeAt(0).widget()
+                    if _x is not None:
+                        _x.deleteLater()
+        self._jobs_schalter = {}
+        aus = self._jobs_aus()
+        for cid, e in sorted((chars or {}).items(),
+                             key=lambda kv: str(kv[1].get("name") or "").lower()):
+            row = QHBoxLayout(); row.setSpacing(6)
+            nl = KurzLabel(str(e.get("name") or cid))
+            row.addWidget(nl, 1)
+            btn = QPushButton()
+            btn.setCheckable(True)
+            btn.setFixedWidth(52)
+            _an = str(cid) not in aus
+            btn.setChecked(_an)
+            self._jobs_schalter_stil(btn, _an)
+            btn.toggled.connect(lambda an, _c=cid: self._jobs_char_schalten(_c, an))
+            row.addWidget(btn)
+            box.addLayout(row)
+            self._jobs_schalter[int(cid)] = btn
+        self._jobs_schalter_cids = set(int(c) for c in (chars or {}))
+
+    def _jobs_char_schalten(self, cid, an):
+        aus = self._jobs_aus()
+        if an:
+            aus.discard(str(cid))
+        else:
+            aus.add(str(cid))
+        self.settings["jobs_chars_aus"] = sorted(aus)
+        config.save_settings_async(self.settings)
+        _b = (getattr(self, "_jobs_schalter", None) or {}).get(int(cid))
+        if _b is not None:
+            self._jobs_schalter_stil(_b, an)
+        self._jobs_karten_zeichnen()
+
+    def _jobs_alle_an(self):
+        self.settings["jobs_chars_aus"] = []
+        config.save_settings_async(self.settings)
+        for _b in (getattr(self, "_jobs_schalter", None) or {}).values():
+            _b.blockSignals(True)
+            _b.setChecked(True)
+            _b.blockSignals(False)
+            self._jobs_schalter_stil(_b, True)
+        self._jobs_karten_zeichnen()
+
+    def _jobs_zeichnen(self):
+        d = self._jobs_daten or {}
+        _chars = d.get("chars") or {}
+        if set(int(c) for c in _chars) != getattr(self, "_jobs_schalter_cids", None):
+            self._jobs_schalter_bauen(_chars)
+        self._jobs_karten_zeichnen()
+        if not _chars:
+            self._jobs_stand_lbl.setText(t("No characters linked."))
+            return
+        from datetime import datetime as _dt
+        self._jobs_stand_lbl.setText(t("as of {zeit}").format(
+            zeit=_dt.fromtimestamp(self._jobs_stand_ts or 0).strftime("%H:%M")))
+
+    def _jobs_karten_zeichnen(self):
+        import time as _t
+        from .mw_helpers import jobs_karten_folge, jobs_sichtbar
+        d = self._jobs_daten or {}
+        namen = d.get("namen") or {}
+        self._jobs_uhr_teile = []
+        self._jobs_karten = {}
+        jetzt = self._jobs_stand_ts or _t.time()
+        alle = d.get("chars") or {}
+        _chars = jobs_sichtbar(alle, self.settings.get("jobs_chars_aus"))
+        karten = []
+        for cid in jobs_karten_folge(_chars):
+            k = self._jobs_karte(cid, _chars[cid], namen, jetzt)
+            self._jobs_karten[int(cid)] = k
+            karten.append(k)
+        self._jobs_raster.setze(karten)
+        self._jobs_summe_zeigen(_chars, len(alle) - len(_chars), jetzt)
+        self._jobs_rest_auffrischen()
+
+    def _jobs_summe_zeigen(self, chars, versteckt, jetzt):
+        from .mw_helpers import jobs_summe, jobs_dauer_kurz, jobs_kapazitaet
+        if not chars and not versteckt:
+            self._jobs_summe_lbl.setText("")
+            self._jobs_summe_lbl.hide()
+            self._jobs_summe_box.hide()
+            return
+        su = jobs_summe(chars, jetzt)
+        ka = jobs_kapazitaet(chars)
+        self._jobs_summe = su                       # b-Suite
+        self._jobs_kapazitaet = ka                  # b-Suite
+        kc = self._jobs_kacheln
+        _farbe_f = theme.GREEN if su["ready"] else theme.MUTED
+        kc["ready"]["zahl"].setText(
+            f'<span style="color:{_farbe_f};">\u2713 {su["ready"]}</span>')
+        kc["ready"]["unter"].setText(t("ready to deliver"))
+        for art in ("mfg", "react", "sci"):
+            a = ka[art]
+            _fa = self._jobs_farbe(art) if a["free"] else theme.MUTED
+            kc[art]["zahl"].setText(
+                f'<span style="color:{_fa};">{a["free"]}</span>'
+                f'<span style="color:{theme.MUTED}; font-size:{theme.FS_BASE}; '
+                f'font-weight:400;"> {t("free slots")}</span>')
+            kc[art]["balken"].setze(a["running"], a["ready"], a["max"])
+            kc[art]["unter"].setText(
+                t("{r} running \u00b7 {f} ready \u00b7 {m} slots").format(
+                    r=a["running"], f=a["ready"], m=a["max"]))
+        if su["next"] is not None:
+            kc["next"]["zahl"].setText(jobs_dauer_kurz(su["next"][0]))
+            kc["next"]["unter"].setText(su["next"][1])
+        else:
+            kc["next"]["zahl"].setText("\u2013")
+            kc["next"]["unter"].setText("")
+        self._jobs_summe_box.show()
+        teile = []
+        if su.get("no_max"):
+            teile.append(t("{n} character(s) without known slot maximum (skills not "
+                           "loaded) \u2013 not counted in the slots.").format(n=su["no_max"]))
+        if versteckt:
+            teile.append(t("{n} character(s) hidden").format(n=versteckt))
+        self._jobs_summe_lbl.setText(
+            f'<span style="color:{theme.MUTED};">' + "  \u00b7  ".join(teile) + "</span>")
+        self._jobs_summe_lbl.setVisible(bool(teile))
+
+    def _jobs_rest_auffrischen(self, jetzt=None):
+        """Nur Restzeit und Balken neu rechnen (Uhr, ohne ESI)."""
+        import time as _t
+        from .mw_helpers import job_fortschritt
+        jetzt = _t.time() if jetzt is None else jetzt
+        for g, lbl, bar in list(getattr(self, "_jobs_uhr_teile", []) or []):
+            try:
+                if g.get("ende") is not None and not g.get("paused"):
+                    g["rest"] = max(0, int(g["ende"] - jetzt))
+                    if g["rest"] == 0:
+                        g["ready"] = True
+                        lbl.setStyleSheet(f"font-family:{theme.MONO}; color:{theme.GREEN}; "
+                                          f"background:transparent;")
+                    _f = job_fortschritt(g.get("start"), g["ende"], jetzt)
+                    if _f is not None:
+                        bar.setValue(int(round(_f * 1000)))
+                lbl.setText(self._jobs_rest_text(g))
+            except RuntimeError:
+                pass          # Karte schon geloescht (neu gezeichnet)
+
     def _build_build_tab(self):
         w = QWidget()
         outer = QHBoxLayout(w)
@@ -544,8 +1389,7 @@ class BauplanTabs:
         self.b_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.b_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.b_table.cellDoubleClicked.connect(self._build_to_chart)
-        self.b_table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.b_table.customContextMenuRequested.connect(self._build_menu)
+        kopier_menue(self.b_table, self._build_menu)
         root.addWidget(self.b_table, 1)
 
         # ---- Capital-Schiffe: eigene, klar getrennte Sektion ------------------
@@ -628,8 +1472,7 @@ class BauplanTabs:
         self.b_cap_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.b_cap_table.setMinimumHeight(320)
         self.b_cap_table.setMaximumHeight(560)
-        self.b_cap_table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.b_cap_table.customContextMenuRequested.connect(self._build_menu_cap)
+        kopier_menue(self.b_cap_table, self._build_menu_cap)
         cap_v.addWidget(self.b_cap_table)
         self.b_cap_wrap = self._collapsible(
             t("CAPITAL SHIPS (BUILD COST, NO MARKET PRICE)"), cap_inner,
@@ -701,6 +1544,7 @@ class BauplanTabs:
         self.b_stack.addWidget(_bp_scroll)      # 1 – Meine Blueprints
         self.b_stack.addWidget(plans_page)      # 2 – Aktuelle Baupläne
         self.b_stack.addWidget(_struct_scroll)  # 3 – Struktur-Fitting (+ Setup)
+        self.b_stack.addWidget(self._jobs_seite_bauen())  # 4 – Industry jobs (emm327)
         # PLAN-KARTEN ERST BEIM ERSTEN ZEIGEN (Nutzer 27.09.2026: "ja bitte
         # mach das"; Start-Messung: der Build-Reiter kostete 1,4 s, fast
         # alles fuer die Karten aller gespeicherten Plaene - dazu starteten
@@ -779,6 +1623,7 @@ class BauplanTabs:
         cards_layout.addStretch()
         self._bd_inv_combos = {}          # je Blaupause die Decryptor-Wahl
         self._bd_inv_best_btns = {}       # je Blaupause der Best-Choice-Knopf
+        self._bd_inv_t1_copy = {}         # je Blaupause "Copy T1 Original"
         self._bd_inv_karten = {}          # je Blaupause Pfeil/Rumpf/Kurzfassung
         self._bd_inv_own = {}             # je Buendel-Ende: Own-BPC-Haken + ME/TE
         # SEITENLEISTE EBENFALLS LEEREN. Diese Funktion laeuft bei JEDEM
@@ -933,7 +1778,7 @@ class BauplanTabs:
             "How likely the planned attempts are really enough.\n"
             "Higher = more attempts, more datacores, more certain to finish - but "
             "more expensive.\nThis does NOT change the success chance per attempt.\n"
-            "Also affects \u201eBest Decryptor\u201c: at high certainty, "
+            "Also affects \u201eAuto-Decryptor\u201c: at high certainty, "
             "decryptors with a better success chance pay off sooner.\n"
             "Applies to this build plan only; a new one starts again at {pct} %."
         ).format(pct=int(industry.DEFAULT_INVENTION_CONFIDENCE * 100)))
@@ -1251,7 +2096,12 @@ class BauplanTabs:
                 # de_scan6: an
                 dc_lbl = QLabel(f"{_dc_kurz} <b>\u00d7{q}</b>")
                 dc_lbl.setStyleSheet("font-size:11px;")
-                dc_lbl.setToolTip(_dc_name + " \u2013 " + t("\u00d7{n} per attempt").format(n=q))
+                dc_lbl.setToolTip(_dc_name + " \u2013 " + t("\u00d7{n} per attempt").format(n=q)
+                                  + ("\n" + t("Needed for copying the T1 original "
+                                               "(one copy run per attempt).")
+                                     if d in {int(_m) for _m, _ in (getattr(
+                                         recipes, "invention_copy_mats", {}) or {}).get(bp_id, [])}
+                                     else ""))
                 dc_row.addWidget(dc_lbl)
                 _dc_sep = QLabel("\u00b7"); _dc_sep.setObjectName("Muted")
                 dc_row.addWidget(_dc_sep)
@@ -1284,14 +2134,15 @@ class BauplanTabs:
             dec_warn_lbl.setStyleSheet(f"color:{theme.AMBER}; font-weight:700;")
             left.addWidget(dec_warn_lbl)
             dec_warn_lbl.hide()
-            # NAME (Nutzer 26.09.2026): "Best Decryptor" statt "Best choice
-            # for profit" - sagt, WAS gewaehlt wird.
-            best_btn = QPushButton(t("Best Decryptor"))
-            best_btn.setIcon(icons.icon("trophy"))
-            best_btn.setToolTip(t(
-                "Runs through all decryptors (plus „no decryptor“) for "
-                  "the current build quantity and picks the one with the "
-                  "lowest expected total cost."))
+            # "COPY DECRYPTOR" STATT "BEST DECRYPTOR" (emm329, Nutzer 02.10.2026:
+            # "der Knopf soll Copy Decryptor heissen, dieselbe Groesse wie Copy
+            # T1 und den oben gewaehlten Decryptor-Namen ins Clipboard legen; ist
+            # kein Decryptor gewaehlt, kann man ihn nicht druecken"). Das
+            # Waehlen des besten macht jetzt nur noch "Auto-Decryptor" in der
+            # Seitenleiste (`_inv_alle_besten`, rechnet weiter ueber
+            # `_bd_inv_rang`). Name `best_btn`/`_bd_inv_best_btns` bleibt.
+            best_btn = QPushButton(t("Copy Decryptor"))
+            best_btn.setCursor(Qt.PointingHandCursor)
             # KOMPAKT, LINKS, GEFUELLT (Nutzer 26.09.2026: "der Best-Choice-
             # Knopf ist so bloed ueber das ganze Fenster gezogen, dass man ihn
             # gar nicht sieht. Kompakter links ueber dem Blueprint-Namen,
@@ -1305,9 +2156,9 @@ class BauplanTabs:
             # SEIT 26.09.2026 WIE "CREATE SHOPPING LIST" (Nutzer: "Best
             # Decryptor optisch anpassen - Hintergrund normale Tool-Farbe,
             # nur Umrandung und Text Amber"). Kompakt und links bleibt.
-            best_btn.setMinimumHeight(34)
+            best_btn.setMinimumHeight(24)
             best_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            best_btn.setStyleSheet(theme.amber_rahmen_knopf())
+            best_btn.setStyleSheet(theme.kopier_knopf_stil())
             _best_row = QHBoxLayout(); _best_row.setSpacing(6)
             _best_row.addWidget(best_btn); _best_row.addStretch()
             self._bd_inv_best_btns = getattr(self, "_bd_inv_best_btns", None) or {}
@@ -1332,6 +2183,27 @@ class BauplanTabs:
             right = QHBoxLayout(); right.setSpacing(10)
             out_icon_lbl = self._icon_label(bp_id, size=48, kind="bp")
             right.addWidget(out_icon_lbl)
+            # "COPY T1 ORIGINAL" NEBEN DEM BILD (Nutzer 01.10.2026: "einen
+            # amber umrahmten Button 'Copy T1 Original' damit ich den
+            # Blueprint kopieren und ingame ins Industriefenster einfuegen
+            # kann um das T1 zu bearbeiten - selber Kopier-Button wie im
+            # Runplaner"). Kopiert den Namen des T1-ORIGINALS (Kopf der
+            # Karte), nicht den des T2-Ergebnisses daneben: kopiert und
+            # erfunden wird ingame vom T1. Gleicher Rahmen und gleicher
+            # Kopierweg (`_copy_bp_name_value`) wie die Runplaner-Knoepfe.
+            _t1_nm = str(extra_names.get(t1_bp) or "").strip()
+            if _t1_nm and not _t1_nm.startswith("#"):
+                _t1_copy = QPushButton(t("Copy T1 Blueprint"))
+                _t1_copy.setCursor(Qt.PointingHandCursor)
+                _t1_copy.setMinimumHeight(24)
+                _t1_copy.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+                _t1_copy.setToolTip(t("Click copies the blueprint name:") + f"\n{_t1_nm}")
+                _t1_copy.setStyleSheet(theme.kopier_knopf_stil())
+                _t1_copy.clicked.connect(
+                    lambda _c=False, _nm=_t1_nm: self._copy_bp_name_value(_nm))
+                right.addWidget(_t1_copy, 0, Qt.AlignVCenter)
+                self._bd_inv_t1_copy = getattr(self, "_bd_inv_t1_copy", None) or {}
+                self._bd_inv_t1_copy[int(bp_id)] = _t1_copy   # b-Suite
             out_col = QVBoxLayout(); out_col.setSpacing(2)
             out_name = QLabel("<b>" + t("{name} Blueprint").format(name=names.get(tid, f"#{tid}")) + "</b>")
             out_name.setStyleSheet(f"color:{theme.CYAN};")
@@ -1585,9 +2457,23 @@ class BauplanTabs:
             # Decryptoren wirken NICHT auf die Job-Zeit selbst (nur auf Runs/
             # ME/TE/Erfolgschance der fertigen BPC), deshalb hier fix pro Item.
             _inv_time_base = recipes.activity_time.get((t1_bp, industry.INVENTION), 0) or 0
-            _inv_struct_pct = (self._struct_extra_rig_pct(inv_struct, "invention")
-                               if inv_struct else 0) or 0
-            _inv_time_per_attempt = _inv_time_base * (1 - _inv_struct_pct / 100.0)
+            # ROLLE, SICHERHEIT UND SKILLS (emm325, s. industry.science_jobzeit):
+            # Engineering Complex wirkt auf Science-Jobs wie auf Fertigung,
+            # der Rig mal Sicherheit, Advanced Industry/Science vom
+            # Invention-Charakter (gepinnt oder der mit dem besten Bonus).
+            _sec_i = float((inv_struct or {}).get("security", 1.0) or 1.0)
+            _inv_struct_pct = ((self._struct_extra_rig_pct(inv_struct, "invention")
+                                if inv_struct else 0) or 0) * _sec_i
+            _copy_rig_pct = ((self._struct_extra_rig_pct(inv_struct, "copy")
+                              if inv_struct else 0) or 0) * _sec_i
+            _rolle_i = self._STRUCT_ROLE_TIME.get(
+                (inv_struct or {}).get("type", "npc"), {}).get("mfg", 0.0)
+            _adv_i, _sci_i = self._inv_zeit_skills(_skill_char)
+            _inv_time_per_attempt = industry.science_jobzeit(
+                _inv_time_base, "invention", _rolle_i, _inv_struct_pct, _adv_i)
+            _copy_time_per_run = industry.science_jobzeit(
+                recipes.activity_time.get((t1_bp, industry.COPYING), 0) or 0,
+                "copy", _rolle_i, _copy_rig_pct, _adv_i, _sci_i)
 
             def _recompute(combo=combo, bp_id=bp_id, base_runs=base_runs,
                           base_prob=base_prob, datacores=datacores,
@@ -1598,9 +2484,7 @@ class BauplanTabs:
                           build_seconds_0dec=build_seconds_0dec,
                           inv_time_per_attempt=_inv_time_per_attempt,
                           inv_struct_pct=_inv_struct_pct,
-                          copy_secs_per_attempt=(
-                              recipes.activity_time.get(
-                                  (t1_bp, industry.COPYING), 0) or 0)):
+                          copy_secs_per_attempt=_copy_time_per_run):
                 key = combo.currentData()
                 dv = next((v for n, v in decryptor_list if n == key),
                           (1.0, 0, 0, 0, None))
@@ -1673,7 +2557,7 @@ class BauplanTabs:
                               (getattr(self, "_bd_dec_bestaetigt", None) or set()))
                 dec_warn_lbl.setText(t(
                     "\u26a0 No decryptor chosen yet \u2013 pick one or press "
-                    "\u201eBest Decryptor\u201c; building from your own copy? "
+                    "\u201eAuto-Decryptor\u201c; building from your own copy? "
                     "Tick \u201eOwn BPC\u201c and enter its ME/TE.") if _dec_offen else "")
                 dec_warn_lbl.setVisible(_dec_offen)
                 self._bd_inv_dec_offen = getattr(self, "_bd_inv_dec_offen", None) or {}
@@ -1690,7 +2574,8 @@ class BauplanTabs:
                 # Als Funktion an der Karte gemerkt, damit Regler und Slot-
                 # Feld sie ohne vollen Rebuild aufrufen koennen.
                 def _fuelle_aufteilung(_att=_inv_attempts_n, _oc=outcome,
-                                       _ipa=inv_time_per_attempt, _bp=int(bp_id)):
+                                       _ipa=inv_time_per_attempt, _bp=int(bp_id),
+                                       _cpr=copy_secs_per_attempt):
                     _sw = (getattr(self, "_bd_inv_split_w", None) or {}).get(_bp)
                     if not _sw:
                         return
@@ -1729,8 +2614,16 @@ class BauplanTabs:
                         f'Job Runs: <span style="{_zahl}">{_auf["kopien"]}</span>'
                         f'</div><div style="font-size:15px; font-weight:700;">'
                         f'Runs per Copy: <span style="{_zahl}">'
-                        f'{_auf["runs_je_kopie"]}</span></div>')
+                        f'{_auf["runs_je_kopie"]}</span></div>'
                         # de_scan3: an
+                        # KOPIERDAUER (emm325, Nutzer: "wie lange das Kopieren
+                        # dauert, koennen wir nicht anzeigen?"): EIN Job mit
+                        # Kopien x Runs je Kopie Kopier-Runs.
+                        + (f'<div style="font-size:15px; font-weight:700;">'
+                           + t("Copy job: \u2248{d}").format(
+                               d=f'<span style="{_zahl}">'
+                                 f'{self._fmt_dur(_cpr * _auf["kopien"] * _auf["runs_je_kopie"])}'
+                                 f'</span>') + '</div>' if _cpr else ""))
                     # DAUER UND BELEGTE SLOTS (Nutzer: "eine Anzeige, wo man
                     # sieht, wie lange es dauert und wie viele Science-Slots
                     # belegt werden"). Wandzeit = Wellen x Zeit je Versuch.
@@ -1748,9 +2641,15 @@ class BauplanTabs:
                     if _auf["rest_reserve"]:
                         _teile.append(t("{n} runs in reserve").format(
                             n=_auf["rest_reserve"]))
+                    # "DANACH INVENTION:" (emm324, Nutzer 01.10.2026: "das
+                    # dauert ingame nur 1h20min und nicht 2T12h"): die Zeile
+                    # stand direkt unter der KOPIER-Anleitung und las sich
+                    # wie die Dauer des Kopierjobs - gemeint sind die
+                    # Invention-Jobs danach (Wellen x Zeit je Versuch).
                     _sw["lbl"].setText(
                         f'<span style="color:{theme.TEXT}; font-size:15px; '
                         f'font-weight:700;">'
+                        + t("Then invention:") + " "
                         + " \u00b7 ".join(_teile) + '</span>')
                     _sw["lbl"].setToolTip(t(
                         "{total} copy runs in total for {att} required attempts.\n"
@@ -1799,7 +2698,7 @@ class BauplanTabs:
                 score_lbl.setToolTip(t(
                     "Material cost: only the base ME of this item \u2013 structure and "
                     "rig ME apply on top and are the same for all decryptors.\n"
-                    "Build time is for information only \u2013 \u201eBest Decryptor\u201c looks "
+                    "Build time is for information only \u2013 \u201eAuto-Decryptor\u201c looks "
                     "at total profit alone.\n"
                     "Invention time is sequential with 1 free science slot; faster "
                     "accordingly with more slots.")
@@ -1871,6 +2770,7 @@ class BauplanTabs:
                     _s.setValue(v2)
                     _s.blockSignals(False)
                 self._bd_inv_split[_bp] = int(v2)
+                self._inv_split_merken_spaeter()
                 if _sw.get("fill"):
                     try:
                         _sw["fill"]()
@@ -1943,34 +2843,35 @@ class BauplanTabs:
                         build_seconds_per_run_0decryptor=build_seconds_0dec)
                 return ranked
 
-            def _pick_best(_checked=False, combo=combo, bp_id=bp_id):
-                ranked = _rangliste()
-                self._bd_dec_bestaetigt = set(getattr(self, "_bd_dec_bestaetigt", None) or ())
-                self._bd_dec_bestaetigt.add(int(bp_id))
-                if ranked and ranked[0]["name"] == combo.currentData():
-                    # Schon der beste: die Combo aendert sich nicht, also auch
-                    # kein Neuaufbau - die Warnung trotzdem wegnehmen.
-                    _cb_r = getattr(self, "_bd_full_rebuild", None)
-                    if _cb_r is not None:
-                        _cb_r()
+            def _dec_name_kopieren(_checked=False, combo=combo):
+                _nm = combo.currentData()
+                if not _nm or _nm == KEIN_DECRYPTOR:
                     return
-                if ranked:
-                    best = ranked[0]
-                    self._combo_select(combo, best["name"])  # löst _on_change aus
-            best_btn.clicked.connect(_pick_best)
+                _nm = str(_nm)
+                # Fallback-Liste ohne SDE kennt nur "Augmentation" usw. - im
+                # Spiel heisst das Item "Augmentation Decryptor".
+                if not _nm.endswith("Decryptor"):
+                    _nm = _nm + " Decryptor"
+                self._copy_bp_name_value(_nm)
+
+            def _dec_knopf_stand(_i=None, combo=combo, _b=best_btn):
+                _an = (combo.isEnabled() and bool(combo.currentData())
+                       and combo.currentData() != KEIN_DECRYPTOR)
+                _b.setEnabled(_an)
+                _b.setToolTip(t("Click copies the name of the decryptor chosen above "
+                                "\u2013 paste it into the in-game search.") if _an else
+                              t("No decryptor chosen \u2013 nothing to copy."))
+            best_btn.clicked.connect(_dec_name_kopieren)
+            combo.currentIndexChanged.connect(_dec_knopf_stand)
+            _dec_knopf_stand()
             # "BEST DECRYPTOR FOR ALL BLUEPRINTS" (Nutzer 26.09.2026: "damit man
             # nicht jeden Blueprint separat ansteuern muss"). Nur Karten, deren
             # Decryptor-Wahl ueberhaupt gilt (bei "Own BPC" ist sie gesperrt).
+            # EIGENE BPC (Combo gesperrt): keine Rangliste - "Auto-Decryptor"
+            # laesst die Karte aus (Nutzer-Screenshot 26.09.2026: Sacrilege mit
+            # Own BPC bekam "Parity"); "Copy Decryptor" sperrt `_dec_knopf_stand`.
             if combo.isEnabled():
                 self._bd_inv_rang[int(bp_id)] = (_rangliste, decryptor_list)
-            else:
-                # EIGENE BPC: der Decryptor zaehlt nicht - der Knopf der Karte
-                # waere sonst ein Schalter ohne Wirkung (Nutzer-Screenshot
-                # 26.09.2026: Sacrilege mit Own BPC bekam "Parity").
-                best_btn.setEnabled(False)
-                best_btn.setToolTip(t(
-                    "With \u201eOwn BPC instead of invention\u201c the invention is "
-                    "skipped - the decryptor no longer matters."))
 
             _recompute()
             # Direkt beim Aufbau auch in opts eintragen (falls schon ein
@@ -2281,6 +3182,13 @@ class BauplanTabs:
         _rp_erz_info = {}
         # JE MINERAL: das beste geprueft Erz und sein Aufpreis - Tooltip.
         _rp_warum_nicht = {}
+        # ERZ, DESSEN MINERALE SCHON IM BESTAND LIEGEN (28.09.2026): nicht
+        # mehr gebraucht, auch ohne Haken in Stufe 0.
+        try:
+            _rp_erz_bestand = {int(str(_k).split("|")[1])
+                               for _k in self._erz_durch_bestand()}
+        except Exception:
+            _rp_erz_bestand = set()
         _rp_alle = (plan or {}).get("reprocess") or {}
         try:
             _cn_rp = {int(_c["character_id"]): (_c.get("character_name")
@@ -2615,7 +3523,16 @@ class BauplanTabs:
                         n=int((plan.get("build_runs") or {}).get(int(r["tid"]), 0) or 0))
                     if _lauf_runs > 0:
                         _runs_hint += " \u00b7 " + t("{n} running").format(n=_lauf_runs)
-                if _offen_runs == 0:
+                if _offen_runs == 0 and int(r["tid"]) in (
+                        getattr(self, "_bd_vorstufen_fertig", None) or set()):
+                    # NICHT MEHR GEBRAUCHT (28.09.2026): alle Verbraucher im
+                    # Plan sind erledigt - die restlichen Runs braucht niemand.
+                    status_txt = t("not needed any more \u2713")
+                    status_col = theme.GREEN
+                    r["reason"] = t("Everything in this plan that uses this item is "
+                                    "already built or running - the remaining runs "
+                                    "are not needed. Nothing to buy, nothing to start.")
+                elif _offen_runs == 0:
                     # NICHTS MEHR ZU BAUEN: alle Runs geliefert oder gestartet.
                     # Vorher stand hier "can be built - 13'019 units" (Nutzer
                     # 26.09.2026) - eine Zahl, die vom Bauen nichts wusste.
@@ -2783,8 +3700,26 @@ class BauplanTabs:
                                      "({r} runs open, delivered and running "
                                      "runs deducted).").format(
                     n=f"{int(_noch_bauen):,}".replace(",", "'"), r=_offen_runs)
+            # FEHLT HEISST FEHLT (27.09.2026, s. mw_helpers.fehlt_spalte): die
+            # Spalte zeigt mindestens, was fuer DIESEN Plan wirklich fehlt -
+            # auch wenn der Hangar voll ist, weil andere Plaene reserviert haben.
+            from eve_trader.ui.mw_helpers import fehlt_spalte
+            _fl_sp = (getattr(self, "_bd_fehl_live", None) or {}).get(int(r["tid"]))
+            _missing_q, _miss_live = fehlt_spalte(
+                _missing_q, (_fl_sp[0] if _fl_sp else 0))
             miss_txt = ("\u2013" if _missing_q <= 0
                         else f"{_missing_q:,}".replace(",", "'"))
+            if int(r["tid"]) in _rp_erz_bestand:
+                # Nutzer 28.09.2026: "ich habe das compressed Ore zu
+                # Mineralien verarbeitet" - die Minerale liegen da, das Erz
+                # braucht der Plan nicht mehr (reprocess.schritte_durch_bestand).
+                _missing_q, _miss_live, miss_txt = 0, False, "\u2013"
+                status_txt = t("not needed \u2013 its minerals are already in stock \u2713")
+                status_col = theme.GREEN
+                r["reason"] = t("Every mineral this ore was planned for is already "
+                                "in stock for this plan (reprocessed or bought). "
+                                "The ore is no longer needed and not on the "
+                                "shopping list.")
             # DIE FARBE FOLGT DER AUSSAGE (Sitzung 17, Nutzer: "es sieht auf
             # den ersten Blick so aus, als haette ich nicht alles - dabei
             # habe ich es, weil ich es noch bauen werde"). Die Spalte rechnet
@@ -2795,7 +3730,7 @@ class BauplanTabs:
             _gedeckt = status_col in (theme.GREEN, theme.GREEN_BRIGHT, theme.BLUE)
             if _missing_q <= 0:
                 miss_col = theme.MUTED
-            elif _gedeckt:
+            elif _gedeckt and not _miss_live:
                 miss_col = theme.GREEN
             else:
                 miss_col = theme.AMBER
@@ -3235,6 +4170,17 @@ class BauplanTabs:
         _k = f"{_stufe}|{_tid}"
         _alt = int(_erl.get(_k, 0) or 0)
         _erl[_k] = max(0, _alt + _runs) if an else max(0, _alt - _runs)
+        # Zeitpunkt je Item mitfuehren (emm336): beim Setzen der juengste
+        # Haken, ist nichts mehr erledigt, faellt er weg.
+        _ets = getattr(self, "_bd_runplan_erledigt_ts", None)
+        if _ets is None:
+            _ets = {}
+            self._bd_runplan_erledigt_ts = _ets
+        if an:
+            import time as _t_erl
+            _ets[_k] = max(float(_ets.get(_k, 0) or 0), _t_erl.time())
+        elif _erl[_k] <= 0:
+            _ets.pop(_k, None)
 
     def _runplan_ziel_stunden(self, stage):
         """Zielzeit DIESER Stufe in Stunden - 0 = so schnell wie moeglich."""
@@ -3656,6 +4602,43 @@ class BauplanTabs:
             _a(f"  {_nm(_t)[:28]:<28} {_z(_fz_stock.get(_t)):>9} {_z(_hangar.get(_t)):>9} "
                f"{_z(_pipe.get(_t)):>9} {_z(_manual.get(_t)):>9} "
                f"{_z(_wirksam.get(_t)):>9} {_z(_used.get(_t)):>11}")
+        # VORSTUFEN-REGEL (Nutzer 28.09.2026, Phenolic: "die 4 Runs sind
+        # immer noch da"): je Bau-Item mit Verbrauchern im Plan, wer es
+        # verbraucht und wie weit der ist - warum die Regel griff oder nicht.
+        _vd = tuple(getattr(self, "_bd_vorstufen_diag", None) or ({}, {}, {}))
+        _vd_erl = {}
+        for _k, _v in (_vd[0] or {}).items():
+            try:
+                _vd_erl[int(_k)] = int(_v or 0)
+            except (TypeError, ValueError):
+                continue
+        _vd_fertig = {int(_k) for _k in (_vd[1] or {})}
+        _vd_bm = _vd[2] or {}
+        _a("")
+        _a(f"VORSTUFEN-REGEL: build_mats im Plan: {len(_vd_bm)} Items, "
+           f"als nicht mehr gebraucht erkannt: {len(_vd_fertig)}")
+        _a("  ITEM (Plan/erledigt)  <- VERBRAUCHER (Plan/erledigt)")
+        _verbr = {}
+        for _c, _ms in _vd_bm.items():
+            try:
+                _c = int(_c)
+            except (TypeError, ValueError):
+                continue
+            for _m in (_ms or []):
+                try:
+                    _verbr.setdefault(int(_m[0]), []).append(_c)
+                except (TypeError, ValueError, IndexError, KeyError):
+                    continue
+        for _t in sorted(plan_runs, key=lambda t: -int(plan_runs.get(t) or 0)):
+            _vs = [c for c in _verbr.get(int(_t), []) if c in plan_runs and c != int(_t)]
+            if not _vs:
+                continue
+            _a(f"  {_nm(_t)[:28]:<28} {_z(plan_runs.get(_t))}/{_z(_vd_erl.get(int(_t)))}"
+               f"{'  -> NICHT MEHR GEBRAUCHT' if int(_t) in _vd_fertig else ''}")
+            for _c in _vs:
+                _offen = _vd_erl.get(_c, 0) < int(plan_runs.get(_c) or 0)
+                _a(f"      <- {_nm(_c)[:28]:<28} {_z(plan_runs.get(_c))}/{_z(_vd_erl.get(_c))}"
+                   f"{'  OFFEN' if _offen else ''}")
         _a("ENDE FORTSCHRITT")
         # de_scan2: an
         # de_scan4: an
@@ -4038,6 +5021,7 @@ class BauplanTabs:
         # OFFENE ZUORDNUNGS-FRAGEN (Stufe C, Teil 2) - transient wie
         # `_bd_runplan_auto`, entsteht bei jedem Aufbau neu.
         self._bd_job_offen = []
+        self._bd_job_prio = []
         self._bd_runplan_runs_by_key = {}
         # WAS IST SCHON ERLEDIGT? Kopie der gemerkten Runs je (Stufe, Item);
         # sie wird beim Bauen der Zeilen aufgebraucht (s. `_k_erl` unten).
@@ -4075,6 +5059,9 @@ class BauplanTabs:
             try:
                 self._job_zuordnung_nachfuehren(res["assignments"],
                                                 float(_frz_sched["ts"]))
+                # Nach dem Zuordnen: der Runplaner sieht nur noch die
+                # laufenden Jobs DIESES Plans (Nutzer 28.09.2026).
+                self._aktive_jobs_filtern()
                 # NAMEN AUS DEM PARAMETER `names` (s. der Hinweis weiter
                 # oben: `_bd_names` gibt es hier nicht) - im Frage-Dialog
                 # soll das Item stehen, nicht seine Typ-Nummer.
@@ -4320,8 +5307,7 @@ class BauplanTabs:
         # Der eingefrorene Plan bleibt UNANGETASTET; nur die Anzeige zeigt
         # den Rest, und die Ursprungszahl steht daneben (Regel 6: nichts
         # verschwindet spurlos).
-        from .mw_helpers import (fertig_menge as _mwh_fertig,
-                                 rest_und_budget as _mwh_rest)
+        from .mw_helpers import fertig_menge as _mwh_fertig
         _rest_budget = {}
         _plan_runs_tid = {}
         for _t_r, _r_r in _runs_by_tid.items():
@@ -4336,6 +5322,29 @@ class BauplanTabs:
             # dem man MEHR gebaut hat als der Plan vorsah, negative Runs
             # zeigen.
             _rest_budget[_t_r] = _mwh_fertig(_pl_r, _fertig, 0)
+        # VORSTUFEN OHNE OFFENEN VERBRAUCHER (Nutzer 28.09.2026, Phenolic):
+        # dieselbe Regel wie im Materialien-Reiter (`_rest_geliefert_jetzt`,
+        # dort samt Haken) - der Runplaner zeigt ihre Rest-Runs nicht mehr.
+        self._bd_vorstufen_diag = ()
+        try:
+            _erl_v = dict(_rest_budget)
+            for _t_v, _n_v in (self._rest_geliefert_jetzt() or {}).items():
+                _erl_v[int(_t_v)] = max(int(_erl_v.get(int(_t_v), 0) or 0), int(_n_v))
+            from .mw_helpers import (vorstufen_erledigt as _mwh_vorstufen,
+                                     vorstufen_ins_budget as _mwh_vs_budget)
+            _vs_schon = set(getattr(self, "_bd_vorstufen_fertig", None) or ())
+            _vs_neu = dict(_mwh_vorstufen(_plan_runs_tid, (plan or {}).get("build_mats"),
+                                          _erl_v))
+            for _t_v in _vs_schon:
+                _vs_neu.setdefault(int(_t_v), int(_plan_runs_tid.get(int(_t_v), 0) or 0))
+            # fuer planer_diagnose.txt (nur schreiben, nie rechnen)
+            self._bd_vorstufen_diag = (dict(_erl_v), dict(_vs_neu),
+                                       dict((plan or {}).get("build_mats") or {}))
+            _rest_budget = _mwh_vs_budget(_rest_budget, _plan_runs_tid,
+                                          (plan or {}).get("build_mats"), _erl_v,
+                                          _vs_schon)
+        except Exception as _ve:
+            self._log_exception("Runplaner: Vorstufen erledigt", str(_ve))
         # FORTSCHRITTS-DIAGNOSE (26.09.2026, Nutzer: "der Runplaner will
         # trotzdem nochmal 6'718 nachbauen ... genau das passiert die ganze
         # Zeit"): dieselben Zahlen, aus denen das Rest-Budget eben entstand,
@@ -4412,6 +5421,13 @@ class BauplanTabs:
         # Runplaner draussen (Nutzer 19.09.2026).
         _rp0_erz = [_s for _s in _rp0_alle
                     if _s.get("art") != "unrefined" and not _s.get("gratis")]
+        # EINGEFROREN: Charakter mit HEUTIGEN Skills/Implantaten neu waehlen,
+        # Mengen bleiben (emm361, `_repro_char_neu_waehlen`).
+        if getattr(self, "_bd_frozen", None) and _rp0_erz:
+            try:
+                _rp0_erz = self._repro_char_neu_waehlen(_rp0_erz, _rp0.get("basis"))
+            except Exception as _rce:
+                self._log_exception("Runplaner: Reprocessing-Charakter", str(_rce))
         _rp0_unref = [_s for _s in _rp0_alle if _s.get("art") == "unrefined"]
 
         def _repro_block(_lbl0, _rp0_sch, _kopf_tip, _kopf_rechts=None, _ckey0="repro"):
@@ -4443,6 +5459,10 @@ class BauplanTabs:
             for _st0 in _rp0_sch:
                 _by_char0.setdefault(_st0.get("char"), []).append(_st0)
             _hakt_alle0 = getattr(self, "_bd_runplan_checked", None) or set()
+            try:
+                _erz_bestand0 = set(self._erz_durch_bestand())
+            except Exception:
+                _erz_bestand0 = set()
             for _cid0, _steps0 in sorted(_by_char0.items(),
                                          key=lambda kv: (kv[0] is None, kv[0] or 0)):
                 _cname0 = cmap.get(_cid0, str(_cid0) if _cid0 is not None else "?")
@@ -4535,6 +5555,19 @@ class BauplanTabs:
                     _key0 = reprocess.schritt_key(_st0)
                     _row0.setData(0, Qt.UserRole + 6, _key0)
                     _hakt0 = _key0 in _hakt_alle0
+                    if not _hakt0 and _key0 in _erz_bestand0:
+                        # MINERALE LIEGEN SCHON DA (28.09.2026): gruen und
+                        # gesagt, ohne Haken zu setzen (den setzt nur der
+                        # Nutzer, Sitzung 8).
+                        _row0.setText(4, _row0.text(4) + "  \u00b7  " + _txt(
+                            "minerals already in stock \u2713"))
+                        for _c0 in range(tbl.columnCount()):
+                            _row0.setForeground(_c0, QColor(theme.GREEN))
+                        _row0.setToolTip(4, _txt(
+                            "Every mineral this ore was planned for is already "
+                            "in stock for this plan (reprocessed or bought). "
+                            "The ore is no longer needed and not on the "
+                            "shopping list."))
                     _row0.setCheckState(0, Qt.Checked if _hakt0 else Qt.Unchecked)
                     if _hakt0:
                         for _c0 in range(tbl.columnCount()):
@@ -4814,6 +5847,38 @@ class BauplanTabs:
                 ms, rs = cslots.get(cid, (1, 1))
                 for _welle, _al in _wellen(alist, rs if slot_kind == "rs" else ms):
                     _eintraege.append((cid, _welle, _al))
+            # VORAB JE STUFE (Nutzer 29.09.2026, Nonlinear Metamaterials bei
+            # Banana UND Peanut Motor, gebaut hatte nur Peanut): laufende
+            # Jobs decken ZUERST die Zeile des Charakters, der sie faehrt
+            # (`budget_eigene_zuerst`), und nachgetragene Haken bekommt eine
+            # Zeile erst, nachdem die wirklich gehakten Zeilen ihre Runs
+            # verbraucht haben (`haken_nachtragen`). Vorher nahm sich die
+            # erste Zeile der Liste beides - blauer Punkt und fremder Haken.
+            from .mw_helpers import (budget_eigene_zuerst as _mwh_eigen,
+                                     haken_nachtragen as _mwh_haken)
+            _zeilen_b, _zeilen_h = [], []
+            for _cid_v, _welle_v, _al_v in _eintraege:
+                _wsuf_v = f"|w{_welle_v}" if _welle_v > 1 else ""
+                _cn_v = cmap.get(_cid_v, str(_cid_v))
+                for _a_v in sorted(_al_v, key=lambda x: -x["runs"]):
+                    _t_v = int(_a_v["tid"])
+                    _zeilen_b.append(((_cid_v, _welle_v, _t_v), _t_v,
+                                      int(_a_v["runs"]), _cn_v))
+                    _zeilen_h.append((f"{stage}|{_cid_v}|{_a_v['tid']}{_wsuf_v}",
+                                      f"{stage}|{_t_v}", int(_a_v.get("runs") or 0)))
+            _lauf_je_char = {}
+            for _t_l, _js_l in (getattr(self, "_bd_active_jobs_map", None) or {}).items():
+                for _j_l in (_js_l or []):
+                    if _j_l.get("char"):
+                        _m_l = _lauf_je_char.setdefault(int(_t_l), {})
+                        _m_l[str(_j_l["char"])] = (_m_l.get(str(_j_l["char"]), 0)
+                                                   + int(_j_l.get("runs") or 0))
+            _tids_v = {z[1] for z in _zeilen_b}
+            _gedeckt_v, _rest_neu_v = _mwh_eigen(
+                _zeilen_b, {_tb: _rest_budget.get(_tb, 0) for _tb in _tids_v}, _lauf_je_char)
+            for _t_v in _tids_v:
+                _rest_budget[_t_v] = _rest_neu_v.get(_t_v, 0)
+            _haken_neu = set(_mwh_haken(_zeilen_h, _checked_set, _rest_erl))
             for cid, _welle, alist in _eintraege:
                 ms, rs = cslots.get(cid, (1, 1))
                 cap = rs if slot_kind == "rs" else ms
@@ -4915,8 +5980,8 @@ class BauplanTabs:
                     # abgearbeitet, deshalb reicht ein laufender Zaehler - die
                     # Summe ueber alle Zuteilungen bleibt exakt.
                     _tid_a = int(a["tid"])
-                    R, _rest_budget[_tid_a] = _mwh_rest(
-                        R_plan, _rest_budget.get(_tid_a, 0))
+                    # verteilt VORAB (`budget_eigene_zuerst`, s. oben)
+                    R = max(0, R_plan - int(_gedeckt_v.get((cid, _welle, _tid_a), 0)))
                     _weg = R_plan - R
                     # ---- ZUSTAND STATT AUSBLENDEN (Nutzer, Sitzung 14) ------
                     # WIDERRUFT DIE ANSAGE AUS SITZUNG 8 ("die ESI soll
@@ -5072,9 +6137,9 @@ class BauplanTabs:
                     # Zeitstempel wandert mit - ohne ihn duerfte die
                     # mitlaufende Reservierung nichts freigeben.
                     _k_erl = f"{stage}|{int(a['tid'])}"
-                    _runs_hier = int(a.get("runs") or 0)
-                    if (_ckey_item not in _checked_set and _runs_hier > 0
-                            and int(_rest_erl.get(_k_erl, 0) or 0) >= _runs_hier):
+                    # ERST die wirklich gehakten Zeilen, dann der Rest
+                    # (`haken_nachtragen`, vorab je Stufe berechnet)
+                    if _ckey_item in _haken_neu and _ckey_item not in _checked_set:
                         _checked_set.add(_ckey_item)
                         _cs_alle = getattr(self, "_bd_runplan_checked", None)
                         if _cs_alle is not None:
@@ -5084,9 +6149,6 @@ class BauplanTabs:
                             _tsm_e[_ckey_item] = float(
                                 (getattr(self, "_bd_runplan_erledigt_ts", None)
                                  or {}).get(_k_erl) or _zeit_mod.time())
-                    if _ckey_item in _checked_set:
-                        _rest_erl[_k_erl] = max(
-                            0, int(_rest_erl.get(_k_erl, 0) or 0) - _runs_hier)
                     if _ckey_item in _checked_set:
                         iit.setCheckState(0, Qt.Checked)
                         _apply_struck(iit)
@@ -5160,6 +6222,21 @@ class BauplanTabs:
                                 "{need}. Once fully covered, the item is HIDDEN from "
                                 "the plan."
                             ).format(seen=_del_n, need=int(a.get('runs') or 0)))
+                        # LAEUFT, GEHOERT ABER NOCH KEINEM PLAN (Nutzer
+                        # 28.09.2026): zaehlt nirgends als erledigt - die
+                        # Zeile sagt es, damit niemand denselben Job ein
+                        # zweites Mal startet.
+                        _unz = ((getattr(self, "_bd_active_unzugeordnet", None)
+                                 or {}).get(a["tid"]) or [])
+                        if _unz:
+                            iit.setText(0, iit.text(0) + " " + _txt(
+                                "(running: {n} runs, not assigned to a plan yet)"
+                            ).format(n=sum(int(_ju.get("runs") or 0) for _ju in _unz)))
+                            iit.setToolTip(0, _txt(
+                                "A job for this item is running, but more than one "
+                                "plan builds it and it is not assigned yet. It "
+                                "counts for no plan until you assign it (button "
+                                "\u201e\u2026 not assigned \u2013 assign\u201c)."))
                     _cname_here = cmap.get(cid, str(cid))
                     _active_all = (getattr(self, "_bd_active_jobs_map", None)
                                   or {}).get(a["tid"]) or []

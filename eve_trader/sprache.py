@@ -255,6 +255,20 @@ KATALOG = {
         "Delete": "L\u00f6schen",
         "Close": "Schlie\u00dfen",
         "Reset": "Zur\u00fccksetzen",
+        "Resets everything in this build plan to the defaults (asks first). Your saved plan only changes when you save again.":
+            "Setzt alles in diesem Bauplan auf Standard zur\u00fcck (fragt vorher). Dein gespeicherter Plan \u00e4ndert sich erst, wenn du wieder speicherst.",
+        "Reset build plan?": "Bauplan zur\u00fccksetzen?",
+        "Do you really want to reset everything in \u201e{name}\u201c to the defaults?":
+            "Willst du wirklich alles in \u201e{name}\u201c auf Standard zur\u00fccksetzen?",
+        "Plan frozen \u2013 unfreeze first ( button), then reset.":
+            "Plan eingefroren \u2013 erst auftauen ( Knopf), dann zur\u00fccksetzen.",
+        "Load order-book prices into the plan": "Orderbuch-Preise in den Plan laden",
+        "Fetches the real sell order book of the hub for every material and uses it for the build cost of this plan (one live request per material, may take a moment).":
+            "Holt f\u00fcr jedes Material das echte Sell-Orderbuch des Hubs und nutzt es f\u00fcr die Baukosten dieses Plans (ein Live-Abruf je Material, kann etwas dauern).",
+        "\u2139 Quantities calculated live, order book prices from the last fetch (Tools \u2192 \u201eLoad order-book prices into the plan\u201c, at quantity {qty}). Run it again for fresh prices.":
+            "\u2139 Mengen live gerechnet, Orderbuch-Preise vom letzten Abruf (Werkzeuge \u2192 \u201eOrderbuch-Preise in den Plan laden\u201c, bei Menge {qty}). F\u00fcr frische Preise erneut ausf\u00fchren.",
+        "Flat price (current market scan) \u2013 for order-book-exact numbers use Tools \u2192 \u201eLoad order-book prices into the plan\u201c.":
+            "Flachpreis (aktueller Markt-Scan) \u2013 f\u00fcr orderbuch-genaue Zahlen Werkzeuge \u2192 \u201eOrderbuch-Preise in den Plan laden\u201c.",
         "Optimal quantity": "Optimale Menge",
         "Estimate capital build cost": "Capital-Baukosten sch\u00e4tzen",
         "Load everything from ESI": "Alles aus ESI laden",
@@ -863,8 +877,6 @@ KATALOG = {
             'Alte Transaktionen löschen',
         'No build plans saved yet. Open a build plan and click „Save build plan“.':
             'Noch keine gespeicherten Baupläne. Öffne einen Bauplan und klicke „Bauplan speichern“.',
-        'Add to build plan':
-            'Zum Bauplan hinzufügen',
         'No structures yet. Add your first one.':
             'Noch keine Strukturen. Füge deine erste hinzu.',
         'WHICH STRUCTURE FOR WHICH ACTIVITY?':
@@ -1133,23 +1145,19 @@ KATALOG = {
             'Rechnet für JEDES Ergebnis unten die genaue Bauplan-Rechnung nach (Losgrößen-/Rundungseffekte, echte Job-Kosten) statt der schnellen Pro-Stück-Schätzung - Menge = Ø Tagesvolumen (realistische Bau-/Verkaufsgröße). Dauert je nach Trefferzahl ein paar Sekunden bis eine Minute. Ergebnisse werden nur für diese Sitzung gemerkt (RAM, keine Datei) - kein Datenmüll auf der Platte.',
         'Searches public contracts in ALL regions for capital sales and derives a reference value per ship type. Capitals are sold everywhere, not only in the hub – a scan over a single region yields no price at all for many types, or just one.\nTAKES LONGER (all of New Eden instead of one region, several minutes depending on time of day).\nThe MEDIAN is shown (the middle price): contract prices regularly have outliers on the high side that would skew an average. The average is in the tooltip of the cell next to it.\nPublic offers only – ESI sees alliance-internal contracts only through a character with the director or accountant role in that corp, which this scan does not cover.':
             'Durchsucht öffentliche Contracts in ALLEN Regionen nach Capital-Verkäufen und bildet daraus einen Richtwert je Schiffstyp. Capitals werden überall verkauft, nicht nur im Hub - ein Scan über nur eine Region liefert für viele Typen gar keinen oder nur einen einzigen Preis.\nDAUERT LÄNGER (ganz New Eden statt einer Region, je nach Tageszeit mehrere Minuten).\nAngezeigt wird der MEDIAN (der mittlere Preis): Contract-Preise haben regelmäßig Ausreißer nach oben, die einen Mittelwert verziehen würden. Der Mittelwert steht im Tooltip der Zelle daneben.\nNur öffentliche Angebote - Allianz-interne Contracts sieht ESI nur über einen Charakter mit Director/Accountant-Rolle in der jeweiligen Corp, das deckt dieser Scan nicht ab.',
-        'Runs through all decryptors (plus „no decryptor“) for the current build quantity and picks the one with the lowest expected total cost.':
-            "Rechnet alle Decryptoren (+ 'Kein Decryptor') für die aktuelle Bauplan-Menge durch und wählt den mit den geringsten erwarteten Gesamtkosten.",
         # ---- Tooltips: Bauplan-Fenster ----
         'On: ME/TE are freely editable here and the invention maths above in this panel is ignored for this end product (no invention cost) – e.g. when you already own the BPC or want to buy it instead of inventing it.':
             'An: ME/TE hier frei editierbar, die Invention-Rechnung oben in diesem Panel wird für dieses Endprodukt ignoriert (keine Invention-Kosten) - z.B. wenn du die BPC schon besitzt oder kaufen willst, statt sie zu erfinden.',
         'How many runs does ONE of your own BPCs have (not a BPO – a blueprint copy runs out eventually)? From that the tool works out how many BPC copies you need for the quantity set above – otherwise the run planner cannot split the end product across build slots and characters.':
             'Wie viele Runs hat EINE deiner eigenen BPCs (nicht BPO - eine Blueprint-Kopie ist irgendwann aufgebraucht)? Daraus errechnet das Tool automatisch, wie viele BPC-Kopien du für die oben eingestellte Menge brauchst - sonst weiß der Runplaner nicht, wie er das Endprodukt auf Bau-Slots/Charaktere aufteilen soll.',
-        'Applies all ME/TE fields (recalculates the chain). It also fetches the real material purchase prices from the order book of the chosen hub (one live request per material, may take a moment) – replacing the flat price in build cost per unit.':
-            'Übernimmt alle ME/TE-Felder (rechnet die Kette neu). Holt dabei auch die Material-Einkaufspreise über den gewählten Hub echt aus dem Orderbuch (Live-Abruf pro Material, kann etwas dauern) – ersetzt den Flachpreis in Baukosten/Stk.',
         'ON: freezes the PLAN – recipe structure, buy/build decisions, quantities and run planner are fixed from now on (along with purchase prices, the job cost basis and the PURCHASING stock as of NOW). That way you can work on the run planner for days without it recalculating behind your back. PROGRESS is ticked off automatically from your ESI jobs (runs delivered since freezing), and ONLY the sell price of the end product stays live – so weeks later you still see the real profit against the purchase costs OF THAT TIME.\nOFF: back to live prices, live stock and a live plan.':
             'AN: friert den PLAN ein - Rezept-Struktur, Kauf/Bau-Entscheidungen, Mengen und Runplaner stehen ab jetzt fest (dazu Einkaufspreise, Jobkosten-Basis und der EINKAUFS-Bestand vom Stand JETZT). Am Runplaner kann man damit tagelang arbeiten, ohne dass er sich unter der Hand neu rechnet. Der FORTSCHRITT wird aus deinen ESI-Jobs automatisch abgehakt (gelieferte Runs seit dem Einfrieren), und NUR der Verkaufspreis des Endprodukts bleibt live - so sieht man in Wochen noch den echten Gewinn gegen die DAMALIGEN Einkaufskosten.\nAUS: zurück zu Live-Preisen, Live-Bestand und Live-Plan.',
         'Sets ONLY the frozen STOCK to the current live state (within the chosen stock scope) – prices and the job cost basis stay from the day of freezing. This clears out remote storage from the frozen state that the new build-structure scope no longer counts.\nSave the build plan afterwards so it survives a restart.':
             'Setzt NUR den eingefrorenen BESTAND auf den aktuellen Live-Stand (im gewählten Bestands-Scope) - Preise und Jobkosten-Basis bleiben vom Einfrier-Tag. Räumt z.B. Fern-Lager aus dem Einfrier-Stand, die der neue Scope nicht mehr zählt.\nDanach „Bauplan speichern“, damit es den Neustart überlebt.',
         'One click instead of four: fetches your real blueprints (BPOs/BPCs) for the end product, components and reactions AND reduces the invention attempts needed – all at once, instead of hunting for the individual buttons in each tab.':
             'Ein Klick statt vier: holt deine echten Blaupausen (BPOs/BPCs) für Endprodukt, Komponenten, Reaktionen UND reduziert die nötigen Invention-Versuche - alles auf einmal, statt die einzelnen Knöpfe in jedem Tab einzeln zu suchen.',
-        'The buy and sell hub is chosen at the top left of the tool and applies to all tabs. The structure icon marks your market structures. On the next „Recalculate“ its real sell order book is used for the material costs.':
-            'Einkaufs-/Verkaufs-Hub wird oben links im Tool gewählt und gilt für alle Reiter. Das Struktur-Symbol markiert deine Markt-Strukturen. Beim nächsten „Neu berechnen“ wird dessen echtes Sell-Order-Buch für die Materialkosten genutzt.',
+        'The buy and sell hub is chosen at the top left of the tool and applies to all tabs. The structure icon marks your market structures. With \u201eLoad order-book prices into the plan\u201c (Tools) its real sell order book is used for the material costs.':
+            'Einkaufs-/Verkaufs-Hub wird oben links im Tool gewählt und gilt für alle Reiter. Das Struktur-Symbol markiert deine Markt-Strukturen. Mit \u201eOrderbuch-Preise in den Plan laden\u201c (Werkzeuge) wird dessen echtes Sell-Order-Buch für die Materialkosten genutzt.',
         'WHERE do you sell the end product? That changes two things:\n• the BROKER FEE (depends on your standings towards the station owner – different per hub)\n• the SELL PRICE (looked up there for this one item, no full market scan needed)\nPURCHASING stays at the scanned hub – you buy where the market scan comes from.\nIn player structures the owner sets the broker fee themselves; ESI does not report it – the global value applies there.':
             'WO verkaufst du das Endprodukt? Das ändert zwei Dinge:\n• die BROKER FEE (hängt an deinen Standings zum Stationsbesitzer – je Hub verschieden)\n• den VERKAUFSPREIS (wird für dieses eine Item dort abgefragt, kein kompletter Markt-Scan nötig)\nDer EINKAUF bleibt am gescannten Hub – gekauft wird dort, wo der Markt-Scan herkommt.\nBei Spielerstrukturen setzt der Besitzer die Broker Fee selbst; ESI liefert sie nicht – dort gilt der globale Wert.',
         'Builds everything that the manufacturing depth allows – EVEN when buying would be cheaper.\n\nDifference to the manufacturing depth: that decides WHICH categories you build yourself at all. This checkbox additionally switches off the cost comparison that otherwise decides per item.':
@@ -1313,8 +1321,143 @@ KATALOG = {
             "\u26a0 Bitte im Struktur-Tab eine Struktur f\u00fcr Invention w\u00e4hlen.",
         "Skills for success chance of:":
             "Skills f\u00fcr Erfolgschance von:",
-        "Best Decryptor":
-            "Bester Decryptor",
+        "This plan is FROZEN \u2013 the materials are bought.\n\nRemove \u201e{name}\u201c anyway? The plan stays frozen: only this end product and the pre-stages only it needs are dropped. All other runs in the run planner stay exactly as they are \u2013 what it would have used of shared pre-stages becomes surplus.":
+            "Dieser Plan ist EINGEFROREN \u2013 das Material ist gekauft.\n\n\u201e{name}\u201c trotzdem entfernen? Der Plan bleibt eingefroren: nur dieses Endprodukt und die Vorstufen, die nur es braucht, fallen weg. Alle anderen Runs im Runplaner bleiben genau so \u2013 was es von gemeinsamen Vorstufen gebraucht h\u00e4tte, wird \u00dcberschuss.",
+        # emm334: Industry Jobs + Plan umbenennen
+        "CHARACTERS":
+            "CHARAKTERE",
+        "All on":
+            "Alle an",
+        "On":
+            "An",
+        "{n} character(s) hidden":
+            "{n} Charakter(e) ausgeblendet",
+        "Rename\u2026":
+            "Umbenennen\u2026",
+        "(close the plan first)":
+            "(erst den Plan schlie\u00dfen)",
+        "Rename build plan":
+            "Bauplan umbenennen",
+        "New name of the build plan:":
+            "Neuer Name des Bauplans:",
+        "A build plan named \u201e{name}\u201c already exists \u2013 choose another name.":
+            "Einen Bauplan \u201e{name}\u201c gibt es schon \u2013 bitte einen anderen Namen w\u00e4hlen.",
+        "Renamed to \u201e{name}\u201c \u2713":
+            "Umbenannt in \u201e{name}\u201c \u2713",
+        "Bought for only {buy} per unit \u2013 the freight is more than the purchase price, so it is shown in ISK, not percent.":
+            "Nur f\u00fcr {buy} je St\u00fcck gekauft \u2013 die Fracht ist h\u00f6her als der Einkaufspreis, deshalb steht sie in ISK statt in Prozent.",
+        "IN PROGRESS ({n})":
+            "LAUFEND ({n})",
+        "COMPLETED ({n})":
+            "ERLEDIGT ({n})",
+        "{n} running job(s)":
+            "{n} laufende(r) Job(s)",
+        "{name} ({n} runs)":
+            "{name} ({n} Runs)",
+        "Count in the profit total":
+            "Im Gewinn-Total mitz\u00e4hlen",
+        "Exclude from profit total":
+            "Aus dem Gewinn-Total nehmen",
+        "Include in profit total":
+            "Wieder ins Gewinn-Total nehmen",
+        " {n} excluded by you.":
+            " {n} von dir ausgeschlossen.",
+        "Sold/day: ? \u2013 market history not loaded yet.":
+            "Verkauft/Tag: ? \u2013 Markt-Historie noch nicht geladen.",
+        "Sold/day: {v} \u00b7 {q} units \u2248 {d} days to sell":
+            "Verkauft/Tag: {v} \u00b7 {q} St\u00fcck \u2248 {d} Tage bis verkauft",
+        "Tick removed for {items} \u2013 ESI shows no job for it on any linked character 30 minutes after ticking.":
+            "Haken bei {items} entfernt \u2013 ESI kennt 30 Minuten nach dem Abhaken bei keinem verkn\u00fcpften Charakter einen Job dazu.",
+        "\u00d8 {v} sold per day at the hub (last 30 days, market history).":
+            "\u00d8 {v} verkauft je Tag am Hub (letzte 30 Tage, Markt-Historie).",
+        "Profit per unit \u00f7 build cost per unit \u2013 the same margin as in the build plan, with your skills and structures (T2: with the best decryptor). Settings in the build plan can raise it further.":
+            "Gewinn je St\u00fcck \u00f7 Baukosten je St\u00fcck \u2013 dieselbe Marge wie im Bauplan, mit deinen Skills und Strukturen (T2: mit dem besten Decryptor). Einstellungen im Bauplan k\u00f6nnen sie weiter erh\u00f6hen.",
+        "skills, standings, industry jobs, blueprints":
+            "Skills, Standings, Industrie-Jobs, Blaupausen",
+        "implants":
+            "Implantate",
+        "stock in your hangars":
+            "Bestand in deinen Hangars",
+        "structure markets":
+            "Struktur-M\u00e4rkte",
+        "open in game":
+            "Im Spiel \u00f6ffnen",
+        "corporation hangar":
+            "Hangar der Corp",
+        "location hint":
+            "Standort-Hinweis",
+        "wallet and orders":
+            "Wallet und Orders",
+        "New ESI permissions \u2013 quick re-link please":
+            "Neue ESI-Rechte \u2013 bitte kurz neu verlinken",
+        "o7 Pilot!\nUnfortunately you have to link your characters again to enjoy the full functionality of Eve MoMa. But in return there are lots of new features \u2013 isn't that great?":
+            "o7 Pilot!\nLeider musst du deine Charaktere neu verlinken, um die volle Funktionalit\u00e4t von Eve MoMa zu genie\u00dfen. Aber daf\u00fcr gibt\u2019s ganz viele neue Funktionen \u2013 ist das nicht toll?",
+        "Don't remind me again for these permissions":
+            "F\u00fcr diese Rechte nicht mehr erinnern",
+        "Re-link now":
+            "Jetzt neu verlinken",
+        "Re-link":
+            "Neu verlinken",
+        "Log in again with {name} \u2013 renews the ESI permissions. Nothing is deleted. In the EVE login, pick {name}.":
+            "Mit {name} neu einloggen \u2013 erneuert die ESI-Rechte. Es wird nichts gel\u00f6scht. Im EVE-Login {name} ausw\u00e4hlen.",
+        "Sold/day":
+            "Verkauft/Tag",
+        "(days)":
+            "(Tage)",
+        "Units of the product sold per day at the hub (average of the last 30 days, market history). Amber below 5/day, red = no trade. ? = history not loaded yet.":
+            "Verkaufte St\u00fcck des Produkts je Tag am Hub (Schnitt der letzten 30 Tage, Markt-Historie). Amber unter 5/Tag, rot = kein Handel. ? = Historie noch nicht geladen.",
+        "Market history not loaded yet \u2013 it is fetched in the background.":
+            "Markt-Historie noch nicht geladen \u2013 sie wird im Hintergrund geholt.",
+        "Not traded at the hub in the last 30 days.":
+            "In den letzten 30 Tagen am Hub nicht gehandelt.",
+        "Thin market: only {v} sold per day.":
+            "D\u00fcnner Markt: nur {v} verkauft je Tag.",
+        "\u00d8 {v} sold per day at the hub (last 30 days). {q} units \u2248 {d} days until all are sold \u2013 if you are the only seller.":
+            "\u00d8 {v} verkauft je Tag am Hub (letzte 30 Tage). {q} St\u00fcck \u2248 {d} Tage, bis alle verkauft sind \u2013 wenn du der einzige Verk\u00e4ufer bist.",
+        "\u26a0 Thin market for {items}: at the current daily volume the quantity takes more than {d} days to sell \u2013 the profit assumes it all sells at today\u2019s price.":
+            "\u26a0 D\u00fcnner Markt bei {items}: beim heutigen Tagesvolumen braucht die Menge mehr als {d} Tage zum Verkauf \u2013 der Gewinn nimmt an, dass alles zum heutigen Preis weggeht.",
+        "Click to show or hide the running jobs":
+            "Klicken zeigt oder versteckt die laufenden Jobs",
+        "Count completed plans in the profit total":
+            "Erledigte Pl\u00e4ne im Gewinn-Total mitz\u00e4hlen",
+        "READY":
+            "FERTIG",
+        "MANUFACTURING":
+            "FERTIGUNG",
+        "REACTIONS":
+            "REAKTIONEN",
+        "SCIENCE":
+            "FORSCHUNG",
+        "NEXT DONE":
+            "N\u00c4CHSTER FERTIG",
+        "ready to deliver":
+            "bereit zum Abliefern",
+        "free slots":
+            "Slots frei",
+        "{r} running \u00b7 {f} ready \u00b7 {m} slots":
+            "{r} laufend \u00b7 {f} fertig \u00b7 {m} Slots",
+        "{n} character(s) without known slot maximum (skills not loaded) \u2013 not counted in the slots.":
+            "{n} Charakter(e) ohne bekanntes Slot-Maximum (Skills nicht geladen) \u2013 nicht in den Slots gez\u00e4hlt.",
+        "(by hand)":
+            "(von Hand)",
+        "Set by hand\u2026":
+            "Von Hand\u2026",
+        "Choose the reprocessing implant per character yourself \u2013 e.g. when it sits in a jump clone (ESI only sees the active clone). Wins over the ESI detection.":
+            "Reprocessing-Implantat je Charakter selbst w\u00e4hlen \u2013 z. B. wenn es in einem Jump-Clone steckt (ESI sieht nur den aktiven Clone). Geht vor die ESI-Erkennung.",
+        "Reprocessing implants":
+            "Reprocessing-Implantate",
+        "ESI only sees the implants of the ACTIVE clone. If you reprocess in a jump clone, choose its implant here.":
+            "ESI sieht nur die Implantate des AKTIVEN Clones. Reprocesst du in einem Jump-Clone, w\u00e4hle sein Implantat hier.",
+        "Auto (ESI)":
+            "Automatisch (ESI)",
+        " Completed plans are not included.":
+            " Erledigte Pl\u00e4ne z\u00e4hlen nicht mit.",
+        "Copy Decryptor":
+            "Decryptor kopieren",
+        "Click copies the name of the decryptor chosen above \u2013 paste it into the in-game search.":
+            "Klick kopiert den Namen des oben gew\u00e4hlten Decryptors \u2013 im Spiel in die Suche einf\u00fcgen.",
+        "No decryptor chosen \u2013 nothing to copy.":
+            "Kein Decryptor gew\u00e4hlt \u2013 nichts zu kopieren.",
         "Free science slots:": "Freie Science-Slots:",
         "Invention jobs at once:": "Invention-Jobs gleichzeitig:",
         "How many invention jobs run at the same time \u2013 one T1 copy each, one science slot each.\nLeft = 1 job (slow, 1 slot busy),\nright = all free science slots (as fast as possible).\nIt does NOT change how many T2 blueprints you get \u2013 that depends on quantity and decryptor.":
@@ -1326,10 +1469,10 @@ KATALOG = {
         "Buy or not?": "Kaufen oder nicht?",
         "Checked {n} blueprint(s): {chg} changed, {same} already on their best decryptor, {skip} skipped (Own BPC).":
             "{n} Blaupause(n) gepr\u00fcft: {chg} gewechselt, {same} hatten schon ihren besten Decryptor, {skip} \u00fcbersprungen (Eigene BPC).",
-        "\u26a0 No decryptor chosen yet \u2013 pick one or press \u201eBest Decryptor\u201c; building from your own copy? Tick \u201eOwn BPC\u201c and enter its ME/TE.":
-            "\u26a0 Noch kein Decryptor gew\u00e4hlt \u2013 einen w\u00e4hlen oder \u201eBester Decryptor\u201c dr\u00fccken; baust du aus deiner eigenen Kopie? \u201eEigene BPC\u201c anhaken und ihre ME/TE eintragen.",
-        "\u26a0 No decryptor chosen yet for: {items}. Invention tab: pick one or press \u201eBest Decryptor for all Blueprints\u201c; building from your own copy? Tick \u201eOwn BPC\u201c and enter its ME/TE.":
-            "\u26a0 Noch kein Decryptor gew\u00e4hlt f\u00fcr: {items}. Invention-Reiter: einen w\u00e4hlen oder \u201eBester Decryptor f\u00fcr alle Blueprints\u201c dr\u00fccken; baust du aus deiner eigenen Kopie? \u201eEigene BPC\u201c anhaken und ihre ME/TE eintragen.",
+        "\u26a0 No decryptor chosen yet \u2013 pick one or press \u201eAuto-Decryptor\u201c; building from your own copy? Tick \u201eOwn BPC\u201c and enter its ME/TE.":
+            "\u26a0 Noch kein Decryptor gew\u00e4hlt \u2013 einen w\u00e4hlen oder \u201eAuto-Decryptor\u201c dr\u00fccken; baust du aus deiner eigenen Kopie? \u201eEigene BPC\u201c anhaken und ihre ME/TE eintragen.",
+        "\u26a0 No decryptor chosen yet for: {items}. Invention tab: pick one or press \u201eAuto-Decryptor\u201c; building from your own copy? Tick \u201eOwn BPC\u201c and enter its ME/TE.":
+            "\u26a0 Noch kein Decryptor gew\u00e4hlt f\u00fcr: {items}. Invention-Reiter: einen w\u00e4hlen oder \u201eAuto-Decryptor\u201c dr\u00fccken; baust du aus deiner eigenen Kopie? \u201eEigene BPC\u201c anhaken und ihre ME/TE eintragen.",
         "will be invented \u2697": "wird erfunden \u2697",
         "Buy Missing Blueprints": "Fehlende Blueprints kaufen",
         "Copies every blueprint of this plan that you own neither as an original nor as a copy \u2013 one original each, in EVE multibuy format. Make copies from it yourself for parallel jobs. Invented T2 copies are left out (they cannot be bought).":
@@ -1342,9 +1485,9 @@ KATALOG = {
             "{n} Blaupause(n) kopiert \u2713 \u2013 im Spiel ins Multibuy-Fenster einf\u00fcgen.",
         "Whether the datacores and decryptors worked out in the Invention tab go into the shopping list.":
             "Ob die im Invention-Reiter ermittelten Datacores und Decryptoren auf die Einkaufsliste kommen.",
-        "Best Decryptor for all Blueprints": "Bester Decryptor f\u00fcr alle Blueprints",
-        "Picks the best decryptor for every blueprint in this tab, one after the other, with the same calculation as each card's \u201eBest Decryptor\u201c button. Cards with \u201eOwn BPC\u201c are left out.":
-            "W\u00e4hlt f\u00fcr jede Blaupause in diesem Reiter nacheinander den besten Decryptor \u2013 mit derselben Rechnung wie der Knopf \u201eBester Decryptor\u201c jeder Karte. Karten mit \u201eEigene BPC\u201c bleiben aussen vor.",
+        "Auto-Decryptor": "Auto-Decryptor",
+        "Picks the best decryptor for every blueprint in this tab, one after the other: the lowest expected total cost for the current quantity. Cards with \u201eOwn BPC\u201c are left out.":
+            "W\u00e4hlt f\u00fcr jede Blaupause in diesem Reiter nacheinander den besten Decryptor: die niedrigsten erwarteten Gesamtkosten f\u00fcr die aktuelle Menge. Karten mit \u201eEigene BPC\u201c bleiben aussen vor.",
         "Own BPC (your own ME/TE)": "Eigene BPC (deine ME/TE)",
         "Ticked = you build from your own researched copy: the invention for this end product is skipped and your ME/TE count. Same switch as \u201eOwn\u201c in the \u201eEnd products\u201c card.":
             "Angehakt = du baust aus deiner eigenen erforschten Kopie: die Invention f\u00fcr dieses Endprodukt entf\u00e4llt, deine ME/TE z\u00e4hlen. Derselbe Schalter wie \u201eOwn\u201c in der Karte \u201eEndprodukte\u201c.",
@@ -1388,8 +1531,8 @@ KATALOG = {
             "Dieses Item braucht keine Invention (T1/BPO) - ME/TE gelten trotzdem, z.B. wenn deine eigene Blaupause schon erforscht ist.",
         "No item in this build plan needs invention (either everything is T1/BPO, or invention is switched off in the build settings).":
             "Kein Item in diesem Bauplan braucht Invention (entweder alles T1/BPO, oder Invention ist in den Bau-Einstellungen ausgeschaltet).",
-        "How likely the planned attempts are really enough.\nHigher = more attempts, more datacores, more certain to finish - but more expensive.\nThis does NOT change the success chance per attempt.\nAlso affects \u201eBest Decryptor\u201c: at high certainty, decryptors with a better success chance pay off sooner.\nApplies to this build plan only; a new one starts again at {pct} %.":
-            "Wie wahrscheinlich die geplanten Versuche wirklich reichen.\nH\u00f6her = mehr Versuche, mehr Datacores, sicherer fertig - aber teurer.\nDas \u00e4ndert NICHT die Erfolgschance je Versuch.\nWirkt auch auf \u201eBester Decryptor\u201c: bei hoher Sicherheit lohnen Decryptoren mit besserer Erfolgschance eher.\nGilt nur f\u00fcr diesen Bauplan; ein neuer startet wieder bei {pct} %.",
+        "How likely the planned attempts are really enough.\nHigher = more attempts, more datacores, more certain to finish - but more expensive.\nThis does NOT change the success chance per attempt.\nAlso affects \u201eAuto-Decryptor\u201c: at high certainty, decryptors with a better success chance pay off sooner.\nApplies to this build plan only; a new one starts again at {pct} %.":
+            "Wie wahrscheinlich die geplanten Versuche wirklich reichen.\nH\u00f6her = mehr Versuche, mehr Datacores, sicherer fertig - aber teurer.\nDas \u00e4ndert NICHT die Erfolgschance je Versuch.\nWirkt auch auf \u201eAuto-Decryptor\u201c: bei hoher Sicherheit lohnen Decryptoren mit besserer Erfolgschance eher.\nGilt nur f\u00fcr diesen Bauplan; ein neuer startet wieder bei {pct} %.",
         "pinned":
             "fixiert",
         "best character marked \u201eFor invention\u201c":
@@ -1409,8 +1552,8 @@ KATALOG = {
             "\u2248{d} Tage",
         "{total} copy runs in total for {att} required attempts.\n{waves} job waves one after another (each wave {par} jobs in parallel).\nYou have to make the copies yourself first \u2013 with ONE original, copy jobs run one after another.":
             "{total} Kopie-Runs insgesamt f\u00fcr {att} n\u00f6tige Versuche.\n{waves} Job-Wellen nacheinander (je Welle {par} Jobs parallel).\nDie Kopien selbst musst du vorher ziehen \u2013 mit EINEM Original laufen Kopier-Jobs nacheinander.",
-        "Material cost: only the base ME of this item \u2013 structure and rig ME apply on top and are the same for all decryptors.\nBuild time is for information only \u2013 \u201eBest Decryptor\u201c looks at total profit alone.\nInvention time is sequential with 1 free science slot; faster accordingly with more slots.":
-            "Materialkosten: nur die Basis-ME dieses Items \u2013 Struktur- und Rig-ME wirken zus\u00e4tzlich und sind f\u00fcr alle Decryptoren gleich.\nBauzeit ist nur zur Info \u2013 \u201eBester Decryptor\u201c schaut ausschlie\u00dflich auf den Gesamtgewinn.\nInvention-Zeit gilt sequenziell bei 1 freiem Science-Slot; mit mehr Slots entsprechend schneller.",
+        "Material cost: only the base ME of this item \u2013 structure and rig ME apply on top and are the same for all decryptors.\nBuild time is for information only \u2013 \u201eAuto-Decryptor\u201c looks at total profit alone.\nInvention time is sequential with 1 free science slot; faster accordingly with more slots.":
+            "Materialkosten: nur die Basis-ME dieses Items \u2013 Struktur- und Rig-ME wirken zus\u00e4tzlich und sind f\u00fcr alle Decryptoren gleich.\nBauzeit ist nur zur Info \u2013 \u201eAuto-Decryptor\u201c schaut ausschlie\u00dflich auf den Gesamtgewinn.\nInvention-Zeit gilt sequenziell bei 1 freiem Science-Slot; mit mehr Slots entsprechend schneller.",
         "\u2139 No stock data yet - \u201e Subtract assets\u201c above normally runs automatically on opening.":
             "\u2139 Noch keine Bestandsdaten - \u201e Assets abziehen\u201c oben l\u00e4uft normalerweise automatisch beim \u00d6ffnen.",
         "{types} material types \u00b7 {buy} to buy \u00b7 {build} will be built \u00b7 {stock} covered from stock \u2713":
@@ -1555,10 +1698,6 @@ KATALOG = {
             "Auf die Blacklist",
         "\u21a9 Remove from blacklist":
             "\u21a9 Von der Blacklist nehmen",
-        "Recalculate":
-            "Neu berechnen",
-        "Plan is frozen \u2013 unfreeze and recalculate?\n\nAfter that, recipe structure, quantities and run planner are LIVE again (and may shift compared to the purchase). Run planner ticks are reset in the process \u2013 they belong to the old calculation.":
-            "Plan ist eingefroren \u2013 Einfrieren aufheben und neu rechnen?\n\nDanach rechnen Rezept-Struktur, Mengen und Runplaner wieder LIVE (und k\u00f6nnen sich gegen\u00fcber dem Einkauf verschieben). Gesetzte Runplaner-H\u00e4kchen werden dabei zur\u00fcckgesetzt \u2013 sie geh\u00f6ren zur alten Rechnung.",
         "Cargo per trip in m\u00b3 \u2013 ~350'000 m\u00b3 = 1 jump freighter. 0 = unlimited (no warning/trips).":
             "Frachtraum pro Fahrt in m\u00b3 \u2013 ~350'000 m\u00b3 = 1 Jumpfrachter. 0 = unbegrenzt (keine Warnung/Fahrten).",
         "ON: the freight service rate (ISK/m\u00b3) is added to the purchase price of every material \u2013 the plan then decides \u201ebuy or build\u201c with the LANDED price instead of the hub price. Bulky material becomes less attractive, compact material more.\nThe freight cost is then inside \u201eBuild cost/unit\u201c and is NOT deducted twice.\nOFF: decision purely by hub price, freight cost deducted from profit only at the end (old behaviour).\nThe flat rate per trip is NEVER apportioned \u2013 it is a step function (an item costs nothing extra until it tips the trip) and stays a plan-level line.":
@@ -2557,8 +2696,8 @@ KATALOG = {
             "Fuel-Block-Blaupausen f\u00fcr Reaktions-/Struktur-Betrieb.",
         "Build aids such as R.A.M. (Robotics/Starship Tech).":
             "Bau-Hilfsmittel wie R.A.M. (Robotics/Starship Tech).",
-        "Components/T1 hulls/Fuel Blocks/Tools \u2013 usually fully researched T1 BPOs, unlike the end product above.\nDEFAULT is ME 10 % / TE 20 % (fully researched BPO). What you change here applies to THIS build plan and is saved with \u201eSave build plan\u201c - it is back on the next opening. A NEW build plan always starts at 10/20.\nThe change takes effect with \u201e\u21bb Recalculate\u201c (the button shows \u2022 while it is not yet included).":
-            "Komponenten/T1-H\u00fcllen/Fuel Blocks/Tools \u2013 i. d. R. voll ausgeforschte T1-BPOs, anders als das Endprodukt oben.\nSTANDARD ist ME 10 % / TE 20 % (voll erforschtes BPO). Was du hier \u00e4nderst, gilt f\u00fcr DIESEN Bauplan und wird mit \u201eBauplan speichern\u201c mitgesichert - beim n\u00e4chsten \u00d6ffnen steht es wieder so da. Ein NEUER Bauplan startet immer bei 10/20.\nWirksam wird die \u00c4nderung mit \u201e\u21bb Neu berechnen\u201c (der Knopf zeigt \u2022, solange sie noch nicht eingerechnet ist).",
+        "Components/T1 hulls/Fuel Blocks/Tools \u2013 usually fully researched T1 BPOs, unlike the end product above.\nDEFAULT is ME 10 % / TE 20 % (fully researched BPO). What you change here applies to THIS build plan and is saved with \u201eSave build plan\u201c - it is back on the next opening. A NEW build plan always starts at 10/20.\nChanges are applied automatically after a short pause.":
+            "Komponenten/T1-H\u00fcllen/Fuel Blocks/Tools \u2013 i. d. R. voll ausgeforschte T1-BPOs, anders als das Endprodukt oben.\nSTANDARD ist ME 10 % / TE 20 % (voll erforschtes BPO). Was du hier \u00e4nderst, gilt f\u00fcr DIESEN Bauplan und wird mit \u201eBauplan speichern\u201c mitgesichert - beim n\u00e4chsten \u00d6ffnen steht es wieder so da. Ein NEUER Bauplan startet immer bei 10/20.\n\u00c4nderungen werden nach einer kurzen Pause automatisch \u00fcbernommen.",
         "Copies \u00d7 runs per stage (end product/components/reactions) \u2013 for this build plan only, remembered with \u201eSave build plan\u201c.":
             "Kopien \u00d7 Runs je Stufe (Endprodukt/Komponenten/Reaktionen) \u2013 nur f\u00fcr diesen Bauplan, wird mit \u201eBauplan speichern\u201c gemerkt.",
         "Build or buy?":
@@ -2599,8 +2738,6 @@ KATALOG = {
             "Eingef\u00fcgter Bestand geleert \u2013 es z\u00e4hlt wieder der ESI-Bestand",
         "\u26d4 {n} material(s) without ANY price \u2013 neither order book nor flat price nor average. These costs are MISSING from the total, so the build cost is too low.":
             "\u26d4 {n} Material(ien) ohne JEDEN Preis \u2013 weder Orderbuch noch Flachpreis noch Durchschnitt. Diese Kosten FEHLEN in der Summe, die Baukosten sind also zu niedrig.",
-        "Flat price (current market scan) \u2013 for order-book-exact numbers click \u201eRecalculate\u201c (hub selectable next to it).":
-            "Flachpreis (aktueller Markt-Scan) \u2013 f\u00fcr orderbuch-genaue Zahlen \u201eNeu berechnen\u201c klicken (Hub daneben w\u00e4hlbar).",
         "Structure for the invention and the character whose skills go into the success chance.":
             "Struktur f\u00fcr die Invention und der Charakter, dessen Skills in die Erfolgschance eingehen.",
         "Total cost of this build plan:":
@@ -2657,8 +2794,6 @@ KATALOG = {
             "Gr\u00f6\u00dfte Posten:",
         "Loading blueprints from ESI \u2026":
             "Blaupausen werden aus ESI geladen \u2026",
-        "\u21bb Runs recalculated \u2013 old run planner ticks reset":
-            "\u21bb Runs neu berechnet \u2013 alte Runplaner-H\u00e4kchen zur\u00fcckgesetzt",
         "Freight cost":
             "Frachtkosten",
         "Cargo hold, freight service (ISK/m\u00b3), flat rate per own trip and whether freight goes into the buy-or-build decision. Set once, then leave collapsed.":
@@ -2667,8 +2802,6 @@ KATALOG = {
             "Zusatzkosten",
         "One-off amount for this build plan that is deducted from the profit \u2013 e.g. bought BPCs.":
             "Einmaliger Betrag f\u00fcr diesen Bauplan, der vom Gewinn abgezogen wird \u2013 z.B. gekaufte BPCs.",
-        "\u26a0 CHANGED ME/TE values are NOT included yet - the numbers above belong to the previous state.\n\n":
-            "\u26a0 GE\u00c4NDERTE ME/TE-Werte sind noch NICHT eingerechnet - die Zahlen oben geh\u00f6ren zum vorherigen Stand.\n\n",
         "\u26a0 no timestamp (plan from before this feature) \u2013 counts as \u201ePermanent\u201c until you paste anew":
             "\u26a0 ohne Zeitstempel (Plan von vor diesem Feature) \u2013 gilt wie \u201eDauerhaft\u201c, bis du neu einf\u00fcgst",
         "only pasted stock active":
@@ -2683,10 +2816,6 @@ KATALOG = {
             "{n} Material(ien) ohne Volumen-Daten in der SDE \u2013 dort mit 0 m\u00b3 gerechnet",
         "ESI loading \u2026":
             "ESI l\u00e4dt \u2026",
-        "Reserve material for \u201e{name}\u201c?\n\n{n} material types will be reserved. Without a reservation, OTHER build plans see this material as free and plan with it \u2013 then it is missing in the middle of the build.":
-            "Material f\u00fcr \u201e{name}\u201c reservieren?\n\nReserviert werden {n} Materialtypen. Ohne Reservierung sehen ANDERE Baupl\u00e4ne dieses Material als frei an und planen es mit ein \u2013 dann fehlt es mitten im Bau.",
-        "\n\n\u26a0 These plans need the same materials:\n\u2022 ":
-            "\n\n\u26a0 Diese Pl\u00e4ne brauchen dieselben Materialien:\n\u2022 ",
         "Reserve material?":
             "Material reservieren?",
         "\u26a0 {n} material(s) not available at the hub in the full required depth \u2013 rest estimated conservatively at the most expensive known price.":
@@ -3567,8 +3696,6 @@ KATALOG = {
             "\u2014 global \u2014",
         "\u2014 global \u2014 (skills not loaded)":
             "\u2014 global \u2014 (Skills nicht geladen)",
-        "\u21bb Recalculate":
-            "\u21bb Neu berechnen",
         "Details \u25be":
             "Details \u25be",
         "Details \u25b4":
@@ -3894,8 +4021,6 @@ KATALOG = {
             "fehlt komplett",
         "{c} covered, {p} partly":
             "{c} gedeckt, {p} teilweise",
-        "reserved":
-            "reserviert",
         "\u21b3 with {who}":
             "\u21b3 bei {who}",
         "Tick all":
@@ -4548,6 +4673,18 @@ KATALOG = {
             "(Order l\u00e4uft)",
         "this plan builds it":
             "dieser Plan baut es",
+        "Largest positions (quantity \u00d7 price):":
+            "Gr\u00f6\u00dfte Posten (Menge \u00d7 Preis):",
+        "T1 original \u00b7 invention":
+            "T1-Original \u00b7 Invention",
+        "T1 original for the invention of the T2 copy - it also builds the T1 item that goes into the T2 product.":
+            "T1-Original f\u00fcr die Invention der T2-Kopie \u2013 baut au\u00dferdem das T1-Item, das ins T2-Produkt geht.",
+        "Copy job: \u2248{d}":
+            "Kopierjob: \u2248{d}",
+        "Then invention:":
+            "Danach Invention:",
+        "reserved by other plans":
+            "von anderen Pl\u00e4nen reserviert",
         "{n} reserved":
             "{n} reserviert",
         "Hide this number \u2013 for screenshots and streams. Only the display "
@@ -4564,6 +4701,8 @@ KATALOG = {
             "Habe ich die Blaupausen?",
         "Click copies the blueprint name:":
             "Klick kopiert den Blaupausen-Namen:",
+        "Copy T1 Blueprint":
+            "T1-Blueprint kopieren",
         "{name} copied \u2713":
             "{name} kopiert \u2713",
         " \u2013 you own {n} in total, the rest is not at this plan's structures":
@@ -4627,8 +4766,6 @@ KATALOG = {
             "Advanced Components",
         "Other (fuel blocks, components)":
             "Sonstige (Fuel Blocks, Komponenten)",
-        "\u2139 Quantities calculated live, order book prices from the last \u201eRecalculate\u201c (fetched at quantity {qty}). Click again for fresh prices.":
-            "\u2139 Mengen live gerechnet, Orderbuch-Preise vom letzten \u201eNeu berechnen\u201c (bei Menge {qty} geholt). F\u00fcr taufrische Preise erneut klicken.",
         "Material (purchase)":
             "Material (Einkauf)",
         "Freight service ({rate} ISK/m\u00b3)":
@@ -4654,6 +4791,24 @@ KATALOG = {
             "Corp-Blaupausen: {name}",
         "Corp jobs: {name}":
             "Corp-Jobs: {name}",
+        # ---- Corp-Blaupausen in My Blueprints (1.1.0) ----
+        "{corp} · several hangars":
+            "{corp} · mehrere Hangars",
+        "{corp} · Corp hangar {n}":
+            "{corp} · Corp-Hangar {n}",
+        "Corp blueprints: no corp hangar selected in the settings":
+            "Corp-Blaupausen: in den Einstellungen ist kein Corp-Hangar gewählt",
+        "{n} corp blueprint(s) from {corps}":
+            "{n} Corp-Blaupause(n) aus {corps}",
+        "re-link for corp access: {names}":
+            "für Corp-Zugriff neu verlinken: {names}",
+        "no Director role in: {corps}":
+            "keine Director-Rolle in: {corps}",
+        # ---- Vorstufen ohne offenen Verbraucher (1.1.0) ----
+        "not needed any more \u2713":
+            "nicht mehr n\u00f6tig \u2713",
+        "Everything in this plan that uses this item is already built or running - the remaining runs are not needed. Nothing to buy, nothing to start.":
+            "Alles in diesem Plan, was dieses Item verbraucht, ist schon gebaut oder l\u00e4uft \u2013 die restlichen Runs braucht es nicht mehr. Nichts zu kaufen, nichts zu starten.",
         "Corp":
             "Corp",
         "Market scanned \u2013 now load the deals":
@@ -5314,9 +5469,26 @@ KATALOG = {
         " (+{n} more)": " (+{n} weitere)",
         "= total build cost": "= Baukosten gesamt",
         "No characters / client ID": "Keine Charaktere / Client-ID",
-        "Recalculated with frozen prices": "Mit eingefrorenen Preisen neu gerechnet",
         "{label}: {cov}/{tot} items covered": "{label}: {cov}/{tot} Items abgedeckt",
         "Mfg. {mfg} \u00b7 React. {react}": "Fert. {mfg} \u00b7 Reakt. {react}",
+        # emm327 Industry-Jobs-Seite
+        "Industry jobs": "Industrie-Jobs",
+        "INDUSTRY JOBS": "INDUSTRIE-JOBS",
+        "All linked characters: busy and free job slots, and every running job with what it builds and how long it still takes. A finished job keeps its slot until you deliver it.":
+            "Alle verlinkten Charaktere: belegte und freie Job-Slots und jeder laufende Job \u2013 was er baut und wie lange er noch braucht. Ein fertiger Job belegt seinen Slot, bis du ihn ablieferst.",
+        "Reverse engineering": "Reverse Engineering",
+        "Loading jobs failed.": "Laden der Jobs fehlgeschlagen.",
+        "Loading jobs \u2026": "Lade Jobs \u2026",
+        "ready to deliver \u2713": "fertig \u2013 abliefern \u2713",
+        "paused": "pausiert",
+        "ESI error: {e}": "ESI-Fehler: {e}",
+        "no running jobs": "keine laufenden Jobs",
+        "Mfg.": "Fert.",
+        "React.": "Reakt.",
+        "Science": "Science",
+        "\u2713 {n} ready to deliver": "\u2713 {n} fertig \u2013 abliefern",
+        "{n} job(s) \u00b7 {r} runs": "{n} Job(s) \u00b7 {r} Runs",
+        "as of {zeit}": "Stand {zeit}",
         "{name} (fixed assignment)": "{name} (fest zugewiesen)",
         "Profile \u201e{name}\u201c saved \u2713": "Profil \u201e{name}\u201c gespeichert \u2713",
         "{n} copied \u2713": "{n} kopiert \u2713",
@@ -5497,9 +5669,6 @@ KATALOG = {
         "the remaining ones; save the plan to keep it.":
             "Dieses Endprodukt aus dem B\u00fcndel nehmen. Das Fenster \u00f6ffnet "
             "sich mit den \u00fcbrigen neu; zum Behalten den Plan speichern.",
-        "Frozen plan \u2013 unfreeze it first (Tools), then remove \u201e{name}\u201c.":
-            "Eingefrorener Plan \u2013 erst auftauen (Werkzeuge), dann "
-            "\u201e{name}\u201c herausnehmen.",
         "A bundle needs at least two end products \u2013 use \u201eEdit\u201c in My "
         "build plans to dissolve it.":
             "Ein B\u00fcndel braucht mindestens zwei Endprodukte \u2013 zum "
@@ -5540,6 +5709,87 @@ KATALOG = {
             "{n} Endprodukt(e) geh\u00f6ren zu diesem B\u00fcndel \u2013 ein- oder ausblenden",
         "{n} build plans": "{n} Baupl\u00e4ne",
         "Profit/unit, net": "Gewinn/Stk, netto",
+        "Rigs": "Rigs",
+        "Freeze build plan?": "Bauplan einfrieren?",
+        "Why reserve? Without it, OTHER build plans treat this material as free "
+        "and use it \u2013 then it is missing in the middle of your build.":
+            "Warum reservieren? Ohne Reservierung halten ANDERE Baupl\u00e4ne dieses "
+            "Material f\u00fcr frei und verbrauchen es \u2013 dann fehlt es mitten in "
+            "deinem Bau.",
+        "Reserve {n} material types for \u201e{name}\u201c?":
+            "{n} Materialarten f\u00fcr \u201e{name}\u201c reservieren?",
+        "These plans need the same materials:":
+            "Diese Baupl\u00e4ne brauchen dieselben Materialien:",
+        "Changeable any time with the lock on the plan card.":
+            "Jederzeit \u00e4nderbar mit dem Schloss auf der Plan-Karte.",
+        "Suggest end products for this plan": "Endprodukte f\u00fcr diesen Plan vorschlagen",
+        "Profitable end products of the same tech level from your blueprints "
+        "whose margin is at least that of this plan \u2013 sorted by shared "
+        "materials. Right-click adds them to this plan.":
+            "Lohnende Endprodukte derselben Tech-Stufe aus deinen Blaupausen, deren "
+            "Marge mindestens so hoch ist wie die dieses Plans \u2013 sortiert nach "
+            "gemeinsamen Materialien. Rechtsklick f\u00fcgt sie diesem Plan hinzu.",
+        "Suggestions for this plan": "Vorschl\u00e4ge f\u00fcr diesen Plan",
+        "Shared": "Gemeinsam",
+        "Load your blueprints in \u201eMy Blueprints\u201c first \u2013 the suggestions "
+        "come from their profit calculation.":
+            "Lade zuerst deine Blaupausen in \u201eMy Blueprints\u201c \u2013 die "
+            "Vorschl\u00e4ge kommen aus deren Gewinnrechnung.",
+        "No end product of your blueprints fits: same tech level ({tech}), "
+        "profitable and a margin of at least {m} %.":
+            "Kein Endprodukt deiner Blaupausen passt: gleiche Tech-Stufe ({tech}), "
+            "lohnend und eine Marge von mindestens {m} %.",
+        "{n} end products from your blueprints, tech level {tech}, margin at least "
+        "{m} % (this plan) \u2013 so the bundle margin cannot drop. Right-click adds "
+        "them to this plan.":
+            "{n} Endprodukte aus deinen Blaupausen, Tech-Stufe {tech}, Marge mindestens "
+            "{m} % (dieser Plan) \u2013 so kann die B\u00fcndel-Marge nicht sinken. "
+            "Rechtsklick f\u00fcgt sie diesem Plan hinzu.",
+        "Add to this build plan ({n})": "Zu diesem Bauplan hinzuf\u00fcgen ({n})",
+        "Delete build plan?": "Bauplan l\u00f6schen?",
+        "Are you sure you want to delete the build plan \u201e{name}\u201c?":
+            "Bist du sicher, dass du den Bauplan \u201e{name}\u201c l\u00f6schen willst?",
+        "IMPORTANT: freeze the plan as soon as you have bought the materials!":
+            "WICHTIG: Friere den Plan ein, sobald du die Materialien gekauft hast!",
+        "\u2212 Freight service": "\u2212 Frachtdienst",
+        "of which freight service": "davon Frachtdienst",
+        "Includes freight of {isk}: units sold somewhere else than where they "
+        "were bought, m\u00b3 \u00d7 your current rate ({satz} ISK/m\u00b3).":
+            "Enth\u00e4lt Fracht von {isk}: Stück, die woanders verkauft als "
+            "gekauft wurden, m\u00b3 \u00d7 dein aktueller Satz ({satz} ISK/m\u00b3).",
+        "Margin after freight of {isk} per unit (units bought away from the hub). "
+        "Without freight: {ohne}.":
+            "Marge nach Fracht von {isk} je St\u00fcck (St\u00fcck, die nicht am Hub "
+            "gekauft wurden). Ohne Fracht: {ohne}.",
+        "Only blueprints whose product belongs to this faction. Ships of one "
+        "faction often share components and materials \u2013 good for a multi "
+        "build plan. Most modules and rigs have no faction.":
+            "Nur Blaupausen, deren Produkt zu dieser Fraktion geh\u00f6rt. Schiffe "
+            "einer Fraktion teilen oft Komponenten und Materialien \u2013 gut "
+            "f\u00fcr einen Multiplan. Die meisten Module und Rigs haben keine "
+            "Fraktion.",
+        "Already included in the build cost above (\u201eFreight in decision\u201c "
+        "is on) \u2013 not deducted a second time.":
+            "Steckt schon in den Baukosten dar\u00fcber (\u201eFracht "
+            "mitentscheiden\u201c ist an) \u2013 wird nicht ein zweites Mal "
+            "abgezogen.",
+        "ISK/m\u00b3 \u00d7 volume of the shopping list, deducted from the profit.":
+            "ISK/m\u00b3 \u00d7 Volumen der Einkaufsliste, wird vom Gewinn abgezogen.",
+        "Freeze \u201e{name}\u201c now?\n\nFreezing fixes quantities, prices and the "
+        "run planner split, and from then on your ESI jobs count as progress. "
+        "Freeze once you have bought the material \u2013 later via \u201eFreeze "
+        "plan \u2013 purchase done\u201c in the plan.":
+            "\u201e{name}\u201c jetzt einfrieren?\n\nEinfrieren h\u00e4lt Mengen, "
+            "Preise und die Aufteilung im Runplaner fest, und ab dann z\u00e4hlen "
+            "deine ESI-Jobs als Fortschritt. Friere ein, sobald du das Material "
+            "gekauft hast \u2013 sp\u00e4ter \u00fcber \u201ePlan einfrieren "
+            "\u2013 Einkauf erledigt\u201c im Plan.",
+        "Net profit per unit divided by this product's cost per unit (incl. "
+        "its share of freight and extra costs) \u2013 the same formula as the "
+        "margin above.":
+            "Nettogewinn je St\u00fcck geteilt durch die Kosten je St\u00fcck "
+            "dieses Produkts (inkl. Anteil an Fracht und Extrakosten) \u2013 "
+            "dieselbe Formel wie die Marge oben.",
         "Sale price minus sales tax and broker fee ({pct} %), minus this "
         "product's share of the build cost and of freight and extra costs. "
         "Quantity \u00d7 this column, summed over all end products, is the total "
@@ -5626,6 +5876,86 @@ KATALOG = {
             "Produkt aus der Rechnung (keine Invention-Kosten). Aus: die ME "
             "kommt aus der Invention (2 % Basis plus Decryptor) und ist "
             "nicht \u00e4nderbar.",
+        "running since {t}": "l\u00e4uft seit {t}",
+        "{name}  ({n} jobs)": "{name}  ({n} Jobs)",
+        "Location: re-link":
+            "Standort: neu verkn\u00fcpfen",
+        "The location hint is on, but {name} was linked without the location permission. Add esi-location.read_location.v1 to your EVE app and link the character again (Characters).":
+            "Der Standort-Hinweis ist an, aber {name} wurde ohne die Standort-Berechtigung verkn\u00fcpft. esi-location.read_location.v1 in deiner EVE-App eintragen und den Charakter neu verkn\u00fcpfen (Characters).",
+        "a player structure in {system}":
+            "einer Spieler-Struktur in {system}",
+        "in space in {system}":
+            "im All in {system}",
+        "Not at the hub":
+            "Nicht am Hub",
+        "{name} is at {where}, not at {hub}. Orders you place in the game go where the character is docked \u2013 the prices here are for {hub}.":
+            "{name} ist bei {where}, nicht bei {hub}. Orders, die du im Spiel setzt, landen dort, wo der Charakter angedockt ist \u2013 die Preise hier gelten f\u00fcr {hub}.",
+        "On (warn when the character is not at the hub)":
+            "An (warnen, wenn der Charakter nicht am Hub ist)",
+        "Character location":
+            "Charakter-Standort",
+        "On: next to the character at the top a warning appears when the character is not docked at the selected hub. Needs the scope esi-location.read_location.v1 in your EVE app and re-linking.":
+            "An: oben neben dem Charakter erscheint eine Warnung, wenn der Charakter nicht am gew\u00e4hlten Hub angedockt ist. Braucht den Scope esi-location.read_location.v1 in deiner EVE-App und ein Neu-Verkn\u00fcpfen.",
+        "Switched on and saved. Add esi-location.read_location.v1 to your EVE app, then re-link your character (Characters tab).":
+            "Eingeschaltet und gespeichert. esi-location.read_location.v1 in deiner EVE-App eintragen, dann den Charakter neu verkn\u00fcpfen (Reiter Characters).",
+        "Needed for copying the T1 original "
+        "(one copy run per attempt).":
+            "Wird zum Kopieren des T1-Originals gebraucht "
+            "(ein Kopie-Run je Versuch).",
+        "not needed \u2013 its minerals are already in stock \u2713":
+            "nicht mehr n\u00f6tig \u2013 seine Minerale liegen schon da \u2713",
+        "Every mineral this ore was planned for is already "
+        "in stock for this plan (reprocessed or bought). "
+        "The ore is no longer needed and not on the "
+        "shopping list.":
+            "Jedes Mineral, f\u00fcr das dieses Erz geplant war, liegt f\u00fcr "
+            "diesen Plan schon im Bestand (reprocesst oder gekauft). Das Erz "
+            "wird nicht mehr gebraucht und steht nicht auf der Einkaufsliste.",
+        "minerals already in stock \u2713": "Minerale schon da \u2713",
+        "(running: {n} runs, not assigned to a plan yet)":
+            "(l\u00e4uft: {n} Runs, noch keinem Plan zugeordnet)",
+        "A job for this item is running, but more than one "
+        "plan builds it and it is not assigned yet. It "
+        "counts for no plan until you assign it (button "
+        "\u201e\u2026 not assigned \u2013 assign\u201c).":
+            "F\u00fcr dieses Item l\u00e4uft ein Job, aber mehrere Pl\u00e4ne bauen "
+            "es und er ist noch nicht zugeordnet. Er z\u00e4hlt f\u00fcr keinen Plan, "
+            "bis du ihn zuordnest (Knopf \u201e\u2026 not assigned \u2013 assign\u201c).",
+        "{n} job(s) assigned by build priority \u2013 check":
+            "{n} Job(s) nach Bau-Priorit\u00e4t zugeordnet \u2013 pr\u00fcfen",
+        "These jobs were built for an item that more than one plan "
+        "needs. The card order (#1, #2 ...) gave them to a plan. If you "
+        "built them for another plan, change it here \u2013 saving "
+        "confirms them and the button goes away.":
+            "Diese Jobs bauten ein Item, das mehrere Pl\u00e4ne brauchen. Die "
+            "Kartenreihenfolge (#1, #2 ...) hat sie einem Plan gegeben. Hast du "
+            "sie f\u00fcr einen anderen Plan gebaut, \u00e4ndere es hier \u2013 "
+            "Speichern best\u00e4tigt sie, und der Knopf verschwindet.",
+        "Jobs with a plan already chosen were given out by the card "
+        "order (build priority). Change the plan if you built them for "
+        "another one \u2013 saving confirms them.":
+            "Jobs mit schon gew\u00e4hltem Plan hat die Kartenreihenfolge "
+            "(Bau-Priorit\u00e4t) verteilt. \u00c4ndere den Plan, wenn du sie "
+            "f\u00fcr einen anderen gebaut hast \u2013 Speichern best\u00e4tigt sie.",
+        "\u26a0 No lock: this plan reserves nothing \u2013 "
+        "plans below it can use its material despite its number.":
+            "\u26a0 Kein Schloss: dieser Plan reserviert nichts \u2013 "
+            "Pl\u00e4ne unter ihm k\u00f6nnen sein Material trotz seiner Nummer "
+            "verbrauchen.",
+        "\u26a0 Looks finished but is not marked as done \u2013 it "
+        "keeps its number and its reservation until you mark it done.":
+            "\u26a0 Sieht fertig aus, ist aber nicht als erledigt markiert \u2013 "
+            "er beh\u00e4lt Nummer und Reservierung, bis du ihn abschlie\u00dft.",
+        "Build priority #{n}: plans with a smaller number get stock "
+        "and unassigned jobs first. Change it by rearranging the "
+        "cards.":
+            "Bau-Priorit\u00e4t #{n}: Pl\u00e4ne mit kleinerer Zahl bekommen "
+            "Bestand und nicht zugeordnete Jobs zuerst. \u00c4ndern: Karten "
+            "umordnen.",
+        "Your copies in the hangar have {n} runs each (ESI) \u2013 "
+        "every job uses a whole copy.":
+            "Deine Kopien im Hangar haben je {n} Runs (ESI) \u2013 "
+            "jeder Job verbraucht eine ganze Kopie.",
         "How many runs does ONE of your own BPCs of this product have? "
         "The run planner never puts more than this into a single job.":
             "Wie viele Runs hat EINE deiner eigenen BPCs von diesem Produkt? "
@@ -5682,14 +6012,31 @@ KATALOG = {
         "\u201e{name}\u201c and is reserved there.":
             "Keine eigene Reservierung: dieser Plan geh\u00f6rt zum Multi-Bauplan "
             "\u201e{name}\u201c und wird dort reserviert.",
-        "You can change this any time with the lock on the plan's card. And "
-        "if you later put this plan into a multi build plan, its own "
-        "reservation is released automatically \u2013 the bundle reserves for "
-        "all its plans together.":
-            "Du kannst das jederzeit mit dem Schloss auf der Plan-Karte "
-            "\u00e4ndern. Und nimmst du den Plan sp\u00e4ter in einen Multi-Bauplan, "
-            "wird seine eigene Reservierung automatisch aufgehoben \u2013 das "
-            "B\u00fcndel reserviert dann f\u00fcr alle seine Pl\u00e4ne gemeinsam.",
+        # Fracht in der Verkaufsliste (emm272, 29.09.2026)
+        "Freight {isk} per unit ({n} of {gesamt} units were bought away from "
+        "this hub, {m3} m\u00b3 \u00d7 {satz} ISK/m\u00b3). The target price "
+        "already includes it: +{pct} %.":
+            "Fracht {isk} je St\u00fcck ({n} von {gesamt} St\u00fcck wurden nicht an "
+            "diesem Hub gekauft, {m3} m\u00b3 \u00d7 {satz} ISK/m\u00b3). Der Zielpreis "
+            "enth\u00e4lt sie schon: +{pct} %.",
+        "No freight for this item":
+            "Keine Fracht f\u00fcr dieses Item",
+        "Charge freight for this item again":
+            "Fracht f\u00fcr dieses Item wieder berechnen",
+        "Freight per m\u00b3. Units you bought away from the active hub get "
+        "volume \u00d7 this rate added to their cost; 0 = no freight.":
+            "Fracht je m\u00b3. St\u00fcck, die nicht am aktiven Hub gekauft wurden, "
+            "bekommen Volumen \u00d7 diesen Satz auf ihre Kosten; 0 = keine Fracht.",
+        "Freight {satz} ISK/m\u00b3: applies to {n} item(s) \u2013 only units "
+        "bought away from {hub} get it.":
+            "Fracht {satz} ISK/m\u00b3: gilt f\u00fcr {n} Item(s) \u2013 nur St\u00fcck, "
+            "die nicht in {hub} gekauft wurden, bekommen sie.",
+        "Freight off (0 ISK/m\u00b3).":
+            "Fracht aus (0 ISK/m\u00b3).",
+        "Open build plan \u201e{plan}\u201c (not saved yet)":
+            "Offener Bauplan \u201e{plan}\u201c (noch nicht gespeichert)",
+        "{n} end products added \u2013 save the plan to keep it.":
+            "{n} Endprodukte hinzugef\u00fcgt \u2013 speichere den Plan, um sie zu behalten.",
     },
 }
 
