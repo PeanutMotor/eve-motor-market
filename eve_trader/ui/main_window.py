@@ -61,6 +61,42 @@ class BlassBisHover(QObject):
         return False
 
 
+class FlashHinweis(QFrame):
+    """Kurzer Hinweis an der Maus als EIGENES kleines Fenster (03.10.2026,
+    Nutzer: "das Tooltip nach Klick auf Market scan haelt gerade mal eine
+    Sekunde, keine Zeit zum Lesen"). Vorher QToolTip: Qt hat nur EINEN
+    Tooltip - der eigene Tooltip des Knopfs unter der Maus ersetzte den
+    Hinweis nach ~0,7 s. Dieses Fenster gehoert niemandem sonst und bleibt
+    genau so lange, wie verlangt (mindestens FLASH_MIN_MS)."""
+
+    def __init__(self, parent):
+        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setObjectName("FlashHinweis")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 7, 10, 7)
+        self.lbl = QLabel("")
+        self.lbl.setWordWrap(True)
+        self.lbl.setMaximumWidth(460)
+        lay.addWidget(self.lbl)
+        self.setStyleSheet(
+            f"QFrame#FlashHinweis{{background:{theme.PANEL2}; border:1px solid {theme.CYAN}; "
+            f"border-radius:6px;}} QLabel{{color:{theme.TEXT}; font-size:{theme.FS_BASE}; "
+            f"background:transparent;}}")
+        self.uhr = QTimer(self)
+        self.uhr.setSingleShot(True)
+        self.uhr.timeout.connect(self.hide)
+
+    def zeige(self, pos, text, ms):
+        self.lbl.setText(str(text))
+        self.adjustSize()
+        self.move(pos.x() - 24, pos.y() - self.height() - 14)
+        self.show()
+        self.raise_()
+        self.uhr.start(int(ms))
+
+
 class ElideLabel(QLabel):
     """Ein Label, das zu langen Text mit "\u2026" kuerzt statt ihn hart
     abzuschneiden (Gewinn-Uebersicht, Nutzer 18.09.2026: "die Auflistung
@@ -3744,6 +3780,19 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     def _do_scan(self, region, hub_label, *, hintergrund=False):
         """Scan one hub into the shared snapshot. Any tab can trigger this for
         its own hub — every tab works on its own."""
+        # KLICK WAEHREND DES START-SCANS (Nutzer 03.10.2026: "ich habe auf
+        # Market scan gedrueckt, aber es passiert nichts"). Der Scan beim
+        # Start laeuft im Hintergrund; ein zweiter Scan desselben Markts waere
+        # doppelte Last fuer ESI. Statt eines grauen Knopfs, der nichts tut,
+        # sagt der Klick jetzt, dass er schon laeuft.
+        if (not hintergrund and getattr(self, "_scan_hg_laeuft", False)
+                and getattr(self, "_workers", None)):
+            import time as _tz
+            _s = int(_tz.monotonic() - getattr(self, "_lade_t0", _tz.monotonic()))
+            self._flash_tip(t("The market scan is already running in the background "
+                              "({s} s) – the prices come in by themselves.")
+                            .format(s=_s), ms=self.FLASH_LESEN_MS)
+            return
         # cooldown: ESI market orders only refresh every few minutes, so a fresh
         # scan of the SAME hub is reused instead of re-hammering ESI (repeated
         # quick re-scans are exactly what triggers the throttling / slow scans).
@@ -3759,11 +3808,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 lbl = getattr(self, st, None)
                 if lbl is not None:
                     lbl.setText(msg)
+            # Auch dort zeigen, wo geklickt wurde - die Statuszeilen oben
+            # stehen in Daytrade/Swing/Build; vom Portfolio aus sah man NICHTS.
+            if not hintergrund:
+                self._flash_tip(msg, ms=self.FLASH_LESEN_MS)
             self._set_scan_buttons(True)
             if hintergrund:
                 self._scan_laeuft = False     # nichts gescannt - nichts gesperrt
             return
-        self._set_scan_buttons(False)
+        # Hintergrund-Scan: Knoepfe bleiben bedienbar, damit ein Klick die
+        # Meldung oben bekommt statt ins Leere zu gehen (_scan_hg_laeuft).
+        if hintergrund:
+            self._scan_hg_laeuft = True
+        else:
+            self._set_scan_buttons(False)
         for st in ("deal_status", "hold_status", "build_status"):
             lbl = getattr(self, st, None)
             if lbl is not None:
@@ -3828,6 +3886,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         Knopf wieder; war er gut, bleibt er ruhig."""
         if hintergrund:
             self._hintergrund_laden_zeigen(False)
+            self._scan_hg_laeuft = False
         self._scan_laeuft = False
         try:
             self._scan_alter_pruefen()
@@ -9453,8 +9512,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 return
 
     def _bau_profile_snapshot(self):
-        return {k: v for k, v in self.settings.items()
-                if k.startswith("bau_") and k != "bau_profiles"}
+        # NUR EINSTELLUNGEN (03.10.2026): nie die Plaene - siehe
+        # config.BAU_PROFIL_OHNE.
+        return config.bau_profil_bereinigen(self.settings)
 
     def _reload_bau_profiles(self):
         if not hasattr(self, "bs_profile"):
@@ -9489,7 +9549,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         snap = (self.settings.get("bau_profiles") or {}).get(name)
         if not snap:
             return
-        self.settings.update(snap)
+        # Auch ein ALTES Profil (mit Plaenen darin) ueberschreibt nie mehr
+        # die aktuellen Plaene, Jobs oder Skills.
+        self.settings.update(config.bau_profil_bereinigen(snap))
         config.save_settings(self.settings)
         self._apply_bau_settings_to_fields()
         self._flash_tip(t("Profile \u201e{name}\u201c loaded \u2713").format(name=name))
@@ -14498,7 +14560,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.bp_table.keyPressEvent = _bp_table_key
         lay.addWidget(self.bp_table, 1)
 
-    def _reload_my_blueprints(self):
+    def _reload_my_blueprints(self, *, overlay=True):
         from ..sprache import t as _txt   # `t` ist hier lokal belegt
         """ESI-Abruf aller Blueprints über alle verknüpften Charaktere, dann in
         die Tabelle. Fällt auf Mock-Daten zurück, wenn keine Charaktere/Client-ID
@@ -14897,6 +14959,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Wirtschaftlichkeit, die diese Tabelle zeigt, keine zweite Rechnung.
             self._bp_econ_stand = {"profit_by_bp": dict(profit_by_bp),
                                    "names": dict(names or {})}
+            # Wer auf das Laden wartet (Vorschlags-Fenster, emm371), hoert es
+            # NACH dem Fuellen der Tabelle.
+            QTimer.singleShot(0, lambda: self._bp_geladen_melden(True))
             econ_ready = res.get("econ_ready", False)
             volmap = res.get("volmap", {}) or {}
             _tbl = self.bp_table
@@ -15155,8 +15220,21 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         def fail(msg):
             self.bp_refresh_btn.setEnabled(True)
             self.bp_status.setText(t("\u26a0 Error while loading: ") + str(msg))
+            self._bp_geladen_melden(False, msg)
 
-        self._run(Worker(job), done, fail_cb=fail, label=_txt("Loading blueprints …"))
+        self._run(Worker(job), done, fail_cb=fail, label=_txt("Loading blueprints …"),
+                  overlay=overlay)
+
+    def _bp_geladen_melden(self, ok, msg=""):
+        """My Blueprints fertig (oder gescheitert): einmalige Rueckrufe
+        abarbeiten (`_bp_geladen_rueckrufe`, z. B. das Vorschlags-Fenster)."""
+        cbs = list(getattr(self, "_bp_geladen_rueckrufe", None) or [])
+        self._bp_geladen_rueckrufe = []
+        for cb in cbs:
+            try:
+                cb(bool(ok), str(msg or ""))
+            except Exception as _e:
+                self._log_exception("My Blueprints: Rueckruf nach dem Laden", str(_e))
 
     def _apply_bp_filter(self):
         """Blendet Tabellenzeilen nach den Kategorie-Checkboxen + „nur profitable“
@@ -24788,6 +24866,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     # weg, dass man kaum was lesen kann"). 2 s reichen fuer "copied ✓",
     # nicht fuer einen ganzen Satz.
     FLASH_LESEN_MS = 4000
+    FLASH_MIN_MS = 2000      # kein Hinweis verschwindet frueher (03.10.2026)
 
     def _flash_tip(self, text=None, ms=2000):
         """Kurzes Bestätigungs-Tooltip an der Maus – bleibt lange genug sichtbar,
@@ -24799,14 +24878,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         Startsprache fest (dieselbe Falle wie t() in einer Klassenkonstante)."""
         if text is None:
             text = t("copied ✓")
-        from PySide6.QtWidgets import QToolTip
         from PySide6.QtGui import QCursor
-        from PySide6.QtCore import QRect, QPoint
-        pos = QCursor.pos()
-        # deutlich ÜBER dem Cursor platzieren (nicht rechts daneben): hoch genug,
-        # dass der Tooltip komplett über der Pfeilspitze sitzt, leicht nach links,
-        # damit er über der Maus zentriert wirkt.
-        QToolTip.showText(pos - QPoint(24, 44), text, self, QRect(), int(ms))
+        # Eigenes Fenster statt QToolTip (siehe FlashHinweis), ueber der Maus,
+        # mindestens FLASH_MIN_MS lang (Nutzer 03.10.2026: "min 2 Sekunden").
+        fh = getattr(self, "_flash_hinweis", None)
+        if fh is None:
+            fh = self._flash_hinweis = FlashHinweis(self)
+        fh.zeige(QCursor.pos(), text, max(int(ms or 0), self.FLASH_MIN_MS))
 
     # Rückwärtskompatibler Alias (alte Aufrufer):
     def _copied_popup(self, text=None):

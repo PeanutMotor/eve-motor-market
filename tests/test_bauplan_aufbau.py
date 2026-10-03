@@ -3793,7 +3793,7 @@ _app.processEvents()
 _strays = [w for w in _app.topLevelWidgets()
            if w.isVisible() and w is not win and w is not _dlg
            and not w.windowTitle().startswith(("Bauplan", "Build plan", "Motor"))
-           and w.__class__.__name__ not in ("QMenu", "QToolTip")]
+           and w.__class__.__name__ not in ("QMenu", "QToolTip", "FlashHinweis")]
 check(f"b8 keine streunenden Top-Level-Fenster {[type(w).__name__ for w in _strays][:3]}",
       not _strays)
 _orphan_lbls = [w for w in _app.topLevelWidgets()
@@ -17489,6 +17489,204 @@ except Exception as _e145:                                # pragma: no cover
     import traceback as _tb145
     _fail.append(f"b145 Fehlt-Zeilen mit Haken: {type(_e145).__name__}: {_e145} | "
                  + _tb145.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b163)
+# "MARKET SCAN GEDRUECKT, ES PASSIERT NICHTS" (Nutzer 03.10.2026, frische
+# 1.1.0-EXE). Zwei Wege ins Leere: waehrend des Start-Scans im Hintergrund
+# waren alle Scan-Knoepfe grau, und kurz nach einem Scan stand die
+# Abkuehl-Meldung nur in Daytrade/Swing/Build - vom Portfolio aus nichts.
+try:
+    import eve_trader.store as _st163
+    _alt163 = {"tip": win._flash_tip, "run": win._run,
+               "age": _st163.snapshot_age_seconds, "reg": _st163.get_scan_region,
+               "snap": _st163.get_snapshot, "w": list(getattr(win, "_workers", []) or []),
+               "hg": getattr(win, "_scan_hg_laeuft", False)}
+    _tips163, _runs163 = [], []
+    win._flash_tip = lambda text=None, ms=2000: _tips163.append(str(text))
+    win._run = lambda w, *a, **k: _runs163.append(k.get("overlay", True))
+    try:
+        # 1) Start-Scan im Hintergrund: Knoepfe bleiben bedienbar.
+        _st163.snapshot_age_seconds = lambda *a, **k: None
+        win._set_scan_buttons(True)
+        win._do_scan(10000002, "Jita", hintergrund=True)
+        check(f"b163 Hintergrund-Scan laesst 'Market scan' bedienbar ({_runs163})",
+              win.g_scan_btn.isEnabled() and _runs163 == [False]
+              and getattr(win, "_scan_hg_laeuft", False))
+        # 2) Klick waehrenddessen: Meldung statt zweitem Scan.
+        win._workers = [object()]
+        win.scan_global()
+        check(f"b163 Klick waehrend des Hintergrund-Scans meldet sich ({_tips163})",
+              len(_runs163) == 1 and len(_tips163) == 1
+              and ("background" in _tips163[0] or "Hintergrund" in _tips163[0]))
+        win._scan_fertig_melden(True)
+        check("b163 nach dem Scan ist die Sperre weg",
+              not getattr(win, "_scan_hg_laeuft", False))
+        # 3) Abkuehlzeit: die Meldung kommt auch beim Klicker an.
+        _tips163.clear()
+        _st163.snapshot_age_seconds = lambda *a, **k: 10
+        _st163.get_scan_region = lambda *a, **k: 10000002
+        _st163.get_snapshot = lambda *a, **k: [{"type_id": 34}]
+        win._scan_struct_id = None
+        win._do_scan(10000002, "Jita")
+        check(f"b163 frisch gescannt: Meldung an der Maus ({_tips163})",
+              len(_tips163) == 1 and len(_runs163) == 1)
+    finally:
+        win._flash_tip = _alt163["tip"]; win._run = _alt163["run"]
+        _st163.snapshot_age_seconds = _alt163["age"]
+        _st163.get_scan_region = _alt163["reg"]; _st163.get_snapshot = _alt163["snap"]
+        win._workers = _alt163["w"]; win._scan_hg_laeuft = False
+        win._hintergrund_laden_zeigen(False)
+        win._set_scan_buttons(True)
+except Exception as _e163:                               # pragma: no cover
+    _fail.append(f"b163 Market scan gibt Rueckmeldung: {type(_e163).__name__}: {_e163}")
+
+# ---------------------------------------------------------------- (b164)
+# PROFIL LADEN ERSETZT NIE DIE PLAENE (03.10.2026): am echten Fenster, mit
+# einem ALTEN Profil, das noch Plaene und Jobs traegt.
+try:
+    import eve_trader.config as _cfg164
+    _alt164 = {"save": _cfg164.save_settings,
+               "plans": win.settings.get("bau_saved_plans"),
+               "profs": win.settings.get("bau_profiles"),
+               "me": win.settings.get("bau_me"), "jobs": win.settings.get("bau_live_jobs")}
+    _cfg164.save_settings = lambda *a, **k: None
+    try:
+        _jetzt164 = [{"id": 164, "label": "b164 heute", "type_id": 100, "qty": 3}]
+        win.settings["bau_saved_plans"] = _jetzt164
+        win.settings["bau_live_jobs"] = ["heute"]
+        win.settings["bau_profiles"] = {"b164 alt": {
+            "bau_me": 7, "bau_saved_plans": [{"id": 1, "label": "alt"}],
+            "bau_live_jobs": ["alt"]}}
+        win._reload_bau_profiles()
+        win._combo_select(win.bs_profile, "b164 alt")
+        win._load_bau_profile()
+        check(f"b164 Profil laden: Einstellung uebernommen, Plaene und Jobs bleiben "
+              f"({win.settings.get('bau_me')}, {win.settings.get('bau_saved_plans')})",
+              win.settings.get("bau_me") == 7
+              and win.settings.get("bau_saved_plans") is _jetzt164
+              and win.settings.get("bau_live_jobs") == ["heute"])
+        _sn164 = win._bau_profile_snapshot()
+        check("b164 Profil speichern: keine Plaene, keine Jobs im Profil",
+              "bau_saved_plans" not in _sn164 and "bau_live_jobs" not in _sn164
+              and "bau_me" in _sn164)
+    finally:
+        _cfg164.save_settings = _alt164["save"]
+        win.settings["bau_saved_plans"] = _alt164["plans"] or []
+        win.settings["bau_profiles"] = _alt164["profs"] or {}
+        if _alt164["me"] is not None:
+            win.settings["bau_me"] = _alt164["me"]
+        if _alt164["jobs"] is None:
+            win.settings.pop("bau_live_jobs", None)
+        else:
+            win.settings["bau_live_jobs"] = _alt164["jobs"]
+        win._reload_bau_profiles()
+except Exception as _e164:                               # pragma: no cover
+    _fail.append(f"b164 Profil laden: {type(_e164).__name__}: {_e164}")
+
+# ---------------------------------------------------------------- (b165)
+# HINWEIS AN DER MAUS BLEIBT LESBAR (Nutzer 03.10.2026: "haelt gerade mal eine
+# Sekunde ... lass es min 2 Sekunden da"). Ein Tooltip anderswo darf ihn nicht
+# verdraengen, und keine Anzeige ist kuerzer als 2 s.
+try:
+    from PySide6.QtWidgets import QToolTip as _QTT165
+    from PySide6.QtCore import QPoint as _QP165
+    win._flash_tip("b165 lesbar", ms=4000)
+    _fh165 = getattr(win, "_flash_hinweis", None)
+    _QTT165.showText(_QP165(10, 10), "fremder Tooltip", win)
+    _app.processEvents()
+    check("b165 Hinweis bleibt, auch wenn ein anderer Tooltip aufgeht (4 s)",
+          _fh165 is not None and _fh165.isVisible() and _fh165.uhr.isActive()
+          and _fh165.uhr.interval() == 4000 and _fh165.lbl.text() == "b165 lesbar")
+    win._flash_tip("b165 kurz", ms=300)
+    check(f"b165 mindestens 2 s ({_fh165.uhr.interval() if _fh165 else None})",
+          _fh165 is not None and _fh165.uhr.interval() == 2000)
+    _QTT165.hideText()
+    if _fh165 is not None:
+        _fh165.uhr.stop(); _fh165.hide()
+except Exception as _e165:                               # pragma: no cover
+    _fail.append(f"b165 Hinweis lesbar: {type(_e165).__name__}: {_e165}")
+
+# ---------------------------------------------------------------- (b166)
+# VORSCHLAG OHNE GELADENE BLUEPRINTS (Nutzer 03.10.2026: "ja gerne" auf einen
+# Knopf "Load blueprints" im Vorschlags-Fenster). Am echten Fenster-Objekt:
+# Knopf da, Klick laedt My Blueprints OHNE Overlay, danach geht das Fenster
+# mit Vorschlaegen neu auf; scheitert das Laden, bleibt es mit Fehlertext.
+try:
+    from eve_trader import industry as _I166
+    _alt166 = {k: getattr(win, k, None) for k in (
+        "_bp_econ_stand", "_bd_type", "_bd_marge_stand", "_bd_plan_ref",
+        "_bd_buendel_enden")}
+    _cm166, _rn166 = _I166.item_category_map, win.VORSCHLAG_RECHNEN
+    _rl166 = win._reload_my_blueprints
+    _rufe166 = []
+    try:
+        _I166.item_category_map = lambda: {900: (6, 25, 1), 901: (6, 25, 1)}
+        win.VORSCHLAG_RECHNEN = 0
+        win._bp_econ_stand = None
+        win._bd_type = 900; win._bd_buendel_enden = None
+        win._bd_marge_stand = 10.0
+        win._bd_plan_ref = {"plan": {"buy": {34: 10}}}
+
+        def _lade166(*, overlay=True):
+            _rufe166.append(overlay)
+            win._bp_econ_stand = {"profit_by_bp": {1: {
+                "product_id": 901, "category": "end", "meta": 1,
+                "cost_unit": 100.0, "profit": 40.0}}, "names": {901: "b166 Kandidat"}}
+            win._bp_geladen_melden(True)
+        win._reload_my_blueprints = _lade166
+        _d166 = win._multi_vorschlag_fenster()
+        _b166 = getattr(win, "_bd_vorschlag_lade_btn", None)
+        check("b166 ohne geladene Blueprints: Knopf 'Load blueprints' im Fenster",
+              _b166 is not None and _b166.isEnabled())
+        if _b166 is not None:
+            _b166.click(); _app.processEvents()
+        _t166 = win._bd_vorschlag_tbl
+        _n166 = [_t166.item(r, 0).text() for r in range(_t166.rowCount())]
+        check(f"b166 Klick laedt (ohne Overlay) und zeigt dann die Vorschlaege "
+              f"({_rufe166}, {_n166})",
+              _rufe166 == [False] and _n166 == ["b166 Kandidat"]
+              and win._bd_vorschlag_dlg is not _d166
+              and getattr(win, "_bd_vorschlag_lade_btn", 1) is None)
+        win._bd_vorschlag_dlg.close()
+        # Scheitern: Fenster bleibt, Knopf wieder frei.
+        win._bp_econ_stand = None
+        win._reload_my_blueprints = lambda *, overlay=True: win._bp_geladen_melden(
+            False, "b166 kaputt")
+        _d166f = win._multi_vorschlag_fenster()
+        _b166f = win._bd_vorschlag_lade_btn
+        _b166f.click(); _app.processEvents()
+        check("b166 Laden gescheitert: Fenster bleibt, Knopf wieder bedienbar",
+              win._bd_vorschlag_dlg is _d166f and _b166f.isEnabled())
+        _d166f.close()
+        # Der ECHTE Ladeweg meldet sich nach dem Fuellen der Tabelle (der
+        # Abruf selbst ist vorgetaeuscht: _run liefert ein leeres Ergebnis).
+        win.__dict__.pop("_reload_my_blueprints", None)
+        _gehoert166, _ov166 = [], []
+        _run_alt166 = win._run
+
+        def _run166(w, done, fail_cb=None, **k):
+            _ov166.append(k.get("overlay", True))
+            done({"rows": [], "names": {}, "mock": False, "volmap": {}, "absatz": {},
+                  "profit_by_bp": {}, "econ_ready": True, "loc_names": {},
+                  "corp_hinweis": "", "corps": [], "struct_fail_codes": {}})
+        win._run = _run166
+        try:
+            win._bp_geladen_rueckrufe = [lambda ok, msg="": _gehoert166.append(ok)]
+            win._reload_my_blueprints(overlay=False)
+            _app.processEvents()
+        finally:
+            win._run = _run_alt166
+        check(f"b166 echter Ladeweg meldet 'fertig' an das Fenster ({_gehoert166}, {_ov166})",
+              _gehoert166 == [True] and _ov166 == [False])
+    finally:
+        _I166.item_category_map = _cm166; win.VORSCHLAG_RECHNEN = _rn166
+        win._reload_my_blueprints = _rl166
+        win.__dict__.pop("_reload_my_blueprints", None)
+        win._bp_geladen_rueckrufe = []
+        for _k, _v in _alt166.items():
+            setattr(win, _k, _v)
+except Exception as _e166:                               # pragma: no cover
+    _fail.append(f"b166 Vorschlag laedt Blueprints: {type(_e166).__name__}: {_e166}")
 
 # ---------------------------------------------------------------- (b162)
 _app.processEvents()

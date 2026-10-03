@@ -1422,9 +1422,39 @@ class MultiBauplan:
         lay.addWidget(tbl)
         self._bd_vorschlag_dlg = dlg          # fuer die b-Suite
         self._bd_vorschlag_tbl = tbl
+        self._bd_vorschlag_lade_btn = None
         if grund == "keine_bp":
             info.setText(t("Load your blueprints in \u201eMy Blueprints\u201c first "
                            "\u2013 the suggestions come from their profit calculation."))
+            # LADEN DIREKT VON HIER (Nutzer 03.10.2026: "ja gerne" auf den
+            # Vorschlag): My Blueprints laedt im Hintergrund, danach geht das
+            # Fenster an derselben Stelle mit den Vorschlaegen neu auf.
+            lade = QPushButton(t("Load blueprints"))
+            lade.setIcon(icons.icon("refresh"))
+            lade.setStyleSheet(theme.amber_rahmen_knopf())
+            lay.insertWidget(1, lade, 0, Qt.AlignLeft)
+            self._bd_vorschlag_lade_btn = lade      # fuer die b-Suite
+
+            def _fertig(ok, msg=""):
+                if getattr(self, "_bd_vorschlag_dlg", None) is not dlg:
+                    return                          # Fenster inzwischen zu/ersetzt
+                if not ok:
+                    lade.setEnabled(True)
+                    lade.setText(t("Load blueprints"))
+                    info.setText(t("\u26a0 Error while loading: ") + str(msg))
+                    return
+                _pos = dlg.pos()
+                dlg.close()
+                neu = self._multi_vorschlag_fenster()
+                neu.move(_pos)
+
+            def _laden():
+                lade.setEnabled(False)
+                lade.setText(t("Loading blueprints \u2026"))
+                self._bp_geladen_rueckrufe = (
+                    list(getattr(self, "_bp_geladen_rueckrufe", None) or []) + [_fertig])
+                self._reload_my_blueprints(overlay=False)
+            lade.clicked.connect(lambda: _laden())
         elif not kand:
             info.setText(t("No end product of your blueprints fits: same tech level "
                            "({tech}), profitable and a margin of at least {m} %."

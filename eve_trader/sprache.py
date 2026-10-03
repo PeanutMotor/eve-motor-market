@@ -3140,6 +3140,8 @@ KATALOG = {
             "\u00d8-Kauf +Geb.",
         "Already listed in the market \u2013 your sell order is running, you are waiting for a buyer. Nothing more to do.":
             "Bereits im Markt gelistet \u2013 deine Verkaufs-Order l\u00e4uft, du wartest auf einen K\u00e4ufer. Nichts weiter zu tun.",
+        "The market scan is already running in the background ({s} s) \u2013 the prices come in by themselves.":
+            "Der Markt-Scan l\u00e4uft schon im Hintergrund ({s} s) \u2013 die Preise kommen von selbst.",
         "{hub} was just scanned ({age}s ago) \u2013 using the fresh data ({n} items). Rescan possible in {secs}s.":
             "{hub} wurde gerade gescannt (vor {age}s) \u2013 nutze die frischen Daten ({n} Items). Neu-Scan in {secs}s m\u00f6glich.",
         "Double-click = price history. T1/T2/T3 only \u2013 LP/faction excluded. Build cost is an estimate (without your system/rigs, without LP cost).":

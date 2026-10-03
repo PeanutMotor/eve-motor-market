@@ -21808,6 +21808,33 @@ _tb463 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
 check("aa463 die Karten werden in dieser Reihenfolge gezeichnet",
       "for cid in jobs_karten_folge(_chars):" in _tb463)
 
+# ---------------------------------------------------------------- (aa475)
+# BAU-PROFIL = NUR EINSTELLUNGEN (03.10.2026): ein Profil trug die ganzen
+# Bauplaene (20 MB) - "Profil laden" haette die aktuellen Plaene durch einen
+# alten Stand ersetzt. Rein + Migration (gegen eine Kopie, ohne Schreiben).
+import eve_trader.config as _cfg475
+_snap475 = {"bau_me": 10, "bau_facility_tax": 1.5, "bau_struct": "x",
+            "bau_saved_plans": [{"id": 1}], "bau_live_jobs": [1], "bau_char_skills": {"1": {}},
+            "bau_plan_reihenfolge": [1], "bau_multi_zu": [], "bau_profiles": {"a": {}},
+            "bau_buy_inv_default_applied": True, "bau_structures": [{"id": 9}],
+            "ui_hub": 1}
+eq("aa475 Profil behaelt nur Einstellungen (keine Plaene, Jobs, Skills, Reihenfolge, Marker)",
+   sorted(_cfg475.bau_profil_bereinigen(_snap475)),
+   ["bau_facility_tax", "bau_me", "bau_struct"])
+_alt475 = _cfg475.save_settings
+_cfg475.save_settings = lambda *a, **k: None
+try:
+    _d475 = {"bau_profiles": {"P": dict(_snap475)}, "bau_saved_plans": [{"id": 7}]}
+    for _mk in ("bau_buy_inv_default_applied", "bau_cat_me_te_reset_applied",
+                "bau_transport_both_applied", "buendel_done_nachgezogen"):
+        _d475[_mk] = True
+    _cfg475._nach_migrationen(_d475)
+finally:
+    _cfg475.save_settings = _alt475
+check("aa475 Migration entschlackt alte Profile einmal, die echten Plaene bleiben",
+      sorted(_d475["bau_profiles"]["P"]) == ["bau_facility_tax", "bau_me", "bau_struct"]
+      and _d475["bau_saved_plans"] == [{"id": 7}] and _d475.get("bau_profile_bereinigt") is True)
+
 # ---------------------------------------------------------------- (aa474)
 # AUSGABE AUF WINDOWS (pruefe.py 02.10.2026, Python 3.14, cp1252): ein Fehltext
 # mit "\u25b8" liess print() sterben, die roten Pruefungen kamen nie heraus.
@@ -22750,11 +22777,11 @@ check("aa427 ... der Optimierer holt die Enden-Namen aus _bd_names_ref",
 # Veroeffentlichung lassen wir immer einen Test laufen, um eine fehlerfreie
 # Veroeffentlichung zu gewaehrleisten"). Die Veroeffentlichung bricht bei
 # Rot ab, BEVOR committet wird; eigener Starter per Doppelklick. CRLF.
-_rel426b = open("release/veroeffentliche_1.0.9.bat", "rb").read()
+_rel426b = open("release/veroeffentliche_1.1.0.bat", "rb").read()
 _rel426 = _rel426b.replace(b"\r\n", b"\n")      # Logik unabhaengig vom Zeilenende
 _p426 = _rel426.find(b"python pruefe.py < nul\n")
 _f426 = _rel426.find(b"if errorlevel 1 (\n  echo ROT: pruefe.py", _p426)
-check("aa426 veroeffentliche_1.0.9.bat prueft ZUERST und bricht bei Rot ab",
+check("aa426 veroeffentliche_1.1.0.bat prueft ZUERST und bricht bei Rot ab",
       0 < _p426 < _f426 < _rel426.find(b"git commit")
       and 0 < _rel426.find(b"  goto ende\n)\necho gruen", _f426))
 check("aa426 ... und hat Windows-Zeilenenden (CRLF)",

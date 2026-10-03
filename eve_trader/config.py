@@ -565,6 +565,38 @@ def buendel_quellen_nachziehen(plans):
     return aus
 
 
+# BAU-PROFIL = NUR EINSTELLUNGEN (03.10.2026, gefunden in der settings.json des
+# Nutzers): ein Profil speicherte ALLE "bau_*"-Schluessel - auch die
+# gespeicherten Bauplaene (20 MB im Profil "WipeOut/A-DD Pocket"), Jobs,
+# Skills und Reihenfolgen. "Profil laden" haette damit die aktuellen Plaene
+# still durch einen alten Stand ersetzt (Fortschritt, Haken, Reservierungen
+# weg). Ab jetzt: ein Profil traegt nur Einstellungen; Zustand und
+# abgerufene Daten bleiben draussen - beim Speichern, beim Laden (alte
+# Profile) und einmal per Migration.
+BAU_PROFIL_OHNE = frozenset({
+    "bau_profiles", "bau_saved_plans", "bau_live_jobs", "bau_owned_bp",
+    "bau_char_skills", "bau_char_slots", "bau_char_free", "bau_char_free_ts",
+    "bau_char_roles", "bau_char_implant", "bau_char_reproc_implant",
+    "bau_char_reproc_implant_hand", "bau_structures", "bau_struct_scan_ts",
+    "bau_online_windows", "bau_calendar", "bau_inv_zu", "bau_rollen_vorbelegt",
+})
+
+
+def bau_profil_schluessel(k) -> bool:
+    """Gehoert der Schluessel in ein Bau-Profil? Nur Einstellungen - keine
+    Plaene, keine Plan-Reihenfolge/-Ansicht, keine abgerufenen Daten, keine
+    Migrations-Marker."""
+    k = str(k)
+    return (k.startswith("bau_") and k not in BAU_PROFIL_OHNE
+            and not k.startswith(("bau_plan_", "bau_multi_"))
+            and not k.endswith("_applied"))
+
+
+def bau_profil_bereinigen(snap) -> dict:
+    """Ein Profil (auch ein altes) auf seine Einstellungen reduzieren."""
+    return {k: v for k, v in (snap or {}).items() if bau_profil_schluessel(k)}
+
+
 def _nach_migrationen(data: dict) -> dict:
     # Migration: tx_cache_minutes war nie über die UI einstellbar - jeder
     # gespeicherte Wert von genau 30 ist also der alte hartkodierte Default,
@@ -671,6 +703,15 @@ def _nach_migrationen(data: dict) -> dict:
                     _q["reserve"] = False
                     _q["done_durch_buendel"] = _b.get("id")
         data["buendel_done_nachgezogen"] = True
+        _migrated = True
+    # ALTE BAU-PROFILE ENTSCHLACKEN (03.10.2026): Plaene, Jobs, Skills raus
+    # (siehe BAU_PROFIL_OHNE). EINMAL per Marker.
+    if not data.get("bau_profile_bereinigt"):
+        _pr = data.get("bau_profiles")
+        if isinstance(_pr, dict):
+            data["bau_profiles"] = {_n: bau_profil_bereinigen(_v)
+                                    for _n, _v in _pr.items() if isinstance(_v, dict)}
+        data["bau_profile_bereinigt"] = True
         _migrated = True
     if _migrated:
         try:

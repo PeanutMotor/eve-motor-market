@@ -71,3 +71,13 @@ veroeffentliche_bericht.txt
 ordne_projekt.bat
 transkript_bericht.txt
 transkript_dateien.txt
+
+# Aufgeraeumt fuer 1.1.0 (03.10.2026): persoenliche Sitzungs- und Backup-Helfer
+# gehoeren nicht ins oeffentliche Repo (sie bleiben lokal).
+SKIZZE_FORTSCHRITT.md
+werkzeuge/transkribiere.*
+werkzeuge/sichere_*.bat
+werkzeuge/zippe_*.bat
+werkzeuge/sicherung.bat
+werkzeuge/git_commit_push.bat
+*_bericht.txt
