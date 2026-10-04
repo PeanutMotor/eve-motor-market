@@ -97,6 +97,9 @@ def tab_icon_at(tabs, pos, widget, text, name):
 # steht. Nur dort kopiert ein Klick - das Kaestchen daneben bleibt frei,
 # sonst ueberschriebe jeder Haken still die Zwischenablage.
 ROLLE_KOPIERNAME = Qt.UserRole + 8
+# Je Runplaner-Zeile die Klick-Werte [(tid, Runs je Kopie, reaktion)] -
+# jede Namens-Kopie merkt damit die Job-Zuordnung mit (emm402).
+ROLLE_KLICKWERTE = Qt.UserRole + 9
 
 
 def kopier_text_rect(option_oder_view, index, item_rect=None):

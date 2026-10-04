@@ -144,7 +144,7 @@ class JobZeile(QFrame):
     Fortschritt fuellt den Hintergrund der Zeile in der Farbe der Art - keine
     eigene Balken-Zeile mehr. value()/setValue() 0..1000 wie ein Balken."""
 
-    def __init__(self, kuerzel, text, rest, farbe, parent=None):
+    def __init__(self, kuerzel, text, rest, farbe, parent=None, corp=False):
         super().__init__(parent)
         self._farbe = QColor(farbe)
         self._wert = 0
@@ -159,6 +159,19 @@ class JobZeile(QFrame):
             f"padding:0px 3px; font-size:{theme.FS_SMALL}; font-weight:700; "
             f"background:transparent;")
         h.addWidget(self.tag)
+        # CORP-ABZEICHEN (emm396, Nutzer: "fehlt mir an Uebersicht zwischen
+        # Corp und nicht Corp jobs"): amber Abzeichen statt des frueheren
+        # " · Corp"-Textanhangs - faellt zwischen den Zeilen sofort auf.
+        self.corp_tag = None
+        if corp:
+            self.corp_tag = QLabel(t("Corp"))
+            self.corp_tag.setAlignment(Qt.AlignCenter)
+            self.corp_tag.setStyleSheet(
+                f"color:{theme.AMBER}; border:1px solid {theme.AMBER}; "
+                f"border-radius:3px; padding:0px 3px; "
+                f"font-size:{theme.FS_SMALL}; font-weight:700; "
+                f"background:transparent;")
+            h.addWidget(self.corp_tag)
         self.name = KurzLabel(text)
         self.name.setStyleSheet("font-weight:700; background:transparent;")
         h.addWidget(self.name, 1)
@@ -195,57 +208,45 @@ class KartenRaster(QWidget):
     """Kacheln nebeneinander, so viele Spalten wie in die Breite passen
     (emm330: "Charaktere nebeneinander, nicht untereinander").
 
-    emm342 (Nutzer: "wenn man ein Dropdown aufmacht, sollen die Karten rechts
-    oder links davon nicht mitrutschen"): SPALTEN statt Zeilen-Raster. Karte i
-    steht in Spalte i % n (Lesereihenfolge bleibt zeilenweise), jede Spalte
-    stapelt fuer sich - waechst eine Karte, rutscht nur ihre eigene Spalte."""
+    emm398 (Nutzer: "so sehen die Karten nicht schoen angeordnet aus" ->
+    "Buendige Reihen"): GITTER statt freier Spalten - alle Karten einer
+    Reihe beginnen auf derselben Hoehe (AlignTop), die Reihe ist so hoch
+    wie ihre hoechste Karte. Die emm342-Zusage bleibt dabei erfuellt:
+    waechst eine Karte (Dropdown auf), bleiben die Nachbarn IHRER Reihe
+    oben stehen, nur die Reihen darunter rutschen nach unten."""
 
     def __init__(self, breite=340, parent=None):
         super().__init__(parent)
         self._breite = int(breite)
         self._karten = []
         self._spalten = 0
-        self._reihe = QHBoxLayout(self)
-        self._reihe.setContentsMargins(0, 0, 0, 0)
-        self._reihe.setSpacing(12)
-        self._spalten_lay = []
+        self._gitter = QGridLayout(self)
+        self._gitter.setContentsMargins(0, 0, 0, 0)
+        self._gitter.setHorizontalSpacing(12)
+        self._gitter.setVerticalSpacing(12)
 
     def spalten(self):
         return max(1, (self.width() + 12) // (self._breite + 12))
 
-    def _spalte(self, c):
-        # Spalten-Layouts werden nur angelegt, nie geloescht; eine leere
-        # Spalte (nur Stretch) zaehlt fuer Qt als leer - kein Abstand.
-        while len(self._spalten_lay) <= c:
-            v = QVBoxLayout()
-            v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(12)
-            v.addStretch(1)
-            self._reihe.addLayout(v, 0)
-            self._spalten_lay.append(v)
-        return self._spalten_lay[c]
-
-    def _abhaengen(self, karten):
-        for v in self._spalten_lay:
-            for k in karten:
-                v.removeWidget(k)
+    def _abhaengen(self):
+        for k in self._karten:
+            self._gitter.removeWidget(k)
 
     def setze(self, karten):
-        self._abhaengen(self._karten)
+        self._abhaengen()
         for k in self._karten:
             k.deleteLater()
         self._karten = list(karten)
         self._anordnen(neu=True)
 
     def lage(self):
-        """[(Platz in der Spalte, Spalte)] je Karte, aus dem echten Layout."""
+        """[(Reihe, Spalte)] je Karte, aus dem echten Layout."""
         out = []
         for k in self._karten:
-            for c, v in enumerate(self._spalten_lay):
-                i = v.indexOf(k)
-                if i >= 0:
-                    out.append((i, c))
-                    break
+            i = self._gitter.indexOf(k)
+            if i >= 0:
+                r, c, _rs, _cs = self._gitter.getItemPosition(i)
+                out.append((r, c))
             else:
                 out.append(None)
         return out
@@ -255,13 +256,17 @@ class KartenRaster(QWidget):
         if n == self._spalten and not neu:
             return
         self._spalten = n
-        self._abhaengen(self._karten)
+        self._abhaengen()
         for i, k in enumerate(self._karten):
-            v = self._spalte(i % n)
-            v.insertWidget(v.count() - 1, k)
-        self._spalte(n - 1)
-        for c in range(len(self._spalten_lay)):
-            self._reihe.setStretch(c, 1 if c < n else 0)
+            self._gitter.addWidget(k, i // n, i % n, Qt.AlignTop)
+        # Unter der letzten Reihe faengt eine Stretch-Reihe den Rest ab,
+        # rechts von der letzten Spalte nichts (aktive Spalten teilen sich
+        # die Breite gleichmaessig).
+        reihen = (len(self._karten) + n - 1) // n
+        for r in range(max(self._gitter.rowCount(), reihen + 1)):
+            self._gitter.setRowStretch(r, 1 if r == reihen else 0)
+        for c in range(max(self._gitter.columnCount(), n)):
+            self._gitter.setColumnStretch(c, 1 if c < n else 0)
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
@@ -612,10 +617,11 @@ class BauplanTabs:
         slots_alt = dict(self.settings.get("bau_char_slots") or {})
 
         def job():
-            from .mw_helpers import jobs_uebersicht
+            from .mw_helpers import jobs_uebersicht, corp_jobs_verteilen
             import time as _t
             out, tids = {}, set()
             jetzt = _t.time()
+            roh, mx_je = {}, {}
             for ch in chars:
                 cid = int(ch["character_id"])
                 e = {"name": ch.get("character_name") or ch.get("name") or str(cid),
@@ -630,9 +636,51 @@ class BauplanTabs:
                 except Exception as ex:
                     e["fehler"] = str(ex)[:120]
                     jobs = []
-                e["ueb"] = jobs_uebersicht(jobs, mx, jetzt)
-                tids.update(z["tid"] for z in e["ueb"]["zeilen"] if z["tid"])
+                roh[cid], mx_je[cid] = jobs, mx
                 out[cid] = e
+            # CORP-JOBS (emm389, Discord HerrLades: "it only shows private
+            # jobs?"): mit dem Corp-Schalter und Factory_Manager kommen die
+            # Corp-Jobs dazu - sie laufen auf den SLOTS des startenden
+            # Charakters (installer_id), zaehlen also in DESSEN Karte mit;
+            # dazu je Corp eine eigene Karte mit ALLEN Corp-Jobs.
+            if self.settings.get("use_corp"):
+                _co = {"ohne_rolle": [], "relink": [], "failed": [],
+                       "keine_division": False, "aktiv": True, "bp_ok": True}
+                try:
+                    _, _, plan_jobs = self._corp_rollen(client_id, chars, _co)
+                except Exception:
+                    plan_jobs = {}
+                _bekannt = {j.get("job_id") for js in roh.values() for j in js}
+                for corp_id, via_cid in sorted((plan_jobs or {}).items()):
+                    ec = {"name": "", "fehler": None, "ueb": None, "ist_corp": True}
+                    try:
+                        cjobs = esi.fetch_corporation_jobs(client_id, via_cid, corp_id)
+                    except Exception as ex:
+                        ec["fehler"] = str(ex)[:120]
+                        cjobs = []
+                    try:
+                        ec["name"] = t("Corp: {name}").format(
+                            name=esi.fetch_corporation_name(corp_id))
+                    except Exception:
+                        ec["name"] = t("Corp: {name}").format(name=f"#{corp_id}")
+                    je_cid, _rest = corp_jobs_verteilen(cjobs, list(roh), _bekannt)
+                    for _c, _js in je_cid.items():
+                        roh[_c] = list(roh[_c]) + _js
+                    # NUR die uebrigen Jobs (fremde Installer) auf die
+                    # Corp-Karte (emm396, Nutzer: "es sind die selben Jobs
+                    # Lezaar und corp" - vorher standen ALLE Corp-Jobs dort,
+                    # der Job eines verknuepften Installers damit doppelt).
+                    # Ohne uebrige Jobs und ohne Fehler faellt die Karte weg
+                    # (eine leere "no running jobs"-Corp-Karte wuerde luegen,
+                    # die Jobs laufen ja - auf den Charakter-Karten).
+                    ec["ueb"] = jobs_uebersicht(_rest, None, jetzt)
+                    if _rest or ec["fehler"]:
+                        out[-int(corp_id)] = ec
+            for cid in roh:
+                out[cid]["ueb"] = jobs_uebersicht(roh[cid], mx_je[cid], jetzt)
+            for e in out.values():
+                tids.update(z["tid"] for z in (e["ueb"] or {}).get("zeilen", ())
+                            if z["tid"])
             try:
                 namen = esi.resolve_names(list(tids)) if tids else {}
             except Exception:
@@ -705,6 +753,23 @@ class BauplanTabs:
         kopf.addWidget(name)
         kopf.addStretch()
         _n_fertig = sum(g["n"] for g in gr["ready"])
+        # CORP-ABZEICHEN IM KOPF (emm398, Nutzer: "wenn zugeklappt sieht man
+        # nicht dass ein Corpjob laeuft"): laufende + fertige Corp-Jobs
+        # dieser Karte, sichtbar auch bei zugeklappter Job-Liste. Nicht auf
+        # der Corp-Karte selbst (dort ist alles Corp, der Kopf ist amber).
+        card._corp_badge = None
+        _n_corp = (sum(g["n"] for g in gr["laufend"] if g.get("corp"))
+                   + sum(g["n"] for g in gr["ready"] if g.get("corp")))
+        if _n_corp and not e.get("ist_corp"):
+            _cb = QLabel(t("Corp") if _n_corp == 1 else f"{t('Corp')} {_n_corp}")
+            _cb.setToolTip(t("{n} corp job(s) \u2013 they run on this "
+                             "character's job slots.").format(n=_n_corp))
+            _cb.setStyleSheet(f"color:{theme.AMBER}; border:1px solid {theme.AMBER}; "
+                              f"border-radius:4px; padding:1px 7px; "
+                              f"font-size:{theme.FS_SMALL}; font-weight:800; "
+                              f"background:transparent;")
+            kopf.addWidget(_cb)
+            card._corp_badge = _cb
         if _n_fertig:
             _badge = QLabel(f"\u2713 {_n_fertig}")
             _badge.setToolTip(t("\u2713 {n} ready to deliver").format(n=_n_fertig))
@@ -717,15 +782,26 @@ class BauplanTabs:
             if z["ready"]:
                 _fertig_je[z["art"]] += 1
         card._slots = {}
-        slots = QHBoxLayout(); slots.setSpacing(12)
-        for art, lab in (("mfg", t("Mfg.")), ("react", t("React.")), ("sci", t("Science"))):
-            _mx = (u["max"] or {}).get(art) if u["max"] else None
-            box, sk = self._jobs_slot_gruppe(lab, art, u["belegt"][art],
-                                             _fertig_je[art], _mx)
-            card._slots[art] = sk
-            slots.addLayout(box)
-        slots.addStretch()
-        v.addLayout(slots)
+        if e.get("ist_corp"):
+            # CORP-KARTE (emm389): die Corp hat keine eigenen Slots - ihre
+            # Jobs belegen die Slots des startenden Charakters und zaehlen
+            # DORT. Deshalb hier keine Slot-Zeile, nur der Hinweis.
+            _ch = QLabel(t("Corp jobs run on the installer's job slots – "
+                           "they count on that character's card."))
+            _ch.setObjectName("Muted"); _ch.setWordWrap(True)
+            v.addWidget(_ch)
+            name.setStyleSheet(f"color:{theme.AMBER}; font-weight:800; "
+                               f"font-size:{theme.FS_H2};")
+        else:
+            slots = QHBoxLayout(); slots.setSpacing(12)
+            for art, lab in (("mfg", t("Mfg.")), ("react", t("React.")), ("sci", t("Science"))):
+                _mx = (u["max"] or {}).get(art) if u["max"] else None
+                box, sk = self._jobs_slot_gruppe(lab, art, u["belegt"][art],
+                                                 _fertig_je[art], _mx)
+                card._slots[art] = sk
+                slots.addLayout(box)
+            slots.addStretch()
+            v.addLayout(slots)
         if e["fehler"]:
             fz = QLabel(t("ESI error: {e}").format(e=e["fehler"]))
             fz.setWordWrap(True)
@@ -735,13 +811,25 @@ class BauplanTabs:
             rk = QLabel(t("\u2713 {n} ready to deliver").format(n=_n_fertig))
             rk.setStyleSheet(f"color:{theme.GREEN}; font-weight:700; padding-top:4px;")
             v.addWidget(rk)
-            rl = QLabel(" \u00b7 ".join(
-                f"{g['n']}\u00d7 {namen.get(g['tid']) or '#' + str(g['tid'])}"
-                for g in gr["ready"]))
+            # Fertig-Zeile mit Corp-Marke (emm397, Nutzer "ja"): ein fertiger
+            # Corp-Job traegt sein amber "Corp" auch hier - Rich-Text, weil
+            # die Zeile EIN Label ist (Namen escaped, Marke als Span).
+            from html import escape as _esc
+            _rt = []
+            for g in gr["ready"]:
+                _s = f"{g['n']}\u00d7 " + _esc(
+                    str(namen.get(g["tid"]) or "#" + str(g["tid"])))
+                if g.get("corp"):
+                    _s += (f" <span style=\"color:{theme.AMBER}; "
+                           f"font-weight:700;\">" + _esc(t("Corp")) + "</span>")
+                _rt.append(_s)
+            rl = QLabel(" \u00b7 ".join(_rt))
+            rl.setTextFormat(Qt.RichText)
             rl.setWordWrap(True)
             rl.setStyleSheet(f"color:{theme.GREEN}; font-size:{theme.FS_SMALL}; "
                              f"padding-left:14px;")
             v.addWidget(rl)
+            card._ready_lbl = rl
         # JOBS ZUM AUSKLAPPEN (emm338, Nutzer: "die Fortschrittsbalken als
         # Dropdown zum Ausklappen, damit man standardmaessig nur die Compact-
         # Ansicht von jedem Char hat"). Zustand je Charakter gemerkt
@@ -782,7 +870,8 @@ class BauplanTabs:
                 nm = job_anzeigename(namen.get(g["tid"]) or f"#{g['tid']}", g["activity_id"])
                 zeile = JobZeile(t(self._JOB_KUERZEL.get(int(g["activity_id"] or 0), "?")),
                                  t("{name} ({n} runs)").format(name=nm, n=g["runs"]),
-                                 self._jobs_rest_text(g), farbe)
+                                 self._jobs_rest_text(g), farbe,
+                                 corp=bool(g.get("corp")))   # emm396: amber Corp-Abzeichen
                 zeile.setMinimumHeight(26)
                 _tip = [str(namen.get(g["tid"]) or g["tid"]),
                         self._jobs_art_name(g["activity_id"]),
@@ -921,6 +1010,10 @@ class BauplanTabs:
 
     def _jobs_summe_zeigen(self, chars, versteckt, jetzt):
         from .mw_helpers import jobs_summe, jobs_dauer_kurz, jobs_kapazitaet
+        # OHNE die Corp-Karten (emm389): deren Jobs stecken schon in den
+        # Charakter-Karten der Installer - sie doppelt zu zaehlen wuerde die
+        # Kacheln verfaelschen.
+        chars = {k: v for k, v in (chars or {}).items() if not v.get("ist_corp")}
         if not chars and not versteckt:
             self._jobs_summe_lbl.setText("")
             self._jobs_summe_lbl.hide()
@@ -1193,7 +1286,7 @@ class BauplanTabs:
         self.bs_inv = QComboBox()
         self.bs_inv.addItem(t("Include invention"), True)
         self.bs_inv.addItem(t("Ignore invention"), False)
-        self.bs_inv.setCurrentIndex(0 if self.settings.get("bau_invention", False) else 1)
+        self.bs_inv.setCurrentIndex(0)       # emm385: Invention immer an
         self.bs_decry = QComboBox()
         for nm, _v in self._decryptor_list():
             # ANZEIGE uebersetzt, DATEN nicht: `_combo_select` waehlt ueber
@@ -5520,9 +5613,8 @@ class BauplanTabs:
                     _ic0 = self._table_icon(_st0.get("erz"))
                     if _ic0:
                         _row0.setIcon(0, _ic0)
-                    # KLICK AUF DEN NAMEN KOPIERT DEN ERZ-NAMEN (wie bei den
-                    # Blaupausen: Rahmen malt KopierRahmenDelegate, den Klick
-                    # nimmt _sched_name_klick).
+                    # Der Erz-Name haengt an der Zeile (Rechtsklick/Strg+C
+                    # kopiert ihn); der Linksklick-Kopierweg ist raus (emm401).
                     _row0.setData(0, ROLLE_KOPIERNAME, _erz_nm0)
                     _row0.setData(0, Qt.UserRole, _st0.get("erz"))
                     if _st0.get("art") == "unrefined":
@@ -5532,8 +5624,7 @@ class BauplanTabs:
                             "structure, rig and ore skills do not apply here.\nTick = "
                             "reprocessed (progress mark only).").format(
                             n=int(_st0.get("menge") or 0),
-                            pct=f"{float(_st0.get('ausbeute') or 0) * 100.0:.1f}")
-                            + "\n" + _txt("Click copies the name for the market search."))
+                            pct=f"{float(_st0.get('ausbeute') or 0) * 100.0:.1f}"))
                     else:
                         _row0.setToolTip(0, _txt(
                             "{n} batches of {p} units. Yield {pct} % with this "
@@ -5541,8 +5632,7 @@ class BauplanTabs:
                             "on the minerals must be in stock and the ore no longer "
                             "counts as needed.").format(
                             n=int(_st0.get("portionen") or 0), p=int(_st0.get("portion") or 0),
-                            pct=f"{float(_st0.get('ausbeute') or 0) * 100.0:.1f}")
-                            + "\n" + _txt("Click copies the name for the market search."))
+                            pct=f"{float(_st0.get('ausbeute') or 0) * 100.0:.1f}"))
                     _row0.setToolTip(4, _txt("What the ore yields for this plan; the "
                                              "rest is surplus (right)."))
                     # HAKEN = REPROCESST (Nutzer-Befund 18.09.2026: die
@@ -5609,9 +5699,14 @@ class BauplanTabs:
                     except Exception:
                         pass       # Knoepfe sind Komfort, nie kritisch
                 # Charakter ZU, Stufe AUF - wie bei den anderen Stufen
-                # (Nutzer 19.09.2026, Screenshot).
-                _citem0.setExpanded(False)
-            _item0.setExpanded(True)
+                # (Nutzer 19.09.2026, Screenshot); was der Nutzer selbst
+                # geklappt hat, gewinnt (emm400).
+                _citem0.setExpanded(bool(_klapp_vorher.get(_ckey_c0, False)))
+            # de_scan5: aus - interner Klapp-Schluessel, nie sichtbar
+            _item0.setData(0, Qt.UserRole + 6, "stufe|" + str(_ckey0))
+            _item0.setExpanded(bool(_klapp_vorher.get(
+                "stufe|" + str(_ckey0), True)))
+            # de_scan5: an
 
         _lbl_st0 = "0. " + _txt("Reprocessing")
         if _rp0.get("struct"):
@@ -5777,6 +5872,13 @@ class BauplanTabs:
             # Stufenzeilen haben ein Feld" waere tautologisch (die Rotprobe
             # hat genau das gemeldet).
             stage_item.setData(1, Qt.UserRole + 8, str(stage))
+            # KLAPP-GEDAECHTNIS AUCH FUER DIE STUFE (emm400, Nutzer: der
+            # ESI-Autorefresh "schliesst leider auch alle aufgeklappten job
+            # runs wieder"): mit dem Schluessel landet jeder Nutzer-Klapp in
+            # `_bd_sched_klapp` (dieselben Signale wie die Charakterzeilen).
+            # de_scan5: aus - interner Klapp-Schluessel, nie sichtbar
+            stage_item.setData(0, Qt.UserRole + 6, "stufe|" + str(stage))
+            # de_scan5: an
             self._runplan_ziel_feld(
                 tbl, stage_item, stage,
                 (res.get("stage_min_times") or {}).get(stage, 0.0),
@@ -6370,18 +6472,21 @@ class BauplanTabs:
                     # Aktivität merken (für "Blueprint-Name kopieren": Reaktion vs
                     # Fertigung -> "Reaction Formula" bzw. "Blueprint").
                     iit.setData(0, Qt.UserRole + 7, a.get("activity"))
-                    # DER NAME IST ANKLICKBAR (Nutzer, 15.09.2026): "im
-                    # Runplaner steht Silicon Diborite - klickt man drauf,
-                    # bekommt man Silicon Diborite Reaction Formula ins
-                    # Clipboard". Hier steht die Zeile schon fest, also wird
-                    # der Blaupausen-Name hier abgelegt; Rahmen malt
-                    # KopierRahmenDelegate, den Klick nimmt _sched_name_klick.
+                    # Der Blaupausen-Name haengt an der Zeile - fuer
+                    # Rechtsklick/Strg+C (der Linksklick-Kopierweg ist seit
+                    # emm401 raus: er kopierte, ohne den Run-Klick zu merken).
                     # EINE Quelle fuer den Namen: _bp_name_fuer, dieselbe
                     # Regel wie im Rechtsklick-Menue und in der BP-Spalte.
                     iit.setData(0, ROLLE_KOPIERNAME,
                                 self._bp_name_fuer(
                                     self._bp_basisname(a.get("tid"), a.get("name")),
                                     a.get("activity")))
+                    # KLICK-WERTE DER ZEILE (emm402): Rueckfall = volle
+                    # Run-Zahl; kennt die Zeile Kopien-Teile, ueberschreibt
+                    # der Knopf-Block unten mit den Werten je Kopie.
+                    iit.setData(0, Qt.UserRole + 9,
+                                [(int(a.get("tid") or 0), int(a.get("runs") or 0),
+                                  a.get("activity") in (9, 11))])
                     # RUNS FETT (Nutzer, 15.09.2026): das ist die Zahl, nach
                     # der man ingame den Job einstellt - sie soll sich vom
                     # Rest der Zeile abheben.
@@ -6615,9 +6720,17 @@ class BauplanTabs:
                                 f"padding:0px 8px;}}"
                                 f"QPushButton:hover{{border-color:"
                                 f"{theme.AMBER}; background:{theme.PANEL};}}")
+                            # AUCH DER NAME-KNOPF MERKT DIE ZUORDNUNG
+                            # (emm402): je Kopien-Groesse ein Klick - wie
+                            # die amber Runs-Knoepfe daneben.
+                            iit.setData(0, Qt.UserRole + 9,
+                                        [(int(a.get("tid") or 0), int(_r9),
+                                          a.get("activity") in (9, 11))
+                                         for _r9, _a9 in _gruppen])
                             _kopf.clicked.connect(
-                                lambda _c=False, _nm=_bp_nm:
-                                self._copy_bp_name_value(_nm))
+                                lambda _c=False, _nm=_bp_nm, _it9=iit: (
+                                    self._copy_bp_name_value(_nm),
+                                    self._runplan_klick_bei_kopie([_it9])))
                             _cl.addWidget(_kopf)
                             for _r, _anz in _gruppen:
                                 _mal = QLabel(f"{_anz}\u00d7")
@@ -6808,7 +6921,21 @@ class BauplanTabs:
                 _k_cf = str(_cf.data(0, Qt.UserRole + 6) or "")
                 _cf.setExpanded(bool(_klapp_vorher.get(_k_cf,
                                                        _stufe_abgedeckt)))
-            stage_item.setExpanded(not _stufe_abgedeckt)
+                # AUFGEKLAPPTE RUN-ZEILE BLEIBT AUF (emm400, Nutzer:
+                # "Runplaner bei aufgeklappten Runs per character ist am
+                # meisten betroffen"): gemerkt war der Klapp schon
+                # (UserRole+6 -> _bd_sched_klapp), wiederhergestellt nie.
+                # HIER und nicht beim addChild: setExpanded wirkt erst,
+                # wenn die Zeile im Baum haengt (b102 war sonst rot).
+                for _jx in range(_cf.childCount()):
+                    _it_x = _cf.child(_jx)
+                    _k_x = str(_it_x.data(0, Qt.UserRole + 6) or "")
+                    if _k_x and _klapp_vorher.get(_k_x):
+                        _it_x.setExpanded(True)
+            # de_scan5: aus - interner Klapp-Schluessel, nie sichtbar
+            stage_item.setExpanded(bool(_klapp_vorher.get(
+                "stufe|" + str(stage), not _stufe_abgedeckt)))   # emm400
+            # de_scan5: an
             if stage == _ub_nach:
                 _unref_block()
         # ---- ℹ NICHT EINGEPLANT: Kauf billiger / Bestand deckt --------------
@@ -6877,5 +7004,8 @@ class BauplanTabs:
                 _ihdr.addChild(_iit)
                 _shown += 1
             tbl.addTopLevelItem(_ihdr)
-            _ihdr.setExpanded(False)
+            # de_scan5: aus - interner Klapp-Schluessel, nie sichtbar
+            _ihdr.setData(0, Qt.UserRole + 6, "stufe|info")
+            _ihdr.setExpanded(bool(_klapp_vorher.get("stufe|info", False)))
+            # de_scan5: an
         tbl.blockSignals(False)

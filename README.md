@@ -28,8 +28,8 @@ Full source in this repository and as a zip on every release (GPL-3.0). `eve_tra
 
 The calculations are guarded, not trusted:
 
-- two test suites, 4'887 and 2'085 checks, run with `python pruefe.py`
-- a mutation harness (`tests/rotprobe.py`) that breaks the code on purpose, 1'770 mutations, to prove the checks catch a regression
+- two test suites, 4'904 and 2'112 checks, run with `python pruefe.py`
+- a mutation harness (`tests/rotprobe.py`) that breaks the code on purpose, 1'801 mutations, to prove the checks catch a regression
 - source-order lint, `pyflakes`, and six scanners that keep the English and German texts in step
 
 ## Community

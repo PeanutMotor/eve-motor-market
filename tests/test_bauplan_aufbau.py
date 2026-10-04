@@ -2279,44 +2279,64 @@ except Exception as e:                                   # pragma: no cover
     _fail.append(f"b7e Contract-Knopf mit Preis: {type(e).__name__}: {e}")
 
 # ---------------------------------------------------------------- (b7f)
-# DER NAME IM RUNPLANER IST KOPIERBAR UND GERAHMT.
-# NUTZER, 15.09.2026: "im Runplaner steht Silicon Diborite - klickt man drauf,
-# bekommt man Silicon Diborite Reaction Formula ins Clipboard", dazu ein
-# kleiner Rahmen wie um die Run-Zahlen, fette Run-Zahlen, und die FARBE des
-# Namens soll bleiben (gebaute Zeilen blau, nicht amber).
+# KEIN KOPIEREN PER LINKSKLICK AUF DEN NAMEN IM RUNPLANER (emm401, Nutzer
+# 04.10.2026: "dann sollten wir das kopieren per linksklick auf den namen
+# vielleicht entfernen, damit das gar nicht erst passieren kann im
+# Runplaner" - der Name-Klick kopierte, ohne den Run-Klick zu merken; Runs
+# gehoeren ueber den amber Knopf kopiert). Der Name bleibt an der Zeile
+# (ROLLE_KOPIERNAME) fuer Rechtsklick/Strg+C.
 from PySide6.QtWidgets import QTreeWidgetItem as _TWI7f
-from eve_trader.ui.mw_basis import (ROLLE_KOPIERNAME as _RKN7f,
-                                    kopier_text_rect as _ktr7f)
+from eve_trader.ui.mw_basis import ROLLE_KOPIERNAME as _RKN7f
 _dlg7f = getattr(win, "_bd_dialog", None)
 _sched7f = next((x for x in (_dlg7f.findChildren(QTreeWidget) if _dlg7f else [])
                  if x.columnCount() == 6), None)
 check("b7f der Runplaner-Baum ist da", _sched7f is not None)
 if _sched7f is not None:
-    # KEINE HERVORHEBUNG MEHR (Nutzer, 15.09.2026: "die Items sollen wieder
-    # normal aussehen"). Erst war es ein Rahmen, dann ein Chip - beides zu
-    # laut. Die Zeile sieht aus wie jede andere; nur der Klick kopiert.
     check("b7f Spalte 0 malt NICHTS Eigenes mehr",
           _sched7f.itemDelegateForColumn(0) is None)
-    # DAS KAESTCHEN BLEIBT FREI: der Rahmen (und damit die Trefferflaeche)
-    # faengt rechts vom Haken an - sonst kopierte jeder Haken still mit.
+    # DER ECHTE WEG: itemClicked ausloesen wie ein Linksklick - haette
+    # jemand den Kopier-Handler wieder angeschlossen, stuende der Name in
+    # der Zwischenablage (Lehre b87/b88: die Verdrahtung pruefen).
     _ti7f = _TWI7f(["Silicon Diborite", "130", "", "", "", ""])
     _sched7f.addTopLevelItem(_ti7f)
     _ti7f.setData(0, _RKN7f, "Silicon Diborite Reaction Formula")
-    _idx7f = _sched7f.indexFromItem(_ti7f, 0)
-    _r7f = _ktr7f(_sched7f, _idx7f, _sched7f.visualRect(_idx7f))
-    check("b7f die Trefferflaeche laesst das Kaestchen aus",
-          _r7f is not None and _r7f.left() > _sched7f.visualRect(_idx7f).left())
-    # KEIN KOPIEREN OHNE NAMEN und nicht in anderen Spalten - sonst
-    # ueberschreibt jeder Klick im Baum die Zwischenablage.
-    _ti_ohne7f = _TWI7f(["Leziris Lezflow", "", "", "", "", ""])
-    _sched7f.addTopLevelItem(_ti_ohne7f)
     QApplication.clipboard().setText("UNBERUEHRT")
-    win._sched_name_klick(_ti_ohne7f, 0)
-    win._sched_name_klick(_ti7f, 3)
-    check("b7f ein Klick ohne Namen kopiert nichts",
+    _sched7f.itemClicked.emit(_ti7f, 0)
+    _app.processEvents()
+    check("b7f ein Linksklick auf den Namen kopiert NICHTS mehr",
           QApplication.clipboard().text() == "UNBERUEHRT")
+    check("b7f der alte Klick-Handler ist ausgebaut",
+          not hasattr(win, "_sched_name_klick"))
     _sched7f.takeTopLevelItem(_sched7f.indexOfTopLevelItem(_ti7f))
-    _sched7f.takeTopLevelItem(_sched7f.indexOfTopLevelItem(_ti_ohne7f))
+    # emm402 (Nutzer: "Alle Wege merken mit"): Strg+C auf einer markierten
+    # Zeile kopiert den Namen UND merkt die Job-Zuordnung (run_klicks) -
+    # der ECHTE Weg ueber den Tastatur-Handler des Baums, mit Aufraeumen
+    # vorher und nachher (Suiten-Zustand ueberlebt Laeufe).
+    _ti9 = _TWI7f(["b7f KlickItem", "20", "", "", "", ""])
+    _sched7f.addTopLevelItem(_ti9)
+    _ti9.setData(0, _RKN7f, "b7f KlickItem")
+    _ti9.setData(0, Qt.UserRole + 7, 1)
+    _ti9.setData(0, Qt.UserRole + 9, [(917001, 10, False), (917001, 7, False)])
+    _pid_alt9 = getattr(win, "_bd_open_plan_id", None)
+    win._bd_open_plan_id = "b7f_klick"
+    from eve_trader import store as _st9
+    try:
+        _st9.run_klicks_loeschen("b7f_klick")
+        _sched7f.clearSelection()
+        _ti9.setSelected(True)
+        from PySide6.QtGui import QKeyEvent as _QKE9
+        from PySide6.QtCore import QEvent as _QEV9
+        _sched7f.keyPressEvent(
+            _QKE9(_QEV9.KeyPress, Qt.Key_C, Qt.ControlModifier))
+        _kl9 = _st9.run_klicks_fuer_plan("b7f_klick")
+        check(f"b7f Strg+C kopiert den Namen und merkt die Klick-Werte "
+              f"({sorted(int(k['runs']) for k in _kl9)})",
+              "b7f KlickItem Blueprint" in QApplication.clipboard().text()
+              and sorted(int(k["runs"]) for k in _kl9) == [7, 10])
+    finally:
+        _st9.run_klicks_loeschen("b7f_klick")
+        win._bd_open_plan_id = _pid_alt9
+        _sched7f.takeTopLevelItem(_sched7f.indexOfTopLevelItem(_ti9))
 # DIE VERDRAHTUNG IM RUNPLANER SELBST - am Quelltext, weil der Baum ohne
 # getickte Bau-Charaktere leer bleibt und die Pruefung sonst blind waere.
 _src7f = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
@@ -9351,6 +9371,47 @@ try:
        (5900, {200: 275}))
     eq("b7u ... und total_cost ist um die Ersparnis gesunken",
        round(float(_plan7u["total_cost"]) - float(_plan_a["total_cost"])), 5900)
+    # REPROCESSING-STEUER (emm392, Nutzer 04.10.2026: "werden reprocessing
+    # kosten mit einkalkuliert?"): Feld in der Karte; Prozent vom Wert der
+    # Ausgaenge, mindert die Ersparnis; zu hoch -> kein Tausch mehr.
+    _tax7u = getattr(win, "_bd_reproc_tax", None)
+    check("b7u die Karte hat das Steuer-Feld (an, Suffix %)",
+          _tax7u is not None and _tax7u.isEnabled()
+          and _tax7u.suffix().strip() == "%")
+    _ausg7u = dict((_plan_a.get("reprocess", {}).get("schritte") or [{}])[0]
+                   .get("ausgang") or {})
+    _wert7u = sum(q * float((win._bd_pricemap or {}).get(int(m)) or 0.0)
+                  for m, q in _ausg7u.items())
+    if _tax7u is not None:
+        _tax7u.setValue(10.0)
+        _tax7u.editingFinished.emit(); _app.processEvents()
+        _plan_t = (getattr(win, "_bd_plan_cache", None) or (None, None))[1] or {}
+        _s_t = (_plan_t.get("reprocess", {}).get("schritte") or [{}])[0]
+        check(f"b7u 10 % Steuer: Ersparnis sinkt um den Steuerbetrag "
+              f"(5900 - {0.1 * _wert7u:.0f}), Schritt traegt steuer_kosten",
+              _wert7u > 0
+              and abs(float(_plan_t.get("reprocess", {}).get("ersparnis") or 0)
+                      - (5900.0 - 0.1 * _wert7u)) < 1.0
+              and abs(float(_s_t.get("steuer_kosten") or 0) - 0.1 * _wert7u) < 1.0
+              and float(win.settings.get("bau_reproc_steuer") or 0) == 10.0)
+        _lbst7u = (getattr(win, "_bd_detail_val_lbls", None) or {}).get(
+            "Reprocessing-Steuer")
+        from eve_trader.ui.mw_basis import isk as _iskst7u
+        check("b7u Details zeigen die Reprocessing-Steuer (Zeile sichtbar, Betrag)",
+              _lbst7u is not None and not _lbst7u.isHidden()
+              and _lbst7u.text() == _iskst7u(0.1 * _wert7u, suffix=False))
+        _tax7u.setValue(99.0)
+        _tax7u.editingFinished.emit(); _app.processEvents()
+        _plan_h = (getattr(win, "_bd_plan_cache", None) or (None, None))[1] or {}
+        check("b7u 99 % Steuer: der Tausch lohnt nicht mehr - wieder 60 Testmat gekauft",
+              dict(_plan_h.get("buy") or {}) == {200: 60}
+              and not (_plan_h.get("reprocess", {}).get("schritte") or []))
+        _tax7u.setValue(0.0)
+        _tax7u.editingFinished.emit(); _app.processEvents()
+        win.settings["bau_reproc_steuer"] = 0.0
+        _plan_z = (getattr(win, "_bd_plan_cache", None) or (None, None))[1] or {}
+        check("b7u Steuer wieder 0: Tausch und Ersparnis wie vorher",
+              round(float(_plan_z.get("reprocess", {}).get("ersparnis") or 0)) == 5900)
     check("b7u der Materialien-Tab zeigt das Erz",
           any("Compressed Testore" in z for z in _mat_zeilen7u()))
     # REZEPT-BAUM (Nutzer 18.09.2026: "im Rezeptbaum noch keine Beschreibung
@@ -10009,6 +10070,71 @@ try:
             check("b102 ... und eine wieder zugeklappte bleibt zu",
                   not any(str(_c.data(0, Qt.UserRole + 6)) == str(_k_o102)
                           and _c.isExpanded() for _c in _czeilen102()))
+            # emm400 (Nutzer: "Runplaner bei aufgeklappten Runs per
+            # character ist am meisten betroffen"): eine aufgeklappte
+            # RUN-ZEILE (Item unter dem Charakter) bleibt nach dem
+            # Neuaufbau offen - gemerkt war sie schon, wiederhergestellt nie.
+            _cz102 = next((_c for _c in _czeilen102()
+                           if str(_c.data(0, Qt.UserRole + 6)) == str(_k_o102)),
+                          None)
+            _iit102 = None
+            if _cz102 is not None:
+                _cz102.setExpanded(True)
+                _iit102 = next((_cz102.child(_j)
+                                for _j in range(_cz102.childCount())
+                                if _cz102.child(_j).childCount()
+                                and _cz102.child(_j).data(0, Qt.UserRole + 6)),
+                               None)
+            check("b102 es gibt eine Run-Zeile mit Unterzeilen",
+                  _iit102 is not None)
+            if _iit102 is not None:
+                _ik102 = str(_iit102.data(0, Qt.UserRole + 6))
+                _iit102.setExpanded(True)
+                win._bd_full_rebuild()
+                _app.processEvents()
+
+                def _runzeile102(_k):
+                    for _c in _czeilen102():
+                        for _j in range(_c.childCount()):
+                            if str(_c.child(_j).data(0, Qt.UserRole + 6)
+                                   or "") == _k:
+                                return _c.child(_j)
+                    return None
+                _iit2_102 = _runzeile102(_ik102)
+                check("b102 eine aufgeklappte Run-Zeile bleibt nach dem "
+                      "Neuaufbau offen",
+                      _iit2_102 is not None and _iit2_102.isExpanded())
+                (getattr(win, "_bd_sched_klapp", None) or {}).pop(_ik102, None)
+            # emm400 (Nutzer: der ESI-Autorefresh "schliesst leider auch
+            # alle aufgeklappten job runs wieder"): auch die STUFE selbst
+            # behaelt den Nutzer-Klapp ueber den Neuaufbau.
+            _tr_s = getattr(win, "_sched_tree_ref", None)
+            _st_s = next((_tr_s.topLevelItem(_i)
+                          for _i in range(_tr_s.topLevelItemCount())
+                          if str(_tr_s.topLevelItem(_i).data(0, Qt.UserRole + 6)
+                                 or "").startswith("stufe|")
+                          and _tr_s.topLevelItem(_i).isExpanded()
+                          and _tr_s.topLevelItem(_i).childCount()), None)
+            check("b102 es gibt eine offene Stufe mit Klapp-Schluessel",
+                  _st_s is not None)
+            if _st_s is not None:
+                _k_s = str(_st_s.data(0, Qt.UserRole + 6))
+                _st_s.setExpanded(False)
+                win._bd_full_rebuild()
+                _app.processEvents()
+                _tr_s2 = getattr(win, "_sched_tree_ref", None)
+                _alle_s = [_tr_s2.topLevelItem(_i)
+                           for _i in range(_tr_s2.topLevelItemCount())]
+                _st_s2 = next((_x for _x in _alle_s
+                               if str(_x.data(0, Qt.UserRole + 6) or "") == _k_s),
+                              None)
+                check("b102 eine zugeklappte Stufe bleibt nach dem Neuaufbau zu",
+                      _st_s2 is not None and not _st_s2.isExpanded())
+                check("b102 eine nie angefasste offene Stufe bleibt offen",
+                      any(str(_x.data(0, Qt.UserRole + 6) or "").startswith("stufe|")
+                          and str(_x.data(0, Qt.UserRole + 6) or "") != _k_s
+                          and _x.isExpanded() for _x in _alle_s))
+                (getattr(win, "_bd_sched_klapp", None) or {}).pop(_k_s, None)
         win.settings["bau_runplan_ziel"] = _alt102[0]
         win.settings["bau_runplan_ziel_std"] = _alt102[1]
         if _altfr102 is not None:
@@ -10379,6 +10505,15 @@ try:
     eq("b7v Gesamt-Baukosten ENTHALTEN die Fracht",
        _lb7v["= Baukosten gesamt"].text(),
        _isk7v(6000.0 + 267.0 + _jc7v + _sc7v + _iv7v, suffix=False))
+    # KEINE ZWEITE MARGE (emm393/394, Nutzer 04.10.2026: erst "wieso steht
+    # oben gross 2.3 % und unten klein 2.1 %?", nach der Vereinheitlichung
+    # dann "wenn es dieselbe Zahl ist ... nimm die kleine Marge unten
+    # raus"): die Details haben KEINE Marge-Zeile mehr - die Marge steht
+    # nur noch gross in der Kopfzeile.
+    _pfv7v = getattr(win, "_bd_profit_val_lbls", None) or {}
+    check("b7v die Details haben keine zweite Marge-Zeile mehr",
+          "Marge" not in _pfv7v
+          and getattr(win, "_bd_marge_stand", None) is not None)
     # JEDE ZEILE ERKLAERT SICH (Nutzer 25.09.2026: "auf allen Zeilen eine
     # Mouseover-Info fuer alle ISK-Eintraege"). Geprueft wird die WERT-Zelle
     # jeder Zeile der linken Spalte - ohne Ausnahme, sonst faellt beim
@@ -10389,7 +10524,7 @@ try:
           + (" - ohne: " + ", ".join(_ohne7v) if _ohne7v else ""),
           not _ohne7v)
     _tips7v = getattr(win, "_bd_detail_tips", None) or {}
-    check("b7v die Erklaerungen kommen aus EINER Stelle", len(_tips7v) >= 18)
+    check("b7v die Erklaerungen kommen aus EINER Stelle", len(_tips7v) >= 17)   # emm394: ohne Marge
     # GEGENPROBE: die Erklaerung steht auch an der BESCHRIFTUNG, nicht nur
     # an der Zahl - man zeigt beim Lesen auf das Wort, nicht auf den Betrag.
     # Die Tooltips werden fuers Anzeigen in ein <div> gewickelt (tooltips.py),
@@ -11072,34 +11207,24 @@ try:
               f"({_r_an158.get('total')}, {_r_an158.get('transport')})",
               abs(_r_an158.get("total", 0) - (_m158 * 110.0 + _job158)) < 1.0
               and abs(_r_an158.get("transport", 0) - 50000.0) < 0.01)
-        # MARKT-CHECK JE ENDE: A 40 Stueck bei 2/Tag = 20 Tage (langsam,
-        # amber), B 10 Stueck bei 7/30 je Tag = 43 Tage (duenn, rot + Warnung).
+        # emm391 (Nutzer 04.10.2026: "diese Spalten Sold/Day sollten nicht im
+        # Bauplan sein, nur im My-Blueprints-Tab"): die Endprodukte-Karte hat
+        # KEINE Sold/day-Spalte und KEINE Duennmarkt-Warnzeile mehr; das X
+        # sitzt wieder auf Spalte 11. My Blueprints behaelt seine Spalte (b44).
         _tb158 = getattr(win, "_bd_multi_tbl", None)
-        _kopf158 = _tb158.horizontalHeaderItem(11).text() if _tb158 is not None else ""
-        check(f"b158 Endprodukte-Karte hat die Spalte 'Sold/day' ({_kopf158!r})",
-              _tb158 is not None and _tb158.columnCount() == 13
-              and _kopf158.startswith(_t4("Sold/day")))
-        _zellen158 = {}
-        for _r158 in range(_tb158.rowCount() if _tb158 is not None else 0):
-            _zellen158[_tb158.item(_r158, 0).text()] = _tb158.item(_r158, 11)
-        import eve_trader.ui.theme as _th158
-        check(f"b158 A: '2.0 \u00b7 20' in Amber ({[(k, v.text()) for k, v in _zellen158.items()]})",
-              "A158" in _zellen158 and _zellen158["A158"].text() == "2.0 \u00b7 20"
-              and _zellen158["A158"].foreground().color().name().lower() == _th158.AMBER.lower())
-        check("b158 B: '0.2 \u00b7 43' in Rot",
-              "B158" in _zellen158 and _zellen158["B158"].text() == "0.2 \u00b7 43"
-              and _zellen158["B158"].foreground().color().name().lower() == _th158.RED.lower())
-        _ml158 = getattr(win, "_bd_multi_markt_lbl", None)
-        check("b158 Warnzeile 'duenner Markt' nennt nur B",
-              _ml158 is not None and not _ml158.isHidden()
-              and "B158" in _ml158.text() and "A158" not in _ml158.text())
-        _st158.get_histories = lambda ids, region=10000002: {int(x): [] for x in (ids or [])}
-        from PySide6.QtWidgets import QLabel as _QL158
-        _l158 = _QL158()
-        _nachl158.clear()
-        win._einzel_absatz_zeigen(_A83, _l158)
-        check(f"b158 Einzelplan ohne Historie: '?' und EIN Nachlade-Auftrag ({_nachl158})",
-              "?" in _l158.text() and _nachl158 == [[_A83]])
+        check(f"b158 Endprodukte-Karte OHNE Sold/day-Spalte (12 Spalten, "
+              f"{_tb158.columnCount() if _tb158 is not None else '?'})",
+              _tb158 is not None and _tb158.columnCount() == 12
+              and all((_tb158.horizontalHeaderItem(_c) is None
+                       or "Sold" not in _tb158.horizontalHeaderItem(_c).text())
+                      for _c in range(_tb158.columnCount())))
+        check("b158 X-Knopf sitzt auf Spalte 11 (je Zeile ein Zell-Widget)",
+              _tb158.rowCount() > 0
+              and all(_tb158.cellWidget(_r, 11) is not None
+                      for _r in range(_tb158.rowCount())))
+        check("b158 keine Duennmarkt-Warnzeile mehr am Fenster",
+              getattr(win, "_bd_multi_markt_lbl", None) is None
+              and getattr(win, "_bd_einzel_absatz_lbl", None) is None)
     finally:
         I.recipes_cached = _alt158["rc"]
         _st158.get_snapshot = _alt158["snap"]
@@ -12312,7 +12437,7 @@ try:
                   for _x90 in _kopf90))
     eq("b85 die Endprodukte-Karte hat Menge/ME/TE/Eigene BPC/Runs/Kopien/Herausnehmen je Zeile",
        (_tbl85.columnCount() if _tbl85 is not None else -1,
-        _tbl85.rowCount() if _tbl85 is not None else -1), (13, 2))
+        _tbl85.rowCount() if _tbl85 is not None else -1), (12, 2))   # emm391: ohne Sold/day
     _z85 = win._bd_multi_zeilen
     eq("b85 je Endprodukt eine Zeile mit eigenen Feldern",
        sorted(_z85.keys()), sorted([_A85, _B85]))
@@ -12759,6 +12884,18 @@ try:
           and not getattr(win, "_bd_buendel_enden", None))
     if _d120 is not None:
         _pruef120("Einzelplan", _d120)
+        # ME/TE-FELDER BEI INVENTION (Nutzer 04.10.2026, Screenshot: "da steht
+        # immer ME/TE 0/0, das sind doch nicht die Standardwerte ohne
+        # Decryptor"). Mit Invention zeigen sie die erfundene Kopie
+        # (2 % / 4 % ohne Decryptor) und sind gesperrt; 0/0 kam vom
+        # Invention-aus-Fehler (emm385).
+        from PySide6.QtWidgets import QSpinBox as _QSB120, QCheckBox as _QCB120
+        _ob120 = [c for c in _d120.findChildren(_QCB120) if "Own BPC" in c.text()
+                  or "Eigene BPC" in c.text()]
+        _sp120 = ([(sp.value(), sp.isEnabled()) for sp in
+                   _ob120[0].parentWidget().findChildren(_QSB120)][:2] if _ob120 else [])
+        check(f"b120 Einzelplan: ME/TE zeigen die Invention-Werte 2/4, gesperrt ({_sp120})",
+              _sp120 == [(2, False), (4, False)])
         _lbl120 = " ".join(_l.text() for _l in _d120.findChildren(QLabel))
         check("b120 Einzelplan: Invention-Karte mit Kopieranleitung, Regler, Decryptor-Warnung",
               "Copy your T1 original like this" in _lbl120
@@ -12931,7 +13068,7 @@ try:
     _tb87.setStyleSheet(_th7.QSS); _app.processEvents()
     _ganz87 = []
     for _r87 in range(_tb87.rowCount()):
-        _wr87 = _tb87.cellWidget(_r87, 12)
+        _wr87 = _tb87.cellWidget(_r87, 11)   # emm391: X auf Spalte 11
         _bx87 = _wr87.findChild(type(_x87[0])) if _wr87 is not None else None
         _ganz87.append(_bx87 is not None and _wr87.rect().contains(_bx87.geometry())
                        and _bx87.height() >= 14)
@@ -12958,7 +13095,7 @@ try:
           _d87c is not None
           and sorted((win._bd_multi_zeilen or {}).keys()) == sorted([_A87, _B87, _C87])
           and all("raus" in _z for _z in win._bd_multi_zeilen.values())
-          and win._bd_multi_tbl.columnCount() == 13)
+          and win._bd_multi_tbl.columnCount() == 12)   # emm391: ohne Sold/day
     import eve_trader.ui.mw_multi_bauplan as _mmb87
     _q_alt87 = _mmb87.QMessageBox.question
     _fragen87 = []
@@ -13039,7 +13176,47 @@ try:
                   and getattr(win, "_bd_dialog", None) is _d87d)
             _warn87.clear()
             _antw87[0] = _mmb87.QMessageBox.Yes
-            _x87.click(); _app.processEvents()
+            # emm391 (Nutzer 04.10.2026: "man kann bei gespeicherten,
+            # reservierten und eingefrorenen Plaenen immer noch nicht einen
+            # Bauplan per rotes X herausloesen - nach dem Wiederoeffnen sind
+            # die Endprodukte wieder da"): das Entfernen schreibt SOFORT in
+            # den gespeicherten Eintrag (Enden + eingefrorener Schnappschuss);
+            # reserve/reserve_map bleiben unangetastet (Regel 3).
+            from eve_trader import config as _cfgP87
+            _ssa_alt87 = _cfgP87.save_settings_async
+            _cfgP87.save_settings_async = lambda *a, **k: None
+            _pid_vor87 = getattr(win, "_bd_open_plan_id", None)
+            win.settings["bau_saved_plans"].append(
+                {"id": 8796, "label": "b87 GespFrost", "type_id": I.BUENDEL_ID,
+                 "multi": True, "qty": 1,
+                 "enden": [[_A87, 20], [_B87, 10], [_C87, 5]],
+                 "quellen": [], "quellen_stand": {},
+                 "frozen": dict(win._bd_frozen or {}),
+                 "reserve": True, "reserve_map": {"34": 5}})
+            win._bd_open_plan_id = 8796
+            try:
+                _x87.click(); _app.processEvents()
+                _g96 = next(_p for _p in win.settings["bau_saved_plans"]
+                            if _p.get("id") == 8796)
+                _g96_snap = win._plan_snapshot_unpack((_g96.get("frozen") or {})
+                                                      .get("plan_snapshot")) or {}
+                check(f"b87 Entfernen schreibt sofort in den gespeicherten Plan "
+                      f"({_g96.get('enden')})",
+                      [list(_e) for _e in (_g96.get("enden") or [])]
+                      == [[_A87, 20], [_B87, 10]]
+                      and any("saved" in _t or "gespeichert" in _t for _t in _tips87))
+                check("b87 Entfernen am eingefrorenen Plan schreibt den Schnappschuss "
+                      "(C raus), Schloss und reserve_map bleiben",
+                      _C87 not in (_g96_snap.get("buendel_enden") or {})
+                      and _A87 in (_g96_snap.get("build_runs") or {})
+                      and _g96.get("reserve") is True
+                      and _g96.get("reserve_map") == {"34": 5})
+            finally:
+                _cfgP87.save_settings_async = _ssa_alt87
+                win._bd_open_plan_id = _pid_vor87
+                win.settings["bau_saved_plans"] = [
+                    _p for _p in win.settings["bau_saved_plans"]
+                    if _p.get("id") != 8796]
             _fp87 = win._frozen_snapshot_plan() or {}
             _soll87 = {k: v for k, v in _runs87.items() if k != _C87}
             check("b87 eingefroren + Ja: bleibt eingefroren, keine Auftau-Frage, Ende raus",
@@ -14270,8 +14447,10 @@ try:
         check(f"b129 My Blueprints: Blaupause im Corp-Job steht als 'in job' "
               f"({_zeilen129.get(998)})",
               "job" in (_zeilen129.get(998) or ("",) * 5)[4].lower())
-        check(f"b129 Statuszeile nennt die Corp ({win.bp_status.text()!r})",
-              "Test Corp" in win.bp_status.text())
+        # emm404: Einzelheiten stehen im TOOLTIP der Statuszeile, der
+        # sichtbare Text bleibt kurz ("die Texte entfernen, nervt nur").
+        check(f"b129 Status-Tooltip nennt die Corp ({win.bp_status.toolTip()!r})",
+              "Test Corp" in win.bp_status.toolTip())
         # 4. DROPDOWN (emm301, Nutzer 30.09.2026): KEINE Corp mehr im
         # Dropdown; die Corp-Zeilen stehen unter All und beim Director, ueber
         # den sie geladen wurden (Alpha, erster Charakter mit Rolle).
@@ -14352,9 +14531,10 @@ try:
         # 5. OHNE CORP-SCOPE: Statuszeile nennt, wer neu verlinken muss.
         _esi129.granted_scopes = lambda client_id, cid: set()
         win._reload_my_blueprints()
-        check(f"b129 ohne Corp-Scope: Statuszeile nennt die Charaktere "
-              f"({win.bp_status.text()!r})",
-              "Alpha" in win.bp_status.text() and "Beta" in win.bp_status.text())
+        check(f"b129 ohne Corp-Scope: Status-Tooltip nennt die Charaktere "
+              f"({win.bp_status.toolTip()!r})",
+              "Alpha" in win.bp_status.toolTip()
+              and "Beta" in win.bp_status.toolTip())
     finally:
         for k, v in _alt129.items():
             setattr(_esi129, k, v)
@@ -17207,6 +17387,9 @@ try:
               _k153 is not None and _k153._jobs_body is not None
               and not _k153._jobs_body.isHidden()
               and getattr(win._jobs_karten.get(915302), "_jobs_body", None) is None)
+        # emm398: ohne Corp-Jobs KEIN Corp-Abzeichen im Kopf.
+        check("b153 Karte ohne Corp-Jobs traegt kein Corp-Abzeichen",
+              getattr(_k153, "_corp_badge", "fehlt") is None)
         _uhr153 = {}
         for g, lb, bar in sorted(win._jobs_uhr_teile, key=lambda x: -(x[0]["ende"] or 0)):
             _uhr153[g["tid"]] = (lb, bar)    # je tid die Zeile mit dem FRUEHESTEN Ende
@@ -17687,6 +17870,258 @@ try:
             setattr(win, _k, _v)
 except Exception as _e166:                               # pragma: no cover
     _fail.append(f"b166 Vorschlag laedt Blueprints: {type(_e166).__name__}: {_e166}")
+
+# ---------------------------------------------------------------- (b167)
+# RECHENWEG MIT VERSTECKTER EINSTELLUNG (emm385, Nutzer: "so etwas muss in
+# all unseren Tests gefunden werden ... ein Rechenfehler ist das Schlimmste").
+# Die bisherigen Pruefungen bauten ihre opts SELBST und gingen an
+# open_build_detail vorbei - genau dort las der Einzelplan die unsichtbare
+# Einstellung "bau_invention" (beim Nutzer False). Hier der ECHTE Weg mit der
+# schlechtesten Einstellung: was production_plan bekommt, wird mitgeschnitten.
+try:
+    import eve_trader.ui.main_window as _mwm167
+    from eve_trader import store as _st167, industry as _I167
+    _alt167 = {"snap": _st167.get_snapshot, "pp": _I167.production_plan,
+               "sde": _I167.sde_ready, "run": win._run,
+               "inv": win.settings.get("bau_invention")}
+    _opts167, _jobs167 = [], []
+
+    def _pp167(tid, qty, pfn, rec, opts, *a, **k):
+        _opts167.append(dict(opts))
+        raise RuntimeError("b167 Mitschnitt")
+    try:
+        win.settings["bau_invention"] = False      # die alte, unsichtbare Falle
+        _st167.get_snapshot = lambda *a, **k: [
+            {"type_id": 100, "sell_min": 1000.0, "buy_max": 900.0}]
+        _I167.sde_ready = lambda: True
+        _I167.production_plan = _pp167
+        win._run = lambda w, done, fail_cb=None, **k: _jobs167.append(w)
+        win.open_build_detail(100, "b167 Einzelplan", fresh=True)
+        for _w167 in _jobs167[:1]:
+            try:
+                _w167._fn()
+            except Exception:
+                pass
+        check(f"b167 echter Oeffnen-Weg: Einzelplan rechnet MIT Invention, auch wenn "
+              f"die versteckte Einstellung aus ist ({[o.get('invention') for o in _opts167]})",
+              bool(_opts167) and all(o.get("invention") is True for o in _opts167))
+        # Wiederoeffnen eines alten Plans mit invention=False vererbt nichts.
+        win._open_saved_plan_zustand({"id": 1670, "type_id": 100, "qty": 1, "me": 10, "te": 20,
+                                      "invention": False}, 1670)
+        check("b167 alter Plan ohne Invention setzt die Einstellung nicht wieder auf aus",
+              win.settings.get("bau_invention") is True)
+    finally:
+        _st167.get_snapshot = _alt167["snap"]; _I167.production_plan = _alt167["pp"]
+        _I167.sde_ready = _alt167["sde"]; win._run = _alt167["run"]
+        win.settings["bau_invention"] = True
+except Exception as _e167:                               # pragma: no cover
+    import traceback as _tb167
+    _fail.append(f"b167 Invention im echten Oeffnen-Weg: {type(_e167).__name__}: {_e167} | "
+                 + _tb167.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b168)
+# CORP-JOBS AUF DER INDUSTRY-JOBS-SEITE (emm389, Discord HerrLades). Echter
+# Lade-Weg (_jobs_laden), ESI + Rollen gestubbt: Corp-Karte je Corp (ohne
+# Slot-Zeile), Corp-Jobs zaehlen in die Slots des INSTALLERS, die Kacheln
+# zaehlen nichts doppelt, fremde Installer stehen nur auf der Corp-Karte.
+try:
+    import time as _ti168
+    from datetime import datetime as _dt168, timezone as _tz168
+    _alt168 = {"lc": store.list_characters, "sk": esi.fetch_skills,
+               "aj": esi.fetch_active_jobs, "rn": esi.resolve_names,
+               "cj": esi.fetch_corporation_jobs, "cn": esi.fetch_corporation_name,
+               "uc": win.settings.get("use_corp"),
+               "cid": win.settings.get("client_id"),
+               "cr": getattr(type(win), "_corp_rollen", None)}
+    _jetzt168 = _ti168.time()
+
+    def _iso168(off):
+        return _dt168.fromtimestamp(_jetzt168 + off, _tz168.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+    try:
+        store.list_characters = lambda: [{"character_id": 916801,
+                                          "character_name": "b168 Pilot"}]
+        esi.fetch_skills = lambda cid, ch: {3387: 4}        # 5 Fertigungs-Slots
+        esi.fetch_active_jobs = lambda cid, ch, **kw: [
+            {"job_id": 51, "activity_id": 1, "product_type_id": 916811, "runs": 2,
+             "status": "active", "end_date": _iso168(7200),
+             "start_date": _iso168(-3600)}]
+        esi.fetch_corporation_jobs = lambda cid, ch, corp, **kw: [
+            {"job_id": 52, "activity_id": 1, "product_type_id": 916812, "runs": 4,
+             "status": "active", "end_date": _iso168(3600),
+             "start_date": _iso168(-3600), "corporation_id": corp,
+             "installer_id": 916801},
+            {"job_id": 53, "activity_id": 5, "product_type_id": 916813, "runs": 1,
+             "status": "active", "end_date": _iso168(600),
+             "corporation_id": corp, "installer_id": 999999}]
+        esi.fetch_corporation_name = lambda corp: "b168 Corp"
+        esi.resolve_names = lambda ids: {916811: "b168 Eigen", 916812: "b168 CorpBau",
+                                         916813: "b168 CorpKopie Blueprint"}
+        win.settings["client_id"] = "b168"
+        win.settings["use_corp"] = True
+        win._corp_rollen = lambda client_id, chars, out: (
+            {916801: "b168 Pilot"}, {77168: 916801}, {77168: 916801})
+        win._jobs_daten = None
+        win._jobs_laeuft = False
+        win._jobs_laden()
+        for _ in range(250):
+            _app.processEvents()
+            if win._jobs_daten is not None and not win._jobs_laeuft:
+                break
+            _ti168.sleep(0.02)
+        _ch168 = (win._jobs_daten or {}).get("chars") or {}
+        _p168 = _ch168.get(916801)
+        _c168 = _ch168.get(-77168)
+        check(f"b168 je Corp eine eigene Karte (Name, ist_corp) ({sorted(map(str, _ch168))})",
+              _p168 is not None and _c168 is not None and _c168.get("ist_corp")
+              and _c168["name"].endswith("b168 Corp"))
+        check("b168 Corp-Job zaehlt in die Slots des Installers (2 von 5 Fertigung belegt)",
+              _p168["ueb"]["belegt"]["mfg"] == 2
+              and _p168["ueb"]["frei"]["mfg"] == 3)
+        # emm396 (Nutzer: "es sind die selben Jobs Lezaar und corp"): die
+        # Corp-Karte zeigt NUR die uebrigen Jobs (fremde Installer) - der
+        # Job des verknuepften Installers steht allein auf dessen Karte.
+        check("b168 Corp-Karte zeigt nur fremde Installer (kein Job doppelt)",
+              _c168["ueb"]["belegt"] == {"mfg": 0, "react": 0, "sci": 1}
+              and _c168["ueb"]["max"] is None
+              and all(z["tid"] != 916812 for z in _c168["ueb"]["zeilen"]))
+        _karte168 = (getattr(win, "_jobs_karten", None) or {}).get(-77168)
+        _slots168 = getattr(_karte168, "_slots", None) if _karte168 is not None else None
+        check("b168 Corp-Karte hat KEINE Slot-Kaestchen (Jobs laufen auf fremden Slots)",
+              _karte168 is not None and not _slots168)
+        # Kacheln zaehlen die Corp-Karte nicht mit (sonst doppelt).
+        _ka168 = getattr(win, "_jobs_kapazitaet", None) or {}
+        check(f"b168 Kacheln ohne Doppelzaehlung: Fertigung 2 belegt / 5 Slots "
+              f"({_ka168.get('mfg')})",
+              (_ka168.get("mfg") or {}).get("running") == 2
+              and (_ka168.get("mfg") or {}).get("max") == 5
+              and (getattr(win, "_jobs_summe", None) or {}).get("no_max") == 0)
+        # Der Corp-Job auf der Charakter-Karte sagt es dazu (emm396: amber
+        # Corp-ABZEICHEN statt " \u00b7 Corp"-Textanhang). NICHT am Item-
+        # Namen festmachen (der heisst selbst "CorpBau" - "Corp" in _x
+        # waere damit IMMER wahr, die Mutation blieb BLIND): das Abzeichen
+        # ist das Widget corp_tag, und der EIGENE Job traegt keines.
+        from eve_trader.ui.mw_bauplan_tabs import JobZeile as _JZ168
+        _kp168 = (getattr(win, "_jobs_karten", None) or {}).get(916801)
+        _zl168 = ([(z.name.voller_text(), z.corp_tag is not None)
+                   for z in _kp168.findChildren(_JZ168)]
+                  if _kp168 is not None else [])
+        check(f"b168 Corp-Job traegt das Corp-Abzeichen, der eigene nicht ({_zl168})",
+              any("CorpBau" in _x and _c for _x, _c in _zl168)
+              and any("Eigen" in _x and not _c for _x, _c in _zl168))
+        # emm398 (Nutzer: "wenn zugeklappt sieht man nicht dass ein Corpjob
+        # laeuft"): Corp-Abzeichen im KARTENKOPF, sichtbar ohne Aufklappen.
+        _cbk168 = getattr(_kp168, "_corp_badge", None) if _kp168 is not None else None
+        check("b168 Kartenkopf traegt das Corp-Abzeichen (auch zugeklappt sichtbar)",
+              _cbk168 is not None and _cbk168.text().startswith("Corp"))
+        # ZWEITER LAUF (emm396): sind ALLE Corp-Jobs von verknuepften
+        # Installern, gibt es KEINE Corp-Karte (eine leere wuerde "no
+        # running jobs" behaupten, waehrend die Jobs auf den Charakter-
+        # Karten laufen).
+        # Job 54 ist FERTIG (Ende in der Vergangenheit) - prueft zugleich
+        # die Corp-Marke in der Fertig-Zeile (emm397).
+        esi.fetch_corporation_jobs = lambda cid, ch, corp, **kw: [
+            {"job_id": 54, "activity_id": 1, "product_type_id": 916812, "runs": 4,
+             "status": "active", "end_date": _iso168(-60),
+             "start_date": _iso168(-3600), "corporation_id": corp,
+             "installer_id": 916801}]
+        win._jobs_daten = None
+        win._jobs_laeuft = False
+        win._jobs_laden()
+        for _ in range(250):
+            _app.processEvents()
+            if win._jobs_daten is not None and not win._jobs_laeuft:
+                break
+            _ti168.sleep(0.02)
+        _ch168b = (win._jobs_daten or {}).get("chars") or {}
+        check("b168 ohne fremde Installer keine Corp-Karte, Job zaehlt beim Installer",
+              _ch168b.get(-77168) is None
+              and (_ch168b.get(916801) or {}).get("ueb", {}).get("belegt", {}).get("mfg") == 2)
+        # emm397 (Nutzer "ja"): der fertige Corp-Job traegt die amber
+        # Corp-Marke auch in der Fertig-Zeile; der Name selbst heisst
+        # "CorpBau", deshalb die Marke am Span-Stil festmachen.
+        from eve_trader.ui import theme as _th168
+        _kpb168 = (getattr(win, "_jobs_karten", None) or {}).get(916801)
+        _rlb168 = getattr(_kpb168, "_ready_lbl", None) if _kpb168 is not None else None
+        _rtx168 = _rlb168.text() if _rlb168 is not None else ""
+        check(f"b168 Fertig-Zeile: Corp-Job traegt die amber Corp-Marke ({_rtx168[:120]})",
+              "CorpBau" in _rtx168 and f"color:{_th168.AMBER}" in _rtx168)
+    finally:
+        store.list_characters = _alt168["lc"]; esi.fetch_skills = _alt168["sk"]
+        esi.fetch_active_jobs = _alt168["aj"]; esi.resolve_names = _alt168["rn"]
+        esi.fetch_corporation_jobs = _alt168["cj"]
+        esi.fetch_corporation_name = _alt168["cn"]
+        win.__dict__.pop("_corp_rollen", None)
+        if _alt168["uc"] is None:
+            win.settings.pop("use_corp", None)
+        else:
+            win.settings["use_corp"] = _alt168["uc"]
+        if _alt168["cid"] is None:
+            win.settings.pop("client_id", None)
+        else:
+            win.settings["client_id"] = _alt168["cid"]
+        win._jobs_daten = None
+except Exception as _e168:                               # pragma: no cover
+    import traceback as _tb168
+    _fail.append(f"b168 Corp-Jobs: {type(_e168).__name__}: {_e168} | "
+                 + _tb168.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b170)
+# TYPE-FILTER GEGEN INVENTABLE-ZEILEN (emm403, Nutzer: "blueprint copys
+# und originale ... lassen sich nicht richtig filtern" - die 🧪-Zeilen
+# liefen am BPO/BPC-Filter vorbei und sahen aus wie Besitz). Wer BPO oder
+# BPC abwaehlt, filtert nach BESITZ: Inventable-Zeilen verschwinden,
+# eigene Zeilen folgen weiter dem Type-Haken.
+try:
+    from PySide6.QtWidgets import QTableWidgetItem as _TWI170
+    _t170 = win.bp_table
+    _cbs170 = [win.bp_cb_end, win.bp_cb_bpo, win.bp_cb_bpc, win.bp_cb_invent,
+               win.bp_cb_profit]
+    _combos170 = [getattr(win, _n) for _n in ("bp_myb_cat", "bp_myb_group",
+                                              "bp_myb_tech") if hasattr(win, _n)]
+    _alt170 = {"rows": _t170.rowCount(),
+               "cbs": [w.isChecked() for w in _cbs170],
+               "combos": [w.currentIndex() for w in _combos170],
+               "such": win.bp_search.currentText()}
+    try:
+        _r170 = _t170.rowCount()
+        _t170.setRowCount(_r170 + 2)
+        _iti = _TWI170("b170 Inventable")
+        _iti.setData(Qt.UserRole + 12, True)
+        _t170.setItem(_r170, 0, _iti)
+        _itb = _TWI170("b170 EigeneKopie")
+        _itb.setData(Qt.UserRole + 9, False)
+        _t170.setItem(_r170 + 1, 0, _itb)
+        for _w in (win.bp_cb_end, win.bp_cb_bpo, win.bp_cb_bpc, win.bp_cb_invent):
+            _w.blockSignals(True); _w.setChecked(True); _w.blockSignals(False)
+        win.bp_cb_profit.blockSignals(True); win.bp_cb_profit.setChecked(False)
+        win.bp_cb_profit.blockSignals(False)
+        for _w in _combos170:
+            _w.blockSignals(True); _w.setCurrentIndex(0); _w.blockSignals(False)
+        win.bp_search.blockSignals(True); win.bp_search.setCurrentText("")
+        win.bp_search.blockSignals(False)
+        win._apply_bp_filter()
+        check("b170 beide Type-Haken an: Inventable-Zeile sichtbar",
+              not _t170.isRowHidden(_r170))
+        win.bp_cb_bpo.blockSignals(True); win.bp_cb_bpo.setChecked(False)
+        win.bp_cb_bpo.blockSignals(False)
+        win._apply_bp_filter()
+        check("b170 BPO abgewaehlt: Inventable-Zeile weg, eigene Kopie bleibt",
+              _t170.isRowHidden(_r170) and not _t170.isRowHidden(_r170 + 1))
+    finally:
+        _t170.setRowCount(_alt170["rows"])
+        for _w, _v in zip(_cbs170, _alt170["cbs"]):
+            _w.blockSignals(True); _w.setChecked(_v); _w.blockSignals(False)
+        for _w, _v in zip(_combos170, _alt170["combos"]):
+            _w.blockSignals(True); _w.setCurrentIndex(_v); _w.blockSignals(False)
+        win.bp_search.blockSignals(True)
+        win.bp_search.setCurrentText(_alt170["such"])
+        win.bp_search.blockSignals(False)
+        win._apply_bp_filter()
+except Exception as _e170:                               # pragma: no cover
+    import traceback as _tb170
+    _fail.append(f"b170 Type-Filter Inventable: {type(_e170).__name__}: {_e170} | "
+                 + _tb170.format_exc().splitlines()[-3].strip())
 
 # ---------------------------------------------------------------- (b162)
 _app.processEvents()

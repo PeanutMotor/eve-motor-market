@@ -285,6 +285,9 @@ DEFAULT_SETTINGS = {
     # 19.09.2026), ein gespeicherter Plan bringt seinen Stand mit.
     "bau_reprocess_on": False,   # Weg B: Compressed Ore statt Minerale
     "bau_unrefined_on": False,   # Weg A: Unrefined-Reaktionen
+    # Reprocessing-Steuer der Struktur in Prozent (emm392, Nutzer
+    # 04.10.2026) - Prozent vom Wert der Ausgaenge, 0 = keine.
+    "bau_reproc_steuer": 0.0,
     # Preisverlauf: zuletzt angesehenes Item [type_id, Name] - beim Oeffnen
     # des Tabs steht sofort ein Graph (18.09.2026).
     "mk_last_item": None,
@@ -597,6 +600,101 @@ def bau_profil_bereinigen(snap) -> dict:
     return {k: v for k, v in (snap or {}).items() if bau_profil_schluessel(k)}
 
 
+ARCHIV_FRIST_SEK = 30 * 86400     # erledigte Plaene aelter als 30 Tage
+
+
+def bauplan_archiv_path() -> str:
+    return os.path.join(app_data_dir(), "bauplan_archiv.json")
+
+
+def bauplan_archiv_anzahl() -> int:
+    """Wie viele Plaene liegen im Archiv? 0 bei fehlender/unlesbarer Datei."""
+    try:
+        with open(bauplan_archiv_path(), encoding="utf-8") as f:
+            return len(json.load(f) or [])
+    except Exception:
+        return 0
+
+
+def archiv_faellig(plans, jetzt):
+    """Welche Plaene duerfen ins Archiv? Rein (emm388, 04.10.2026, Nutzer:
+    "solange du Bauplaene nicht einfach loeschst, ist es okay").
+
+    Faellig: von Hand abgeschlossen (`done_manual`) und seit mehr als 30
+    Tagen (`done_ts`). NIE faellig: ein Plan, den ein VERBLEIBENDER Plan als
+    Quelle (`quellen`) nennt - sonst verloere ein offenes Buendel sein
+    Mitglied (bzw. "Reopen" sein Ziel). Die Pruefung laeuft, bis sich nichts
+    mehr aendert: faellt ein Buendel heraus, bleiben auch seine Mitglieder."""
+    plans = list(plans or [])
+    s = set()
+    for p in plans:
+        try:
+            ts = float(p.get("done_ts") or 0)
+        except (TypeError, ValueError):
+            ts = 0.0
+        if p.get("done_manual") and ts and (jetzt - ts) >= ARCHIV_FRIST_SEK:
+            s.add(str(p.get("id")))
+    while True:
+        halter = set()
+        for p in plans:
+            if str(p.get("id")) in s:
+                continue
+            for q in (p.get("quellen") or []):
+                halter.add(str(q))
+        neu = s - halter
+        if neu == s:
+            return [p for p in plans if str(p.get("id")) in s]
+        s = neu
+
+
+def plaene_archivieren(data, jetzt=None) -> int:
+    """Faellige erledigte Plaene aus den Settings in bauplan_archiv.json
+    VERSCHIEBEN (nie loeschen). Erst wenn die Archivdatei sicher geschrieben
+    ist, verlassen die Plaene die Settings; ist die vorhandene Archivdatei
+    unlesbar, passiert NICHTS (lieber eine grosse settings.json als ein
+    verlorener Plan). Gibt die Zahl der verschobenen Plaene zurueck."""
+    import time as _t
+    jetzt = jetzt if jetzt is not None else _t.time()
+    plans = data.get("bau_saved_plans") or []
+    weg = archiv_faellig(plans, jetzt)
+    if not weg:
+        return 0
+    pfad = bauplan_archiv_path()
+    alt = []
+    if os.path.exists(pfad):
+        try:
+            with open(pfad, encoding="utf-8") as f:
+                alt = json.load(f) or []
+            if not isinstance(alt, list):
+                return 0
+        except Exception:
+            return 0
+    for p in weg:
+        q = dict(p)
+        q["archiviert_ts"] = jetzt
+        alt.append(q)
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix="archiv-", suffix=".tmp", dir=app_data_dir())
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(alt, f, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, pfad)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return 0
+    ids = {str(p.get("id")) for p in weg}
+    data["bau_saved_plans"] = [p for p in plans if str(p.get("id")) not in ids]
+    for k in ("bau_plan_reihenfolge", "bau_plan_eigene_folge", "bau_plan_sortierung"):
+        if isinstance(data.get(k), list):
+            data[k] = [x for x in data[k] if str(x) not in ids]
+    return len(weg)
+
+
 def _nach_migrationen(data: dict) -> dict:
     # Migration: tx_cache_minutes war nie über die UI einstellbar - jeder
     # gespeicherte Wert von genau 30 ist also der alte hartkodierte Default,
@@ -704,6 +802,14 @@ def _nach_migrationen(data: dict) -> dict:
                     _q["done_durch_buendel"] = _b.get("id")
         data["buendel_done_nachgezogen"] = True
         _migrated = True
+    # INVENTION WIEDER AN (emm385, 03.10.2026): die Einstellung ist seit
+    # langem unsichtbar, stand bei manchen Nutzern aber noch auf "aus"
+    # (geerbt von einem alten gespeicherten Plan) - Decryptoren wirkten dann
+    # nicht. EINMAL zuruecksetzen; der Code rechnet ohnehin immer mit Invention.
+    if not data.get("bau_invention_an_applied"):
+        data["bau_invention"] = True
+        data["bau_invention_an_applied"] = True
+        _migrated = True
     # ALTE BAU-PROFILE ENTSCHLACKEN (03.10.2026): Plaene, Jobs, Skills raus
     # (siehe BAU_PROFIL_OHNE). EINMAL per Marker.
     if not data.get("bau_profile_bereinigt"):
@@ -713,6 +819,19 @@ def _nach_migrationen(data: dict) -> dict:
                                     for _n, _v in _pr.items() if isinstance(_v, dict)}
         data["bau_profile_bereinigt"] = True
         _migrated = True
+    # ERLEDIGTE PLAENE ARCHIVIEREN (emm388, laeuft bei jedem Laden):
+    # done_manual ohne Zeitstempel bekommt ihn JETZT (die 30 Tage zaehlen ab
+    # heute - nie rueckwirkend raten), danach wandern faellige ins Archiv.
+    try:
+        import time as _t_arch
+        for _p in (data.get("bau_saved_plans") or []):
+            if _p.get("done_manual") and not _p.get("done_ts"):
+                _p["done_ts"] = _t_arch.time()
+                _migrated = True
+        if plaene_archivieren(data):
+            _migrated = True
+    except Exception:
+        pass
     if _migrated:
         try:
             save_settings(data)   # Marker muss ueberleben, sonst Endlos-Lauf
@@ -731,7 +850,16 @@ def save_settings(settings: dict) -> None:
     # Ein noch laufendes Hintergrund-Schreiben ZUERST abwarten, sonst koennte
     # es hinterher den aelteren Stand ueber den neueren schieben.
     flush_settings()
-    _schreibe_settings(json.dumps(settings, indent=2))
+    _schreibe_settings(_settings_text(settings))
+
+
+def _settings_text(settings: dict) -> str:
+    """EINE Stelle fuer den JSON-Text (emm388, 04.10.2026, Nutzer: "machen").
+    OHNE Einrueckung: an seiner echten settings.json (39 MB) gemessen dauerte
+    `json.dumps(indent=2)` 1,7 s je Speichern, kompakt 0,34 s - und die Datei
+    wird nebenbei kleiner. Lesbarkeit braucht die Datei nicht, sie wird nur
+    von Programmen gelesen."""
+    return json.dumps(settings, separators=(",", ":"))
 
 
 def _schreibe_settings(text: str) -> None:
@@ -795,7 +923,7 @@ def save_settings_async(settings: dict) -> None:
     """
     import threading
     global _schreib_faden
-    text = json.dumps(settings, indent=2)
+    text = _settings_text(settings)
     with _schreib_sperre_holen():
         _schreib_offen["text"] = text
         if _schreib_faden is not None and _schreib_faden.is_alive():

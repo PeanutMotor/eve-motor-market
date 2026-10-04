@@ -148,13 +148,21 @@ def kandidaten(karte: dict, names: dict, cats: dict, price_fn, gratis=()) -> dic
     return out
 
 
-def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=()) -> dict:
+def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
+                      steuer=0.0) -> dict:
     """Ersetzt Mineral-Kaeufe durch Erz-Kaeufe, wo es guenstiger ist.
 
     buy:          {type_id: Menge} aus production_plan()["buy"]
     price_fn:     type_id -> Preis je Stueck (0/None = unbekannt)
     kand:         Ergebnis von kandidaten()
     ausbeute_von: erz_id -> (ausbeute 0..1 | None, char_id | None)
+    steuer:       Reprocessing-Steuer der Struktur 0..1 (emm392, Nutzer
+                  04.10.2026: "werden reprocessing kosten mit einkalkuliert?"
+                  -> "ja"). Das Spiel nimmt sie als Prozent vom WERT der
+                  AUSGAENGE; hier mit den Plan-Preisen bewertet (price_fn -
+                  CCPs Schaetzpreise liegen nicht vor). Sie verteuert jeden
+                  Tauschschritt und schrumpft die Ersparnis; auch Gratis-Erz
+                  (Blacklist) zahlt sie - reprocesst wird trotzdem.
 
     Gierig, deterministisch: in jeder Runde das (Erz, Ziel-Material)-Paar mit
     der groessten Ersparnis; Nebenprodukte werden dem Plan gutgeschrieben,
@@ -189,12 +197,14 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=()) 
             continue
         je_portion = industry.reprocess_ergebnis(e["out"], e["portion"], e["portion"], a)
         if je_portion:
-            ausg[erz] = (a, cid, je_portion)
+            # Wert ALLER Ausgaenge je Portion - darauf liegt die Steuer.
+            ausg[erz] = (a, cid, je_portion,
+                         sum(q * _preis(m) for m, q in je_portion.items()))
 
     while True:
         best = None
         for erz in sorted(ausg):
-            a, cid, je_portion = ausg[erz]
+            a, cid, je_portion, wert_portion = ausg[erz]
             portion = kand[erz]["portion"]
             p_erz = _preis_erz(erz)
             if p_erz <= 0.0 and erz not in gratis:
@@ -207,7 +217,8 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=()) 
                 if p_ziel <= 0.0:
                     continue
                 portionen = int(math.ceil(need[ziel] / float(q_ziel)))
-                kosten = portionen * portion * p_erz
+                kosten = (portionen * portion * p_erz
+                          + steuer * wert_portion * portionen)
                 ersetzt = need[ziel] * p_ziel
                 for mat, q in je_portion.items():
                     if mat == ziel:
@@ -224,7 +235,7 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=()) 
         if best is None:
             break
         _k, erz, ziel, portionen, kosten, ersetzt = best
-        a, cid, je_portion = ausg[erz]
+        a, cid, je_portion, wert_portion = ausg[erz]
         portion = kand[erz]["portion"]
         deckt = {}
         ueb = {}
@@ -248,6 +259,7 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=()) 
                          "ausgang": {m: q * portionen for m, q in je_portion.items()},
                          "deckt": deckt, "ueberschuss": ueb,
                          "kosten": kosten, "ersetzt": ersetzt,
+                         "steuer_kosten": steuer * wert_portion * portionen,
                          "gratis": erz in gratis})
     # WARUM NICHT? (Nutzer 18.09.2026: "ist es richtig, dass Mexallon und
     # Isogen trotzdem gekauft werden?") Je Material, das gekauft bleibt und
@@ -261,13 +273,14 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=()) 
         p_ziel = _preis(ziel)
         best_erz, best_pct = None, None
         for erz in sorted(ausg):
-            a, cid, je_portion = ausg[erz]
+            a, cid, je_portion, wert_portion = ausg[erz]
             q_ziel = je_portion.get(ziel, 0)
             p_erz = _preis(erz)
             if q_ziel <= 0 or p_erz <= 0.0 or p_ziel <= 0.0:
                 continue
             portionen = int(math.ceil(need[ziel] / float(q_ziel)))
-            kosten = portionen * kand[erz]["portion"] * _preis_erz(erz)
+            kosten = (portionen * kand[erz]["portion"] * _preis_erz(erz)
+                      + steuer * wert_portion * portionen)
             ersetzt = need[ziel] * p_ziel
             for mat, q in je_portion.items():
                 if mat != ziel:

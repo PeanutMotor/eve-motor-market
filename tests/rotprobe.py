@@ -1839,7 +1839,7 @@ MUTATIONEN = [
 
     ('Settings-Text erst im Hintergrund gebaut (Stand kann kippen)',
      'eve_trader/config.py',
-     '''    text = json.dumps(settings, indent=2)
+     '''    text = _settings_text(settings)
     with _schreib_sperre_holen():
         _schreib_offen["text"] = text''',
      '''    with _schreib_sperre_holen():
@@ -1848,8 +1848,8 @@ MUTATIONEN = [
 
     ('synchrones Speichern wartet den Hintergrund nicht mehr ab',
      'eve_trader/config.py',
-     '    flush_settings()\n    _schreibe_settings(json.dumps(settings, indent=2))',
-     '    _schreibe_settings(json.dumps(settings, indent=2))',
+     '    flush_settings()\n    _schreibe_settings(_settings_text(settings))',
+     '    _schreibe_settings(_settings_text(settings))',
      'synchrones Speichern wartet erst den Hintergrund ab'),
 
     ('Kreuz-Pfad schreibt wieder synchron (Oberflaeche wartet)',
@@ -2413,8 +2413,10 @@ MUTATIONEN = [
     ('Wiederoeffnen schaltet die Reservierung heimlich wieder an',
      'eve_trader/ui/main_window.py',
      '            _plan["done_manual"] = False\n'
+     '            _plan.pop("done_ts", None)\n'
      '            # Was DIESES Buendel beim Abschliessen mit abgeschlossen hat,\n',
      '            _plan["done_manual"] = False\n'
+     '            _plan.pop("done_ts", None)\n'
      '            _plan["reserve"] = True   # MUTATION\n'
      '            # Was DIESES Buendel beim Abschliessen mit abgeschlossen hat,\n',
      'die Reservierung wird NICHT automatisch reaktiviert'),
@@ -3132,7 +3134,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'die Charakter-Zeilen sind offen, ein Klick genuegt'),
     ('Fertige Stufe startet wieder aufgeklappt',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '            stage_item.setExpanded(not _stufe_abgedeckt)',
+     '            stage_item.setExpanded(bool(_klapp_vorher.get(\n'
+     '                "stufe|" + str(stage), not _stufe_abgedeckt)))   # emm400',
      '            stage_item.setExpanded(True)   # MUTATION',
      'in Bau: die Stufe ist zugeklappt'),
     ('Fertige Stufe behauptet weiter eine Restdauer',
@@ -3503,8 +3506,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'bp_cb_profit startet angehakt'),
     ('Gruppen-Dropdown ist wieder da',
      'eve_trader/ui/main_window.py',
-     '        frow.addWidget(self.bp_myb_cat)',
-     '''        frow.addWidget(self.bp_myb_cat)
+     '        frow2.addWidget(self.bp_myb_cat)',
+     '''        frow2.addWidget(self.bp_myb_cat)
         self.bp_myb_group = QComboBox()   # MUTATION
         self.bp_myb_group.addItem("Alle Gruppen", None)
         frow.addWidget(self.bp_myb_group)''',
@@ -4355,7 +4358,7 @@ Source: "settings.json"; DestDir: "{app}"''',
     # --- aa294: Versionsnummer lesbar und vor der Freigabe sichtbar ---
     ('Die Versionsnummer ist fuer die Update-Pruefung unlesbar',
      'eve_trader/__init__.py',
-     '__version__ = "1.1.0"',
+     '__version__ = "1.1.1"',
      '__version__ = "unbekannt"',
      'aa294 die Versionsnummer ist lesbar und hat drei Teile'),
     ('pruefe.py zeigt die Programmversion nicht mehr',
@@ -5316,8 +5319,10 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa351 der Auffrischer merkt sie ebenfalls'),
     ('Der Blaupausen-Name ist wieder nur eine Beschriftung',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '                                self._copy_bp_name_value(_nm))',
-     '                                None)',
+     '                                lambda _c=False, _nm=_bp_nm, _it9=iit: (\n'
+     '                                    self._copy_bp_name_value(_nm),\n'
+     '                                    self._runplan_klick_bei_kopie([_it9])))',
+     '                                lambda _c=False: None)   # MUTATION',
      'aa352 die Blaupausen-Zelle ist ein Knopf'),
     ('Reaktionen bekommen wieder "Blueprint" statt "Reaction Formula"',
      'eve_trader/ui/main_window.py',
@@ -6124,8 +6129,8 @@ Source: "settings.json"; DestDir: "{app}"''',
 
     ('Stufe-0-Charakter standardmaessig aufgeklappt',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '                _citem0.setExpanded(False)\n',
-     '                _citem0.setExpanded(True)   # MUTATION\n',
+     '                _citem0.setExpanded(bool(_klapp_vorher.get(_ckey_c0, False)))\n',
+     '                _citem0.setExpanded(bool(_klapp_vorher.get(_ckey_c0, True)))   # MUTATION\n',
      'b7u die Charakterzeile in Stufe 0 hat ein Kaestchen (char|repro|1) und ist zu'),
     # Corp-Hangars: Standard alle sieben (Nutzer 19.09.2026).
     ('Corp-Hangars standardmaessig keiner',
@@ -9154,13 +9159,23 @@ Source: "settings.json"; DestDir: "{app}"''',
      'b128 ... danach Anzeige weg'),
     ('Ende entfernen: Fenster wird wieder neu geoeffnet',
      'eve_trader/ui/mw_multi_bauplan.py',
-     '        _fn = getattr(self, "_bd_full_rebuild", None)\n        if _fn is not None:\n            _fn()\n        self._flash_tip(t("\\u201e{name}\\u201c removed',
-     '        _d0 = self._offener_bauplan()\n        if _d0 is not None:\n            _d0.close()\n        self._multi_plan_oeffnen(self._multi_offenen_plan_eintrag(), plan_id=getattr(self, "_bd_open_plan_id", None))   # MUTATION\n        self._flash_tip(t("\\u201e{name}\\u201c removed',
+     '        _fn = getattr(self, "_bd_full_rebuild", None)\n'
+     '        if _fn is not None:\n'
+     '            _fn()\n'
+     '        if _gespeichert:\n',
+     '        _d0 = self._offener_bauplan()\n'
+     '        if _d0 is not None:\n'
+     '            _d0.close()\n'
+     '        self._multi_plan_oeffnen(self._multi_offenen_plan_eintrag(), plan_id=getattr(self, "_bd_open_plan_id", None))   # MUTATION\n'
+     '        if _gespeichert:\n',
      'b87 Knopf: Rueckfrage nennt das Ende'),
     ('Ende entfernen: Plan wird nicht neu gerechnet',
      'eve_trader/ui/mw_multi_bauplan.py',
-     '        _fn = getattr(self, "_bd_full_rebuild", None)\n        if _fn is not None:\n            _fn()\n        self._flash_tip(t("\\u201e{name}\\u201c removed',
-     '        self._flash_tip(t("\\u201e{name}\\u201c removed',
+     '        _fn = getattr(self, "_bd_full_rebuild", None)\n'
+     '        if _fn is not None:\n'
+     '            _fn()\n'
+     '        if _gespeichert:\n',
+     '        if _gespeichert:   # MUTATION: kein Neuaufbau\n',
      'b87 ... und der Plan ist ohne C neu gerechnet'),
     ('Offener Plan: Rechtsklick fragt wieder und fuegt nicht ein',
      'eve_trader/ui/mw_multi_bauplan.py',
@@ -9238,15 +9253,15 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        tw.setToolTip(_txt("Blue = will be built',
      'Farb-Hinweis nur an der Kopfzeile'),
     ('Veroeffentlichung prueft nicht mehr',
-     'release/veroeffentliche_1.1.0.bat',
+     'release/veroeffentliche_1.1.1.bat',
      'python pruefe.py < nul\n',
      'rem python pruefe.py - MUTATION\n',
-     'aa426 veroeffentliche_1.1.0.bat prueft ZUERST'),
+     'aa426 veroeffentliche_1.1.1.bat prueft ZUERST'),
     ('Veroeffentlichung macht bei Rot weiter',
-     'release/veroeffentliche_1.1.0.bat',
+     'release/veroeffentliche_1.1.1.bat',
      '  goto ende\n)\necho gruen >> "%B%"\n',
      ')\necho gruen >> "%B%"\n',
-     'aa426 veroeffentliche_1.1.0.bat prueft ZUERST'),
+     'aa426 veroeffentliche_1.1.1.bat prueft ZUERST'),
     ('Endprodukte-Karte: Name dehnt sich nicht mehr',
      'eve_trader/ui/mw_multi_bauplan.py',
      '        hh.setSectionResizeMode(0, _HV.Stretch)\n',
@@ -10416,12 +10431,22 @@ Source: "settings.json"; DestDir: "{app}"''',
      '    return {"ready": gr["ready"], "laufend": gr["laufend"]}   # MUTATION\n',
      "aa467 gleiche Produkte NICHT zusammengefasst"),
 
-    # emm342: Jobs-Karten in Spalten (Nachbarn rutschen nicht mit)
+    # emm342/398: Jobs-Karten im Gitter (buendige Reihen, Nachbarn bleiben)
     ('Raster: Karten falsch auf Spalten verteilt',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '            v = self._spalte(i % n)\n',
-     '            v = self._spalte(min(i // 2, n - 1))   # MUTATION\n',
+     '            self._gitter.addWidget(k, i // n, i % n, Qt.AlignTop)\n',
+     '            self._gitter.addWidget(k, i // n, min(i // 2, n - 1), Qt.AlignTop)   # MUTATION\n',
      "b153 Karten-Raster"),
+    ('Raster: Reihen-Nachbarn rutschen beim Aufklappen mit (AlignTop fehlt)',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '            self._gitter.addWidget(k, i // n, i % n, Qt.AlignTop)\n',
+     '            self._gitter.addWidget(k, i // n, i % n)   # MUTATION\n',
+     "b153 Aufklappen"),
+    ('Kartenkopf: Corp-Abzeichen fehlt',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        if _n_corp and not e.get("ist_corp"):\n',
+     '        if False:   # MUTATION\n',
+     "b168 Kartenkopf"),
 
     # emm343: Plaene aus dem Gewinn-Total nehmen
     ('Gewinn-Total: ausgenommene zaehlen doch',
@@ -10529,28 +10554,26 @@ Source: "settings.json"; DestDir: "{app}"''',
      '    if tage <= ABSATZ_DUENN:\n        return "slow"\n',
      '    if True:   # MUTATION\n        return "slow"\n',
      "aa469 Stufen"),
-    ('Markt-Spalte im Multiplan bleibt leer',
+    ('Ende entfernen: gespeicherter Plan wird nicht sofort geschrieben',
      'eve_trader/ui/mw_multi_bauplan.py',
-     '                tbl.setItem(r, 11, it)\n',
-     '                pass   # MUTATION\n',
-     "b158 A:"),
-    ('Markt-Warnung erscheint nie',
+     '        _gespeichert = False\n'
+     '        _pid = getattr(self, "_bd_open_plan_id", None)\n',
+     '        _gespeichert = False\n'
+     '        _pid = None   # MUTATION\n',
+     'b87 Entfernen schreibt sofort in den gespeicherten Plan'),
+    ('Ende entfernen: eingefrorener Schnappschuss bleibt im Eintrag stehen',
      'eve_trader/ui/mw_multi_bauplan.py',
-     '                _ml.setVisible(bool(duenn))\n',
-     '                _ml.setVisible(False)   # MUTATION\n',
-     "b158 Warnzeile"),
+     '                if _fz and _p.get("frozen") and getattr(self, "_bd_frozen", None):\n'
+     '                    _p["frozen"] = dict(self._bd_frozen)\n',
+     '                if False:   # MUTATION\n'
+     '                    _p["frozen"] = dict(self._bd_frozen)\n',
+     'b87 Entfernen am eingefrorenen Plan schreibt den Schnappschuss'),
     ('My Blueprints: Absatz-Spalte standardmaessig aus',
      'eve_trader/ui/main_window.py',
      '        _BP_STD = {6, 8, 10, 11, 16, 17}  # Runs, Baukosten/Stk, Profit/Stk, ISK/Std, Absatz, Marge\n',
      '        _BP_STD = {6, 8, 10, 11, 17}   # MUTATION\n',
      "b44 genau sechs Spalten"),
-    ('Einzelplan: fehlende Historie wird nie nachgeladen',
-     'eve_trader/ui/mw_multi_bauplan.py',
-     '        if v is None and nachladen:\n',
-     '        if False:   # MUTATION\n',
-     "b158 Einzelplan ohne Historie"),
-
-    # emm350: Fehlklick-Haken ohne ESI-Job
+        # emm350: Fehlklick-Haken ohne ESI-Job
     ('Fehlklick-Haken: Job auf anderem Charakter zaehlt nicht',
      'eve_trader/ui/mw_helpers.py',
      '        if tid in aktiv:\n            continue\n',
@@ -10762,6 +10785,190 @@ Source: "settings.json"; DestDir: "{app}"''',
      '                self._reload_my_blueprints()   # MUTATION\n',
      "b166 Klick laedt"),
 
+    # emm385: Invention immer an
+    ('Invention: Einzelplan liest wieder die versteckte Einstellung',
+     'eve_trader/ui/main_window.py',
+     '            "invention": True,\n            "force_build":',
+     '            "invention": bool(self.settings.get("bau_invention", False)),\n            "force_build":',
+     "aa476 keine Stelle liest"),
+    ('Invention: Migration setzt nicht zurueck',
+     'eve_trader/config.py',
+     '        data["bau_invention"] = True\n        data["bau_invention_an_applied"] = True\n',
+     '        data["bau_invention_an_applied"] = True\n',
+     "aa476 Migration"),
+    ('Invention: gespeicherter Plan vererbt "aus" wieder global',
+     'eve_trader/ui/main_window.py',
+     '        self.settings["bau_invention"] = True\n',
+     '        self.settings["bau_invention"] = bool(p.get("invention", True))\n',
+     "aa476 keine Stelle liest"),
+    ('Invention: echter Oeffnen-Weg liest die versteckte Einstellung',
+     'eve_trader/ui/main_window.py',
+     '            "invention": True,\n            "force_build":',
+     '            "invention": bool(self.settings.get("bau_invention", False)),\n            "force_build":',
+     "b167 echter Oeffnen-Weg"),
+    ('Invention: alter Plan setzt global wieder aus',
+     'eve_trader/ui/main_window.py',
+     '        self.settings["bau_invention"] = True\n',
+     '        self.settings["bau_invention"] = bool(p.get("invention", True))\n',
+     "b167 alter Plan"),
+
+    # emm388: schnelles Speichern + Plan-Archiv
+    ('Speichern: wieder eingerueckt (1,7 s je Speichern)',
+     'eve_trader/config.py',
+     '    return json.dumps(settings, separators=(",", ":"))\n',
+     '    return json.dumps(settings, indent=2)   # MUTATION\n',
+     "aa477 settings.json wird kompakt"),
+    ('Archiv: Mitglieder offener Buendel werden mitarchiviert',
+     'eve_trader/config.py',
+     '        neu = s - halter\n',
+     '        neu = s   # MUTATION\n',
+     "aa477 faellig"),
+    ('Archiv: unlesbare Archivdatei wird ueberschrieben',
+     'eve_trader/config.py',
+     '            if not isinstance(alt, list):\n                return 0\n        except Exception:\n            return 0\n',
+     '            if not isinstance(alt, list):\n                alt = []   # MUTATION\n        except Exception:\n            alt = []\n',
+     "aa477 unlesbares Archiv"),
+    ('Archiv: done ohne Zeitstempel bleibt ohne',
+     'eve_trader/config.py',
+     '                _p["done_ts"] = _t_arch.time()\n',
+     '                pass   # MUTATION\n',
+     "aa477 done ohne Zeitstempel"),
+
+    # emm389/390: Corp-Jobs + BPC-Bild
+    ('Corp-Jobs: job_id doppelt gezaehlt',
+     'eve_trader/ui/mw_helpers.py',
+     '        if jid is not None and jid in bekannt:\n            continue\n',
+     '        if False:   # MUTATION\n            continue\n',
+     "aa478 installer verknuepft"),
+    ('Corp-Jobs: zaehlen nicht in die Slots des Installers',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                    for _c, _js in je_cid.items():\n                        roh[_c] = list(roh[_c]) + _js\n',
+     '                    pass   # MUTATION\n',
+     "b168 Corp-Job zaehlt"),
+    ('Corp-Karte: zaehlt in die Kacheln doppelt',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        chars = {k: v for k, v in (chars or {}).items() if not v.get("ist_corp")}\n',
+     '        pass   # MUTATION\n',
+     "b168 Kacheln ohne Doppelzaehlung"),
+    ('Corp-Karte: bekommt eine eigene Slot-Zeile',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        if e.get("ist_corp"):\n',
+     '        if False:   # MUTATION\n',
+     "b168 Corp-Karte hat KEINE"),
+    ('Corp-Job: Abzeichen auf der Charakter-Karte fehlt',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                                 corp=bool(g.get("corp")))   # emm396: amber Corp-Abzeichen\n',
+     '                                 corp=False)   # MUTATION\n',
+     "b168 Corp-Job traegt das Corp-Abzeichen"),
+
+    # emm396: Corp-Karte ohne Doppelanzeige
+    ('Corp-Karte: zeigt wieder ALLE Corp-Jobs (Job des Installers doppelt)',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                    ec["ueb"] = jobs_uebersicht(_rest, None, jetzt)\n',
+     '                    ec["ueb"] = jobs_uebersicht(cjobs, None, jetzt)   # MUTATION\n',
+     "b168 Corp-Karte zeigt nur fremde"),
+    ('Leere Corp-Karte bleibt stehen',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                    if _rest or ec["fehler"]:\n',
+     '                    if True:   # MUTATION\n',
+     "b168 ohne fremde Installer keine Corp-Karte"),
+    ('Fertig-Zeile verliert die Corp-Marke',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                if g.get("corp"):\n',
+     '                if False:   # MUTATION\n',
+     "b168 Fertig-Zeile"),
+
+    # emm403: Type-Filter blendet Inventable-Zeilen aus
+    ('Inventable-Zeilen laufen wieder am Type-Filter vorbei',
+     'eve_trader/ui/main_window.py',
+     '                if not (show_bpo and show_bpc):\n'
+     '                    visible = False\n',
+     '                pass   # MUTATION\n',
+     "b170 BPO abgewaehlt"),
+
+    # emm401: kein Kopieren per Linksklick auf den Namen im Runplaner
+    ('Runplaner: Linksklick-Kopieren ist wieder da',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '        # KEIN KOPIEREN PER LINKSKLICK AUF DEN NAMEN MEHR (emm401, Nutzer\n',
+     '        from PySide6.QtWidgets import QApplication as _QAmut   # MUTATION\n'
+     '        sched_tree.itemClicked.connect(\n'
+     '            lambda _it, _c: _QAmut.clipboard().setText(\n'
+     '                str(_it.data(0, Qt.UserRole + 8) or _QAmut.clipboard().text())))\n',
+     "b7f ein Linksklick auf den Namen kopiert NICHTS mehr"),
+
+    # emm402: jede Namens-Kopie merkt die Job-Zuordnung mit
+    ('Namens-Kopie merkt die Zuordnung nicht mehr',
+     'eve_trader/ui/mw_helpers.py',
+     '                    if _t and _r:\n'
+     '                        self._run_klick_merken(int(_t), int(_r), bool(_rk))\n',
+     '                    pass   # MUTATION\n',
+     "b7f Strg+C kopiert den Namen und merkt"),
+    ('Strg+C-Kopierweg vergisst das Klick-Merken',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '            self._runplan_klick_bei_kopie(sched_tree.selectedItems())\n',
+     '            pass   # MUTATION\n',
+     "b7f Strg+C kopiert den Namen und merkt"),
+
+    # emm400: Runplaner-Klapp ueberlebt den ESI-Neuaufbau
+    ('Run-Zeile vergisst den Nutzer-Klapp',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                    if _k_x and _klapp_vorher.get(_k_x):\n',
+     '                    if False:   # MUTATION\n',
+     "b102 eine aufgeklappte Run-Zeile"),
+    ('Stufe vergisst den Nutzer-Klapp',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '            stage_item.setExpanded(bool(_klapp_vorher.get(\n'
+     '                "stufe|" + str(stage), not _stufe_abgedeckt)))   # emm400\n',
+     '            stage_item.setExpanded(not _stufe_abgedeckt)   # MUTATION\n',
+     "b102 eine zugeklappte Stufe"),
+    ('Stufe ohne Klapp-Schluessel',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '            stage_item.setData(0, Qt.UserRole + 6, "stufe|" + str(stage))\n',
+     '            pass   # MUTATION\n',
+     # Ohne Schluessel findet der Test als "offene Stufe" nur noch den
+     # Reprocessing-Block (eigener setData) - rot wird deshalb die
+     # Gegenprobe "alle anderen Stufen haben auch Schluessel und bleiben
+     # offen", nicht die Zuklapp-Pruefung (BLIND-Befund rpL, gemessen).
+     "b102 eine nie angefasste offene Stufe"),
+    ('My Blueprints: Kopie bekommt wieder das BPO-Bild',
+     'eve_trader/ui/main_window.py',
+     '                            tid, kind="bp" if b.get("is_bpo") else "bpc")\n',
+     '                            tid, kind="bp")   # MUTATION\n',
+     "aa478 My Blueprints: Kopien"),
+
+
+    # emm392: Reprocessing-Steuer (Prozent vom Wert der Ausgaenge)
+    ('Reprocessing-Steuer verteuert den Tausch nicht',
+     'eve_trader/reprocess.py',
+     '                kosten = (portionen * portion * p_erz\n'
+     '                          + steuer * wert_portion * portionen)\n',
+     '                kosten = portionen * portion * p_erz   # MUTATION\n',
+     'aa479 10 % Steuer'),
+    ('Ruecklaeufer-Kredit ignoriert die Steuer',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '        if _st <= 0.0 or pfn is None:\n'
+     '            return pfn\n'
+     '        return lambda tid, _f=pfn: float(_f(tid) or 0.0) * (1.0 - _st)\n',
+     '        return pfn   # MUTATION\n',
+     'aa479 Weg A'),
+    ('Steuer-Feld erreicht die Rechnung nicht',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                "struct": s.get("name"), "sid": s.get("id"), "steuer": _st,\n',
+     '                "struct": s.get("name"), "sid": s.get("id"), "steuer": 0.0,   # MUTATION\n',
+     'b7u 10 % Steuer'),
+
+    # emm393: eine Marge + sichtbare Reprocessing-Steuer in den Details
+    ('Details bekommen wieder eine zweite Marge-Zeile',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                        ("= Gewinn", "= Profit"), ("Gewinn / Stk", "Profit / unit"),\n',
+     '                        ("= Gewinn", "= Profit"), ("Gewinn / Stk", "Profit / unit"),\n'
+     '                        ("Marge", "Margin"),   # MUTATION\n',
+     'b7v die Details haben keine zweite Marge-Zeile'),
+    ('Reprocessing-Steuer-Zeile bleibt unsichtbar',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                    _rst_lbl.setVisible(bool(_rst_w))\n',
+     '                    _rst_lbl.setVisible(False)   # MUTATION\n',
+     'b7u Details zeigen die Reprocessing-Steuer'),
 ]
 
 

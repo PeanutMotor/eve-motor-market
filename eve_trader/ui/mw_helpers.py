@@ -167,6 +167,22 @@ class MainWindowHelpers:
             # Ein nicht gemerkter Klick kostet nur Genauigkeit, nie Material.
             self._log_exception("Run-Klick merken", str(_e))
 
+    def _runplan_klick_bei_kopie(self, items):
+        """JEDE Namens-Kopie einer Runplaner-Zeile merkt die Zuordnung mit
+        (emm402, Nutzer: "Alle Wege merken mit" - wer den Namen per
+        Rechtsklick/Strg+C/Blueprint-Knopf kopiert und die Runs abtippt,
+        verlor sonst die Job-Zuordnung bei geteilten Items). Dieselbe
+        Wirkung wie der amber Runs-Knopf: ohne spaeteren passenden
+        ESI-Job bleibt der Klick folgenlos."""
+        from PySide6.QtCore import Qt as _Qt
+        for _it in items or []:
+            try:
+                for _t, _r, _rk in (_it.data(0, _Qt.UserRole + 9) or []):
+                    if _t and _r:
+                        self._run_klick_merken(int(_t), int(_r), bool(_rk))
+            except Exception:
+                pass    # Komfortweg - nie kritisch
+
     def _job_zuordnung_nachfuehren(self, assignments, seit_ts=None):
         """Neue ESI-Jobs den Klicks dieses Plans zuordnen und das MERKEN.
 
@@ -2953,7 +2969,8 @@ def jobs_uebersicht(jobs, slots_max, now):
                        "tid": int(j.get("product_type_id") or 0),
                        "runs": int(j.get("runs") or 0), "status": st,
                        "ende": ende, "start": start, "rest": rest, "ready": fertig,
-                       "paused": st == "paused"})
+                       "paused": st == "paused",
+                       "corp": bool(j.get("corporation_id"))})
     zeilen.sort(key=lambda z: (z["ende"] is None,
                                z["ende"] if z["ende"] is not None else 0,
                                z["tid"]))
@@ -2985,17 +3002,20 @@ def jobs_gruppen(zeilen, now):
         key = (z["activity_id"], z["tid"])
         if z["ready"]:
             g = ready.setdefault(key, {"activity_id": z["activity_id"], "tid": z["tid"],
-                                       "art": z["art"], "n": 0, "runs": 0})
+                                       "art": z["art"], "n": 0, "runs": 0,
+                                       "corp": False})
             g["n"] += 1
             g["runs"] += int(z["runs"] or 0)
+            g["corp"] = g["corp"] or bool(z.get("corp"))
             continue
         key = key + (bool(z["paused"]),)
         g = lauf.setdefault(key, {"activity_id": z["activity_id"], "tid": z["tid"],
                                   "art": z["art"], "paused": bool(z["paused"]),
                                   "n": 0, "runs": 0, "enden": [], "rest": None,
-                                  "ende": None, "start": None})
+                                  "ende": None, "start": None, "corp": False})
         g["n"] += 1
         g["runs"] += int(z["runs"] or 0)
+        g["corp"] = g["corp"] or bool(z.get("corp"))
         if z["ende"] is not None:
             g["enden"].append(z["ende"])
             if g["ende"] is None or z["ende"] < g["ende"]:
@@ -3007,6 +3027,36 @@ def jobs_gruppen(zeilen, now):
     _l = sorted(lauf.values(), key=lambda g: (g["paused"], g["rest"] is None,
                                               g["rest"] or 0, g["tid"]))
     return {"ready": _r, "laufend": _l}
+
+
+def corp_jobs_verteilen(corp_jobs, cids, bekannte_job_ids):
+    """Corp-Jobs auf die Charakter-Karten verteilen (emm389, Discord
+    HerrLades: "corp jobs still use the normal slots of the character you
+    put up the job with"). Rein, ohne Qt.
+
+    -> ({installer_cid: [Jobs]}, uebrige): Jobs eines VERKNUEPFTEN
+    Installers landen bei dessen Karte (dort zaehlen sie in die Slots);
+    schon bekannte job_ids werden nie doppelt gezaehlt; der Rest (fremde
+    Installer) bleibt uebrig - er zaehlt in keine Slot-Zaehlung, die
+    Corp-Karte zeigt ihn trotzdem."""
+    cids = {int(c) for c in (cids or ())}
+    bekannt = {j for j in (bekannte_job_ids or ()) if j is not None}
+    je_cid, uebrig = {}, []
+    for j in corp_jobs or []:
+        jid = j.get("job_id")
+        if jid is not None and jid in bekannt:
+            continue
+        if jid is not None:
+            bekannt.add(jid)
+        try:
+            inst = int(j.get("installer_id") or 0)
+        except (TypeError, ValueError):
+            inst = 0
+        if inst in cids:
+            je_cid.setdefault(inst, []).append(j)
+        else:
+            uebrig.append(j)
+    return je_cid, uebrig
 
 
 def jobs_karten_folge(chars):
@@ -3461,6 +3511,7 @@ def jobs_einzeln(zeilen, now):
         ende = z.get("ende")
         lauf.append({"activity_id": z["activity_id"], "tid": z["tid"], "art": z["art"],
                      "paused": bool(z.get("paused")), "n": 1,
+                     "corp": bool(z.get("corp")),
                      "runs": int(z.get("runs") or 0),
                      "enden": [ende] if ende is not None else [],
                      "rest": z.get("rest"), "ende": ende, "start": z.get("start"),

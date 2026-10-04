@@ -1829,11 +1829,49 @@ class MultiBauplan:
         self._bd_plan_cache = None
         self._bd_tree_cache = None
         self._bd_reaction_stages = None
+        # BEI EINEM GESPEICHERTEN PLAN SOFORT IN DEN EINTRAG SCHREIBEN
+        # (emm391, Nutzer 04.10.2026: "man kann bei gespeicherten,
+        # reservierten und eingefrorenen Plaenen immer noch nicht einen
+        # Bauplan per rotes X herausloesen - nach dem Loeschen und
+        # Wiederoeffnen sind die Endprodukte wieder da"). Vorher stand das
+        # Entfernen nur im Fenster-Zustand und verlangte "Save build plan" -
+        # den drueckt man am eingefrorenen Plan aber nicht (derselbe Befund
+        # wie bei ME/TE je Ende, emm258/_multi_je_ende_merken). Jetzt gehen
+        # Enden, Quellen (der Quellplan wird frei) und die vier
+        # Je-Ende-Felder sofort in den Eintrag; beim eingefrorenen Plan auch
+        # der um das Ende erleichterte Schnappschuss. reserve/reserve_map
+        # bleiben unangetastet (zu viel reserviert ist die sichere Richtung,
+        # Regel 3 - wie beim Entfernen im Fenster seit emm333).
+        _gespeichert = False
+        _pid = getattr(self, "_bd_open_plan_id", None)
+        if _pid is not None:
+            for _p in (self.settings.get("bau_saved_plans", []) or []):
+                if _p.get("id") != _pid or not self._multi_ist_plan(_p):
+                    continue
+                _felder = self._multi_eintrag_felder(existing=_p)
+                # Vergleichsstand nur fuer die VERBLEIBENDEN Quellen - der
+                # Stand der entfernten faellt mit (sonst meldete Entscheid A
+                # einen Plan, der gar nicht mehr dazugehoert).
+                _bleibt = {str(q) for q in _felder["quellen"]}
+                _felder["quellen_stand"] = {
+                    k: v for k, v in (_felder["quellen_stand"] or {}).items()
+                    if k in _bleibt}
+                for _k in ("enden", "quellen", "quellen_stand") + self.JE_ENDE_SOFORT:
+                    _p[_k] = _felder[_k]
+                if _fz and _p.get("frozen") and getattr(self, "_bd_frozen", None):
+                    _p["frozen"] = dict(self._bd_frozen)
+                config.save_settings_async(self.settings)
+                _gespeichert = True
+                break
         _fn = getattr(self, "_bd_full_rebuild", None)
         if _fn is not None:
             _fn()
-        self._flash_tip(t("\u201e{name}\u201c removed from the bundle \u2013 save the "
-                          "plan to keep it.").format(name=name))
+        if _gespeichert:
+            self._flash_tip(t("\u201e{name}\u201c removed from the bundle and "
+                              "saved.").format(name=name))
+        else:
+            self._flash_tip(t("\u201e{name}\u201c removed from the bundle \u2013 save the "
+                              "plan to keep it.").format(name=name))
 
     def _inv_mats_des_endes(self, plan, tid):
         """Datacores/Decryptoren, die die Invention des Endes `tid` im
@@ -2063,30 +2101,8 @@ class MultiBauplan:
             tbl.setColumnWidth(_c, int(_br))
         hh.setSectionResizeMode(0, _HV.Stretch)
 
-    def _einzel_absatz_zeigen(self, tid, lbl, nachladen=True):
-        """Eine Zeile "Verkauft/Tag ... Tage bis verkauft" fuer das Ende eines
-        Einzelplans (emm349). Fehlt die Historie: einmal nachladen."""
-        from .mw_helpers import tage_bis_verkauft, absatz_stufe
-        _region = self._absatz_region(getattr(self, "_bd_sell_hub", None))
-        v = self._absatz_je_typ([tid], _region).get(int(tid))
-        menge = max(1, int(getattr(self, "_bd_qty", 1) or 1))
-        tage = tage_bis_verkauft(menge, v)
-        stufe = absatz_stufe(tage)
-        if v is None:
-            lbl.setText(t("Sold/day: ? \u2013 market history not loaded yet."))
-        else:
-            lbl.setText(t("Sold/day: {v} \u00b7 {q} units \u2248 {d} days to sell").format(
-                v=f"{v:,.1f}".replace(",", "'"), q=menge,
-                d=("\u221e" if tage == float("inf") else f"{tage:,.0f}".replace(",", "'")))
-                + ("  \u26a0 " + t("thin market") if stufe == "thin" else ""))
-        lbl.setStyleSheet(f"font-size:{theme.FS_SMALL}; color:"
-                          + {"ok": theme.MUTED, "slow": theme.AMBER,
-                             "thin": theme.RED}.get(stufe, theme.MUTED) + ";")
-        if v is None and nachladen:
-            self._absatz_nachladen(
-                [tid], _region,
-                fertig=lambda: (self._einzel_absatz_zeigen(tid, lbl, nachladen=False)
-                                if getattr(self, "_bd_einzel_absatz_lbl", None) is lbl else None))
+    # _einzel_absatz_zeigen (emm349) ist AUSGEBAUT (emm391, Nutzer
+    # 04.10.2026: Sold/day nur noch in My Blueprints).
 
     def _multi_enden_karte(self, type_id, names, parent_layout):
         """Karte "Endprodukte" im Bauplan-Dialog - nur fuer ein Buendel.
@@ -2133,12 +2149,8 @@ class MultiBauplan:
                 _h1.addWidget(_eb)
                 _h1.addStretch()
                 _v1.addLayout(_h1)
-                # MARKT-CHECK AUCH BEIM EINZELPLAN (emm349).
-                _al = QLabel("")
-                _al.setWordWrap(True)
-                _v1.addWidget(_al)
-                self._bd_einzel_absatz_lbl = _al         # b-Suite
-                self._einzel_absatz_zeigen(int(type_id), _al)
+                # Die Absatz-Zeile (emm349) ist raus (emm391: Sold/day nur
+                # noch in My Blueprints).
                 parent_layout.addWidget(_k1)
                 self._bd_ende_karte_einzel = _k1        # b-Suite
             return None
@@ -2182,13 +2194,11 @@ class MultiBauplan:
         _body = QWidget()
         _bv = QVBoxLayout(_body)
         _bv.setContentsMargins(0, 0, 0, 0); _bv.setSpacing(6)
-        hinweis = QLabel(t(
-            "Quantity, ME/TE and \u201eOwn BPC\u201c belong to EACH end product here \u2013 "
-            "that is why the single fields above are hidden for a bundle. T2 "
-            "ends take ME/TE from their decryptor (Invention tab); tick \u201eOwn "
-            "BPC\u201c to build from your own copy with its own values instead."))
-        hinweis.setObjectName("Muted"); hinweis.setWordWrap(True)
-        _bv.addWidget(hinweis)
+        # KEIN ERKLAERTEXT MEHR IN DER KARTE (emm391, Nutzer 04.10.2026:
+        # "dieser Text oben im Bauplan ist unnoetiger Reizueberfluss, weg
+        # damit"). Die Erklaerung (Menge/ME/TE/Own BPC gelten je Ende, T2
+        # nimmt ME/TE vom Decryptor) steht jetzt NUR im Tooltip der
+        # Tabelle (gesetzt unten, sobald es sie gibt).
         # WARNUNG, WENN UNKLAR IST, OB ERFUNDEN WIRD (Nutzer 26.09.2026:
         # "Warnmeldung wenn nicht klar ist, ob man T2 noch baut ueber
         # Decryptoren oder alle Own BPC sind"): ein T2-Ende OHNE Haken
@@ -2201,14 +2211,9 @@ class MultiBauplan:
         _warn.setVisible(False)
         _bv.addWidget(_warn)
         self._bd_multi_warn_lbl = _warn
-        # MARKT ZU DUENN (emm349): eigene Zeile, damit sie nicht mit den
-        # Decryptor-/Kopie-Hinweisen um den Platz streitet.
-        _mwarn = QLabel("")
-        _mwarn.setStyleSheet(f"color:{theme.AMBER}; font-weight:700;")
-        _mwarn.setWordWrap(True)
-        _mwarn.setVisible(False)
-        _bv.addWidget(_mwarn)
-        self._bd_multi_markt_lbl = _mwarn
+        # Die Duennmarkt-Warnzeile (emm349) ist AUSGEBAUT (emm391, Nutzer
+        # 04.10.2026: "unnoetiger Reizueberfluss, weg damit") - die
+        # Absatz-Zahlen stehen nur noch in My Blueprints (Spalte Sold/day).
         # ISK EINMAL IN DIE KOPFZEILE statt dreimal je Zeile (Nutzer-Befund
         # 20.09.2026: Spalten zu schmal, Text abgeschnitten) - " ISK" hinter
         # jeder Zahl kostet rund 45 px je Geldspalte, hier also 135.
@@ -2227,16 +2232,21 @@ class MultiBauplan:
                    # zu wissen"). Dieselbe Formel wie die grosse "Margin"
                    # oben: Gewinn netto / (Kosten + Anteil Fracht/Extra).
                    t("Margin") + "\n(%)",
-                   # MARKT-CHECK JE ENDE (emm349, Nutzer: "die Marge ist
-                   # erschreckend zu gut"): Ø verkaufte Stueck/Tag am Hub und
-                   # wie viele Tage die Menge braucht, bis sie weg ist.
-                   t("Sold/day") + "\n" + t("(days)"),
+                   # KEIN "Sold/day" MEHR HIER (emm391, Nutzer 04.10.2026:
+                   # "diese Spalten Sold/Day sollten nicht im Bauplan sein,
+                   # nur im My-Blueprints-Tab") - die Spalte und die
+                   # Duennmarkt-Warnzeile aus emm349 sind raus; My
+                   # Blueprints behaelt seine Sold/day-Spalte.
                    # HERAUSNEHMEN (Nutzer 26.09.2026: "einige Endprodukte
                    # lohnen sich nicht ... wir brauchen einen Knopf, um diese
                    # aus dem Multiplan wieder entfernen zu koennen").
                    ""]
         tbl = QTableWidget(0, len(SPALTEN))
         tbl.setHorizontalHeaderLabels(SPALTEN)
+        tbl.setToolTip(t(
+            "Quantity, ME/TE and \u201eOwn BPC\u201c belong to EACH end product here. "
+            "T2 ends take ME/TE from their decryptor (Invention tab); tick "
+            "\u201eOwn BPC\u201c to build from your own copy with its own values."))
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSelectionMode(QTableWidget.NoSelection)
@@ -2441,7 +2451,7 @@ class MultiBauplan:
             _wr = QWidget(); _hr = QHBoxLayout(_wr)
             _hr.setContentsMargins(4, 0, 4, 0); _hr.addWidget(raus)
             _hr.setAlignment(Qt.AlignHCenter)
-            tbl.setCellWidget(r, 12, _wr)
+            tbl.setCellWidget(r, 11, _wr)   # emm391: Sold/day-Spalte raus, X rueckt auf 11
             w.update({"menge": menge, "me": me, "te": te, "obpc": obpc,
                       "runs": runs, "deckel": _deckel, "raus": raus})
 
@@ -2644,61 +2654,9 @@ class MultiBauplan:
             if _br is not None:
                 _br()
 
-        def _absatz_fuellen(nachladen=True):
-            """Spalte 11 (Ø/Tag und Tage bis verkauft) und die Warnzeile.
-            Fehlt eine Historie, wird sie EINMAL im Hintergrund geholt und
-            die Spalte danach neu gefuellt."""
-            from .mw_helpers import tage_bis_verkauft, absatz_stufe, ABSATZ_DUENN
-            je = getattr(self, "_bd_multi_je", None) or {}
-            reihen = getattr(self, "_bd_multi_reihen", None) or []
-            _region = self._absatz_region(getattr(self, "_bd_sell_hub", None))
-            vol = self._absatz_je_typ(reihen, _region)
-            self._bd_multi_absatz = dict(vol)            # b-Suite
-            duenn = []
-            for r, tid in enumerate(reihen):
-                if r >= tbl.rowCount():
-                    break
-                v = vol.get(int(tid))
-                menge = int((je.get(tid) or je.get(int(tid)) or {}).get("menge") or 0)
-                tage = tage_bis_verkauft(menge, v)
-                stufe = absatz_stufe(tage)
-                if v is None:
-                    _txt_a = "?"
-                elif tage == float("inf"):
-                    _txt_a = "0 \u00b7 \u221e"
-                else:
-                    _txt_a = "{v} \u00b7 {d}".format(
-                        v=(f"{v:.1f}" if v < 10 else f"{v:,.0f}".replace(",", "'")),
-                        d=(f"{tage:.1f}" if tage < 10 else f"{tage:,.0f}".replace(",", "'")))
-                it = NumericItem(_txt_a, -1.0 if tage is None else min(tage, 1e9))
-                it.setForeground(QColor({"ok": theme.TEXT, "slow": theme.AMBER,
-                                         "thin": theme.RED}.get(stufe, theme.MUTED)))
-                if v is None:
-                    it.setToolTip(t("Market history not loaded yet \u2013 it is "
-                                    "fetched in the background."))
-                else:
-                    it.setToolTip(t("\u00d8 {v} sold per day at the hub (last 30 days). "
-                                    "{q} units \u2248 {d} days until all are sold \u2013 "
-                                    "if you are the only seller.").format(
-                        v=f"{v:,.1f}".replace(",", "'"), q=menge,
-                        d=("\u221e" if tage == float("inf") else f"{tage:,.0f}".replace(",", "'"))))
-                tbl.setItem(r, 11, it)
-                if stufe == "thin":
-                    duenn.append(names.get(tid, f"#{tid}"))
-            _ml = getattr(self, "_bd_multi_markt_lbl", None)
-            if _ml is not None:
-                _ml.setText(t("\u26a0 Thin market for {items}: at the current daily "
-                              "volume the quantity takes more than {d} days to sell "
-                              "\u2013 the profit assumes it all sells at today\u2019s "
-                              "price.").format(items=", ".join(duenn), d=int(ABSATZ_DUENN))
-                            if duenn else "")
-                _ml.setVisible(bool(duenn))
-            _fehlt = [int(t_) for t_, v_ in vol.items() if v_ is None]
-            if _fehlt and nachladen:
-                self._absatz_nachladen(
-                    _fehlt, _region,
-                    fertig=lambda: (_absatz_fuellen(nachladen=False)
-                                    if tbl is getattr(self, "_bd_multi_tbl", None) else None))
+        # _absatz_fuellen (emm349: Spalte Sold/day + Duennmarkt-Warnung) ist
+        # AUSGEBAUT (emm391, Nutzer 04.10.2026: "diese Spalten Sold/Day
+        # sollten nicht im Bauplan sein, nur im My-Blueprints-Tab").
 
         def _refresh(plan):
             je = industry.buendel_kosten_je_ende(plan or {})
@@ -2801,7 +2759,6 @@ class MultiBauplan:
             # Bildlaufleiste (Nutzer 26.09.2026, elf Enden: "wir koennen
             # nicht scrollen ... maximal 5 Endprodukte, dafuer eine
             # Scrollleiste rechts, so wie unten im Planer selbst").
-            _absatz_fuellen()
             _zh = tbl.rowHeight(0) if tbl.rowCount() else 30
             _n_sicht = max(1, min(tbl.rowCount(), self.ENDEN_SICHTBAR))
             tbl.setFixedHeight(tbl.horizontalHeader().height()

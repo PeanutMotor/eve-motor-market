@@ -9581,7 +9581,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.bs_bpme.setValue(int(s.get("bau_me", 10)))
             self.bs_bpte.setValue(int(s.get("bau_te", 0)))
             self.bs_react.setCurrentIndex(0 if s.get("bau_reactions", True) else 1)
-            self.bs_inv.setCurrentIndex(0 if s.get("bau_invention", False) else 1)
+            self.bs_inv.setCurrentIndex(0)       # emm385: Invention immer an
             self._combo_select(self.bs_decry, s.get("bau_decryptor", KEIN_DECRYPTOR))
         finally:
             for w in widgets:
@@ -10185,7 +10185,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "me": eff_me,
             "job_pct": self.settings.get("bau_job_pct", 3),
             "build_reactions": True,   # immer einrechnen – Tool entscheidet Bau/Kauf per Menge
-            "invention": bool(self.settings.get("bau_invention", False)),
+            # INVENTION IMMER AN (emm385, 03.10.2026, Nutzer: "das muessen wir
+            # sofort aendern"): die Einstellung ist seit langem UNSICHTBAR
+            # (Bau-Setup-Karte versteckt), stand bei manchen aber auf "aus" -
+            # dann rechnete der Plan ohne Invention-Kosten und Decryptoren
+            # wirkten nicht. Wie im Multiplan: erfindbar = mit Invention;
+            # eigene Kopie -> "Own BPC".
+            "invention": True,
             "force_build": bool(getattr(self, "_bd_force", False)),
             "prefer_build_if_owned": bool(getattr(self, "_bd_prefer_owned", False)),
             "tree_depth": 6,
@@ -11437,11 +11443,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     _QMB.Yes | _QMB.No, _QMB.Yes) != _QMB.Yes:
                 return
             _plan["done_manual"] = False
+            _plan.pop("done_ts", None)
             # Was DIESES Buendel beim Abschliessen mit abgeschlossen hat,
             # geht mit ihm wieder auf (s. unten) - nichts sonst.
             for _q in self._plan_buendel_mitglieder_plaene(_plan):
                 if str(_q.get("done_durch_buendel")) == str(pid):
                     _q["done_manual"] = False
+                    _q.pop("done_ts", None)
                     _q.pop("done_durch_buendel", None)
             config.save_settings(self.settings)
             if hasattr(self, "_reload_saved_plans"):
@@ -11459,6 +11467,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                          _QMB.Yes | _QMB.No, _QMB.Yes) != _QMB.Yes:
             return
         _plan["done_manual"] = True
+        import time as _t_done
+        _plan["done_ts"] = _t_done.time()   # emm388: ab hier zaehlen die 30
+                                            # Tage bis zum Archiv
         _plan["reserve"] = False          # Schloss auf, s. Docstring
         # MITGLIEDER EINES BUENDELS SCHLIESSEN MIT (Nutzer-Screenshot
         # 28.09.2026: Multiplan 1 auf "Done" -> Ametat II, Flycatcher und
@@ -11471,6 +11482,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         for _q in self._plan_buendel_mitglieder_plaene(_plan):
             if not _q.get("done_manual"):
                 _q["done_manual"] = True
+                _q["done_ts"] = _t_done.time()
                 _q["reserve"] = False
                 _q["done_durch_buendel"] = pid
         # FERTIG RUTSCHT NACH UNTEN (Nutzer 28.09.2026: "sollte der Plan
@@ -12671,6 +12683,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _kopf_offen.setStyleSheet(f"color:{theme.CYAN}; font-size:13px; "
                                   f"font-weight:800; letter-spacing:2px; padding:2px 4px;")
         _kopf_fertig = QLabel(t("COMPLETED ({n})").format(n=_n_fertig))
+        # ARCHIV (emm388): erledigte Plaene aelter als 30 Tage wandern in
+        # bauplan_archiv.json (nichts wird geloescht) - der Kopf sagt es.
+        _n_arch = config.bauplan_archiv_anzahl()
+        if _n_arch:
+            _kopf_fertig.setText(_kopf_fertig.text() + "  \u00b7  "
+                                 + t("{n} archived").format(n=_n_arch))
+            _kopf_fertig.setToolTip(t(
+                "Completed plans older than 30 days are moved to "
+                "bauplan_archiv.json in the app data folder - nothing is "
+                "deleted."))
         _kopf_fertig.setStyleSheet(f"color:{theme.MUTED}; font-size:13px; "
                                    f"font-weight:800; letter-spacing:2px; "
                                    f"padding:12px 4px 2px 4px;")
@@ -13183,7 +13205,6 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         wenn (noch) nicht berechenbar (z.B. Item ohne Marktpreis)."""
         type_id = p.get("type_id")
         qty = int(p.get("qty", 1) or 1)
-        _inv_buendel = False
         if type_id == industry.BUENDEL_ID:
             # MULTI-BAUPLAN (1.0.9): Verkauf = Summe der Enden x Menge, geplant
             # wird EIN Buendel ueber die Rezept-Kopie mit seinen Enden. Fehlt
@@ -13198,11 +13219,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if any(v <= 0 for v in _sells_qe):
                 return None
             sell = float(sum(_sells_qe))
-            # Invention ist im Buendel an, sobald ein Ende erfindbar ist -
-            # dieselbe Regel wie im Fenster (_multi_opts_je_ende), sonst
-            # zeigte die Karte einen anderen Gewinn als das Fenster.
-            _inv_buendel = bool(self._multi_enden_erfindbar(
-                recipes, [a for a, _b in _enden_qe]))
+            # Invention: seit emm385 IMMER an (Buendel wie Einzelplan).
         else:
             sell = pm.get(type_id) if type_id else None
         if not sell or sell <= 0 or not type_id:
@@ -13341,9 +13358,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 "me": float(p.get("me", 0) or 0),
                 "job_pct": self.settings.get("bau_job_pct", 3),
                 "build_reactions": True,
-                "invention": bool(p.get("invention", self.settings.get(
-                    "bau_invention", False)))
-                or (type_id == industry.BUENDEL_ID and _inv_buendel),
+                "invention": True,      # emm385: immer an (s. open_build_detail)
                 "inv_decryptor_map": _inv_dec_map,
                 "inv_manual_attempts": _inv_manual_map,
                 "inv_skill_modifier": _inv_skill_mod,
@@ -14275,15 +14290,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         head_title = QLabel(t("MY BLUEPRINTS"))
         head_title.setStyleSheet(f"color:{theme.CYAN}; font-size:15px; font-weight:800; "
                                  f"letter-spacing:1px;")
-        lay.addWidget(head_title)
-        head = QLabel(t(
+        # ERKLAERTEXT NUR NOCH ALS TOOLTIP (emm404, Nutzer: "kannst du
+        # bitte die Texte entfernen? Nervt naemlich nur") - gleiche Loesung
+        # wie im Bauplan-Fenster (emm391).
+        head_title.setToolTip(t(
             "All blueprints your linked characters own (via ESI, "
               "wherever they are).") + " " + t(
             "Blueprints that are in an industry job right now (research, copy, "
             "invention, manufacturing) are shown as \u201ein job\u201c and do not "
             "count as available \u2013 neither here nor in the build plan."))
-        head.setObjectName("Muted"); head.setWordWrap(True)
-        lay.addWidget(head)
+        lay.addWidget(head_title)
 
         row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0)
         self.bp_refresh_btn = QPushButton(t("Load blueprints"))
@@ -14317,7 +14333,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Filter-Leiste: Kategorien per Checkbox (Mehrfachauswahl) + „nur
         # profitable“. Die Filter wirken rein lokal auf die schon geladenen Zeilen
         # (kein erneuter ESI-Abruf) -- deshalb nur _apply_bp_filter(), kein reload.
-        frow = QHBoxLayout(); frow.setContentsMargins(0, 2, 0, 2); frow.setSpacing(14)
+        # ZWEI ZEILEN (emm404, Nutzer: "lieber eine Zeile mehr fuer Filter
+        # und Dropdowns, als alles so breit zu machen"): Zeile 1 = Haken,
+        # Zeile 2 = Dropdowns + Columns.
+        frow = QHBoxLayout(); frow.setContentsMargins(0, 2, 0, 0); frow.setSpacing(10)
         flabel = QLabel(t("Show:"))
         flabel.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
         frow.addWidget(flabel)
@@ -14352,14 +14371,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.bp_cb_profit.stateChanged.connect(self._apply_bp_filter)
         frow.addSpacing(10)
         frow.addWidget(self.bp_cb_profit)
-        frow.addSpacing(18)
+        frow2 = QHBoxLayout(); frow2.setContentsMargins(0, 0, 0, 2)
+        frow2.setSpacing(10)
         cat_lbl = QLabel(t("Category:"))
         cat_lbl.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
-        frow.addWidget(cat_lbl)
+        frow2.addWidget(cat_lbl)
         self.bp_myb_cat = QComboBox(); self.bp_myb_cat.setMinimumWidth(160)
         self.bp_myb_cat.addItem(t("All categories"), None)
         self.bp_myb_cat.currentIndexChanged.connect(self._apply_bp_filter)
-        frow.addWidget(self.bp_myb_cat)
+        frow2.addWidget(self.bp_myb_cat)
         # GRUPPEN-DROPDOWN ENTFERNT (Nutzer, Sitzung 16: "der Dropdown Alle
         # Gruppen kann komplett weg, die Kategorie-Dropdown reicht voellig").
         # Damit faellt auch `_reload_bp_group_filter` weg - es hat nichts
@@ -14373,7 +14393,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                             ("Tech II", {2}), ("Tech III", {14})]:
             self.bp_myb_tech.addItem(label, mset)
         self.bp_myb_tech.currentIndexChanged.connect(self._apply_bp_filter)
-        frow.addWidget(self.bp_myb_tech)
+        frow2.addWidget(self.bp_myb_tech)
         # FRAKTION (Nutzer 30.09.2026) - dieselben vier Rassen wie im
         # Bauen-Reiter (industry.RACE_NAMES); Items ohne raceID (die meisten
         # Module/Rigs) fallen bei gewaehlter Fraktion heraus.
@@ -14386,18 +14406,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "faction often share components and materials \u2013 good for a multi "
             "build plan. Most modules and rigs have no faction."))
         self.bp_myb_race.currentIndexChanged.connect(self._apply_bp_filter)
-        frow.addWidget(self.bp_myb_race)
+        frow2.addWidget(self.bp_myb_race)
         char_lbl = QLabel(t("Character:"))
         char_lbl.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
-        frow.addWidget(char_lbl)
+        frow2.addWidget(char_lbl)
         self.bp_myb_char = QComboBox(); self.bp_myb_char.setMinimumWidth(140)
         self.bp_myb_char.addItem(t("All characters"), "all")
         self.bp_myb_char.setToolTip(
             t("Only show blueprints of one specific linked character."))
         self.bp_myb_char.currentIndexChanged.connect(self._apply_bp_filter)
-        frow.addWidget(self.bp_myb_char)
-        frow.addSpacing(18)
-        frow.addSpacing(18)
+        frow2.addWidget(self.bp_myb_char)
+        frow.addSpacing(12)
         typ_lbl = QLabel(t("Type:"))
         typ_lbl.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
         frow.addWidget(typ_lbl)
@@ -14424,6 +14443,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         frow.addWidget(self.bp_cb_missing)
         frow.addStretch()
         lay.addLayout(frow)
+        frow2.addStretch()
+        lay.addLayout(frow2)
         # Sofort befüllen (nicht erst auf den nächsten "Baurezepte laden"-
         # Durchlauf warten): diese Seite wird oft erst NACH dem SDE-Laden zum
         # ersten Mal aufgebaut - dann war _reload_categories() schon vorbei
@@ -14516,7 +14537,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # bleibt 17, gemerkte Spalten-Zustaende gelten weiter).
         _hbp = self.bp_table.horizontalHeader()
         _hbp.moveSection(_hbp.visualIndex(17), _hbp.visualIndex(10) + 1)
-        frow.addWidget(_bp_cols_btn)
+        frow2.addWidget(_bp_cols_btn)
 
         self.bp_table.verticalHeader().setVisible(False)
         self.bp_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -14971,7 +14992,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             n_profitable = 0
             cat_label = {"end": t("End product"), "component": t("Component"),
                          "reaction": t("Reaction")}
-            _inv_tint = QColor(theme.VIOLET); _inv_tint.setAlpha(26)
+            # emm405 (Nutzer: "erkenne ich jetzt, ob es erfindbar ist oder
+            # eine Copy, die ich besitze?"): kraeftigerer Hauch + violetter
+            # NAME - Besitz bleibt weiss, erfindbar ist violett.
+            _inv_tint = QColor(theme.VIOLET); _inv_tint.setAlpha(42)
             # GLEICHE BLAUPAUSEN ZU EINER ZEILE (Sitzung 17, Nutzer).
             rows = self._bp_zeilen_gruppieren(rows)
             _tbl.setRowCount(len(rows))
@@ -15100,7 +15124,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         it.setData(Qt.UserRole + 2, product_id)
                         it.setData(Qt.UserRole + 3,
                                    names.get(product_id) if product_id else nm)
-                        icon = self._table_icon(tid, kind="bp")
+                        # BPO und BPC auf einen Blick unterscheiden (emm390,
+                        # Discord HashtagMoDSucks): CCPs Bildserver hat fuer
+                        # Kopien ein eigenes Bild (/types/{id}/bpc).
+                        icon = self._table_icon(
+                            tid, kind="bp" if b.get("is_bpo") else "bpc")
                         if icon:
                             it.setIcon(icon)
                         # Echte EVE-Marktkategorie + Tech-Meta fürs Dropdown-
@@ -15124,6 +15152,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                      "ME 2/TE 4 without decryptor).").format(t1=_t1nm))
                     if inv_from:
                         it.setBackground(_inv_tint)
+                        if j == 0:
+                            it.setForeground(QColor(theme.VIOLET))   # emm405
                     if j == 16 and product_id:
                         if _abs is None:
                             it.setForeground(QColor(theme.MUTED))
@@ -15184,18 +15214,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                              if e.get("profit") is not None)
                 n_inv = sum(1 for b in rows if b.get("_inventable_from"))
                 _own = len(rows) - n_inv
+                # KURZ (emm404, Nutzer: "die Texte entfernen, nervt nur"):
+                # nur die Zahlen; Tipp und Einzelheiten im Tooltip.
                 self.bp_status.setText(
                     _txt("{n} blueprints").format(n=_own)
                     + (_txt(" \u00b7 {n} inventable T2 from your T1").format(n=n_inv)
                        if n_inv else "")
-                    + _txt(" \u00b7 {calc} with profit calculated \u00b7 {prof} currently "
-                           "profitable. Tip: sort by \u201eISK/h\u201c for the best hourly "
-                           "rate.").format(calc=n_calc, prof=n_profitable))
+                    + _txt(" \u00b7 {prof} of {calc} profitable").format(
+                        calc=n_calc, prof=n_profitable))
+            _tt = [_txt("Tip: sort by \u201eISK/h\u201c for the best hourly rate.")]
             # Corp-Blaupausen (1.1.0): woher, und beim Namen, warum eine
-            # Corp fehlt - "0 Corp-Blaupausen" allein waere die falsche Aussage.
+            # Corp fehlt - seit emm404 im Tooltip (Warnungen bleiben als
+            # ein Satz sichtbar, die Aufschluesselung steht im Tooltip).
             if res.get("corp_hinweis") and not res.get("mock"):
-                self.bp_status.setText(self.bp_status.text() + "  \u00b7 "
-                                       + res["corp_hinweis"])
+                _tt.append(res["corp_hinweis"])
             fail_codes = res.get("struct_fail_codes") or {}
             if fail_codes:
                 parts = []
@@ -15206,14 +15238,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     parts.append(f"{n}\u00d7 {labels.get(code, str(code))}")
                 self.bp_status.setText(
                     self.bp_status.text() +
-                    _txt("  \u26a0 {n} structure(s) without a name: ").format(
-                        n=sum(fail_codes.values()))
-                    + ", ".join(parts))
+                    _txt("  \u26a0 {n} structure(s) without a name").format(
+                        n=sum(fail_codes.values())))
+                _tt.append(_txt("  \u26a0 {n} structure(s) without a name: ").format(
+                    n=sum(fail_codes.values())).strip() + ", ".join(parts))
                 if "420_uebersprungen" in fail_codes or 420 in fail_codes:
-                    self.bp_status.setText(
-                        self.bp_status.text() +
+                    _tt.append(
                         _txt(" \u2013 ESI error limit reached, run \u201eLoad blueprints\u201c "
-                             "again in about 1 min for the rest."))
+                             "again in about 1 min for the rest.").strip(" \u2013"))
+            self.bp_status.setToolTip("\n".join(_tt))
             self._bp_myb_cat_fuellen()      # nur Kategorien deiner Blaupausen
             self._apply_bp_filter()
 
@@ -15284,9 +15317,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     visible = False
             is_inv_row = bool(cell.data(Qt.UserRole + 12))
             if is_inv_row:
-                # 🧪-Zeilen: eigener Schalter; BPO/BPC-Filter greift nicht
-                # (man BESITZT sie ja gerade noch nicht).
+                # 🧪-Zeilen: eigener Schalter. emm403 (Nutzer: "copys und
+                # originale lassen sich nicht richtig filtern" - die
+                # Inventable-Zeilen liefen am Type-Filter vorbei und sahen
+                # aus wie Besitz): wer BPO oder BPC abwaehlt, filtert nach
+                # BESITZ - dann verschwinden auch die Inventable-Zeilen,
+                # denn sie sind weder das eine noch das andere.
                 if not show_inv:
+                    visible = False
+                if not (show_bpo and show_bpc):
                     visible = False
             else:
                 is_bpo_row = bool(cell.data(Qt.UserRole + 9))
@@ -15613,8 +15652,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Invention ein/ausrechnen wurde PRO PLAN gespeichert (s. _save_plan) -
         # beim Wiederöffnen restaurieren, sonst könnte der inzwischen evtl.
         # geänderte globale Standard rückwirkend diesen Plan verändern.
-        self.settings["bau_invention"] = bool(
-            p.get("invention", self.settings.get("bau_invention", False)))
+        # emm385: NICHT mehr aus dem Plan zurueckschreiben - genau so blieb
+        # "Invention aus" eines alten Plans global haengen (unsichtbar).
+        self.settings["bau_invention"] = True
         # Invention-Tab: gespeicherten Decryptor je Blueprint wiederherstellen.
         # JSON speichert Dict-Keys immer als String -> zurück auf int normalisieren
         # (gleiches Muster wie bei den Skill-Keys, sonst findet _fill_invention_tab

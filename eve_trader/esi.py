@@ -1201,6 +1201,9 @@ def fetch_corporation_jobs(client_id: str, character_id: int,
             "completed_date": j.get("completed_date"),
             "status": st,
             "corporation_id": int(corporation_id),
+            # Wer hat den Job gestartet? Corp-Jobs laufen auf den SLOTS
+            # dieses Charakters (emm389, HerrLades-Screenshot 03.10.2026).
+            "installer_id": j.get("installer_id"),
         })
     return out
 

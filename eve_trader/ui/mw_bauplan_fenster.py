@@ -32,8 +32,8 @@ from . import icons
 from ..sprache import t
 from . import theme
 from .mw_basis import (IskGroupedSpin, IskMillionSpin, MinimizableDialog,
-                       ROLLE_KOPIERNAME, combos_ohne_mausrad, isk,
-                       kopier_text_rect, tab_icon, tab_icon_at)
+                       combos_ohne_mausrad, isk,
+                       tab_icon, tab_icon_at)
 
 
 # CORP-ROLLEN KURZ MERKEN (Nutzer-fehler.log 30.09.2026 19:42:50: zweimal
@@ -208,37 +208,6 @@ class BauplanFenster:
         box.setStandardButtons(_QMB.Yes | _QMB.No)
         box.setDefaultButton(_QMB.Yes if kollisionen else _QMB.No)
         return box
-
-    def _sched_name_klick(self, item, column):
-        """Linksklick auf den Item-Namen im Runplaner kopiert den Blaupausen-
-        bzw. Reaktions-Formel-Namen (Nutzer, 15.09.2026).
-
-        NUR AUF DEM TEXT, NICHT AUF DEM KAESTCHEN: `itemClicked` kommt auch,
-        wenn man den Haken setzt - ohne Positionspruefung wuerde jeder Haken
-        still die Zwischenablage ueberschreiben. Deshalb wird dieselbe
-        Rechteck-Rechnung benutzt, die auch den Rahmen malt: was ausserhalb
-        des gerahmten Textes liegt, ist kein Kopierklick.
-
-        Eine Bequemlichkeit darf den Runplaner nie kosten - alles in try.
-        """
-        try:
-            if column != 0 or item is None:
-                return
-            name = item.data(0, ROLLE_KOPIERNAME)
-            if not name:
-                return
-            tree = item.treeWidget()
-            if tree is None:
-                return
-            from PySide6.QtGui import QCursor
-            idx = tree.indexFromItem(item, 0)
-            rect = kopier_text_rect(tree, idx, tree.visualRect(idx))
-            pos = tree.viewport().mapFromGlobal(QCursor.pos())
-            if rect is not None and not rect.contains(pos):
-                return
-            self._copy_bp_name_value(name)
-        except Exception:
-            pass
 
     def _bd_contract_knopf(self, hat_preis):
         """Contract-Knopf zeigen und blinken lassen, solange dieser Bauplan
@@ -752,8 +721,17 @@ class BauplanFenster:
                                          for a, b in (v or {}).items()))
                          for k, v in skills.items()))
         imps = self._reprocess_implants_map()
+        # REPROCESSING-STEUER (emm392, Nutzer 04.10.2026: "werden
+        # reprocessing kosten mit einkalkuliert?" -> Feld in der Karte).
+        # Prozent der Struktur auf den Wert der Ausgaenge, gespeichert in
+        # bau_reproc_steuer; 0 = wie bisher.
+        try:
+            _st = max(0.0, min(100.0, float(
+                self.settings.get("bau_reproc_steuer", 0) or 0.0))) / 100.0
+        except (TypeError, ValueError):
+            _st = 0.0
         return {"on": weg_b, "unrefined": weg_a, "basis": basis, "info": info,
-                "struct": s.get("name"), "sid": s.get("id"),
+                "struct": s.get("name"), "sid": s.get("id"), "steuer": _st,
                 "skills_fp": hash(fp), "implants": tuple(sorted(imps.items()))}
 
     def _bp_basisname(self, tid, name):
@@ -769,6 +747,19 @@ class BauplanFenster:
             return name
         _nm = (getattr(self, "_bd_names_ref", None) or {}).get(int(_uw.get("u") or 0))
         return _nm if _nm else name
+
+    @staticmethod
+    def _kredit_mit_steuer(pfn, ro):
+        """Weg A (emm392): die Reprocessing-Steuer mindert den Wert des
+        Ruecklaeufers - EINE Stelle fuer Wahl UND Anwenden, sonst entschiede
+        eine andere Zahl, als nachher gutgeschrieben wird."""
+        try:
+            _st = float((ro or {}).get("steuer") or 0.0)
+        except (TypeError, ValueError):
+            _st = 0.0
+        if _st <= 0.0 or pfn is None:
+            return pfn
+        return lambda tid, _f=pfn: float(_f(tid) or 0.0) * (1.0 - _st)
 
     def _unrefined_overlay(self, type_id, recipes_basis, price_fn, opts, kredit_pfn=None,
                            fest=None):
@@ -808,8 +799,9 @@ class BauplanFenster:
                 industry.reprocess_skill_ids())
             kand = reprocess.unrefined_ausbeute(kand, af)
             ids = set(industry.alle_items_der_kette(type_id, recipes_basis)) | {int(type_id)}
-            res = reprocess.unrefined_wahl(kand, ids, price_fn, recipes_basis, opts,
-                                           kredit_pfn=kredit_pfn)
+            res = reprocess.unrefined_wahl(
+                kand, ids, price_fn, recipes_basis, opts,
+                kredit_pfn=self._kredit_mit_steuer(kredit_pfn or price_fn, ro))
         except Exception as _ue:
             self._log_exception("Reprocessing: Unrefined-Wahl", str(_ue))
             return recipes_basis, {}
@@ -861,6 +853,8 @@ class BauplanFenster:
         if not plan or not ro or not (ro.get("on") or ro.get("unrefined")):
             return plan
         neu = dict(plan)
+        _kp = self._kredit_mit_steuer(kredit_pfn or price_fn, ro)   # emm392
+        _steuer = float(ro.get("steuer") or 0.0)
         basis = ro.get("basis")
         if basis is None:
             neu["reprocess"] = {"schritte": [], "ersparnis": 0.0, "ueberschuss": {},
@@ -868,13 +862,13 @@ class BauplanFenster:
                                 if ro.get("on") else None,
                                 "struct": ro.get("struct")}
             # Weg A braucht keine Struktur-Basis (Scrapmetal-Pfad).
-            return self._unrefined_anwenden(neu, ro, kredit_pfn or price_fn)
+            return self._unrefined_anwenden(neu, ro, _kp)
         if not ro.get("on"):
             # Nur Weg A: leerer Weg-B-Rahmen, damit die Anzeige einen Block hat.
             neu["reprocess"] = {"schritte": [], "ersparnis": 0.0, "ueberschuss": {},
                                 "abgelehnt": {}, "basis": basis, "struct": ro.get("struct"),
                                 "info": ro.get("info") or {}}
-            return self._unrefined_anwenden(neu, ro, kredit_pfn or price_fn)
+            return self._unrefined_anwenden(neu, ro, _kp)
         try:
             karte = industry.reprocess_map()
             cats = industry.item_category_map()
@@ -896,7 +890,7 @@ class BauplanFenster:
                 self._reprocess_implants_map(),
                 industry.reprocess_skill_ids(), industry.reprocess_erz_skill())
             res = reprocess.plane_erz_einkauf(plan.get("buy") or {}, price_fn, kand, af,
-                                              gratis=_gratis)
+                                              gratis=_gratis, steuer=_steuer)
             # EIN CHARAKTER FUER ALLES (Nutzer 19.09.2026): stehen mehrere
             # Charaktere in den Schritten (je Erz der beste), noch einmal
             # mit dem einen planen, der ueber alle Erze am meisten holt.
@@ -912,7 +906,8 @@ class BauplanFenster:
                         industry.reprocess_skill_ids(), industry.reprocess_erz_skill(),
                         fest=_einer)
                     res = reprocess.plane_erz_einkauf(plan.get("buy") or {}, price_fn,
-                                                      kand, af, gratis=_gratis)
+                                                      kand, af, gratis=_gratis,
+                                                      steuer=_steuer)
         except Exception as _re:
             self._log_exception("Reprocessing: Erz statt Mineral", str(_re))
             neu["reprocess"] = {"schritte": [], "ersparnis": 0.0, "ueberschuss": {},
@@ -933,7 +928,7 @@ class BauplanFenster:
             for mat, q in (res.get("ueberschuss") or {}).items():
                 surplus[int(mat)] = surplus.get(int(mat), 0) + int(q)
             neu["surplus"] = surplus
-        return self._unrefined_anwenden(neu, ro, kredit_pfn or price_fn)
+        return self._unrefined_anwenden(neu, ro, _kp)
 
     def _unrefined_anwenden(self, plan, ro, kredit_pfn):
         """Weg A auf den Plan: Schritte fuer jedes ueber die Unrefined-Formel
@@ -2601,10 +2596,9 @@ class BauplanFenster:
         st_target = _box(_txt("Min. sell price / unit"), theme.AMBER)
         st_profit = _box(_txt("Total profit"))
         st_profit_raw = _box(_txt("Gross profit (before fees)"), theme.MUTED)
-        # NUR DIE KARTEN-BESCHRIFTUNG uebersetzen. Weiter unten ist
-        # "Marge" ein interner SCHLUESSEL (_pf.get("Marge"),
-        # _profit_rows) - wer den mituebersetzt, findet die Zeile auf
-        # Englisch nicht mehr und die Zahl bleibt leer.
+        # NUR DIE KARTEN-BESCHRIFTUNG uebersetzen. Die kleine Marge-Zeile
+        # in den Details ist raus (emm394, Nutzer: "unnoetiger
+        # Informationsueberfluss") - die Marge steht nur noch hier oben.
         st_marge = _box(_txt("Margin"))
         # Nutzer-Vorgabe: weniger Zahlen. "Gesamt", "Sell / Stk" und
         # "Rohgewinn" verschwinden aus der Leiste - berechnet werden sie
@@ -2735,6 +2729,7 @@ class BauplanFenster:
                         ("Invention (\u00d8)", "Invention (\u00d8)"),
                         ("Bestand (Ersatzkosten)", "Stock (replacement cost)"),
                         ("\u2212 R\u00fcckl\u00e4ufer", "\u2212 Returned (reprocessing)"),
+                        ("Reprocessing-Steuer", "Reprocessing tax"),
                         ("= Baukosten gesamt", "= Total build cost"),
                         ("\u00f7 St\u00fcck", "\u00f7 units"),
                         ("Einkaufsliste (Jita Sell)", "Shopping list (Jita sell)"),
@@ -2755,7 +2750,10 @@ class BauplanFenster:
                         ("\u2212 Eigene Fahrt", "\u2212 Own trip"),
                         ("\u2212 Zusatzkosten", "\u2212 Extra cost"),
                         ("= Gewinn", "= Profit"), ("Gewinn / Stk", "Profit / unit"),
-                        ("Marge", "Margin"),
+                        # KEINE Marge-Zeile mehr (emm394, Nutzer 04.10.2026:
+                        # "wenn es dieselbe Zahl ist, warum wird sie dann
+                        # angezeigt ... nimm die kleine Marge unten raus") -
+                        # die Marge steht gross in der Kopfzeile.
                         ("Verlustschwelle / Stk", "Break-even / unit")]
         # KURZERKLAERUNG AN JEDER ZEILE (Nutzer 25.09.2026: "waere nett im
         # Dropdown Details auf allen Zeilen eine Mouseover-Info fuer alle
@@ -2808,8 +2806,6 @@ class BauplanFenster:
                 "What is left after fees, build cost, trip and extras.",
             "Gewinn / Stk":
                 "Profit divided by the quantity.",
-            "Marge":
-                "Profit as a percentage of the gross sale proceeds.",
             "Verlustschwelle / Stk":
                 "Below this sale price per unit you make a loss – fees, "
                 "trip and extras included.",
@@ -2855,6 +2851,19 @@ class BauplanFenster:
                             "It stays on the shopping list because it returns only "
                             "after the reaction.")
                 _cap.setToolTip(_ttr); _val.setToolTip(_ttr)
+                _cap.setVisible(False); _val.setVisible(False)
+            # de_scan4: aus - interner Dict-Schluessel (siehe _detail_rows)
+            # de_scan5: aus - dito, nie sichtbar
+            if _rlabel == "Reprocessing-Steuer":
+            # de_scan4: an
+            # de_scan5: an
+                # emm393: nur sichtbar, wenn eine Steuer wirklich anfaellt.
+                _tts = _txt("Reprocessing tax of the structure on the value of "
+                            "the reprocessed output. It already shrinks the ore "
+                            "saving, so it is PART of the material row - shown "
+                            "here, not deducted again. The reprocessing credit "
+                            "(way A) is already net of this tax.")
+                _cap.setToolTip(_tts); _val.setToolTip(_tts)
                 _cap.setVisible(False); _val.setVisible(False)
             _detail_val_lbls[_rlabel] = _val
             _detail_caps[_rlabel] = _cap
@@ -3152,6 +3161,29 @@ class BauplanFenster:
             "has a flat 50 % base."))
         rp_struct_cb.setEnabled(rp_cb.isChecked() or ru_cb.isChecked())
         _rp_row.addWidget(rp_struct_cb, 1)
+        # REPROCESSING-STEUER (emm392, Nutzer 04.10.2026: "werden
+        # reprocessing kosten mit einkalkuliert?" -> "ja, in die
+        # ausklappbare Karte"): Prozent der Struktur auf den Wert der
+        # Ausgaenge; schrumpft die Erz-Ersparnis (Weg B) und die
+        # Ruecklaeufer-Gutschrift (Weg A). 0 = wie bisher.
+        from PySide6.QtWidgets import QDoubleSpinBox as _QDSB_RP
+        _rp_tax_lbl = QLabel(_txt("Tax")); _rp_tax_lbl.setObjectName("Muted")
+        _rp_row.addWidget(_rp_tax_lbl)
+        rp_tax = _QDSB_RP()
+        rp_tax.setRange(0.0, 100.0)
+        rp_tax.setDecimals(2)
+        rp_tax.setSingleStep(0.5)
+        rp_tax.setSuffix(" %")
+        try:
+            rp_tax.setValue(float(self.settings.get("bau_reproc_steuer", 0) or 0.0))
+        except (TypeError, ValueError):
+            rp_tax.setValue(0.0)
+        rp_tax.setToolTip(_txt(
+            "Reprocessing tax of the structure (set by its owner; shown in the "
+            "game's reprocessing window). Charged on the value of the output "
+            "materials - it reduces the ore saving and the reprocessing credit."))
+        rp_tax.setEnabled(rp_cb.isChecked() or ru_cb.isChecked())
+        _rp_row.addWidget(rp_tax)
         _rpv.addLayout(_rp_row)
         rp_lbl = QLabel(""); rp_lbl.setObjectName("Muted"); rp_lbl.setWordWrap(True)
         rp_lbl.setStyleSheet("font-size:11px;")
@@ -3290,6 +3322,7 @@ class BauplanFenster:
             self.settings["bau_reprocess_on"] = bool(checked)
             config.save_settings(self.settings)
             rp_struct_cb.setEnabled(bool(checked) or ru_cb.isChecked())
+            rp_tax.setEnabled(bool(checked) or ru_cb.isChecked())
             if checked:
                 _rp_namen_nachziehen()
             _rp_opts_setzen()
@@ -3336,6 +3369,7 @@ class BauplanFenster:
             self.settings["bau_unrefined_on"] = bool(checked)
             config.save_settings(self.settings)
             rp_struct_cb.setEnabled(bool(checked) or rp_cb.isChecked())
+            rp_tax.setEnabled(bool(checked) or rp_cb.isChecked())
             _ru_lbl_refresh()
             _rp_opts_setzen()
             rebuild()
@@ -3352,6 +3386,23 @@ class BauplanFenster:
                 _rp_opts_setzen()
                 rebuild()
         rp_struct_cb.currentIndexChanged.connect(_rp_struct_changed)
+
+        def _rp_tax_changed():
+            try:
+                _neu_tax = float(rp_tax.value())
+            except (TypeError, ValueError):
+                _neu_tax = 0.0
+            if abs(float(self.settings.get("bau_reproc_steuer", 0) or 0.0)
+                   - _neu_tax) < 1e-9:
+                return
+            self.settings["bau_reproc_steuer"] = _neu_tax
+            config.save_settings(self.settings)
+            if rp_cb.isChecked() or ru_cb.isChecked():
+                _rp_opts_setzen()
+                rebuild()
+                _rp_ladder_nachziehen()
+        rp_tax.editingFinished.connect(_rp_tax_changed)
+        self._bd_reproc_tax = rp_tax                      # b-Suite
         self._bd_reprocess_cb = rp_cb
         self._bd_reprocess_struct_cb = rp_struct_cb
         self._bd_reprocess_lbl = rp_lbl
@@ -3540,7 +3591,11 @@ class BauplanFenster:
         # nach dem Ausprobieren: "die Items sollen wieder normal aussehen").
         # Ein Rahmen und spaeter ein Chip waren beide zu laut - die Zeile
         # sieht jetzt aus wie immer, nur der Klick kopiert.
-        sched_tree.itemClicked.connect(self._sched_name_klick)
+        # KEIN KOPIEREN PER LINKSKLICK AUF DEN NAMEN MEHR (emm401, Nutzer
+        # 04.10.2026: "damit das gar nicht erst passieren kann im
+        # Runplaner" - der Name-Klick kopierte, ohne den Run-Klick zu
+        # merken; Runs gehoeren ueber den amber Knopf kopiert, Namen
+        # weiter per Rechtsklick/Strg+C oder den Blueprint-Knopf).
         sched_tree.headerItem().setTextAlignment(1, Qt.AlignCenter)   # Runs-Header mittig
         sched_tree.headerItem().setTextAlignment(5, Qt.AlignCenter)
         sched_tree.headerItem().setToolTip(
@@ -3767,6 +3822,8 @@ class BauplanFenster:
                 return
             from PySide6.QtWidgets import QApplication as _QA
             _QA.clipboard().setText("\n".join(names_out))
+            # Jede Namens-Kopie merkt die Job-Zuordnung mit (emm402).
+            self._runplan_klick_bei_kopie(sched_tree.selectedItems())
             self._flash_tip(_txt("Blueprint name copied: {name}").format(
                                 name=names_out[0])
                             + (f" (+{len(names_out) - 1})" if len(names_out) > 1 else ""))
@@ -3798,7 +3855,7 @@ class BauplanFenster:
             def _copy_all_bp_names():
                 from PySide6.QtWidgets import (QApplication as _QA,
                                                QTreeWidgetItemIterator)
-                seen, out = set(), []
+                seen, out, _kl9 = set(), [], []
                 _sti = QTreeWidgetItemIterator(sched_tree)
                 while _sti.value():
                     _it9 = _sti.value()
@@ -3807,8 +3864,11 @@ class BauplanFenster:
                         if nm and nm not in seen:
                             seen.add(nm)
                             out.append(nm)
+                        _kl9.append(_it9)
                     _sti += 1
                 if out:
+                    # Jede Namens-Kopie merkt die Job-Zuordnung mit (emm402).
+                    self._runplan_klick_bei_kopie(_kl9)
                     _QA.clipboard().setText("\n".join(out))
                     self._flash_tip(
                         _txt("{n} blueprint names copied \u2013 one line per "
@@ -6717,6 +6777,27 @@ class BauplanFenster:
                     _rl_lbl.setVisible(bool(_rl_w))
                     if _rl_cap is not None:
                         _rl_cap.setVisible(bool(_rl_w))
+                # REPROCESSING-STEUER SICHTBAR (emm393, Nutzer: "sollte da
+                # im Details-Tab jetzt nicht irgendwo die Reprocessing-
+                # Kosten stehen?"): Summe der steuer_kosten der Erz-Schritte
+                # (Weg B). Sie steckt schon in der Material-Zeile (die
+                # Ersparnis ist um sie kleiner) - Anzeige grau, kein zweiter
+                # Abzug; der Weg-A-Kredit ist ohnehin schon netto.
+                # de_scan4: aus - interner Dict-Schluessel (siehe _detail_rows)
+                _rst_lbl = _detail_val_lbls.get("Reprocessing-Steuer")
+                _rst_cap = _detail_caps.get("Reprocessing-Steuer")
+                # de_scan4: an
+                _rst_w = sum(float(_s.get("steuer_kosten") or 0.0)
+                             for _s in (((plan or {}).get("reprocess") or {})
+                                        .get("schritte") or [])
+                             if _s.get("art") != "unrefined")
+                if _rst_lbl is not None:
+                    _rst_lbl.setText(isk(_rst_w, suffix=False) if _rst_w else "\u2013")
+                    _rst_lbl.setStyleSheet(
+                        f"font-size:11px; font-weight:700; color:{theme.MUTED};")
+                    _rst_lbl.setVisible(bool(_rst_w))
+                    if _rst_cap is not None:
+                        _rst_cap.setVisible(bool(_rst_w))
                 # --- EINKAUFSLISTE ZU JITA SELL (Nutzer, Sitzung 14) ---
                 # Was er JETZT ausgeben muss - im Unterschied zu "Material",
                 # das den Bestandsanteil nicht enthaelt, und zu "Baukosten
@@ -6845,18 +6926,12 @@ class BauplanFenster:
                 _pset("Gewinn / Stk", (prof / _q_) if prof is not None else None,
                       False, theme.GREEN if (prof or 0) >= 0 else theme.RED)
                 # de_scan2: an
-                # de_scan4: aus - interner SCHLUESSEL (Kategorie/Stufe/Dict), Anzeige uebersetzt woanders
-                _mg = _pf.get("Marge")
-                # de_scan4: an
-                if _mg is not None:
-                    _mgv = (prof / gross * 100.0) if gross else None
-                    _mg.setText(f"{_mgv:+.1f} %" if _mgv is not None else "\u2013")
-                    _mg.setStyleSheet(
-                        "font-size:11px; font-weight:700; color:"
-                        + (theme.GREEN if (_mgv or 0) >= 0 else theme.RED))
-                # de_scan4: aus - interner Dict-Schluessel; die Beschriftung kommt uebersetzt aus _detail_rows
+                # Marge-Zeile entfernt (emm394) - nur noch die Kopfzeile.
+                # de_scan4: aus - interner Dict-Schluessel (siehe _detail_rows)
+                # de_scan5: aus - dito, nie sichtbar
                 _pset("Verlustschwelle / Stk",
                 # de_scan4: an
+                # de_scan5: an
                       (total + transport_cost + extra_cost)
                       / (1 - tax - broker) / _q_ if (1 - tax - broker) else 0,
                       False, theme.AMBER)
@@ -8987,7 +9062,7 @@ class BauplanFenster:
                           # sonst würde ein später geänderter globaler Standard
                           # (Bau-Setup) rückwirkend alte gespeicherte Pläne
                           # verändern, was der Nutzer beim Speichern nicht sah.
-                          "invention": bool(self.settings.get("bau_invention", False)),
+                          "invention": True,     # emm385: immer an
                           # "Alles selbst bauen" + "Assets abziehen" (Checkbox-
                           # Zustand) mitsichern - sonst geht beim Neu-Öffnen
                           # jede Einstellung verloren, die der User bewusst

@@ -65,6 +65,10 @@ KATALOG = {
         "NPC station": "NPC-Station",
         "NPC station (50 %)": "NPC-Station (50 %)",
         "Buy compressed ore instead of minerals": "Komprimiertes Erz statt Minerale kaufen",
+        "Tax":
+            "Steuer",
+        "Reprocessing tax of the structure (set by its owner; shown in the game's reprocessing window). Charged on the value of the output materials - it reduces the ore saving and the reprocessing credit.":
+            "Reprocessing-Steuer der Struktur (vom Besitzer festgelegt; steht im Reprocessing-Fenster des Spiels). Sie f\u00e4llt auf den Wert der Ausg\u00e4nge an \u2013 sie mindert die Erz-Ersparnis und die Reprocessing-Gutschrift.",
         "Reprocess at": "Reprocessen bei",
         "Detects the reprocessing implants (Zainou 'Beancounter' Reprocessing RX-801/802/804) of all linked characters via ESI. Needs the implant scope (Settings \u2192 \u201eImplant manufacturing bonus\u201c \u2192 On + relink). The bonus goes into the yield and the character choice.":
             "Erkennt die Reprocessing-Implantate (Zainou 'Beancounter' Reprocessing RX-801/802/804) aller verkn\u00fcpften Charaktere per ESI. Braucht den Implantat-Scope (Einstellungen \u2192 \u201eImplant manufacturing bonus\u201c \u2192 An + neu verkn\u00fcpfen). Der Bonus geht in Ausbeute und Charakterwahl ein.",
@@ -88,7 +92,6 @@ KATALOG = {
         "{n} batches": "{n} Bl\u00f6cke",
         "Best reprocessing character for these ores (skills x implant) \u2013 log in with this one.":
             "Bester Reprocessing-Charakter f\u00fcr diese Erze (Skills x Implantat) \u2013 mit dem einloggen.",
-        "Click copies the name for the market search.": "Klick kopiert den Namen f\u00fcr die Marktsuche.",
         "What the ore yields for this plan; the rest is surplus (right).":
             "Was das Erz f\u00fcr diesen Plan liefert; der Rest ist \u00dcberschuss (rechts).",
         "Click copies {r} \u2013 paste it into the quantity field in game (Ctrl+V).":
@@ -1362,10 +1365,6 @@ KATALOG = {
             "Wieder ins Gewinn-Total nehmen",
         " {n} excluded by you.":
             " {n} von dir ausgeschlossen.",
-        "Sold/day: ? \u2013 market history not loaded yet.":
-            "Verkauft/Tag: ? \u2013 Markt-Historie noch nicht geladen.",
-        "Sold/day: {v} \u00b7 {q} units \u2248 {d} days to sell":
-            "Verkauft/Tag: {v} \u00b7 {q} St\u00fcck \u2248 {d} Tage bis verkauft",
         "Tick removed for {items} \u2013 ESI shows no job for it on any linked character 30 minutes after ticking.":
             "Haken bei {items} entfernt \u2013 ESI kennt 30 Minuten nach dem Abhaken bei keinem verkn\u00fcpften Charakter einen Job dazu.",
         "\u00d8 {v} sold per day at the hub (last 30 days, market history).":
@@ -1402,8 +1401,6 @@ KATALOG = {
             "Mit {name} neu einloggen \u2013 erneuert die ESI-Rechte. Es wird nichts gel\u00f6scht. Im EVE-Login {name} ausw\u00e4hlen.",
         "Sold/day":
             "Verkauft/Tag",
-        "(days)":
-            "(Tage)",
         "Units of the product sold per day at the hub (average of the last 30 days, market history). Amber below 5/day, red = no trade. ? = history not loaded yet.":
             "Verkaufte St\u00fcck des Produkts je Tag am Hub (Schnitt der letzten 30 Tage, Markt-Historie). Amber unter 5/Tag, rot = kein Handel. ? = Historie noch nicht geladen.",
         "Market history not loaded yet \u2013 it is fetched in the background.":
@@ -1412,10 +1409,6 @@ KATALOG = {
             "In den letzten 30 Tagen am Hub nicht gehandelt.",
         "Thin market: only {v} sold per day.":
             "D\u00fcnner Markt: nur {v} verkauft je Tag.",
-        "\u00d8 {v} sold per day at the hub (last 30 days). {q} units \u2248 {d} days until all are sold \u2013 if you are the only seller.":
-            "\u00d8 {v} verkauft je Tag am Hub (letzte 30 Tage). {q} St\u00fcck \u2248 {d} Tage, bis alle verkauft sind \u2013 wenn du der einzige Verk\u00e4ufer bist.",
-        "\u26a0 Thin market for {items}: at the current daily volume the quantity takes more than {d} days to sell \u2013 the profit assumes it all sells at today\u2019s price.":
-            "\u26a0 D\u00fcnner Markt bei {items}: beim heutigen Tagesvolumen braucht die Menge mehr als {d} Tage zum Verkauf \u2013 der Gewinn nimmt an, dass alles zum heutigen Preis weggeht.",
         "Click to show or hide the running jobs":
             "Klicken zeigt oder versteckt die laufenden Jobs",
         "Count completed plans in the profit total":
@@ -1771,8 +1764,10 @@ KATALOG = {
             "Was nach Geb\u00fchren, Baukosten, Fahrt und Zusatzkosten \u00fcbrig bleibt.",
         "Profit divided by the quantity.":
             "Gewinn geteilt durch die St\u00fcckzahl.",
-        "Profit as a percentage of the gross sale proceeds.":
-            "Gewinn in Prozent des Brutto-Verkaufserl\u00f6ses.",
+        "Reprocessing tax":
+            "Reprocessing-Steuer",
+        "Reprocessing tax of the structure on the value of the reprocessed output. It already shrinks the ore saving, so it is PART of the material row - shown here, not deducted again. The reprocessing credit (way A) is already net of this tax.":
+            "Reprocessing-Steuer der Struktur auf den Wert der verarbeiteten Ausg\u00e4nge. Sie verkleinert schon die Erz-Ersparnis und steckt damit in der Material-Zeile \u2013 hier nur gezeigt, nicht noch einmal abgezogen. Die Reprocessing-Gutschrift (Weg A) ist bereits netto.",
         "Below this sale price per unit you make a loss \u2013 fees, trip and extras included.":
             "Unter diesem Verkaufspreis je St\u00fcck machst du Verlust \u2013 Geb\u00fchren, Fahrt und Zusatzkosten einbezogen.",
         # WARUM ETWAS FEHLT, OBWOHL NICHTS FEHLT (25.09.2026).
@@ -1946,10 +1941,14 @@ KATALOG = {
             "{n} Blueprints",
         " \xb7 {n} inventable T2 from your T1":
             " \u00b7 {n} erfindbare T2 aus deinen T1",
-        " \u00b7 {calc} with profit calculated \u00b7 {prof} currently profitable. Tip: sort by \u201eISK/h\u201c for the best hourly rate.":
-            " \u00b7 {calc} mit Gewinn berechnet \u00b7 {prof} aktuell profitabel. Tipp: nach \u201eISK/Std\u201c sortieren f\u00fcr den besten Stundenlohn.",
+        " \u00b7 {prof} of {calc} profitable":
+            " \u00b7 {prof} von {calc} profitabel",
+        "Tip: sort by \u201eISK/h\u201c for the best hourly rate.":
+            "Tipp: nach \u201eISK/Std\u201c sortieren f\u00fcr den besten Stundenlohn.",
         "  \u26a0 {n} structure(s) without a name: ":
             "  \u26a0 {n} Struktur(en) ohne Namen: ",
+        "  \u26a0 {n} structure(s) without a name":
+            "  \u26a0 {n} Struktur(en) ohne Namen",
         " \u2013 ESI error limit reached, run \u201eLoad blueprints\u201c again in about 1 min for the rest.":
             " \u2013 ESI-Error-Limit erreicht, in ca. 1 Min. erneut \u201eBlueprints laden\u201c f\u00fcr die restlichen.",
         "  \u26a0 Category has >500 missing items \u2013 only the first ones shown. For the complete list, choose a group as well.":
@@ -4813,6 +4812,16 @@ KATALOG = {
             "Alles in diesem Plan, was dieses Item verbraucht, ist schon gebaut oder l\u00e4uft \u2013 die restlichen Runs braucht es nicht mehr. Nichts zu kaufen, nichts zu starten.",
         "Corp":
             "Corp",
+        "Corp: {name}":
+            "Corp: {name}",
+        "Corp jobs run on the installer's job slots \u2013 they count on that character's card.":
+            "Corp-Jobs laufen auf den Job-Slots des startenden Charakters \u2013 sie z\u00e4hlen auf dessen Karte.",
+        "{n} corp job(s) \u2013 they run on this character's job slots.":
+            "{n} Corp-Job(s) \u2013 sie laufen auf den Job-Slots dieses Charakters.",
+        "{n} archived":
+            "{n} archiviert",
+        "Completed plans older than 30 days are moved to bauplan_archiv.json in the app data folder - nothing is deleted.":
+            "Abgeschlossene Pl\u00e4ne, die \u00e4lter als 30 Tage sind, wandern in die Datei bauplan_archiv.json im Datenordner - gel\u00f6scht wird nichts.",
         "Market scanned \u2013 now load the deals":
             "Markt gescannt \u2013 jetzt die Deals laden",
         # ---- Runs statt Stueck (Discord, 16.09.2026) ----
@@ -5679,6 +5688,8 @@ KATALOG = {
         "click \u201eSave build plan\u201c.":
             "\u201e{name}\u201c aus diesem B\u00fcndel nehmen?\n\nGespeichert wird erst "
             "mit \u201eBauplan speichern\u201c.",
+        "\u201e{name}\u201c removed from the bundle and saved.":
+            "\u201e{name}\u201c aus dem B\u00fcndel entfernt und gespeichert.",
         "\u201e{name}\u201c removed from the bundle \u2013 save the plan to keep it.":
             "\u201e{name}\u201c aus dem B\u00fcndel genommen \u2013 zum Behalten den "
             "Plan speichern.",
@@ -5836,13 +5847,11 @@ KATALOG = {
         # Multi-Bauplan, Schritt 4: je Endprodukt (mw_multi_bauplan.py).
         "Own BPC": "Eigene BPC",
         "Runs/BPC": "Runs/BPC",
-        "Quantity, ME/TE and \u201eOwn BPC\u201c belong to EACH end product here \u2013 "
-        "that is why the single fields above are hidden for a bundle. T2 "
-        "ends take ME/TE from their decryptor (Invention tab); tick \u201eOwn "
-        "BPC\u201c to build from your own copy with its own values instead.":
+        "Quantity, ME/TE and \u201eOwn BPC\u201c belong to EACH end product here. "
+        "T2 ends take ME/TE from their decryptor (Invention tab); tick "
+        "\u201eOwn BPC\u201c to build from your own copy with its own values.":
             "Menge, ME/TE und \u201eEigene BPC\u201c geh\u00f6ren hier zu JEDEM Endprodukt "
-            "einzeln \u2013 deshalb sind die einzelnen Felder oben beim B\u00fcndel "
-            "ausgeblendet. T2-Enden nehmen ME/TE aus ihrem Decryptor "
+            "einzeln. T2-Enden nehmen ME/TE aus ihrem Decryptor "
             "(Invention-Reiter); \u201eEigene BPC\u201c anhaken, um stattdessen aus "
             "der eigenen Kopie mit deren Werten zu bauen.",
         "\u26a0 Unclear whether you invent or build from your own copies: "

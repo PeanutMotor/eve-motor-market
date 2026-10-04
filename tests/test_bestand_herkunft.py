@@ -9865,7 +9865,7 @@ def _fn_cfg221(name):
 _ssa221 = _fn_cfg221("save_settings_async")
 check("aa221 save_settings_async ist auffindbar", bool(_ssa221))
 check("aa221 der JSON-Text entsteht SOFORT (Momentaufnahme)",
-      "text = json.dumps(settings, indent=2)" in _ssa221
+      "text = _settings_text(settings)" in _ssa221
       and "_schreib_offen[\"text\"] = text" in _ssa221)
 check("aa221 ein laufender Faden uebernimmt den neuen Text, statt anzustehen",
       "if _schreib_faden is not None and _schreib_faden.is_alive():" in _ssa221
@@ -21808,6 +21808,185 @@ _tb463 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
 check("aa463 die Karten werden in dieser Reihenfolge gezeichnet",
       "for cid in jobs_karten_folge(_chars):" in _tb463)
 
+# ---------------------------------------------------------------- (aa478)
+# CORP-JOBS AUF DER INDUSTRY-JOBS-SEITE (emm389, Discord HerrLades: "it only
+# shows private jobs?" und "corp jobs still use the normal slots of the
+# character you putting up the job with"). Rein: Verteilung nach installer_id,
+# Dedupe nach job_id, Corp-Flagge wandert bis in Gruppen und Einzelzeilen.
+from eve_trader.ui.mw_helpers import (corp_jobs_verteilen as _cjv478,
+                                      jobs_uebersicht as _ju478,
+                                      jobs_gruppen as _jg478,
+                                      jobs_einzeln as _je478)
+_cj478 = [
+    {"job_id": 1, "installer_id": 100, "activity_id": 1, "product_type_id": 11,
+     "runs": 3, "status": "active", "end_date": "2026-10-02T13:00:00Z",
+     "corporation_id": 777},
+    {"job_id": 2, "installer_id": 200, "activity_id": 5, "product_type_id": 22,
+     "runs": 1, "status": "active", "end_date": "2026-10-02T13:00:00Z",
+     "corporation_id": 777},
+    {"job_id": 3, "installer_id": 100, "activity_id": 1, "product_type_id": 11,
+     "runs": 3, "status": "active", "end_date": "2026-10-02T13:00:00Z",
+     "corporation_id": 777},
+]
+_je_cid478, _rest478 = _cjv478(_cj478, [100], {3})
+eq("aa478 installer verknuepft -> seine Karte; fremd -> uebrig; bekannte job_id nie doppelt",
+   (sorted(j["job_id"] for j in _je_cid478.get(100, [])),
+    [j["job_id"] for j in _rest478]),
+   ([1], [2]))
+_jetzt478 = 1_000_000.0
+import datetime as _dt478
+_u478 = _ju478(_cj478[:1] + [{"activity_id": 1, "product_type_id": 11, "runs": 2,
+                              "status": "active",
+                              "end_date": "2026-10-02T13:00:00Z"}], (5, 2, 2),
+               _dt478.datetime.fromisoformat("2026-10-02T12:00:00+00:00").timestamp())
+check("aa478 die Zeile weiss, ob der Job ein Corp-Job ist",
+      [z["corp"] for z in _u478["zeilen"]] == [True, False]
+      and _u478["belegt"]["mfg"] == 2)
+_g478 = _jg478(_u478["zeilen"], _jetzt478)
+_e478 = _je478(_u478["zeilen"], _jetzt478)
+check("aa478 Gruppe und Einzelzeile tragen die Corp-Flagge weiter",
+      any(g.get("corp") for g in _g478["laufend"])
+      and sorted(z["corp"] for z in _e478["laufend"]) == [False, True])
+_esi478 = open("eve_trader/esi.py", encoding="utf-8").read()
+check("aa478 fetch_corporation_jobs liefert installer_id mit",
+      '"installer_id": j.get("installer_id"),' in _esi478)
+_mw478 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa478 My Blueprints: Kopien bekommen das BPC-Bild, Originale das BPO-Bild (emm390)",
+      'kind="bp" if b.get("is_bpo") else "bpc"' in _mw478)
+
+# ---------------------------------------------------------------- (aa479)
+# REPROCESSING-STEUER (emm392, Nutzer 04.10.2026: "werden reprocessing
+# kosten mit einkalkuliert?" -> Steuer-Feld): Prozent vom WERT DER AUSGAENGE,
+# verteuert jeden Tauschschritt (Weg B) und mindert den Ruecklaeufer-Kredit
+# (Weg A, ueber _kredit_mit_steuer). Handrechnung an einem Erz.
+import eve_trader.reprocess as _rp479
+_kand479 = {900: {"out": {800: 100}, "portion": 100}}
+_preise479 = {900: 10.0, 800: 50.0}
+_ab479 = lambda erz: (1.0, 77)
+_alt_erg479 = None
+try:
+    import eve_trader.industry as _I479
+    _alt_erg479 = _I479.reprocess_ergebnis
+    # Basis-Ausgang 1:1 (Ausbeute steckt schon in _ab479): 100 Stueck M.
+    _I479.reprocess_ergebnis = lambda out, menge, portion, a: {
+        int(m): int(q * a) for m, q in (out or {}).items()}
+    _r0 = _rp479.plane_erz_einkauf({800: 100}, _preise479.get, _kand479, _ab479)
+    eq("aa479 ohne Steuer: Tausch lohnt (Kosten 1000 gegen 5000), Ersparnis 4000",
+       (len(_r0["schritte"]), round(_r0["ersparnis"])), (1, 4000))
+    _r1 = _rp479.plane_erz_einkauf({800: 100}, _preise479.get, _kand479, _ab479,
+                                   steuer=0.10)
+    eq("aa479 10 % Steuer auf den Ausgangswert (5000): Ersparnis 4000 -> 3500, "
+       "Schritt traegt steuer_kosten",
+       (round(_r1["ersparnis"]), round(_r1["schritte"][0]["steuer_kosten"])),
+       (3500, 500))
+    _r2 = _rp479.plane_erz_einkauf({800: 100}, _preise479.get, _kand479, _ab479,
+                                   steuer=0.90)
+    check("aa479 90 % Steuer: der Tausch lohnt nicht mehr (5500 > 5000) - kein Schritt",
+          not _r2["schritte"] and _r2["buy"] == {800: 100})
+finally:
+    if _alt_erg479 is not None:
+        _I479.reprocess_ergebnis = _alt_erg479
+from eve_trader.ui.mw_bauplan_fenster import BauplanFenster as _BF479
+_pfn479 = lambda tid: 100.0
+check("aa479 Weg A: _kredit_mit_steuer mindert den Ruecklaeufer-Preis (100 -> 90), "
+      "ohne Steuer bleibt die Funktion unangetastet",
+      abs(_BF479._kredit_mit_steuer(_pfn479, {"steuer": 0.10})(34) - 90.0) < 1e-9
+      and _BF479._kredit_mit_steuer(_pfn479, {"steuer": 0}) is _pfn479
+      and _BF479._kredit_mit_steuer(_pfn479, {}) is _pfn479)
+import inspect as _in479
+_src479 = _in479.getsource(_BF479._reprocess_opts)
+check("aa479 _reprocess_opts traegt die Steuer aus bau_reproc_steuer (0..1) in die opts",
+      '"steuer": _st' in _src479 and "bau_reproc_steuer" in _src479)
+
+# ---------------------------------------------------------------- (aa477)
+# SCHNELLES SPEICHERN + PLAN-ARCHIV (emm388, Nutzer: "machen" / "solange du
+# Bauplaene nicht einfach loeschst, ist es okay").
+import eve_trader.config as _cfg477
+check("aa477 settings.json wird kompakt geschrieben (gemessen 1,7 s -> 0,34 s)",
+      _cfg477._settings_text({"a": 1, "b": [1, 2]}) == '{"a":1,"b":[1,2]}')
+_jetzt477 = 1_000_000_000.0
+_alt477 = _jetzt477 - 31 * 86400
+_pl477 = [
+    {"id": 1, "label": "alt fertig", "done_manual": True, "done_ts": _alt477},
+    {"id": 2, "label": "frisch fertig", "done_manual": True, "done_ts": _jetzt477 - 86400},
+    {"id": 3, "label": "offen"},
+    {"id": 4, "label": "Mitglied alt", "done_manual": True, "done_ts": _alt477},
+    {"id": 5, "label": "offenes Buendel", "type_id": -1, "quellen": [4]},
+    {"id": 6, "label": "fertiges Buendel", "type_id": -1, "quellen": [7],
+     "done_manual": True, "done_ts": _alt477},
+    {"id": 7, "label": "Mitglied von 6", "done_manual": True, "done_ts": _alt477},
+]
+eq("aa477 faellig: alt+fertig ja; frisch, offen und Mitglieder OFFENER Buendel nie; "
+   "fertiges Buendel samt Mitglied zusammen",
+   sorted(str(p["id"]) for p in _cfg477.archiv_faellig(_pl477, _jetzt477)),
+   ["1", "6", "7"])
+import tempfile as _tf477, shutil as _sh477
+_w477 = _tf477.mkdtemp(prefix="aa477-")
+_add_alt477 = _cfg477.app_data_dir
+_sv_alt477 = _cfg477.save_settings
+try:
+    _cfg477.app_data_dir = lambda: _w477
+    _cfg477.save_settings = lambda *a, **k: None
+    _d477 = {"bau_saved_plans": [dict(p) for p in _pl477],
+             "bau_plan_reihenfolge": ["1", "3", "6"]}
+    _n477 = _cfg477.plaene_archivieren(_d477, _jetzt477)
+    import json as _json477
+    with open(_cfg477.bauplan_archiv_path(), encoding="utf-8") as _f477:
+        _arch477 = _json477.load(_f477)
+    check(f"aa477 verschoben, nie geloescht: 3 im Archiv (mit Zeitstempel), "
+          f"4 bleiben, Reihenfolge bereinigt ({_n477})",
+          _n477 == 3 and sorted(str(p["id"]) for p in _arch477) == ["1", "6", "7"]
+          and all(p.get("archiviert_ts") for p in _arch477)
+          and sorted(str(p["id"]) for p in _d477["bau_saved_plans"]) == ["2", "3", "4", "5"]
+          and _d477["bau_plan_reihenfolge"] == ["3"])
+    # Unlesbares Archiv -> NICHTS passiert (lieber gross als verloren).
+    with open(_cfg477.bauplan_archiv_path(), "w", encoding="utf-8") as _f477:
+        _f477.write("{kaputt")
+    _d477b = {"bau_saved_plans": [dict(_pl477[0])]}
+    check("aa477 unlesbares Archiv: kein Plan verlaesst die Settings",
+          _cfg477.plaene_archivieren(_d477b, _jetzt477) == 0
+          and len(_d477b["bau_saved_plans"]) == 1)
+    # Migration setzt done_ts nach (ab HEUTE, nie rueckwirkend geraten).
+    _d477c = {"bau_saved_plans": [{"id": 9, "done_manual": True}]}
+    for _mk in ("bau_buy_inv_default_applied", "bau_cat_me_te_reset_applied",
+                "bau_transport_both_applied", "buendel_done_nachgezogen",
+                "bau_profile_bereinigt", "bau_invention_an_applied"):
+        _d477c[_mk] = True
+    _cfg477._nach_migrationen(_d477c)
+    check("aa477 done ohne Zeitstempel bekommt ihn beim Laden (Archiv erst in 30 Tagen)",
+          bool(_d477c["bau_saved_plans"][0].get("done_ts"))
+          and len(_d477c["bau_saved_plans"]) == 1)
+finally:
+    _cfg477.app_data_dir = _add_alt477
+    _cfg477.save_settings = _sv_alt477
+    _sh477.rmtree(_w477, ignore_errors=True)
+
+# ---------------------------------------------------------------- (aa476)
+# INVENTION IMMER AN (emm385, 03.10.2026): die Einstellung "bau_invention" ist
+# unsichtbar, stand beim Nutzer aber auf "aus" (vererbt von einem alten Plan
+# beim Wiederoeffnen) - der Eos-Plan rechnete ohne Invention, Decryptoren und
+# "Auto-Decryptor" taten nichts. Migration + keine Lesestelle mehr.
+import eve_trader.config as _cfg476
+_alt476 = _cfg476.save_settings
+_cfg476.save_settings = lambda *a, **k: None
+try:
+    _d476 = {"bau_invention": False}
+    for _mk in ("bau_buy_inv_default_applied", "bau_cat_me_te_reset_applied",
+                "bau_transport_both_applied", "buendel_done_nachgezogen",
+                "bau_profile_bereinigt"):
+        _d476[_mk] = True
+    _cfg476._nach_migrationen(_d476)
+finally:
+    _cfg476.save_settings = _alt476
+check("aa476 Migration stellt die versteckte Invention-Einstellung einmal auf an",
+      _d476.get("bau_invention") is True and _d476.get("bau_invention_an_applied") is True)
+_ui476 = "".join(open(_f, encoding="utf-8").read() for _f in (
+    "eve_trader/ui/main_window.py", "eve_trader/ui/mw_bauplan_fenster.py",
+    "eve_trader/ui/mw_multi_bauplan.py", "eve_trader/ui/mw_bauplan_tabs.py"))
+check("aa476 keine Stelle liest 'bau_invention' mehr als Rechen-Schalter",
+      'get("bau_invention"' not in _ui476 and "get('bau_invention'" not in _ui476
+      and 'self.settings["bau_invention"] = True' in _ui476)
+
 # ---------------------------------------------------------------- (aa475)
 # BAU-PROFIL = NUR EINSTELLUNGEN (03.10.2026): ein Profil trug die ganzen
 # Bauplaene (20 MB) - "Profil laden" haette die aktuellen Plaene durch einen
@@ -22777,11 +22956,11 @@ check("aa427 ... der Optimierer holt die Enden-Namen aus _bd_names_ref",
 # Veroeffentlichung lassen wir immer einen Test laufen, um eine fehlerfreie
 # Veroeffentlichung zu gewaehrleisten"). Die Veroeffentlichung bricht bei
 # Rot ab, BEVOR committet wird; eigener Starter per Doppelklick. CRLF.
-_rel426b = open("release/veroeffentliche_1.1.0.bat", "rb").read()
+_rel426b = open("release/veroeffentliche_1.1.1.bat", "rb").read()
 _rel426 = _rel426b.replace(b"\r\n", b"\n")      # Logik unabhaengig vom Zeilenende
 _p426 = _rel426.find(b"python pruefe.py < nul\n")
 _f426 = _rel426.find(b"if errorlevel 1 (\n  echo ROT: pruefe.py", _p426)
-check("aa426 veroeffentliche_1.1.0.bat prueft ZUERST und bricht bei Rot ab",
+check("aa426 veroeffentliche_1.1.1.bat prueft ZUERST und bricht bei Rot ab",
       0 < _p426 < _f426 < _rel426.find(b"git commit")
       and 0 < _rel426.find(b"  goto ende\n)\necho gruen", _f426))
 check("aa426 ... und hat Windows-Zeilenenden (CRLF)",
