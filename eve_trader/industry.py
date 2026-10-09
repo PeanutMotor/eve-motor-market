@@ -3351,15 +3351,11 @@ def build_cost(type_id, price_fn, recipes: Recipes, opts: dict,
                 p = price_fn(dc_id)
                 if p:
                     dc_cost += p * dc_qty
-            per_item_dv = (opts.get("inv_decryptor_map") or {}).get(bp_id)
-            if per_item_dv is not None:
-                prob *= per_item_dv[0]
-                runs += per_item_dv[1]
-                dcy = per_item_dv[4]
-            else:
-                prob *= opts.get("inv_prob_mult", 1.0)
-                runs += opts.get("inv_run_mod", 0)
-                dcy = opts.get("inv_decryptor_id")
+            # EINE Stelle fuer die Decryptor-Wahl (emm455).
+            _dv = decryptor_fuer_bp(bp_id, opts)
+            prob *= _dv[0]
+            runs += _dv[1]
+            dcy = _dv[4]
             prob = min(1.0, prob * (opts.get("inv_skill_modifier") or {}).get(bp_id, 1.0))
             if dcy:
                 dc_cost += (price_fn(dcy) or 0)
@@ -3655,15 +3651,11 @@ def build_tree(type_id, price_fn, recipes: Recipes, opts: dict,
             # hier fehlte es - die Detailansicht zeigte sonst höhere
             # Invention-Kosten als der Scan): per-Item-Decryptor +
             # Skill-Modifier.
-            per_item_dv = (opts.get("inv_decryptor_map") or {}).get(bp_id)
-            if per_item_dv is not None:
-                prob *= per_item_dv[0]
-                runs += per_item_dv[1]
-                dcy = per_item_dv[4]
-            else:
-                prob *= opts.get("inv_prob_mult", 1.0)
-                runs += opts.get("inv_run_mod", 0)
-                dcy = opts.get("inv_decryptor_id")
+            # EINE Stelle fuer die Decryptor-Wahl (emm455).
+            _dv = decryptor_fuer_bp(bp_id, opts)
+            prob *= _dv[0]
+            runs += _dv[1]
+            dcy = _dv[4]
             prob = min(1.0, prob * (opts.get("inv_skill_modifier") or {}).get(bp_id, 1.0))
             if dcy:
                 dc_cost += (price_fn(dcy) or 0)
@@ -3941,13 +3933,8 @@ def _inv_cost(bp_id, runs, recipes, price_fn, opts, mats_out=None):
     # Per-Item-Decryptor (aus dem Invention-Tab, opts["inv_decryptor_map"]) hat
     # Vorrang vor dem einen globalen Decryptor-Setting - so kann jedes Item
     # seinen eigenen Decryptor nutzen statt nur EINEN für den ganzen Bauplan.
-    per_item = (opts.get("inv_decryptor_map") or {}).get(bp_id)
-    if per_item is not None:
-        prob_mult, run_mod, _me_mod, _te_mod, dcy = per_item
-    else:
-        prob_mult = opts.get("inv_prob_mult", 1.0)
-        run_mod = opts.get("inv_run_mod", 0)
-        dcy = opts.get("inv_decryptor_id")
+    # EINE Stelle fuer die Decryptor-Wahl (emm455).
+    prob_mult, run_mod, _me_mod, _te_mod, dcy = decryptor_fuer_bp(bp_id, opts)
     prob *= prob_mult
     inv_runs += run_mod
     if dcy:
@@ -4018,8 +4005,6 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
              surplus:{tid:overproduced}}."""
     import math
     from collections import defaultdict, deque
-    me_factor = 1 - opts.get("me", 0) / 100.0
-    me_factor_reaction = 1 - (opts.get("me_reaction", 0) or 0) / 100.0
     me_map = opts.get("me_map") or {}
     me_map_reaction = opts.get("me_map_reaction") or {}
 

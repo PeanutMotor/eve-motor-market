@@ -288,6 +288,9 @@ DEFAULT_SETTINGS = {
     # Reprocessing-Steuer der Struktur in Prozent (emm392, Nutzer
     # 04.10.2026) - Prozent vom Wert der Ausgaenge, 0 = keine.
     "bau_reproc_steuer": 0.0,
+    # JE STRUKTUR gemerkte Reprocessing-Steuer (emm496): {struct_id|"npc":
+    # Prozent}. Der alte globale Wert oben bleibt nur als Migrationsquelle.
+    "bau_reproc_steuer_map": {},
     # Preisverlauf: zuletzt angesehenes Item [type_id, Name] - beim Oeffnen
     # des Tabs steht sofort ein Graph (18.09.2026).
     "mk_last_item": None,
@@ -762,6 +765,20 @@ def _nach_migrationen(data: dict) -> dict:
                     data[_k] = list(_cids)
         data["bau_rollen_vorbelegt"] = True
         _migrated = True
+    # BESTANDS-POOL FUER ROLLEN JE PLAN (emm426): einmalig die heutigen
+    # Rollen-Charaktere merken - ab jetzt koennen Plaene eigene Rollen
+    # tragen, ihr Bestand soll aber fuer jeden Plan weiter zaehlen.
+    if "bau_rollen_pool" not in data:
+        _pool = set()
+        for _k in ("bau_build_chars", "bau_reaction_chars",
+                   "bau_invention_chars", "bau_copy_chars"):
+            for _c in (data.get(_k) or []):
+                try:
+                    _pool.add(int(_c))
+                except (TypeError, ValueError):
+                    continue
+        data["bau_rollen_pool"] = sorted(_pool)
+        _migrated = True
     # REAGENZGLAS-EMOJI AUS ALTEN PLAN-NAMEN (Nutzer 18.09.2026: "diese
     # Reagenzglas-Emojis im Profit-Tab muessen weg"). Eine fruehere Fassung
     # nannte erfindbare T2-Zeilen "\U0001F9EA Name"; gespeicherte Plaene
@@ -809,6 +826,21 @@ def _nach_migrationen(data: dict) -> dict:
     if not data.get("bau_invention_an_applied"):
         data["bau_invention"] = True
         data["bau_invention_an_applied"] = True
+        _migrated = True
+    # REPROCESSING-STEUER JE STRUKTUR (emm496, Nutzer 09.10.2026: "einmal
+    # eingegebene Steuer soll auf zukuenftig erstellten Bauplaenen
+    # uebernommen werden, solange die selbe Reprocessing Struktur gewaehlt
+    # ist"): der alte GLOBALE Wert wandert EINMAL unter die damals
+    # gewaehlte Struktur, danach zaehlt nur noch die Karte je Struktur.
+    if not data.get("reproc_steuer_map_applied"):
+        try:
+            _alt_st = float(data.get("bau_reproc_steuer") or 0.0)
+        except (TypeError, ValueError):
+            _alt_st = 0.0
+        if _alt_st > 0 and not (data.get("bau_reproc_steuer_map") or {}):
+            data["bau_reproc_steuer_map"] = {
+                str(data.get("bau_reprocess_struct") or "npc"): _alt_st}
+        data["reproc_steuer_map_applied"] = True
         _migrated = True
     # ALTE BAU-PROFILE ENTSCHLACKEN (03.10.2026): Plaene, Jobs, Skills raus
     # (siehe BAU_PROFIL_OHNE). EINMAL per Marker.

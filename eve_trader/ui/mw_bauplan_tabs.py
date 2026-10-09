@@ -14,12 +14,15 @@ REGELN FUER DIESES MODUL (wie mw_helpers.py):
   (`_ui_dateien8` in test_bestand_herkunft.py), Text- und AST-Pruefungen
   sehen diese Datei also mit.
 """
+import os
+
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QIcon
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout,
-    QLabel, QPushButton, QSizePolicy, QSlider, QSpinBox, QStackedWidget,
-    QTableWidget, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QPushButton, QSizePolicy, QSlider, QSpinBox,
+    QStackedWidget,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .. import config, esi, hubs, industry, reprocess, store
@@ -235,6 +238,11 @@ class KartenRaster(QWidget):
     def setze(self, karten):
         self._abhaengen()
         for k in self._karten:
+            # ERST ABHAENGEN, dann loeschen (emm461): `deleteLater` wirkt erst
+            # in der naechsten Runde der Ereignisschleife - bis dahin blieben
+            # die alten Karten SICHTBAR und lagen ueber den neuen (beim
+            # Rendern gesehen). `setParent(None)` nimmt sie sofort vom Schirm.
+            k.setParent(None)
             k.deleteLater()
         self._karten = list(karten)
         self._anordnen(neu=True)
@@ -447,6 +455,773 @@ class BauplanTabs:
     # was und wie lange"; Ort laut Nutzer: neuer Knopf in der Leiste unter
     # PRODUCTION). Nur Anzeige - liest ESI, schreibt nichts in die Settings.
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # BUILD FROM STOCK (emm436, Discord HashtagMoDSucks "Runs from stock";
+    # Nutzer-Entscheide: eigene Seite in der PRODUCTION-Leiste, Vorstufen
+    # duerfen aus dem Hangar gebaut werden, Material gesperrter Plaene
+    # zaehlt NICHT). Je eigener Blaupause: wie viele Runs gibt der Hangar
+    # her. Die Rechnung ist rein (`aus_bestand`), hier nur Abruf + Anzeige.
+    # ------------------------------------------------------------------
+    # + "vs. 90d avg" (emm499): Sell-Preis gegen den 90-Tage-Schnitt der
+    # Markthistorie - NEUTRAL (Scam-Warnlampe), nie gefaerbt.
+    BFS_SPALTEN = ("Item", "Runs", "Units", "Limited by", "Builds sub-steps",
+                   "Profit/unit", "Profit total", "vs. 90d avg")
+
+    def _bfs_seite_bauen(self):
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(14, 10, 14, 10)
+        v.setSpacing(8)
+        kopf = QHBoxLayout(); kopf.setSpacing(10)
+        titel = QLabel(t("BUILD FROM STOCK (BETA)"))
+        titel.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
+                            f"color:{theme.GREEN};")
+        # Erklaerung NUR als Tooltip (Nutzer: Texte "nerven", emm391/emm404).
+        titel.setToolTip(t(
+            "How many runs of each of your own blueprints the material in your "
+            "hangar allows - the same stock rules as the build plan (structures, "
+            "characters, corp hangar). Material reserved by locked build plans "
+            "does not count. Missing components may be built from stock too, if "
+            "you own their blueprint. Rounded up per run, only your blueprint "
+            "ME - never more runs than really work."))
+        kopf.addWidget(titel)
+        kopf.addStretch()
+        self._bfs_nur_cb = QCheckBox(t("Only buildable"))
+        self._bfs_nur_cb.setChecked(bool(self.settings.get("bfs_nur_baubar", True)))
+        self._bfs_nur_cb.setIcon(icons.icon("hammer"))   # b55: Bedienelemente tragen ein Symbol
+        self._bfs_nur_cb.toggled.connect(lambda _on: self._bfs_filter_umschalten())
+        kopf.addWidget(self._bfs_nur_cb)
+        self._bfs_refresh_btn = QPushButton(t("Refresh"))
+        self._bfs_refresh_btn.setIcon(icons.icon("refresh"))
+        self._bfs_refresh_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        self._bfs_refresh_btn.clicked.connect(lambda: self._bfs_laden())
+        kopf.addWidget(self._bfs_refresh_btn)
+        v.addLayout(kopf)
+        # FILTERLEISTE WIE MY BLUEPRINTS (emm489, Nutzer: "die selben Filter
+        # und Dropdown Einstellungen wie My Blueprints Tab"). Gefiltert wird
+        # ueber DIESELBEN reinen Helfer (industry.bp_kategorie_passt,
+        # RACE_NAMES, Tech-Mengen wie bp_myb_tech) - kein Nachbau. Bewusst
+        # NICHT uebernommen: BPO/BPC, Show missing und Inventable T2 (diese
+        # Seite kennt weder fehlende noch erfindbare Zeilen, Kopien sind je
+        # Item zusammengefasst) und der Charakter-Filter (der Hangar ist
+        # gemeinsam, jede Zeile rechnet ueber alle Charaktere).
+        f1 = QHBoxLayout(); f1.setSpacing(10)
+        _sl = QLabel(t("Show:"))
+        _sl.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
+        f1.addWidget(_sl)
+        self._bfs_cb_end = QCheckBox(t("End products"))
+        self._bfs_cb_end.setIcon(icons.icon("target"))
+        self._bfs_cb_comp = QCheckBox(t("Components"))
+        self._bfs_cb_comp.setIcon(icons.icon("wrench"))
+        self._bfs_cb_react = QCheckBox(t("Reactions"))
+        self._bfs_cb_react.setIcon(icons.icon("flask"))
+        self._bfs_cb_profit = QCheckBox(t("profitable only"))
+        self._bfs_cb_profit.setIcon(icons.icon("coins"))
+        for _cb in (self._bfs_cb_end, self._bfs_cb_comp, self._bfs_cb_react):
+            _cb.setChecked(True)
+        self._bfs_cb_profit.setChecked(False)
+        for _cb in (self._bfs_cb_end, self._bfs_cb_comp,
+                    self._bfs_cb_react, self._bfs_cb_profit):
+            _cb.toggled.connect(lambda _on: self._bfs_zeichnen())
+            f1.addWidget(_cb)
+        f1.addStretch()
+        _su = QLabel(t("Search:"))
+        _su.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
+        f1.addWidget(_su)
+        self._bfs_suche = QLineEdit()
+        self._bfs_suche.setPlaceholderText(t("Item name …"))
+        # DARF SCHRUMPFEN (emm500, b66 auf seinem Windows rot: Seite 1180 px,
+        # weil die Texte dort ~1,4-1,6x breiter messen und das feste
+        # 220-px-Feld obendrauf kam). Breit, wenn Platz ist; unter Druck
+        # gibt das Feld nach, nie die Filter-Haken (deren Text ist fest).
+        self._bfs_suche.setMinimumWidth(120)
+        self._bfs_suche.setMaximumWidth(220)
+        self._bfs_suche.setClearButtonEnabled(True)
+        self._bfs_suche.textChanged.connect(lambda _tx: self._bfs_zeichnen())
+        f1.addWidget(self._bfs_suche)
+        v.addLayout(f1)
+        f2 = QHBoxLayout(); f2.setSpacing(10)
+        _cl = QLabel(t("Category:"))
+        _cl.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
+        f2.addWidget(_cl)
+        self._bfs_cat = QComboBox(); self._bfs_cat.setMinimumWidth(160)
+        self._bfs_cat.addItem(t("All categories"), None)
+        self._bfs_cat.currentIndexChanged.connect(
+            lambda _i: self._bfs_zeichnen())
+        f2.addWidget(self._bfs_cat)
+        self._bfs_tech = QComboBox(); self._bfs_tech.setMinimumWidth(120)
+        for _lab, _mset in [(t("All tech levels"), None), ("Tech I", {0, 1}),
+                            ("Tech II", {2}), ("Tech III", {14})]:
+            self._bfs_tech.addItem(_lab, _mset)
+        self._bfs_tech.currentIndexChanged.connect(
+            lambda _i: self._bfs_zeichnen())
+        f2.addWidget(self._bfs_tech)
+        self._bfs_race = QComboBox(); self._bfs_race.setMinimumWidth(110)
+        self._bfs_race.addItem(t("All races"), None)
+        for _rid, _rname in sorted(industry.RACE_NAMES.items(),
+                                   key=lambda x: x[1]):
+            self._bfs_race.addItem(_rname, _rid)
+        self._bfs_race.currentIndexChanged.connect(
+            lambda _i: self._bfs_zeichnen())
+        f2.addWidget(self._bfs_race)
+        f2.addStretch()
+        v.addLayout(f2)
+        self._bfs_stand_lbl = QLabel("")
+        self._bfs_stand_lbl.setObjectName("Muted")
+        self._bfs_stand_lbl.setWordWrap(True)
+        v.addWidget(self._bfs_stand_lbl)
+        self._bfs_warn_lbl = QLabel("")
+        self._bfs_warn_lbl.setWordWrap(True)
+        self._bfs_warn_lbl.setStyleSheet(f"color:{theme.AMBER};")
+        self._bfs_warn_lbl.hide()
+        v.addWidget(self._bfs_warn_lbl)
+        tbl = QTableWidget(0, len(self.BFS_SPALTEN))
+        tbl.setHorizontalHeaderLabels([t(s) for s in self.BFS_SPALTEN])
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+        tbl.setSelectionBehavior(QTableWidget.SelectRows)
+        tbl.setAlternatingRowColors(True)
+        from PySide6.QtWidgets import QHeaderView
+        tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        tbl.horizontalHeader().setStretchLastSection(True)
+        # "vs. 90d avg" steht VISUELL vor Profit total (emm500, Nutzer:
+        # "die ist ca 60% zu breit"): stretchLastSection dehnt die letzte
+        # SICHTBARE Spalte - seit emm499 war das die schmale Trend-Spalte,
+        # die damit allen Restplatz bekam. Jetzt dehnt wieder Profit total
+        # (letzte visuelle Spalte), die Trend-Spalte behaelt ihre
+        # Inhaltsbreite. Logische Indizes unveraendert (Spalte 7 = Trend).
+        _hb500 = tbl.horizontalHeader()
+        _hb500.moveSection(_hb500.visualIndex(7), _hb500.visualIndex(6))
+        tbl.horizontalHeaderItem(5).setToolTip(t(
+            "From My Blueprints (materials valued at market price). Load My "
+            "Blueprints once to see it."))
+        tbl.horizontalHeaderItem(7).setToolTip(t(
+            "Current sell price vs. the 90-day average of the market "
+            "history. Deliberately NOT colored: a price far above the "
+            "average can mean market manipulation (scam) rather than "
+            "profit. ? = history not loaded yet."))
+        kopier_menue(tbl, lambda pos: self._bfs_menue(pos))
+        self._bfs_table = tbl
+        v.addWidget(tbl, 1)
+        self._bfs_daten = None
+        self._bfs_stand_ts = 0.0
+        self._bfs_laeuft = False
+        # LEER-HINWEIS IN DER TABELLE (emm493, Nutzer: "genau am selben Ort
+        # wie bei My blueprints den Knopf machen, auch blinken wenn nicht
+        # geladen"): dieselbe Infrastruktur (_leerhinweis) und derselbe Look
+        # (_bp_leer_stil) wie der Knopf in der leeren bp_table. Was der
+        # Hinweis sagt, entscheidet _bfs_leer_zustand bei jedem Einblenden.
+        try:
+            _box = self._leerhinweis(
+                tbl, t("Loading blueprints and stock …"),
+                knopf_text=t("Load blueprints"),
+                aktion=self._bfs_mb_laden,
+                symbol=icons.icon("blueprint"),
+                zustand=self._bfs_leer_zustand)
+            self._bfs_leer_box = _box
+            self._bfs_leer_knopf = getattr(_box, "_knopf", None)
+            if self._bfs_leer_knopf is not None:
+                self._bfs_leer_an = False
+                self._bp_leer_stil(self._bfs_leer_knopf, False)
+                _btmr = QTimer(self)
+                _btmr.setInterval(700)
+                _btmr.timeout.connect(lambda: self._bfs_leer_blink_schritt())
+                _btmr.start()
+                self._bfs_leer_timer = _btmr
+        except Exception as _lh:               # pragma: no cover
+            self._log_exception("Leerhinweis Build from stock", str(_lh))
+        return page
+
+    def _bfs_seite_gezeigt(self):
+        """Aus _bau_nav(5): beim ersten Zeigen und ab 10 min Alter laden."""
+        import time as _t
+        if self._bfs_daten is None or _t.time() - self._bfs_stand_ts > 600:
+            self._bfs_laden()
+
+    def _bfs_leer_zustand(self):
+        """Was der Leer-Hinweis der BFS-Tabelle sagt (emm493) ->
+        (titel, knopf_text, symbolname, aktion). Der Knopf kommt IMMER,
+        solange My Blueprints nicht geladen sind (Nutzer-Screenshot
+        emm494, Tech-II-Filter + "profitable only" AUS: "da ist kein load
+        blueprints button") - nicht nur, wenn der Gewinn-Filter der Grund
+        der Leere ist."""
+        if getattr(self, "_bfs_laeuft", False) or \
+                getattr(self, "_bfs_daten", None) is None:
+            return (t("Loading blueprints and stock …"), None, None, None)
+        econ = (getattr(self, "_bp_econ_stand", None) or {}).get("profit_by_bp")
+        if econ is None:
+            return (t("Profit unknown - load My Blueprints first."),
+                    t("Load blueprints"), "blueprint", self._bfs_mb_laden)
+        return (t("Nothing matches the filters."), None, None, None)
+
+    def _bfs_mb_laden(self):
+        """Knopf im Leer-Hinweis: My Blueprints nachladen (emm371-Mechanik:
+        Rueckruf ueber `_bp_geladen_rueckrufe`), danach neu zeichnen - der
+        Gewinn-Filter sieht dann Zahlen."""
+        def _fertig(_ok, _msg=""):
+            try:
+                self._bfs_zeichnen()
+            except Exception as _e:
+                self._log_exception("Build from stock: Rueckruf", str(_e))
+        self._bp_geladen_rueckrufe = (
+            list(getattr(self, "_bp_geladen_rueckrufe", None) or []) + [_fertig])
+        self._reload_my_blueprints(overlay=False)
+
+    def _bfs_leer_blink_schritt(self):
+        """Blinkt den Leer-Knopf, solange er der naechste Handgriff ist.
+        BEWUSST NICHT ueber isVisible (in nie gezeigten Fenstern immer False,
+        CLAUDE.md-Falle): leer UND der Zustand will einen Knopf = blinken.
+        Stil ueber die EINE Stelle `_bp_leer_stil` - exakt der Look des
+        My-Blueprints-Knopfs."""
+        btn = getattr(self, "_bfs_leer_knopf", None)
+        tbl = getattr(self, "_bfs_table", None)
+        if btn is None or tbl is None:
+            return
+        try:
+            if tbl.rowCount() == 0 and bool(self._bfs_leer_zustand()[1]):
+                self._bfs_leer_an = not getattr(self, "_bfs_leer_an", False)
+            else:
+                self._bfs_leer_an = False
+            self._bp_leer_stil(btn, self._bfs_leer_an)
+        except RuntimeError:                   # Knopf schon geloescht
+            pass
+
+    def _bfs_bestand_holen(self, client_id, chars):
+        """Freier Hangar-Bestand nach den REGELN DES BAUPLANS (Strukturen /
+        Scope, Rollen-Pool, Hangar der Corp) - ohne Pipeline (fertige, nicht
+        abgeholte Jobs zaehlen nicht: lieber zu wenig Runs, Regel 3).
+        -> (bestand, kein_ort, failed)."""
+        s = self.settings
+        scope = s.get("bau_stock_scope") or "structures"   # "plan" = wie Strukturen
+        # EINE Stelle fuer "welche Struktur ist verlinkt" (emm490) - dieselbe
+        # Liste laesst den Strukturen-Knopf in der Leiste blinken.
+        from .mw_helpers import verlinkte_struktur_ids
+        locs = verlinkte_struktur_ids(s)
+        if scope != "all" and not locs:
+            return {}, True, []
+        ids = self._runplan_pool_char_ids(s)
+        pool = [c for c in chars if c["character_id"] in ids] if ids else list(chars)
+        agg, failed = {}, []
+        for ch in pool:
+            cid = ch["character_id"]
+            try:
+                if scope == "all":
+                    a = esi.fetch_assets(client_id, cid)
+                else:
+                    a = esi.assets_at_locations(client_id, cid, locs)
+                for tid, q in (a or {}).items():
+                    agg[int(tid)] = agg.get(int(tid), 0) + int(q)
+            except Exception:
+                failed.append(ch.get("character_name") or str(cid))
+        try:
+            _c = self._corp_bau_daten(client_id, chars,
+                                      None if scope == "all" else locs)
+            for tid, q in (_c.get("summe") or {}).items():
+                agg[int(tid)] = agg.get(int(tid), 0) + int(q)
+            failed.extend(_c.get("failed") or [])
+        except Exception:
+            failed.append("Corp")
+        return agg, False, failed
+
+    def _bfs_laden(self):
+        if getattr(self, "_bfs_laeuft", False):
+            return
+        client_id = self.settings.get("client_id")
+        chars = store.list_characters()
+        if not client_id or not chars:
+            self._bfs_stand_lbl.setText(t("No characters linked."))
+            return
+
+        def job():
+            from .. import aus_bestand
+            import time as _t
+            owned = self._bd_fetch_all_owned_blueprints(force=True, merken=False) or []
+            rec = industry.recipes_cached()
+            bestand, kein_ort, failed = self._bfs_bestand_holen(client_id, chars)
+            try:
+                reserv = self._reserved_by_other_plans(self.settings, None)[0] or {}
+            except Exception:
+                reserv = {}
+            frei = {}
+            for tid, q in bestand.items():
+                r = int(q) - int(reserv.get(int(tid), 0) or 0)
+                if r > 0:
+                    frei[int(tid)] = r
+            zeilen = aus_bestand.bestand_liste(owned, rec.product_to_bp,
+                                               rec.bp_materials, frei)
+            # FILTER-METADATEN je Zeile (emm489): Kategorie/Gruppe/Tech aus
+            # derselben Quelle wie My Blueprints (item_category_map), Rasse
+            # aus item_race_map, die Show-Einteilung mit DERSELBEN Regel wie
+            # dort (classify: Reaktion -> Gruppenname "Component"/
+            # "Construction" -> sonst Endprodukt).
+            catmap = industry.item_category_map() or {}
+            rmap = industry.item_race_map() or {}
+            try:
+                rig_ids = set(industry.rig_gruppen() or ())
+            except Exception:
+                rig_ids = set()
+            try:
+                gnamen = industry.group_names(
+                    [z["produkt"] for z in zeilen]) or {}
+            except Exception:
+                gnamen = {}
+            for z in zeilen:
+                _tid = int(z["produkt"])
+                _cgm = catmap.get(_tid) or (None, None, None)
+                z["cat"], z["grp"], z["meta"] = _cgm[0], _cgm[1], _cgm[2]
+                z["race"] = rmap.get(_tid)
+                if _tid in (getattr(rec, "reaction_products", None)
+                            or set()):
+                    z["art"] = "reaction"
+                else:
+                    _gn = str(gnamen.get(_tid) or "")
+                    z["art"] = ("component"
+                                if ("Component" in _gn or "Construction" in _gn)
+                                else "end")
+            tids = set()
+            for z in zeilen:
+                tids.add(z["produkt"])
+                if z["grenze"]:
+                    tids.add(int(z["grenze"]))
+                tids.update(z["baut"])
+            namen = dict(store.cached_names(list(tids)) or {}) if tids else {}
+            fehlt = [x for x in tids if x not in namen]
+            if fehlt:
+                try:
+                    namen.update(esi.resolve_names(fehlt) or {})
+                except Exception:
+                    pass
+            n_res = sum(1 for tid in bestand if int(reserv.get(int(tid), 0) or 0) > 0)
+            # PREIS-TREND (emm499): dieselbe lokale Historie wie Sold/day.
+            try:
+                trend = self._preis_trend_je_typ(
+                    [int(z["produkt"]) for z in zeilen])
+            except Exception:
+                trend = {}
+            return {"zeilen": zeilen, "namen": namen, "kein_ort": kein_ort,
+                    "failed": failed, "n_res": n_res, "rig_ids": rig_ids,
+                    "trend": trend, "ts": _t.time()}
+
+        def done(res):
+            self._bfs_laeuft = False
+            self._bfs_daten = res
+            self._bfs_stand_ts = res.get("ts") or 0.0
+            self._bfs_cat_fuellen()
+            self._bfs_zeichnen()
+
+        def fail(_err):
+            self._bfs_laeuft = False
+            self._bfs_stand_lbl.setText(t("Loading failed."))
+
+        self._bfs_laeuft = True
+        self._bfs_stand_lbl.setText(t("Loading blueprints and stock …"))
+        self._run(Worker(job), done, fail, overlay=False)
+
+    def _bfs_filter_umschalten(self):
+        self.settings["bfs_nur_baubar"] = bool(self._bfs_nur_cb.isChecked())
+        try:
+            config.save_settings_async(self.settings)
+        except Exception:
+            pass
+        self._bfs_zeichnen()
+
+    def _bfs_cat_fuellen(self):
+        """Kategorie-Dropdown aus den eigenen Zeilen - dieselbe Regel wie
+        My Blueprints (`industry.bp_kategorien_zeigen`, emm489)."""
+        cb = getattr(self, "_bfs_cat", None)
+        if cb is None:
+            return
+        zeilen = [(z.get("cat"), z.get("grp"))
+                  for z in ((self._bfs_daten or {}).get("zeilen") or [])]
+        try:
+            opts = industry.bp_kategorien_zeigen(
+                industry.category_options(), zeilen or None,
+                (self._bfs_daten or {}).get("rig_ids"), t("Rigs"))
+        except Exception:
+            opts = []
+        alt = cb.currentData()
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItem(t("All categories"), None)
+        for _cid, _nm in opts:
+            cb.addItem(str(_nm), _cid)
+        ix = cb.findData(alt) if alt is not None else 0
+        cb.setCurrentIndex(ix if ix >= 0 else 0)
+        cb.blockSignals(False)
+
+    def _bfs_breiten_setzen(self):
+        """Spaltenbreiten EINMAL beim ersten Fuellen (danach bleiben vom
+        Nutzer gezogene Breiten stehen).
+
+        BUILDS SUB-STEPS IST GEDECKELT (emm490, Nutzer: "Build substeps ist
+        viel zu breit, man sieht die anderen Columns nicht" und, nach dem
+        ersten Wurf, "immer noch 50% zu breit"): ein blosses
+        `resizeColumnsToContents()` gab der Spalte die Breite ihrer
+        LAENGSTEN Zeile ("2x Hydrogen Fuel Block, 5x Oxygen Fuel Block,
+        12x Silicon Diborite, 12x Vanadium Hafnite") - Profit/unit und
+        Profit total standen damit rechts ausserhalb des Bildes.
+
+        Der Deckel ist KEINE Pixelzahl (die waere auf seinem Windows
+        falsch - dieselben Widgets sind dort rund 1,6x breiter, b66),
+        sondern ein ANTEIL der Tabelle: hoechstens EIN DRITTEL. Die
+        Unterschritte sind Nebeninfo; was uebrig bleibt, bekommt die
+        Spalte ITEM (dort stehen die langen Namen). Qt kuerzt den
+        Zelltext dann mit "…", die volle Liste steht im Tooltip."""
+        tbl = self._bfs_table
+        tbl.resizeColumnsToContents()
+        fm = tbl.fontMetrics()
+        sub_spalte, name_spalte = 4, 0
+        breit = tbl.viewport().width()
+
+        def _kopf_w(i):
+            kopf = tbl.horizontalHeaderItem(i)
+            return (fm.horizontalAdvance(kopf.text()) + 34) if kopf else 0
+        for i in range(tbl.columnCount()):
+            tbl.setColumnWidth(i, max(tbl.columnWidth(i) + 22, _kopf_w(i), 70))
+        tbl.setColumnWidth(sub_spalte,
+                           max(_kopf_w(sub_spalte),
+                               min(tbl.columnWidth(sub_spalte), breit // 3)))
+        belegt = sum(tbl.columnWidth(i) for i in range(tbl.columnCount())
+                     if i != name_spalte)
+        tbl.setColumnWidth(name_spalte,
+                           max(tbl.columnWidth(name_spalte), breit - belegt))
+
+    def _bfs_zeichnen(self):
+        res = self._bfs_daten or {}
+        tbl = self._bfs_table
+        namen = res.get("namen") or {}
+        nur = self._bfs_nur_cb.isChecked()
+        econ = (getattr(self, "_bp_econ_stand", None) or {}).get("profit_by_bp")
+        zeilen = list(res.get("zeilen") or [])
+        baubar = [z for z in zeilen if z["runs"] > 0]
+        zeigen = baubar if nur else zeilen
+
+        def _name(tid):
+            return namen.get(int(tid)) or f"#{tid}"
+
+        # FILTER WIE MY BLUEPRINTS (emm489) - dieselben Helfer, dieselbe
+        # Bedeutung. `art` / `cat` / `meta` / `race` haengen an der Zeile
+        # (im Lade-Job gerechnet).
+        show489 = {"end": self._bfs_cb_end.isChecked(),
+                   "component": self._bfs_cb_comp.isChecked(),
+                   "reaction": self._bfs_cb_react.isChecked()}
+        only_profit489 = self._bfs_cb_profit.isChecked()
+        want_cat489 = self._bfs_cat.currentData()
+        want_meta489 = self._bfs_tech.currentData()
+        want_race489 = self._bfs_race.currentData()
+        such489 = self._bfs_suche.text().strip().lower()
+        rig_ids489 = res.get("rig_ids") or set()
+
+        def _passt489(z):
+            if not show489.get(z.get("art") or "end", True):
+                return False
+            if only_profit489:
+                _e = (econ or {}).get(z["bp"]) or {}
+                if not ((_e.get("profit") or 0) > 0):
+                    return False
+            if not industry.bp_kategorie_passt(want_cat489, z.get("cat"),
+                                               z.get("grp"), rig_ids489):
+                return False
+            if want_meta489 is not None and \
+                    int(z.get("meta") or 0) not in want_meta489:
+                return False
+            if want_race489 is not None and z.get("race") != want_race489:
+                return False
+            if such489 and such489 not in _name(z["produkt"]).lower():
+                return False
+            return True
+        zeigen = [z for z in zeigen if _passt489(z)]
+
+        tbl.setSortingEnabled(False)
+        tbl.setRowCount(len(zeigen))
+        for r, z in enumerate(zeigen):
+            nm = _name(z["produkt"])
+            it = QTableWidgetItem(nm)
+            it.setData(Qt.UserRole, (z["produkt"], z["units"], nm))
+            tbl.setItem(r, 0, it)
+            tbl.setItem(r, 1, NumericItem(f"{z['runs']:,}".replace(",", "'"), z["runs"]))
+            tbl.setItem(r, 2, NumericItem(f"{z['units']:,}".replace(",", "'"), z["units"]))
+            g = z.get("grenze")
+            if g is None:
+                gt = "—"
+            elif int(g) == int(z["produkt"]):
+                gt = t("blueprint copy runs")
+            else:
+                gt = _name(g)
+            tbl.setItem(r, 3, QTableWidgetItem(gt))
+            baut = ", ".join(f"{n}× {_name(tid)}"
+                             for tid, n in sorted(z["baut"].items(),
+                                                  key=lambda kv: _name(kv[0])))
+            bi = QTableWidgetItem(baut or "—")
+            if baut:
+                # VOLLE LISTE IN DEN TOOLTIP (emm490): die Spalte ist
+                # gedeckelt, lange Listen kuerzt Qt mit "…" - ohne den
+                # Tooltip waere der Rest nicht mehr lesbar.
+                bi.setToolTip(baut + "\n" + t(
+                    "Runs of these components are built from stock first."))
+            tbl.setItem(r, 4, bi)
+            e = (econ or {}).get(z["bp"]) or {}
+            pu = e.get("profit")
+            if pu is None:
+                tbl.setItem(r, 5, NumericItem("—", None))
+                tbl.setItem(r, 6, NumericItem("—", None))
+            else:
+                ges = float(pu) * z["units"]
+                for c, w in ((5, float(pu)), (6, ges)):
+                    ni = NumericItem(isk(w, suffix=False), w)
+                    ni.setForeground(QBrush(QColor(theme.GREEN if w >= 0 else theme.RED)))
+                    tbl.setItem(r, c, ni)
+            # vs. 90d avg (emm499): Sell gegen den 90-Tage-Schnitt - NEUTRAL
+            # weiss, bewusst NICHT gefaerbt (Scam-Warnlampe). b186/b198-
+            # Fixtures setzen _bfs_daten ohne "trend" -> res.get tolerieren.
+            from .mw_helpers import preis_abweichung as _pabw499
+            _tr499 = (res.get("trend") or {}).get(int(z["produkt"]))
+            _txt499, _val499 = self._trend_pct_zelle(
+                _pabw499(e.get("sell"), (_tr499 or {}).get("o90")), True)
+            _ti499 = NumericItem(_txt499, _val499)
+            if _tr499:
+                def _tt499(w):
+                    return (f"{w:+,.0f} %".replace(",", "'")
+                            if w is not None else "?")
+                def _ts499(w):
+                    return isk(w, suffix=False) if w is not None else "?"
+                _ti499.setToolTip(t(
+                    "Current sell price vs. the 90-day average "
+                    "of the market history.\n"
+                    "Ø 7d: {o7} · Ø 30d: {o30} "
+                    "· Ø 90d: {o90}\n"
+                    "Change: 7d {d7} · 30d {d30} "
+                    "· 90d {d90}").format(
+                    o7=_ts499(_tr499.get("o7")),
+                    o30=_ts499(_tr499.get("o30")),
+                    o90=_ts499(_tr499.get("o90")),
+                    d7=_tt499(_tr499.get("d7")),
+                    d30=_tt499(_tr499.get("d30")),
+                    d90=_tt499(_tr499.get("d90"))))
+            tbl.setItem(r, 7, _ti499)
+            for c in (1, 2, 5, 6, 7):
+                tbl.item(r, c).setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        tbl.setSortingEnabled(True)
+        if not getattr(self, "_bfs_sortiert", False):
+            tbl.sortItems(2, Qt.DescendingOrder)
+            self._bfs_sortiert = True
+        if not getattr(self, "_bfs_breiten_gesetzt", False) and zeigen:
+            self._bfs_breiten_setzen()
+            self._bfs_breiten_gesetzt = True
+        txt = t("{n} blueprints · {k} buildable from stock").format(
+            n=len(zeilen), k=len(baubar)) \
+            + "  ·  " + t("{n} shown").format(n=len(zeigen))
+        if res.get("n_res"):
+            txt += " · " + t("{n} item types partly reserved by locked plans "
+                             "(not counted)").format(n=res["n_res"])
+        if econ is None:
+            txt += " · " + t("profit: load My Blueprints first")
+        self._bfs_stand_lbl.setText(txt)
+        warn = []
+        if res.get("kein_ort"):
+            warn.append(t("⚠ No build structure linked - no stock counted. Link "
+                          "one under Structures or set stock to Everywhere."))
+        if res.get("failed"):
+            warn.append(t("⚠ Could not read: {names}").format(
+                names=", ".join(res["failed"])))
+        self._bfs_warn_lbl.setText("\n".join(warn))
+        self._bfs_warn_lbl.setVisible(bool(warn))
+        # LEER-HINWEIS NACHSTELLEN (emm493): bleibt die Tabelle bei 0 Zeilen,
+        # feuern die Model-Signale nicht - ein umgelegter Filter aendert aber
+        # den Zustand (Knopf rein/raus). Deshalb hier ausdruecklich.
+        _st493 = getattr(tbl, "_leerhinweis_stellen", None)
+        if _st493 is not None:
+            _st493()
+
+    def _bfs_menue(self, pos):
+        from .mw_basis import kontext_menue
+        tbl = self._bfs_table
+        it = tbl.itemAt(pos)
+        if it is None:
+            return
+        z = tbl.item(it.row(), 0)
+        d = z.data(Qt.UserRole) if z is not None else None
+        if not d:
+            return
+        prod, units, nm = d
+        m = kontext_menue(tbl)
+        if units > 0:
+            a = m.addAction(t("Open build plan with {n} units").format(
+                n=f"{units:,}".replace(",", "'")))
+        else:
+            a = m.addAction(t("Open build plan"))
+        a.triggered.connect(lambda _c=False, p=prod, u=units, n=nm:
+                            self._bfs_plan_oeffnen(p, u, n))
+        m.exec(tbl.viewport().mapToGlobal(pos))
+
+    def _bfs_plan_oeffnen(self, produkt, units, name):
+        """Neuer Bauplan mit der Menge aus dem Bestand (`_bd_qty_pending`
+        wird im Neu-Zweig von open_build_detail verbraucht)."""
+        self._bd_qty_pending = max(1, int(units or 1))
+        self.open_build_detail(int(produkt), name, fresh=True)
+
+    # ------------------------------------------------------------------
+    # MY BLUEPRINTS vs BAUPLAN (emm437, Discord elglebo: Golem in My
+    # Blueprints +64.8M Gewinn, im Bauplan -7.3M; Nutzer: "woher kommt diese
+    # Abweichung? koennen wir das testen?" -> "nicht noch mehr Tools im
+    # Bauplan, das Tool will ich als bat"). NUR mit EMM_MB_VERGLEICH=1
+    # (gesetzt von werkzeuge\vergleiche_mb.bat): nach jeder Bauplan-Rechnung
+    # geht `kosten_zerlegen` vom GEMERKTEN Eingang der My-Blueprints-Zeile
+    # Schritt fuer Schritt zum Bauplan und haengt das Ergebnis an
+    # berichte\mb_vergleich_bericht.txt. Keine Oberflaeche, aendert nichts.
+    # ------------------------------------------------------------------
+    MB_VERGLEICH_AN = os.environ.get("EMM_MB_VERGLEICH") == "1"
+
+    def _mb_vergleich_pfad(self):
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "berichte", "mb_vergleich_bericht.txt")
+
+    def _mb_vergleich_notiz(self, text):
+        """Eine Zeile in den Vergleichsbericht (emm449, Nutzer: "es entsteht
+        irgendwie kein Bericht") - nur mit EMM_MB_VERGLEICH=1. So zeigt der
+        Bericht auch, WAS passiert ist, wenn kein Vergleich entsteht."""
+        if not self.MB_VERGLEICH_AN:
+            return
+        try:
+            pfad = self._mb_vergleich_pfad()
+            os.makedirs(os.path.dirname(pfad), exist_ok=True)
+            with open(pfad, "a", encoding="utf-8") as f:
+                f.write(text.rstrip("\n") + "\n")
+        except Exception:
+            pass
+
+    def _mb_vergleich_nachziehen(self):
+        """Aus rebuild(): je Item und Menge EINMAL (sonst schriebe jedes
+        Umschalten einen Abschnitt)."""
+        if not self.MB_VERGLEICH_AN:
+            return
+        z = getattr(self, "_bd_rechen_eingang", None)
+        if not z:
+            self._mb_vergleich_notiz("Build plan: no calculation input yet")
+            return
+        k = (int(z["type_id"]), int(z["qty"]))
+        fertig = getattr(self, "_mb_vergleich_fertig", None)
+        if fertig is None:
+            fertig = self._mb_vergleich_fertig = set()
+        if k in fertig:
+            return
+        fertig.add(k)
+        try:
+            self._mb_vergleich_bericht()
+        except Exception as _ex:
+            self._mb_vergleich_notiz("ERROR (build plan side): %s: %s"
+                                     % (type(_ex).__name__, str(_ex)[:300]))
+
+    def _mb_vergleich_bericht(self):
+        from .mw_helpers import kosten_zerlegen
+        stand = getattr(self, "_bp_econ_stand", None) or {}
+        mb = stand.get("eingang")
+        ziel = getattr(self, "_bd_rechen_eingang", None)
+        pfad = self._mb_vergleich_pfad()
+        if not ziel:
+            return
+        tid = int(ziel["type_id"])
+        name = (stand.get("names") or {}).get(tid) or str(tid)
+
+        def _schreiben(text):
+            try:
+                os.makedirs(os.path.dirname(pfad), exist_ok=True)
+                with open(pfad, "a", encoding="utf-8") as f:
+                    f.write(text)
+            except Exception:
+                pass
+
+        _bpi = (mb["recipes"].product_to_bp or {}).get(tid) if mb else None
+        e = (stand.get("profit_by_bp") or {}).get(int(_bpi[0])) if _bpi else None
+        if not mb or not e or e.get("cost_unit") is None:
+            _schreiben(f"\n=== {name} (type {tid}) ===\nNO COMPARISON: My Blueprints "
+                       "not loaded, or no profit row for this item.\n")
+            return
+        # SOFORT eine Zeile (Nutzer 06.10.2026: "nix da" - der Bericht entstand
+        # erst am Ende des Hintergrund-Jobs; wer vorher schloss, bekam nichts).
+        _schreiben(f"\n=== {name} (type {tid}) === started, wait for "
+                   "'Report written' before closing\n")
+        try:
+            self.statusBar().showMessage(t("Comparison running \u2026"), 60000)
+        except Exception:
+            pass
+        bp = int(_bpi[0])
+        o0 = dict(mb["opts"])
+        if mb.get("jc_fuer"):
+            o0["jobcost_by_tid"] = mb["jc_fuer"](tid)   # Stufen dieser Zeile
+        if mb.get("me_fuer"):
+            o0.update(mb["me_fuer"](tid))              # Struktur-ME (emm445)
+        if e.get("mb_dv") is not None:
+            o0["inv_decryptor_map"] = {bp: e["mb_dv"]}
+        start = {"qty": int(e.get("mb_qty") or 1), "pfn": mb["pm"].get,
+                 "recipes": mb["recipes"], "opts": o0}
+
+        _namen = dict(stand.get("names") or {})
+        _namen.update(getattr(self, "_bd_names_ref", None) or {})
+
+        def job():
+            from .mw_helpers import me_vergleich
+            schritte = kosten_zerlegen(
+                lambda q, pf, rc, op: industry.production_plan(tid, q, pf, rc, op),
+                start, ziel)
+            # JE ITEM: wer macht den ME-Unterschied (emm446)? Nur gebaute
+            # Fertigungs-Items des Bauplans.
+            try:
+                _pl = industry.production_plan(tid, ziel["qty"], ziel["pfn"],
+                                               ziel["recipes"], dict(ziel["opts"]))
+                _rc = ziel["recipes"]
+                _fert = [x for x in ((_pl or {}).get("build_runs") or {})
+                         if x not in (getattr(_rc, "reaction_products", None)
+                                      or set())]
+                me_zeilen = me_vergleich(_fert, start["opts"], ziel["opts"])
+            except Exception as _mx:
+                me_zeilen = [("ERROR", str(_mx)[:120], None)]
+            return schritte, me_zeilen
+
+        def done(erg):
+            schritte, me_zeilen = erg
+            self._mb_vergleich_ergebnis = schritte
+
+            def _z(v):
+                return "-" if v is None else f"{v:,.0f}".replace(",", "'")
+            zl = [f"\n=== {name} (type {tid}) ===",
+                  f"My Blueprints: cost/unit {_z(e.get('cost_unit'))}, sell "
+                  f"{_z(e.get('sell'))}, profit/unit {_z(e.get('profit'))}, decryptor "
+                  f"{e.get('decryptor') or '-'}, quantity {start['qty']}",
+                  f"Build plan: quantity {ziel['qty']}",
+                  "step | cost/unit | delta | material | job | invention | stock"]
+            for s in schritte:
+                tl = s.get("teile") or {}
+                zl.append(" | ".join([s["schritt"], _z(s.get("je_stk")),
+                                      _z(s.get("delta")), _z(tl.get("mat")),
+                                      _z(tl.get("job")), _z(tl.get("inv")),
+                                      _z(tl.get("stock"))])
+                          + (f" | ERROR {s['fehler']}" if s.get("fehler") else ""))
+            zl.append("(order matters: interactions land on the later step. "
+                      "Last row = build plan.)")
+            if me_zeilen:
+                zl.append("ME per item (blueprint ME / rig / role, in %) - "
+                          "My Blueprints vs build plan:")
+                for _t, _a, _b in me_zeilen:
+                    if _t == "ERROR":
+                        zl.append("  ERROR " + str(_a))
+                        continue
+                    zl.append("  %s: %s / %s / %s  vs  %s / %s / %s" % (
+                        _namen.get(_t) or _t, _a[0], _a[1], _a[2],
+                        _b[0], _b[1], _b[2]))
+            zl.append("")
+            _schreiben("\n".join(zl))
+            try:
+                self.statusBar().showMessage(t("Report written: {datei}").format(
+                    datei=os.path.basename(pfad)), 8000)
+            except Exception:
+                pass
+
+        def fail(err):
+            _schreiben(f"ERROR: {str(err)[:300]}\n")
+
+        self._run(Worker(job), done, fail, overlay=False)
+
     def _jobs_art_name(self, activity_id):
         return {1: t("Manufacturing"), 3: t("TE research"), 4: t("ME research"),
                 5: t("Copying"), 7: t("Reverse engineering"), 8: t("Invention"),
@@ -463,6 +1238,1199 @@ class BauplanTabs:
 
     def _jobs_farbe(self, art):
         return getattr(theme, self._JOB_FARBE.get(art, "CYAN"))
+
+    # ------------------------------------------------------------------
+    # STOCK LOCATIONS (emm458, Nutzer 07.10.2026: "wo die Materialien der
+    # Bauplaene rumliegen, bei welchem Charakter was liegt ... Strukturen,
+    # Container, Frachtcontainer ... Suchspalte ... neuer Tab wie Industry
+    # Jobs"; Rueckfrage: Name "Stock locations", Item zuerst, Material der
+    # gespeicherten + eingefrorenen Plaene, Bedarf daneben).
+    # Logik rein in eve_trader/lagerorte.py; hier nur Abruf + Anzeige.
+    # ------------------------------------------------------------------
+
+    def _lager_seite_bauen(self):
+        """STOCK LOCATIONS als KARTEN je Ort (emm461, Nutzer: "hier erkenne
+        ich gar nichts, weder Charaktere noch Karten ... ich haette lieber
+        die Locations als Karten, meistens hat man nur 4-5 Baustrukturen,
+        vielleicht eine Legende rechts, wo man waehlen kann, auf welchen
+        Strukturen / NPC-Stationen Materialien ueberhaupt getrackt werden
+        sollen ... generell etwas aehnlich wie der Industry-Jobs-Tab").
+        ERSETZT den einen grossen Baum aus emm458."""
+        from PySide6.QtWidgets import QPlainTextEdit, QScrollArea
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(14, 10, 14, 10)
+        v.setSpacing(8)
+        kopf = QHBoxLayout(); kopf.setSpacing(10)
+        titel = QLabel(t("STOCK LOCATIONS (BETA)"))
+        titel.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
+                            f"color:{theme.GREEN};")
+        titel.setToolTip(t(
+            "Where the material of your saved, frozen build plans is lying: "
+            "one card per station or structure, per item the character (or "
+            "corp hangar) and the container, nested containers included. The "
+            "game only takes material from the hangar of the character who "
+            "starts the job - this page shows who has to move what. Counted "
+            "as needed is only what the runs you have NOT built yet still "
+            "take. Ship cargo and fittings do not count, like everywhere in "
+            "Eve MoMa."))
+        kopf.addWidget(titel)
+        kopf.addStretch()
+        self._lager_stand_lbl = QLabel("")
+        self._lager_stand_lbl.setObjectName("Muted")
+        kopf.addWidget(self._lager_stand_lbl)
+        self._lager_plan_cb = QComboBox()
+        self._lager_plan_cb.setMinimumWidth(220)
+        self._lager_plan_cb.setToolTip(t(
+            "Which plans' material to list. Saved, frozen plans that are not "
+            "completed. The search below finds any item regardless."))
+        self._lager_plan_cb.currentIndexChanged.connect(lambda _i: self._lager_zeichnen())
+        ohne_mausrad(self._lager_plan_cb)
+        kopf.addWidget(self._lager_plan_cb)
+        self._lager_kauf_btn = QPushButton(t("Copy shopping list"))
+        self._lager_kauf_btn.setIcon(icons.icon("cart"))
+        self._lager_kauf_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        self._lager_kauf_btn.setToolTip(t(
+            "Everything that is really missing across ALL listed plans, as "
+            "Name<TAB>quantity for EVE's multibuy. Only material your plans "
+            "BUY - anything they build themselves stays out, so you never buy "
+            "what you are about to produce. Your saved shopping list is not "
+            "touched."))
+        self._lager_kauf_btn.clicked.connect(lambda: self._lager_kaufliste_kopieren())
+        # DIE KOPF-KNOEPFE DUERFEN SCHRUMPFEN (emm500, b66 auf seinem
+        # Windows rot: Seite 1281 px - dort messen dieselben Texte
+        # ~1,4-1,6x breiter, Lehre vom 19.09.2026, drei Kopfzeilen-Knoepfe
+        # in Meine Bauplaene). Volle Breite, solange Platz ist.
+        self._lager_kauf_btn.setMinimumWidth(40)
+        kopf.addWidget(self._lager_kauf_btn)
+        self._lager_auf_btn = QPushButton(t("Expand all"))
+        self._lager_auf_btn.setIcon(icons.icon("plus"))   # b55: Bedienelemente tragen ein Symbol
+        self._lager_auf_btn.clicked.connect(lambda: self._lager_aufklappen())
+        self._lager_auf_btn.setMinimumWidth(40)
+        kopf.addWidget(self._lager_auf_btn)
+        self._lager_refresh_btn = QPushButton(t("Refresh"))
+        self._lager_refresh_btn.setIcon(icons.icon("refresh"))
+        self._lager_refresh_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        self._lager_refresh_btn.clicked.connect(lambda: self._lager_laden())
+        self._lager_refresh_btn.setMinimumWidth(40)
+        kopf.addWidget(self._lager_refresh_btn)
+        v.addLayout(kopf)
+        # UNVOLLSTAENDIGE DATEN SIND KEINE EINKAUFSLISTE (emm476, Nutzer:
+        # "jetzt ist es noch schlimmer geworden"): scheitert ein Asset- oder
+        # Job-Abruf, fehlt Bestand bzw. Fortschritt - die roten Fehlbetraege
+        # sind dann ZU HOCH, und genau daraus entsteht ein unnoetiger
+        # Nachkauf. Die Zeile stand bisher nur hinten in der Statuszeile und
+        # wurde dort abgeschnitten. Jetzt steht sie rot und breit oben, und
+        # "Copy shopping list" ist in dem Fall gesperrt.
+        self._lager_warn_lbl = QLabel("")
+        self._lager_warn_lbl.setWordWrap(True)
+        self._lager_warn_lbl.setStyleSheet(
+            f"background:#3A1A18; color:{theme.RED}; "
+            f"border:1px solid {theme.RED}; border-radius:6px; "
+            f"padding:6px 10px; font-weight:700;")
+        self._lager_warn_lbl.hide()
+        v.addWidget(self._lager_warn_lbl)
+        # SUCHFELD - mehrzeilig, damit eine Hangar-Kopie (Name<TAB>Menge je
+        # Zeile) oder eine Einkaufsliste direkt eingefuegt werden kann.
+        self._lager_suche = QPlainTextEdit()
+        self._lager_suche.setPlaceholderText(t(
+            "Type or paste item names - one per line (a hangar copy with "
+            "quantities works too)"))
+        self._lager_suche.setFixedHeight(52)
+        self._lager_suche.setTabChangesFocus(True)
+        self._lager_suche_timer = QTimer(page)
+        self._lager_suche_timer.setSingleShot(True)
+        self._lager_suche_timer.timeout.connect(lambda: self._lager_zeichnen())
+        # SICHTBARER WEG ZURUECK (emm487, Nutzer nach Rechtsklick "Search
+        # for this item": "jetzt komme ich nicht mehr zurueck, die Karte von
+        # Dockside ist klein geworden") - die Suche filtert die Karten,
+        # solange Text im Feld steht, aber das sah man nirgends. Der Knopf
+        # erscheint nur bei aktiver Suche und leert sie mit einem Klick.
+        self._lager_suche_leeren = QPushButton(t("Clear search"))
+        self._lager_suche_leeren.setIcon(icons.icon("close"))
+        self._lager_suche_leeren.setStyleSheet(theme.amber_rahmen_knopf())
+        self._lager_suche_leeren.setToolTip(t(
+            "Back to all items – the search filters the cards as long "
+            "as text is in the box."))
+        self._lager_suche_leeren.setVisible(False)
+        self._lager_suche_leeren.clicked.connect(
+            lambda: (self._lager_suche.setPlainText(""),
+                     self._lager_suche_timer.stop(),
+                     self._lager_zeichnen()))
+        self._lager_suche.textChanged.connect(
+            lambda: (self._lager_suche_leeren.setVisible(
+                bool(self._lager_suche.toPlainText().strip())),
+                self._lager_suche_timer.start(250)))
+        _s_reihe = QHBoxLayout()
+        _s_reihe.setContentsMargins(0, 0, 0, 0)
+        _s_reihe.setSpacing(8)
+        _s_reihe.addWidget(self._lager_suche, 1)
+        _s_reihe.addWidget(self._lager_suche_leeren, 0,
+                           Qt.AlignTop)
+        v.addLayout(_s_reihe)
+        # GESAMT-LEISTE wie bei Industry Jobs (emm346/emm461): getrackte
+        # Orte, Items, Fehlbetraege - auf einen Blick, bevor man die Karten
+        # liest.
+        self._lager_summe_box = QWidget()
+        _sb = QHBoxLayout(self._lager_summe_box)
+        _sb.setContentsMargins(0, 0, 0, 0); _sb.setSpacing(10)
+        self._lager_kacheln = {}
+        for _schl, _titel, _farbe in (("locs", t("LOCATIONS"), theme.CYAN),
+                                      ("items", t("ITEMS"), theme.GREEN),
+                                      ("short", t("MISSING"), theme.RED)):
+            _k, _zl, _ul = self._industrie_kachel(_titel, _farbe)
+            _sb.addWidget(_k, 1)
+            self._lager_kacheln[_schl] = {"rahmen": _k, "zahl": _zl, "unter": _ul}
+        v.addWidget(self._lager_summe_box)
+        body = QHBoxLayout(); body.setSpacing(12)
+        self._lager_raster = KartenRaster(breite=440)
+        _sc = QScrollArea(); _sc.setWidgetResizable(True)
+        _sc.setFrameShape(QScrollArea.NoFrame)
+        _sc.setWidget(self._lager_raster)
+        body.addWidget(_sc, 1)
+        # ORTE AN/AUS (Nutzer: "eine Legende rechts, wo man waehlen kann,
+        # auf welchen Strukturen / NPC-Stationen Materialien ueberhaupt
+        # getrackt werden sollen"). Gemerkt in settings["lager_orte_aus"]
+        # (die AUSgeschalteten) - ein neuer Ort ist damit von selbst an.
+        panel = QFrame(); panel.setObjectName("Card")
+        panel.setFixedWidth(240)
+        pv = QVBoxLayout(panel)
+        pv.setContentsMargins(10, 10, 10, 10); pv.setSpacing(6)
+        _pt = QLabel(t("LOCATIONS"))
+        _pt.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
+                          f"color:{theme.CYAN};")
+        pv.addWidget(_pt)
+        _ph = QLabel(t("Material at a location you switch off counts nowhere - "
+                       "not in the shortfall either."))
+        _ph.setObjectName("Muted"); _ph.setWordWrap(True)
+        _ph.setStyleSheet(f"font-size:{theme.FS_SMALL};")
+        pv.addWidget(_ph)
+        self._lager_schalter_box = QVBoxLayout(); self._lager_schalter_box.setSpacing(4)
+        pv.addLayout(self._lager_schalter_box)
+        self._lager_alle_btn = QPushButton(t("All on"))
+        self._lager_alle_btn.setIcon(icons.icon("check"))   # b55: Bedienelemente mit Symbol
+        self._lager_alle_btn.setToolTip(t(
+            "Switch every location on - or, when all are on, off at once."))
+        self._lager_alle_btn.clicked.connect(lambda: self._lager_alle_umschalten())
+        pv.addWidget(self._lager_alle_btn)
+        pv.addStretch()
+        body.addWidget(panel)
+        v.addLayout(body, 1)
+        self._lager_daten = None
+        self._lager_stand_ts = 0.0
+        self._lager_laeuft = False
+        self._lager_karten = {}          # {ort_id: Karte} - b-Suite
+        self._lager_schalter = {}        # {ort_id: Knopf} - b-Suite
+        self._lager_schalter_orte = None
+        return page
+
+    def _lager_seite_gezeigt(self):
+        """Aus _bau_nav(6): beim ersten Zeigen und ab 10 min Alter laden
+        (ESI cacht Assets ohnehin bis zu einer Stunde)."""
+        import time as _t
+        self._lager_plaene_fuellen()
+        # SUCHE BEIM BETRETEN LEEREN (emm488, Nutzer: "wenn ich die Tabs
+        # wechsle ... und wieder zurueck soll das Suchfeld leer sein").
+        # Signale geblockt, sonst zeichnete der 250-ms-Timer doppelt;
+        # folgt kein Laden, zeichnet die Seite einmal selbst neu.
+        # "Where is it?" (emm459) setzt seinen Suchtext NACH diesem Aufruf
+        # und bleibt damit erhalten.
+        _suche_war = bool(self._lager_suche.toPlainText())
+        if _suche_war:
+            self._lager_suche.blockSignals(True)
+            self._lager_suche.setPlainText("")
+            self._lager_suche.blockSignals(False)
+            self._lager_suche_timer.stop()
+            self._lager_suche_leeren.setVisible(False)
+        if self._lager_daten is None or _t.time() - self._lager_stand_ts > 600:
+            self._lager_laden()
+        elif _suche_war:
+            self._lager_zeichnen()
+
+    def _lager_plaene_fuellen(self):
+        from .. import lagerorte
+        cb = self._lager_plan_cb
+        alt = cb.currentData()
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItem(t("All frozen plans"), None)
+        for p in lagerorte.plaene_fuer_lagerorte(self.settings):
+            cb.addItem(str(p.get("label") or p.get("item_name") or p.get("id")),
+                       p.get("id"))
+        ix = cb.findData(alt) if alt is not None else 0
+        cb.setCurrentIndex(ix if ix >= 0 else 0)
+        cb.blockSignals(False)
+
+    def _lager_ort_namen(self, orte, char_fuer_ort):
+        """{ort_id: Name} aus den bekannten Quellen - Bau-Strukturen, Hubs/
+        Favoriten, FRUEHER AUFGELOESTE Namen, NPC-Stationen (oeffentlich);
+        unbekannte STRUKTUREN ueber die Charaktere, die dort Assets haben.
+
+        emm462 (Nutzer-Screenshot: zwei Orte standen als "#1045682518989"):
+        (1) es wird JEDER Charakter mit Assets an diesem Ort probiert, nicht
+        nur der erste - Andockrecht hat oft nur einer (Muster aus
+        `_reload_locations`); (2) ein 420 (ESI-Fehlerbudget erschoepft)
+        bricht sofort ab, danach bringt Weiterprobieren nur noch mehr 420er;
+        (3) ein einmal aufgeloester Name wird in `lager_ort_namen` gemerkt
+        und beim naechsten Laden ohne Abruf benutzt - so bleibt er auch da,
+        wenn das Fehlerbudget gerade knapp ist."""
+        namen = {}
+        for bs in (self.settings.get("bau_structures") or []):
+            sid = bs.get("link_structure_id")
+            if sid and bs.get("name"):
+                namen[int(sid)] = str(bs["name"])
+        try:
+            for o in self._link_orte():
+                if o.get("structure_id") and o.get("name"):
+                    namen.setdefault(int(o["structure_id"]), str(o["name"]))
+        except Exception:
+            pass
+        _gemerkt = dict(self.settings.get("lager_ort_namen") or {})
+        for k, v in _gemerkt.items():
+            try:
+                if v:
+                    namen.setdefault(int(k), str(v))
+            except (TypeError, ValueError):
+                continue
+        offen = [o for o in orte if o not in namen]
+        stationen = [o for o in offen if 0 < o < 2 ** 31]
+        if stationen:
+            try:
+                namen.update(esi.orts_namen(stationen) or {})
+            except Exception:
+                pass
+        client_id = self.settings.get("client_id")
+        fehl = 0
+        budget_weg = False
+        neu = {}
+        for o in offen:
+            if o in namen or o < 2 ** 31 or fehl >= 8 or budget_weg:
+                continue
+            _cands = char_fuer_ort.get(o) or []
+            if not isinstance(_cands, (list, tuple)):
+                _cands = [_cands]
+            for cid in _cands:
+                if not cid or not client_id:
+                    continue
+                try:
+                    info = esi.resolve_structure(client_id, int(cid), int(o)) or {}
+                except Exception as _se:
+                    _code = getattr(getattr(_se, "response", None),
+                                    "status_code", None)
+                    if _code == 420:
+                        budget_weg = True
+                        break
+                    continue
+                if info.get("name"):
+                    namen[o] = str(info["name"])
+                    neu[str(o)] = str(info["name"])
+                    break
+            if o not in namen:
+                fehl += 1
+        # Bleibt eine Struktur namenlos, sagt die Liste WARUM - eine nackte
+        # Nummer sieht aus wie ein Fehler (Nutzer: "in der Locations-Legende
+        # gibts noch 2 Strukturen ohne Namen, nur Zahlen mit #"). Den Namen
+        # einer Struktur gibt EVE nur Charakteren mit Andockrecht.
+        for o in orte:
+            if o not in namen and o >= 2 ** 31:
+                namen[o] = t("Structure (no docking access) \u00b7 #{id}").format(id=o)
+        if neu:
+            _gemerkt.update(neu)
+            self.settings["lager_ort_namen"] = _gemerkt
+            config.save_settings_async(self.settings)
+        return namen
+
+    def _lager_laden(self):
+        if getattr(self, "_lager_laeuft", False):
+            return
+        client_id = self.settings.get("client_id")
+        chars = store.list_characters()
+        if not client_id or not chars:
+            self._lager_stand_lbl.setText(t("No characters linked."))
+            return
+        settings = self.settings
+
+        def job():
+            from .. import lagerorte
+            import time as _t
+            ctypes = esi.container_type_ids_safe()
+            zeilen, failed = [], []
+            # WIE VIEL hat ESI je Charakter/Corp geliefert (emm477)? Nur so
+            # faellt ein STILL zu kleiner Abruf auf - er macht den
+            # Fehlbetrag zu hoch, und genau daraus wurde ein Nachkauf.
+            asset_n = {}
+            besitzer_namen = {}
+            beh_namen = {}
+            char_fuer_ort = {}      # {ort: [cid, ...]} - ALLE, die dort Assets haben
+            for ch in chars:
+                cid = int(ch["character_id"])
+                name = ch.get("character_name") or ch.get("name") or str(cid)
+                besitzer_namen[("char", cid)] = name
+                try:
+                    assets = esi._fetch_all_assets(client_id, cid)
+                except Exception as _ae:
+                    self._log_exception(f"Stock locations: assets {name}", str(_ae))
+                    failed.append(name)
+                    continue
+                z = lagerorte.zeilen_aus_assets(assets, ctypes, cid, "char")
+                asset_n[name] = len(z)
+                for r in z:
+                    _l = char_fuer_ort.setdefault(r["ort"], [])
+                    if cid not in _l:
+                        _l.append(cid)
+                ids = lagerorte.behaelter_ids(z)
+                if ids:
+                    try:
+                        for k, nm in (esi.fetch_asset_names(client_id, cid, sorted(ids))
+                                      or {}).items():
+                            if nm:
+                                beh_namen[k] = nm
+                    except Exception:
+                        pass
+                zeilen.extend(z)
+            # CORP-HANGARS (nur mit dem Corp-Schalter, EIN Abruf je Corp wie
+            # ueberall - corp.abrufplan ueber _corp_rollen).
+            _corp_jobs_plan = {}      # {corp_id: via_cid} fuer den Job-Abruf
+            if settings.get("use_corp"):
+                from .. import corp as _corp
+                _co = {"ohne_rolle": [], "relink": [], "failed": [],
+                       "keine_division": False, "aktiv": True, "bp_ok": True}
+                try:
+                    _, plan, _pj = self._corp_rollen(client_id, chars, _co)
+                    _corp_jobs_plan = dict(_pj or {})
+                except Exception:
+                    plan = {}
+                    # Rollen unbekannt -> Corp-Jobs unbekannt. None heisst
+                    # unten "ehrlich als Fehler melden", nicht "keine Corp".
+                    _corp_jobs_plan = None
+                divs = _corp.divisions_bereinigt(settings.get("corp_divisions"))
+                for corp_id, via in sorted((plan or {}).items()):
+                    try:
+                        cname = esi.fetch_corporation_name(corp_id)
+                    except Exception:
+                        cname = f"#{corp_id}"
+                    besitzer_namen[("corp", int(corp_id))] = t("Corp: {name}").format(name=cname)
+                    try:
+                        ca = esi.fetch_corporation_assets(client_id, via, corp_id)
+                    except Exception as _ce:
+                        self._log_exception(f"Stock locations: corp assets {cname}", str(_ce))
+                        failed.append(t("Corp: {name}").format(name=cname))
+                        continue
+                    zc = lagerorte.zeilen_aus_assets(ca, ctypes, int(corp_id), "corp",
+                                                     divisions=divs)
+                    asset_n[t("Corp: {name}").format(name=cname)] = len(zc)
+                    for r in zc:
+                        _l = char_fuer_ort.setdefault(r["ort"], [])
+                        if via not in _l:
+                            _l.append(via)
+                    zeilen.extend(zc)
+            plaene = lagerorte.plaene_fuer_lagerorte(settings)
+            # NOCH OFFENER Bedarf (emm463): die lokale Job-Zuordnung sagt,
+            # welche Runs dieser Plan schon gebaut hat - kein ESI-Abruf.
+            try:
+                _zuord = store.job_zuordnung_details()
+            except Exception as _ze:
+                self._log_exception("Stock locations: job assignments", str(_ze))
+                _zuord = {}
+            # NOCH NICHT ZUGEORDNETE JOBS (emm475, Nutzer: "jetzt habe ich
+            # schon nachgekauft, das darf auf keinen Fall jemals wieder
+            # passieren"): die Job-Zuordnung laeuft nur beim Aufbau des
+            # Runplaners eines Plans. Wer einen Job startet und den Plan
+            # danach nicht oeffnet, hat sein Material im Spiel weg, waehrend
+            # die Seite den Bedarf noch voll zeigt - genau so entstand der
+            # unnoetige Nachkauf. Jobs, die GENAU EIN Plan gebaut haben
+            # kann, zaehlen deshalb hier mit; mehrdeutige kommen als
+            # sichtbare Warnung (`job_offen`), nie still.
+            _jobs_alle, _job_fehler = [], False
+            for ch in chars:
+                try:
+                    _jobs_alle += esi.fetch_active_jobs(
+                        client_id, int(ch["character_id"]),
+                        include_delivered=True) or []
+                except Exception as _je:
+                    _job_fehler = True
+                    self._log_exception(
+                        f"Stock locations: jobs {ch.get('character_name')}",
+                        str(_je))
+            # CORP-JOBS ZAEHLEN WIE CHARAKTER-JOBS (emm482, Nutzer 09.10.2026:
+            # "Corp Jobs funktionieren exakt gleich wie normale Jobs?" - hier
+            # NICHT: die Seite holte nur Charakter-Jobs. Ein Corp-Job wurde
+            # weder festgeschrieben noch mitgezaehlt, sein Material war im
+            # Spiel weg, der Fehlbetrag blieb zu hoch - dieselbe Luecke wie
+            # emm475, nur fuer Corp-Bauer). Ein Abruf je Corp (corp.abrufplan,
+            # Rolle Factory_Manager); scheitert er oder sind die Rollen
+            # unbekannt, gilt dieselbe Regel wie bei den Charakteren: nichts
+            # festschreiben, rote Zeile (emm476). Doppelte job_ids filtert
+            # zuteilbare_jobs; /characters/.../industry/jobs enthaelt keine
+            # Corp-Jobs (geprueft, emm389).
+            if _corp_jobs_plan is None:
+                _job_fehler = True
+            else:
+                for _c482, _v482 in sorted(_corp_jobs_plan.items()):
+                    try:
+                        _jobs_alle += esi.fetch_corporation_jobs(
+                            client_id, int(_v482), int(_c482),
+                            include_delivered=True) or []
+                    except Exception as _je:
+                        _job_fehler = True
+                        self._log_exception(
+                            f"Stock locations: corp jobs #{_c482}", str(_je))
+            try:
+                _vergeben = store.job_zuordnung_alle() or {}
+            except Exception as _ve:
+                self._log_exception("Stock locations: job assignments 2", str(_ve))
+                _vergeben = {}
+                _job_fehler = True
+            # Items, die NOCH ANDERE offene Plaene bauen (auch nicht
+            # eingefrorene) - damit ist ein Job nicht mehr eindeutig.
+            from .mw_helpers import MainWindowHelpers as _MH475
+            _ids = {str(p.get("id")) for p in plaene}
+            _fremd = set()
+            for _p in (settings.get("bau_saved_plans") or []):
+                if not isinstance(_p, dict) or _p.get("done_manual"):
+                    continue
+                if str(_p.get("id")) in _ids:
+                    continue
+                _fremd |= set(_MH475.plan_baut_items(_p))
+            _extra, _job_offen, _fest = ({}, [], 0)
+            if not _job_fehler:
+                _tr, _job_offen = lagerorte.zuteilbare_jobs(
+                    _jobs_alle, plaene, _vergeben, _fremd)
+                # FESTSCHREIBEN (emm478, Nutzer-Entscheid "still
+                # festschreiben"): bisher lief die Zuordnung NUR beim Aufbau
+                # des Runplaners eines Plans - wer 30 Jobs startet und den
+                # Plan nicht oeffnet, hatte sie nirgends. Eindeutig heisst:
+                # GENAU EIN offener Plan baut das Item, der Job startete
+                # nach dessen Einfrieren. Die erste Entscheidung gewinnt
+                # (INSERT OR IGNORE); korrigieren kann der Nutzer sie im
+                # Runplaner unter "Job assignments".
+                for _jid, _pid, _tid, _runs, _akt in _tr:
+                    _e = _extra.setdefault(_pid, {})
+                    _e[_tid] = _e.get(_tid, 0) + _runs
+                    try:
+                        if store.job_zuordnung_setzen(
+                                _jid, _pid, _tid, _runs, "eindeutig"):
+                            _fest += 1
+                    except Exception as _fe:
+                        self._log_exception(
+                            "Stock locations: assign job", str(_fe))
+                # STUFEN RUN-ZAHL + BAU-PRIORITAET (emm484, Nutzer: "ja
+                # unbedingt genau so bauen!"): bauen ZWEI Plaene dasselbe
+                # Item, blieb der Job bisher eine Warnung, bis man einen
+                # Plan im Runplaner oeffnete - nur dort liefen die Stufen
+                # aus emm430. Jetzt laufen DIESELBEN Helfer auch hier.
+                _job_offen, _fest2 = self._lager_stufen_zuordnen(
+                    _job_offen, _extra, _vergeben)
+                _fest += _fest2
+            gebaut_tids = lagerorte.gebaute_tids(plaene)
+            bedarf = lagerorte.bedarf_aus_plaenen(plaene, _zuord, _extra)
+            bedarf_je_plan = {p.get("id"): lagerorte.bedarf_aus_plaenen(
+                [p], _zuord, _extra) for p in plaene}
+            tids = {r["tid"] for r in zeilen} | set(bedarf)
+            # Behaelter ohne eigenen Namen heissen nach ihrem Typ.
+            beh_typ = lagerorte.behaelter_typen(zeilen)
+            tids |= set(beh_typ.values())
+            namen = dict(store.cached_names(sorted(tids)) or {}) if tids else {}
+            fehlt = [x for x in tids if x not in namen]
+            if fehlt:
+                try:
+                    namen.update(esi.resolve_names(fehlt) or {})
+                except Exception:
+                    pass
+            for i, tid in beh_typ.items():
+                if not beh_namen.get(i):
+                    beh_namen[i] = namen.get(tid) or f"#{tid}"
+            orte = {r["ort"] for r in zeilen}
+            ort_namen = self._lager_ort_namen(orte, char_fuer_ort)
+            # STILL ZU KLEINER ABRUF (emm477): zweimal gemessen am
+            # 08.10.2026 - 3'886 -> 2'501 Asset-Zeilen, 38 Mio Stueck weg,
+            # ohne einen einzigen ESI-Fehler. Sinkt die Zeilenzahl eines
+            # Charakters deutlich, ist der Fehlbetrag zu hoch.
+            _schrumpf = []
+            try:
+                _schrumpf, _stand_neu = lagerorte.bestand_schrumpf(
+                    asset_n, settings.get("lager_asset_stand") or {})
+                settings["lager_asset_stand"] = _stand_neu
+                config.save_settings_async(settings)
+            except Exception as _se:
+                self._log_exception("Stock locations: asset count", str(_se))
+            return {"zeilen": zeilen, "namen": namen, "ort_namen": ort_namen,
+                    "besitzer_namen": besitzer_namen, "beh_namen": beh_namen,
+                    "bedarf": bedarf, "bedarf_je_plan": bedarf_je_plan,
+                    "built": gebaut_tids,
+                    "job_extra": _extra, "job_offen": _job_offen,
+                    "job_fehler": _job_fehler, "schrumpf": _schrumpf,
+                    "job_fest": _fest,
+                    # ESI-FEHLERBUDGET (emm480): ein 420 waehrend des Abrufs
+                    # beantwortet GAR NICHTS mehr - dann sind diese Zahlen
+                    # unvollstaendig, auch wenn kein einzelner Abruf geworfen
+                    # hat (die Lage vom 09.10.2026, fehler.log 13:33).
+                    "budget_420": esi.budget_erschoepft(),
+                    "failed": failed, "ts": _t.time()}
+
+        def done(res):
+            self._lager_laeuft = False
+            self._lager_daten = res
+            self._lager_stand_ts = res.get("ts") or 0.0
+            self._lager_plaene_fuellen()
+            self._lager_zeichnen()
+
+        def fail(_err):
+            self._lager_laeuft = False
+            self._lager_stand_lbl.setText(t("Loading failed."))
+
+        self._lager_laeuft = True
+        self._lager_stand_lbl.setText(t("Loading assets of all characters \u2026"))
+        self._run(Worker(job), done, fail, overlay=False)
+
+    def _lager_aus(self):
+        """Die AUSgeschalteten Orte (Strings) - ein neuer Ort ist von selbst an."""
+        return {str(x) for x in (self.settings.get("lager_orte_aus") or [])}
+
+    def _lager_ort_schalten(self, ort, an):
+        aus = self._lager_aus()
+        if an:
+            aus.discard(str(ort))
+        else:
+            aus.add(str(ort))
+        self.settings["lager_orte_aus"] = sorted(aus)
+        config.save_settings_async(self.settings)
+        _b = (getattr(self, "_lager_schalter", None) or {}).get(int(ort))
+        if _b is not None:
+            self._jobs_schalter_stil(_b, an)
+        self._lager_alle_btn_stand()
+        self._lager_zeichnen()
+
+    def _lager_alle_umschalten(self):
+        """EIN Knopf fuer beides (emm462, Nutzer: "ausserdem man einen
+        All On/Off toggle"): sind alle Orte an, schaltet er alle aus - sonst
+        alle an. Der Knopftext sagt immer, was der naechste Klick tut."""
+        orte = [int(o) for o in (self._lager_schalter_orte or [])]
+        alle_an = not (self._lager_aus() & {str(o) for o in orte})
+        self.settings["lager_orte_aus"] = sorted(str(o) for o in orte) if alle_an else []
+        config.save_settings_async(self.settings)
+        for _b in (getattr(self, "_lager_schalter", None) or {}).values():
+            _b.blockSignals(True)
+            _b.setChecked(not alle_an)
+            _b.blockSignals(False)
+            self._jobs_schalter_stil(_b, not alle_an)
+        self._lager_alle_btn_stand()
+        self._lager_zeichnen()
+
+    def _lager_alle_btn_stand(self):
+        """Beschriftung des Toggles: "All off", solange alle an sind."""
+        btn = getattr(self, "_lager_alle_btn", None)
+        if btn is None:
+            return
+        orte = [int(o) for o in (self._lager_schalter_orte or [])]
+        alle_an = bool(orte) and not (self._lager_aus() & {str(o) for o in orte})
+        btn.setText(t("All off") if alle_an else t("All on"))
+        btn.setIcon(icons.icon("close" if alle_an else "check"))
+
+    def _lager_schalter_bauen(self, orte):
+        """Eine Zeile je Ort: Name + An/Aus-Knopf (wie die Charaktere bei
+        Industry Jobs - dieselbe Knopf-Stelle `_jobs_schalter_stil`)."""
+        box = self._lager_schalter_box
+        while box.count():
+            it = box.takeAt(0)
+            _w = it.widget()
+            if _w is not None:
+                _w.deleteLater()
+            elif it.layout() is not None:
+                while it.layout().count():
+                    _x = it.layout().takeAt(0).widget()
+                    if _x is not None:
+                        _x.deleteLater()
+        self._lager_schalter = {}
+        aus = self._lager_aus()
+        for ort, name, menge in orte:
+            row = QHBoxLayout(); row.setSpacing(6)
+            nl = KurzLabel(str(name))
+            nl.setToolTip(t("{name} \u00b7 {n} units").format(
+                name=name, n=f"{int(menge):,}".replace(",", "'")))
+            row.addWidget(nl, 1)
+            btn = QPushButton()
+            btn.setCheckable(True)
+            btn.setFixedWidth(52)
+            _an = str(ort) not in aus
+            btn.setChecked(_an)
+            self._jobs_schalter_stil(btn, _an)
+            btn.toggled.connect(lambda an, _o=ort: self._lager_ort_schalten(_o, an))
+            row.addWidget(btn)
+            box.addLayout(row)
+            self._lager_schalter[int(ort)] = btn
+        self._lager_schalter_orte = [int(o) for o, _n, _m in orte]
+        self._lager_alle_btn_stand()
+
+    def _lager_baum_hoehe(self, baum):
+        """Hoehe aus den SICHTBAREN Zeilen - die Karte waechst beim
+        Aufklappen, statt eine eigene Bildlaufleiste zu bekommen."""
+        n = 0
+
+        def _zaehl(it):
+            nonlocal n
+            for i in range(it.childCount()):
+                n += 1
+                c = it.child(i)
+                if c.isExpanded():
+                    _zaehl(c)
+        for i in range(baum.topLevelItemCount()):
+            n += 1
+            _t = baum.topLevelItem(i)
+            if _t.isExpanded():
+                _zaehl(_t)
+        zh = baum.sizeHintForRow(0) if baum.topLevelItemCount() else 20
+        return max(26, n * max(18, zh) + 8)
+
+    def _lager_hoehe_nachziehen(self, baum):
+        baum.setFixedHeight(self._lager_baum_hoehe(baum))
+
+    def _lager_karte(self, k, fehlt=False):
+        """Eine Karte je Ort (emm461): Kopf = Ort, darunter je Item eine
+        aufklappbare Zeile (Charakter -> Container). `fehlt` = die Karte der
+        Items, die an keinem eingeschalteten Ort liegen."""
+        from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+        card = QFrame(); card.setObjectName("Card")
+        card.setMinimumWidth(420)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(12, 10, 12, 10); v.setSpacing(5)
+        kopf = QHBoxLayout(); kopf.setSpacing(8)
+        name = QLabel(str(k["name"]))
+        name.setStyleSheet(f"color:{theme.RED if fehlt else theme.CYAN}; "
+                           f"font-weight:800; font-size:{theme.FS_H2};")
+        name.setToolTip(str(k["name"]))
+        kopf.addWidget(name, 1)
+        if k["short"]:
+            _b = QLabel(t("{n} items missing").format(n=k["short"]))
+            _b.setStyleSheet(f"background:{theme.RED}; color:{theme.BG}; "
+                             f"font-weight:800; border-radius:4px; padding:1px 7px;")
+            kopf.addWidget(_b)
+        v.addLayout(kopf)
+        unter = QLabel(t("{i} item(s) \u00b7 {n} units").format(
+            i=len(k["items"]), n=f"{int(k['menge']):,}".replace(",", "'")))
+        unter.setObjectName("Muted")
+        unter.setStyleSheet(f"font-size:{theme.FS_SMALL};")
+        v.addWidget(unter)
+        if not k["items"] and not fehlt:
+            # Eingeschalteter Ort, an dem nichts Gesuchtes liegt.
+            _leer = QLabel(t("Nothing your plans still need lies here."))
+            _leer.setObjectName("Muted")
+            _leer.setStyleSheet(f"font-size:{theme.FS_SMALL};")
+            _leer.setWordWrap(True)
+            v.addWidget(_leer)
+            card._lager_baum = None      # b-Suite
+            card._lager_ort = k["ort"]
+            return card
+        baum = QTreeWidget()
+        baum.setColumnCount(3)
+        baum.setHeaderHidden(True)
+        baum.setRootIsDecorated(True)
+        baum.setIndentation(14)
+        baum.setUniformRowHeights(True)
+        baum.setFrameShape(QFrame.NoFrame)
+        baum.setSelectionMode(QTreeWidget.ExtendedSelection)
+        baum.setStyleSheet("QTreeWidget{background:transparent;}")
+        baum.setColumnWidth(0, 230)
+        baum.setColumnWidth(1, 90)
+        kopier_menue(baum, lambda pos, _b=baum: self._lager_karte_menue(_b, pos))
+        _amber = QBrush(QColor(theme.AMBER))
+        _rot = QBrush(QColor(theme.RED))
+        _mut = QBrush(QColor(theme.MUTED))
+
+        def _z(n):
+            return f"{int(n):,}".replace(",", "'")
+        for it in k["items"]:
+            top = QTreeWidgetItem([it["name"], _z(it["menge"]), ""])
+            top.setData(0, Qt.UserRole, it["tid"])
+            top.setData(0, ROLLE_KOPIERNAME, it["name"])
+            top.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            f = top.font(0); f.setBold(True); top.setFont(0, f)
+            _bd = " \u00b7 ".join(f"{_z(q)} {pl}" for pl, q in it["bedarf"])
+            if it["short"] > 0:
+                _st = t("missing {n}").format(n=_z(it["short"]))
+                top.setText(2, _st)
+                top.setForeground(2, _rot)
+            elif it["bedarf"]:
+                top.setText(2, "\u2713")
+            if _bd:
+                top.setToolTip(2, t("Still needed by plans: {b}").format(b=_bd)
+                               + "\n" + t("{n} across all tracked locations").format(
+                                   n=_z(it["gesamt"])))
+            baum.addTopLevelItem(top)
+            for bes in it.get("besitzer") or []:
+                bi = QTreeWidgetItem([bes["name"], _z(bes["menge"]), ""])
+                bi.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+                bi.setForeground(0, _amber if bes["art"] == "corp" else _mut)
+                top.addChild(bi)
+                for pfad, q in bes["pfade"]:
+                    txt = " \u203a ".join(pfad) if pfad else t("in hangar (no container)")
+                    pi = QTreeWidgetItem([txt, _z(q), ""])
+                    pi.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+                    pi.setForeground(0, _mut)
+                    if pfad:
+                        pi.setIcon(0, icons.icon("package"))
+                    bi.addChild(pi)
+        baum.expanded.connect(lambda _i, _b=baum: (
+            self._lager_hoehe_nachziehen(_b), self._lager_auf_btn_stand()))
+        baum.collapsed.connect(lambda _i, _b=baum: (
+            self._lager_hoehe_nachziehen(_b), self._lager_auf_btn_stand()))
+        v.addWidget(baum)
+        self._lager_hoehe_nachziehen(baum)
+        card._lager_baum = baum          # b-Suite
+        card._lager_ort = k["ort"]
+        return card
+
+    def _lager_karte_menue(self, baum, pos):
+        """Rechtsklick in einer Orts-Karte: "Copy" kommt vom Verteiler,
+        dazu "Where is it?" (springt auf dieses Item in der Suche)."""
+        from .mw_basis import kontext_menue
+        it = baum.itemAt(pos)
+        if it is None:
+            return
+        top = it
+        while top.parent() is not None:
+            top = top.parent()
+        tid = top.data(0, Qt.UserRole)
+        if not tid:
+            return
+        m = kontext_menue(baum)
+        a = m.addAction(icons.icon("search"), t("Search for this item"))
+        a.triggered.connect(lambda _c=False, _n=top.text(0): (
+            self._lager_suche.setPlainText(_n), self._lager_zeichnen()))
+        m.exec(baum.viewport().mapToGlobal(pos))
+
+    def _lager_zeichnen(self):
+        from .. import lagerorte
+        res = self._lager_daten
+        if not res:
+            self._lager_raster.setze([])
+            return
+        zeilen = res.get("zeilen") or []
+        namen = res.get("namen") or {}
+        ort_namen = res.get("ort_namen") or {}
+        orte = lagerorte.orte_mit_bestand(zeilen, ort_namen)
+        if [o for o, _n, _m in orte] != (self._lager_schalter_orte or None):
+            self._lager_schalter_bauen(orte)
+        aus = self._lager_aus()
+        aktiv = [o for o, _n, _m in orte if str(o) not in aus]
+        begriffe = lagerorte.suchbegriffe(self._lager_suche.toPlainText())
+        pid = self._lager_plan_cb.currentData()
+        bedarf = (res.get("bedarf_je_plan") or {}).get(pid) if pid is not None \
+            else res.get("bedarf")
+        bedarf = bedarf or {}
+        nur = None if begriffe else set(bedarf)
+        karten, fehlt = lagerorte.karten(
+            zeilen, namen, ort_namen, res.get("besitzer_namen") or {},
+            res.get("beh_namen") or {}, bedarf=bedarf, nur_tids=nur,
+            begriffe=begriffe, nur_orte=aktiv,
+            selbst_gebaut=res.get("built") or set())
+        # Der Einkaufslisten-Knopf nimmt GENAU das, was hier steht - je Item
+        # einmal (ein Item liegt oft an mehreren Orten).
+        _fehl_items = {}
+        for _k in karten:
+            for _i in _k["items"]:
+                _fehl_items.setdefault(int(_i["tid"]), _i)
+        for _i in fehlt:
+            _fehl_items.setdefault(int(_i["tid"]), _i)
+        self._lager_fehl_items = list(_fehl_items.values())
+        self._lager_karten = {}
+        widgets = []
+        if fehlt:
+            # Bedarf, der an keinem eingeschalteten Ort liegt - eigene Karte
+            # ganz vorn (Handlungsbedarf zuerst, wie die Job-Karten).
+            _k = {"ort": 0, "name": t("Not at any tracked location"),
+                  "menge": 0, "short": len(fehlt),
+                  "items": [{"tid": x["tid"], "name": x["name"], "menge": 0,
+                             "gesamt": 0, "bedarf": x["bedarf"],
+                             "short": x["short"], "besitzer": []} for x in fehlt]}
+            widgets.append(self._lager_karte(_k, fehlt=True))
+        for k in karten:
+            w = self._lager_karte(k)
+            self._lager_karten[int(k["ort"])] = w
+            widgets.append(w)
+        self._lager_raster.setze(widgets)
+        # KACHELN
+        _n_items = len({i["tid"] for k in karten for i in k["items"]}) + len(fehlt)
+        _n_short = len({i["tid"] for k in karten for i in k["items"]
+                        if i["short"] > 0}) + len(fehlt)
+        kc = self._lager_kacheln
+        kc["locs"]["zahl"].setText(
+            f'<span style="color:{theme.CYAN};">{len(aktiv)}</span>'
+            f'<span style="color:{theme.MUTED}; font-size:{theme.FS_BASE}; '
+            f'font-weight:400;"> / {len(orte)}</span>')
+        kc["locs"]["unter"].setText(t("tracked"))
+        kc["items"]["zahl"].setText(
+            f'<span style="color:{theme.GREEN};">{_n_items}</span>')
+        kc["items"]["unter"].setText(
+            t("searched") if begriffe else t("still needed by your plans"))
+        kc["short"]["zahl"].setText(
+            f'<span style="color:{theme.RED if _n_short else theme.MUTED};">'
+            f'{_n_short}</span>')
+        kc["short"]["unter"].setText(t("not enough across all characters"))
+        # STAND
+        from datetime import datetime as _dt
+        teile = []
+        if self._lager_stand_ts:
+            teile.append(t("as of {zeit}").format(
+                zeit=_dt.fromtimestamp(self._lager_stand_ts).strftime("%H:%M")))
+        # WARNUNGEN ZUERST (emm476): die Statuszeile wird rechts
+        # abgeschnitten - was wichtig ist, steht vorn.
+        # NIE STILL (emm475): ein Job, dessen Material im Spiel schon weg
+        # ist, senkt den Bedarf nur, wenn er EINDEUTIG einem Plan gehoert.
+        # Alles andere steht hier - sonst kauft der Nutzer nach, was er
+        # gerade verbaut (genau der Schaden vom 08.10.2026).
+        _n_of = len(res.get("job_offen") or [])
+        if _n_of:
+            teile.append(t("\u26a0 {n} job(s) belong to no plan - assign them")
+                         .format(n=_n_of))
+        _ex = res.get("job_extra") or {}
+        _n_ex = sum(len(v or {}) for v in _ex.values())
+        if _n_ex:
+            # Gezaehlt werden ITEMS, nicht Jobs (emm478 - der alte Text sagte
+            # "2 job(s)", gemeint waren 2 Materialien aus 33 Jobs).
+            teile.append(t("{n} item(s) covered by jobs not yet assigned")
+                         .format(n=_n_ex))
+        if res.get("job_fest"):
+            teile.append(t("{n} job(s) assigned automatically").format(
+                n=res["job_fest"]))
+        if len(aktiv) < len(orte):
+            teile.append(t("{n} location(s) switched off").format(
+                n=len(orte) - len(aktiv)))
+        self._lager_stand_lbl.setText("  \u00b7  ".join(teile))
+        self._lager_unvollstaendig_zeigen(res)
+        self._lager_auf_btn_stand()
+
+    def _lager_stufen_zuordnen(self, offen, extra, vergeben):
+        """RUN-ZAHL und BAU-PRIORITAET auch beim stillen Festschreiben der
+        Stock-locations-Seite (emm484, Nutzer: "ja unbedingt genau so
+        bauen!").
+
+        DIESELBEN Helfer wie der Runplaner (Regel 9 - kein Nachbau):
+        `signatur_zuteilen` (genau EIN Plan hat exakt so viele offene Runs
+        wie der Job -> ihm, Quelle "signatur"; ZWEI exakte Treffer ->
+        mehrdeutig, die Prioritaet laesst sie liegen, emm430) und
+        `prio_jobs_zuteilen` (Plan #1 der Bau-Reihenfolge, in den der Job
+        GANZ passt, Quelle "prioritaet" - still seit emm430). Die Plaene
+        kommen aus `_prio_plaene()` - exakt die Liste des Runplaners, samt
+        schon belegter Runs aus der Zuordnungs-Tabelle. Was keine Stufe
+        nimmt, bleibt die sichtbare Warnung (emm475: gerechnet oder
+        gemeldet, nie still). Korrigierbar wie immer ueber "Job
+        assignments" im Runplaner.
+
+        Gezaehlt (in `extra`, je Plan) wird NUR, was wirklich geschrieben
+        wurde: kam ein anderer dazwischen (INSERT OR IGNORE -> False),
+        koennte der Job einem anderen Plan gehoeren - dann lieber eine
+        Warnung fuer einen Ladevorgang als ein falscher Abzug (Regel 3).
+        -> (offene Jobs ohne die zugeteilten, Anzahl festgeschrieben)."""
+        from .mw_helpers import (MainWindowHelpers as _MH,
+                                 prio_jobs_zuteilen, signatur_zuteilen)
+        if not offen:
+            return offen, 0
+        try:
+            _rx = set(industry.recipes_cached().reaction_products or ())
+        except Exception as _re:
+            # Ohne Rezeptdaten keine Aktivitaets-Pruefung - dann lieber
+            # NICHT zuteilen (Regel 3); die Jobs bleiben sichtbare Warnung.
+            self._log_exception("Stock locations: recipes for stages",
+                                str(_re))
+            return offen, 0
+
+        def _ir(_t):
+            return int(_t) in _rx
+
+        def _ts(j):
+            # Geliefert zaehlt ab dem ABLIEFERN, laufend ab dem START -
+            # dieselbe Lesart wie der Runplaner (emm263/268).
+            if (j or {}).get("status") == "delivered":
+                return _MH._iso_job_ts(j.get("completed_date"))
+            return _MH._iso_job_ts(j.get("start_date"))
+
+        _js = []
+        for j in offen:
+            _t = _ts(j)
+            if _t is None or j.get("job_id") is None:
+                continue
+            _js.append(dict(j, _ts=_t))
+        if not _js:
+            return offen, 0
+        _verg = set()
+        for _k in (vergeben or {}):
+            try:
+                _verg.add(int(_k))
+            except (TypeError, ValueError):
+                continue
+        fest, zugeteilt = 0, {}
+        _nach = {int(j["job_id"]): j for j in _js}
+        _plaene = self._prio_plaene()
+        _mehr = set()
+        if _plaene:
+            _vert, _mehr = signatur_zuteilen(_js, _plaene, _verg, _ir)
+            for _jid, _pid in _vert.items():
+                _j = _nach.get(int(_jid)) or {}
+                try:
+                    if store.job_zuordnung_setzen(
+                            int(_jid), _pid, _j.get("product_type_id"),
+                            _j.get("runs"), "signatur"):
+                        fest += 1
+                        zugeteilt[int(_jid)] = (_pid, _j)
+                except Exception as _fe:
+                    self._log_exception(
+                        "Stock locations: assign job (run count)", str(_fe))
+            _rest_js = [j for j in _js
+                        if int(j["job_id"]) not in zugeteilt
+                        and int(j["job_id"]) not in _mehr]
+            if _rest_js:
+                # Frisch gerechnet: `belegt` enthaelt jetzt auch die
+                # Signatur-Treffer von eben (dieselbe Reihenfolge wie
+                # _job_zuordnung_nachfuehren im Runplaner).
+                _plaene2 = self._prio_plaene()
+                _, _vert2 = prio_jobs_zuteilen(
+                    _rest_js, _plaene2, _verg | set(zugeteilt), _ir)
+                for _jid, _pid in _vert2.items():
+                    _j = _nach.get(int(_jid)) or {}
+                    try:
+                        if store.job_zuordnung_setzen(
+                                int(_jid), _pid, _j.get("product_type_id"),
+                                _j.get("runs"), "prioritaet"):
+                            fest += 1
+                            zugeteilt[int(_jid)] = (_pid, _j)
+                    except Exception as _fe:
+                        self._log_exception(
+                            "Stock locations: assign job (priority)",
+                            str(_fe))
+        for _jid, (_pid, _j) in zugeteilt.items():
+            try:
+                _t = int(_j.get("product_type_id") or 0)
+                _r = int(_j.get("runs") or 0)
+            except (TypeError, ValueError):
+                continue
+            if _t > 0 and _r > 0:
+                _e = extra.setdefault(str(_pid), {})
+                _e[_t] = _e.get(_t, 0) + _r
+        rest = []
+        for j in offen:
+            try:
+                if int(j.get("job_id")) in zugeteilt:
+                    continue
+            except (TypeError, ValueError):
+                pass
+            rest.append(j)
+        return rest, fest
+
+    def _lager_unvollstaendig_grund(self, res):
+        """Warum die Zahlen dieser Seite ZU HOCH sein koennen - oder "".
+
+        emm476 (Nutzer: "jetzt ist es noch schlimmer geworden"): scheitert
+        ein Asset-Abruf, fehlt der Bestand dieses Charakters komplett;
+        scheitert die Job-Liste, fehlt der Fortschritt. In beiden Faellen
+        zeigt die Seite einen zu grossen Fehlbetrag, und genau daraus wurde
+        am 08.10.2026 ein unnoetiger Nachkauf. EINE Stelle fuer die rote
+        Zeile UND die Sperre des Einkaufs-Knopfs (Regel 9)."""
+        from ..sprache import t as _txt
+        teile = []
+        # ESI-FEHLERBUDGET ERSCHOEPFT (emm480, gemessen in seiner fehler.log
+        # vom 09.10.2026 13:33): bei 420 antwortet CCP auf NICHTS mehr - weder
+        # Assets noch Jobs noch Blaupausen. Das steht VOR allem anderen, weil
+        # es die Ursache der uebrigen Meldungen ist.
+        if (res or {}).get("budget_420") or esi.budget_erschoepft():
+            teile.append(_txt(
+                "ESI error budget used up (420) - CCP is answering nothing "
+                "right now. Wait a minute, then press Refresh."))
+        if (res or {}).get("failed"):
+            teile.append(_txt(
+                "Stock not loaded for: {names} - what is lying there is "
+                "missing here.").format(names=", ".join(res["failed"])))
+        if (res or {}).get("job_fehler"):
+            teile.append(_txt(
+                "Industry jobs not loaded - runs you have already built are "
+                "missing here."))
+        for _nm, _vor, _jetzt in ((res or {}).get("schrumpf") or []):
+            teile.append(_txt(
+                "{name}: ESI only sent {jetzt} of {vor} stacks - press "
+                "Refresh.").format(name=_nm, jetzt=_jetzt, vor=_vor))
+        if not teile:
+            return ""
+        return _txt("⚠ INCOMPLETE DATA - do not buy from this list!") \
+            + "  " + "  ".join(teile)
+
+    def _lager_unvollstaendig_zeigen(self, res):
+        """Rote Zeile oben + Einkaufs-Knopf sperren (emm476)."""
+        from ..sprache import t as _txt
+        grund = self._lager_unvollstaendig_grund(res)
+        lbl = getattr(self, "_lager_warn_lbl", None)
+        if lbl is not None:
+            lbl.setText(grund)
+            lbl.setVisible(bool(grund))
+        btn = getattr(self, "_lager_kauf_btn", None)
+        if btn is not None:
+            btn.setEnabled(not grund)
+            if grund:
+                btn.setToolTip(grund)
+            else:
+                btn.setToolTip(_txt(
+                    "Everything that is really missing across ALL listed "
+                    "plans, as Name<TAB>quantity for EVE's multibuy. Only "
+                    "material your plans BUY - anything they build "
+                    "themselves stays out, so you never buy what you are "
+                    "about to produce. Your saved shopping list is not "
+                    "touched."))
+
+    def _lager_kaufliste_kopieren(self):
+        """"Giant Shopping List" (emm464, Nutzer: "ueber alle Baupläne hinweg
+        sehen, was fehlt, und eine Giant Shopping List erstellen"): alles mit
+        Fehlbetrag ausser dem, was die Plaene selbst bauen - als Multibuy-Text
+        in die Zwischenablage. Die gespeicherte Einkaufsliste bleibt
+        unberuehrt (Nutzer-Entscheid: "in die Zwischenablage").
+
+        Ein ABGESCHALTETER Ort senkt den Einkauf NICHT (emm467, Nutzer:
+        "nein da wird nix verschoben, sonst wuerde ich ja zbsp Jita
+        einschalten wenn ich von da material nehmen wollte")."""
+        from .. import lagerorte
+        from PySide6.QtWidgets import QApplication
+        # KEINE EINKAUFSLISTE AUS UNVOLLSTAENDIGEN DATEN (emm476): fehlt der
+        # Bestand eines Charakters oder die Job-Liste, sind die Fehlbetraege
+        # zu hoch - der Nutzer wuerde kaufen, was er schon hat.
+        _grund = self._lager_unvollstaendig_grund(self._lager_daten or {})
+        if _grund:
+            self._flash_tip(_grund)
+            return
+        posten = lagerorte.einkaufsliste(
+            getattr(self, "_lager_fehl_items", None) or [],
+            (self._lager_daten or {}).get("built") or set())
+        if not posten:
+            self._flash_tip(t("Nothing is missing \u2013 nothing to buy."))
+            return
+        QApplication.clipboard().setText(lagerorte.multibuy_text(posten))
+        self._flash_tip(t("{n} materials copied for EVE's multibuy.").format(
+            n=len(posten)))
+
+    def _lager_aufklappen(self):
+        """Ein Knopf, zwei Richtungen (Nutzer: "der Expand all Knopf soll auch
+        Toggle sein und wieder alles zusammenziehen")."""
+        _auf = not self._lager_alles_offen()
+        for w in (getattr(self, "_lager_karten", None) or {}).values():
+            _b = getattr(w, "_lager_baum", None)
+            if _b is not None:
+                _b.expandAll() if _auf else _b.collapseAll()
+                self._lager_hoehe_nachziehen(_b)
+        self._lager_auf_btn_stand()
+
+    def _lager_alles_offen(self):
+        """Ist JEDE Item-Zeile aufgeklappt? GEMESSEN, nicht gemerkt - nach
+        einem Neuzeichnen sind die Karten wieder zu, und zugeklappt wird auch
+        von Hand."""
+        n = 0
+        for w in (getattr(self, "_lager_karten", None) or {}).values():
+            _b = getattr(w, "_lager_baum", None)
+            if _b is None:
+                continue
+            for i in range(_b.topLevelItemCount()):
+                n += 1
+                if not _b.topLevelItem(i).isExpanded():
+                    return False
+        return n > 0
+
+    def _lager_auf_btn_stand(self):
+        """Der Knopf sagt immer, was der NAECHSTE Klick tut (wie 'All on/off')."""
+        _b = getattr(self, "_lager_auf_btn", None)
+        if _b is None:
+            return
+        _auf = self._lager_alles_offen()
+        _b.setText(t("Collapse all") if _auf else t("Expand all"))
+        _b.setIcon(icons.icon("minus" if _auf else "plus"))
+
+    def _lager_zeigen(self, tid, name=None, plan_id=None):
+        """Aus einem Bauplan-Fenster heraus: Stock locations mit DIESEM Item
+        im Suchfeld und dem Plan im Dropdown oeffnen (emm459, Rechtsklick
+        "Where is it?" im Runplaner und im Materialien-Reiter)."""
+        if not hasattr(self, "_lager_suche"):
+            return
+        # Der Vorne-Halter des Bauplan-Fensters (emm416) wuerde das
+        # Hauptfenster sonst in den ersten 20 s wieder nach hinten draengen.
+        _vh = getattr(self, "_bd_vorne_halter", None)
+        if _vh is not None:
+            try:
+                _vh.abschalten()
+            except Exception:
+                pass
+        try:
+            self._go_tab("build")
+        except Exception:
+            pass
+        self._bau_nav(6)
+        cb = self._lager_plan_cb
+        ix = cb.findData(plan_id) if plan_id is not None else -1
+        cb.blockSignals(True)
+        cb.setCurrentIndex(ix if ix >= 0 else 0)
+        cb.blockSignals(False)
+        _nm = str(name or "").strip()
+        if not _nm or _nm.startswith("#"):
+            _nm = ((self._lager_daten or {}).get("namen") or {}).get(int(tid)) \
+                or _nm or f"#{int(tid)}"
+        self._lager_suche.setPlainText(_nm)
+        self._lager_zeichnen()
+        try:
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+
+    def _wo_liegt_aktion(self, menu, tid, name):
+        """Menue-Eintrag "Where is it?" (emm459) - EINE Stelle fuer Runplaner
+        und Materialien-Reiter."""
+        a = menu.addAction(icons.icon("map"), t("Where is it? (Stock locations)"))
+        _pid = getattr(self, "_bd_open_plan_id", None)
+        a.triggered.connect(lambda _c=False, _t=int(tid), _n=name, _p=_pid:
+                            self._lager_zeigen(_t, _n, _p))
+        return a
+
+    def _mat_tab_menue(self, pos):
+        """Rechtsklick im Materialien-Reiter (emm459): "Copy" kommt vom
+        Verteiler, dazu "Where is it?" fuer Zeilen mit type_id."""
+        from .mw_basis import kontext_menue
+        tbl = getattr(self, "_bd_mat_tab_tbl", None)
+        if tbl is None:
+            return
+        it = tbl.itemAt(pos)
+        if it is None:
+            return
+        tid = it.data(0, Qt.UserRole)
+        if not tid:
+            return
+        m = kontext_menue(tbl)
+        self._wo_liegt_aktion(m, int(tid), it.text(0))
+        m.exec(tbl.viewport().mapToGlobal(pos))
+
+    def _industrie_kachel(self, titel, farbe, balken=None):
+        """Kachel der Industrie-Seiten: Titel, grosse Zahl, optionaler
+        Balken, Unterzeile. EINE Stelle fuer "Industry jobs" (emm346) und
+        "Stock locations" (emm461) - zwei Kopien desselben Stils waeren
+        zwei Wahrheiten darueber, wie eine Kachel aussieht.
+        -> (Rahmen, Zahl-Label, Unter-Label)."""
+        k = QFrame(); k.setObjectName("Card")
+        k.setStyleSheet(f"QFrame#Card{{background:{theme.PANEL2}; "
+                        f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
+        kv = QVBoxLayout(k)
+        kv.setContentsMargins(12, 8, 12, 8); kv.setSpacing(3)
+        tl = QLabel(titel)
+        tl.setStyleSheet(f"color:{farbe}; font-size:{theme.FS_SMALL}; "
+                         f"font-weight:800; letter-spacing:1px; background:transparent;")
+        kv.addWidget(tl)
+        zl = QLabel("\u2013")
+        zl.setTextFormat(Qt.RichText)
+        zl.setWordWrap(True)              # "n free slots" bricht um statt zu draengen
+        zl.setStyleSheet(f"font-size:{theme.FS_KPI}; font-weight:800; "
+                         f"background:transparent;")
+        kv.addWidget(zl)
+        if balken is not None:
+            kv.addWidget(balken)
+        # Unterzeile gekuerzt mit "..." (sie traegt Item- und Ortsnamen
+        # beliebiger Laenge - sie darf die Seite nie verbreitern).
+        ul = KurzLabel("")
+        ul.setObjectName("Muted")
+        ul.setStyleSheet(f"font-size:{theme.FS_SMALL}; background:transparent;")
+        kv.addWidget(ul)
+        return k, zl, ul
 
     def _jobs_seite_bauen(self):
         from PySide6.QtWidgets import QScrollArea
@@ -515,40 +2483,13 @@ class BauplanTabs:
         _sb = QHBoxLayout(self._jobs_summe_box)
         _sb.setContentsMargins(0, 0, 0, 0); _sb.setSpacing(10)
         self._jobs_kacheln = {}
-
-        def _kachel(titel, farbe):
-            k = QFrame(); k.setObjectName("Card")
-            k.setStyleSheet(f"QFrame#Card{{background:{theme.PANEL2}; "
-                            f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
-            kv = QVBoxLayout(k)
-            kv.setContentsMargins(12, 8, 12, 8); kv.setSpacing(3)
-            tl = QLabel(titel)
-            tl.setStyleSheet(f"color:{farbe}; font-size:{theme.FS_SMALL}; "
-                             f"font-weight:800; letter-spacing:1px; background:transparent;")
-            kv.addWidget(tl)
-            zl = QLabel("\u2013")
-            zl.setTextFormat(Qt.RichText)
-            zl.setWordWrap(True)          # "n free slots" bricht um statt zu draengen
-            zl.setStyleSheet(f"font-size:{theme.FS_KPI}; font-weight:800; "
-                             f"background:transparent;")
-            kv.addWidget(zl)
-            return k, kv, zl
         for _schl, _titel, _farbe in (("ready", t("READY"), theme.GREEN),
                                       ("mfg", t("MANUFACTURING"), self._jobs_farbe("mfg")),
                                       ("react", t("REACTIONS"), self._jobs_farbe("react")),
                                       ("sci", t("SCIENCE"), self._jobs_farbe("sci")),
                                       ("next", t("NEXT DONE"), theme.CYAN)):
-            _k, _kv, _zl = _kachel(_titel, _farbe)
-            _bal = None
-            if _schl in ("mfg", "react", "sci"):
-                _bal = KapazitaetsBalken(_farbe)
-                _kv.addWidget(_bal)
-            # Unterzeile gekuerzt mit "..." (der naechste Job traegt einen
-            # Item-Namen beliebiger Laenge - er darf die Seite nie verbreitern).
-            _ul = KurzLabel("")
-            _ul.setObjectName("Muted")
-            _ul.setStyleSheet(f"font-size:{theme.FS_SMALL}; background:transparent;")
-            _kv.addWidget(_ul)
+            _bal = KapazitaetsBalken(_farbe) if _schl in ("mfg", "react", "sci") else None
+            _k, _zl, _ul = self._industrie_kachel(_titel, _farbe, balken=_bal)
             _sb.addWidget(_k, 1)
             self._jobs_kacheln[_schl] = {"rahmen": _k, "zahl": _zl, "balken": _bal,
                                          "unter": _ul}
@@ -1114,7 +3055,6 @@ class BauplanTabs:
         sroot.setContentsMargins(14, 8, 14, 8)
         sroot.setSpacing(7)
 
-        head = QHBoxLayout()
         # hub + scan live in the top toolbar now; keep objects as synced state only
         self.b_hub = QComboBox()
         for _key, _label, _region_id, _station_id in hubs.NPC_HUBS:
@@ -1462,9 +3402,18 @@ class BauplanTabs:
         # Kennzahlen (Baukosten, Sell, Gewinn/m3, Tagesvolumen,
         # Volatilitaet, Bestandstage, Gewinn/Tag, ISK/Std) stehen im
         # Zeilen-Tooltip - nichts ist verloren, nur nicht mehr im Weg.
-        self.b_table = QTableWidget(0, 4)
+        # + "vs. 90d avg" (emm499): Sell-Preis gegen den 90-Tage-Schnitt der
+        # Markthistorie - NEUTRAL, als Scam-Warnlampe (Nutzer: hohe Marge
+        # kann Markt-Manipulation sein). Der Balken rueckt auf Spalte 4.
+        self.b_table = QTableWidget(0, 5)
         self.b_table.setHorizontalHeaderLabels(
-            [t("Item"), t("Build margin"), t("Profit/unit"), t("Rating")])
+            [t("Item"), t("Build margin"), t("Profit/unit"),
+             t("vs. 90d avg"), t("Rating")])
+        self.b_table.horizontalHeaderItem(3).setToolTip(
+            t("Current sell price vs. the 90-day average of the market "
+              "history. Deliberately NOT colored: a price far above the "
+              "average can mean market manipulation (scam) rather than "
+              "profit. ? = history not loaded yet."))
         self._make_columns_friendly(self.b_table)
         # WENIGER DATENBLATT (Nutzer: "weniger wie ne Excel-Tabelle"): das
         # Zellen-GITTER ist der staerkste Excel-Ausloeser - weg damit; die
@@ -1638,6 +3587,8 @@ class BauplanTabs:
         self.b_stack.addWidget(plans_page)      # 2 – Aktuelle Baupläne
         self.b_stack.addWidget(_struct_scroll)  # 3 – Struktur-Fitting (+ Setup)
         self.b_stack.addWidget(self._jobs_seite_bauen())  # 4 – Industry jobs (emm327)
+        self.b_stack.addWidget(self._bfs_seite_bauen())   # 5 – Build from stock (emm436)
+        self.b_stack.addWidget(self._lager_seite_bauen()) # 6 – Stock locations (emm458)
         # PLAN-KARTEN ERST BEIM ERSTEN ZEIGEN (Nutzer 27.09.2026: "ja bitte
         # mach das"; Start-Messung: der Build-Reiter kostete 1,4 s, fast
         # alles fuer die Karten aller gespeicherten Plaene - dazu starteten
@@ -2617,17 +4568,6 @@ class BauplanTabs:
                 ap = industry.invention_attempt_plan(
                     _runs_still_needed, outcome, [dc_cost], dcy_cost,
                     confidence=self._bd_inv_confidence())
-                _dc_stock = (getattr(self, "_bd_opts", None) or {}).get("stock") or {}
-                _dc_attempts = int(ap["confident_attempts"] or 0)
-                _dc_total_needed = 0
-                _dc_owned = 0
-                for _d, _q in datacores:
-                    _needed_d = _dc_attempts * _q
-                    _dc_total_needed += _needed_d
-                    _dc_owned += min(_needed_d, int(_dc_stock.get(_d, 0) or 0))
-                _dc_stock_txt = (t(" ({have} already in the hangar \u2192 {buy} more to buy)").format(
-                                    have=_dc_owned, buy=max(0, _dc_total_needed - _dc_owned))
-                                if _dc_owned else "")
                 # KEINE ZUSATZZEILEN (Nutzer 26.09.2026: "for runs = successes,
                 # on average it would take, invention cost - die koennen weg").
                 # Geblieben ist nur der Hinweis auf eigene T2-Kopien - der
@@ -2672,6 +4612,8 @@ class BauplanTabs:
                     _sw = (getattr(self, "_bd_inv_split_w", None) or {}).get(_bp)
                     if not _sw:
                         return
+                    # Regler/Slots geaendert -> Runplaner-Science folgt (emm425).
+                    self._science_spaeter()
                     # Versuchszahl fuer die Nutzstufen des Reglers merken.
                     _sw["att"] = int(_att or 0)
                     # GANZE BREITE NUTZBAR (Nutzer 26.09.2026: "warum kann ich
@@ -2808,7 +4750,16 @@ class BauplanTabs:
                     # Struktur-/Skill-Boni bewusst weggelassen -> "grob")
                     "inv_secs": int((inv_time_per_attempt or 0) * _attempts_n),
                     "copy_secs": int((copy_secs_per_attempt or 0) * _attempts_n),
+                    # SCIENCE-BLOCK IM RUNPLANER (emm411): dieselben Zahlen
+                    # wie die Kopieranleitung der Karte - EINE Quelle.
+                    "runs_je_kopie": int(outcome.get("runs") or 1),
+                    "prob": outcome.get("prob"),
+                    "ipa": float(inv_time_per_attempt or 0),
+                    "cpr": float(copy_secs_per_attempt or 0),
+                    "t1": int(t1_bp or 0),
                 }
+                # Runplaner-Science-Block folgt der Karte (emm425).
+                self._science_spaeter()
                 # KURZFASSUNG IN DER KOPFZEILE (zugeklappte Karte): Decryptor,
                 # Versuche, Invention-Kosten - dieselben Zahlen wie unten.
                 _kz = (getattr(self, "_bd_inv_karten", None) or {}).get(int(bp_id))
@@ -2855,8 +4806,19 @@ class BauplanTabs:
                     return v
                 return math.ceil(_att / math.ceil(_att / min(v, _att)))
 
-            def _regler_zieht(v, _sw=_sw_k, _bp=int(bp_id)):
-                v2 = _nutzstufe(v)
+            # SPAETE BINDUNG (emm497, Nutzer: "aendert man bei den
+            # endprodukten die anzahl, kann man den regler nurnoch bis in
+            # die Mitte ziehn"): `_nutzstufe` wird in DIESER Schleife je
+            # Karte neu definiert - ein nackter `_nutzstufe(v)`-Aufruf im
+            # Handler zeigte zur Laufzeit IMMER auf die zuletzt definierte
+            # Fassung, also auf die Versuchszahl der LETZTEN Karte. Solange
+            # alle Karten gleich viele Versuche hatten, fiel das nicht auf;
+            # nach einer Mengenaenderung schnappte der Regler von Karte A
+            # auf das att von Karte B (gemessen: att=44, Schnapp auf 2).
+            # Dieselbe Fehlerklasse wie der Multi-Knopf vom 20.09.2026 -
+            # deshalb als Vorgabewert binden.
+            def _regler_zieht(v, _sw=_sw_k, _bp=int(bp_id), _stufe=_nutzstufe):
+                v2 = _stufe(v)
                 _s = _sw["slider"]
                 if _s.value() != v2:
                     _s.blockSignals(True)
@@ -3308,7 +5270,18 @@ class BauplanTabs:
                 + f"  \u00b7  {float(_st.get('ausbeute') or 0) * 100.0:.1f} %"
                 + f"  \u00b7  {_cn_rp.get(_st.get('char'), '?')}")
         for _m, _e in (_rp_alle.get("abgelehnt") or {}).items():
-            if _e.get("erz") is not None and _e.get("aufpreis_pct") is not None:
+            if _e.get("erz") is None:
+                continue
+            if _e.get("markt_leer"):
+                # MARKT LEER (emm491, Nutzer: "leider lassen die vorhandenen
+                # market orders in Jita es nicht zu"): das Erz waere evtl.
+                # sogar guenstiger - es liegt nur nicht genug am Hub. Der
+                # Grund ist der Markt, nicht der Preis.
+                _rp_warum_nicht[int(_m)] = t(
+                    "Compressed ore checked: not enough {ore} on sell orders "
+                    "at the hub - the rest stays bought as mineral.").format(
+                    ore=str((names or {}).get(_e["erz"]) or _e["erz"]))
+            elif _e.get("aufpreis_pct") is not None:
                 _rp_warum_nicht[int(_m)] = t(
                     "Compressed ore checked: {ore} would be {pct} % more expensive "
                     "than buying the mineral.").format(
@@ -3376,6 +5349,14 @@ class BauplanTabs:
         # Einkaufsliste doch wieder wachsen zu lassen - genau das, was der
         # Nutzer nicht will.
         self._bd_verlust = dict(_verloren)
+        # DATACORES/DECRYPTOREN, DIE GESTARTETE INVENTION-JOBS SCHON
+        # VERBRAUCHT HABEN (emm431, ESI statt Haken): sie fallen aus Bedarf
+        # und Einkaufsliste - so wie gebaute Runs beim Fertigungsmaterial.
+        try:
+            _inv_esi = self._inv_verbraucht_esi() if _inv_ids else {}
+        except Exception as _ie:
+            self._log_exception("Invention: ESI-Verbrauch", str(_ie))
+            _inv_esi = {}
         for tid in all_ids:
             missing = (buy.get(tid, 0) or 0) + (_inv_buy.get(tid, 0) or 0)
             used = (stock_used.get(tid, 0) or 0) + (_inv_stock.get(tid, 0) or 0)
@@ -3383,7 +5364,12 @@ class BauplanTabs:
             reprocessed = _rp_deckt.get(tid, 0) or 0
             gratis_q = _rp_gratis.get(tid, 0) or 0
             total = missing + used + built + reprocessed + gratis_q
-            if total <= 0:
+            _inv_vb = 0
+            if tid in _inv_ids and _inv_esi.get(tid):
+                _inv_vb = min(int(_inv_esi[tid]), int(total))
+                total -= _inv_vb
+                missing = min(int(missing), int(total))
+            if total <= 0 and not _inv_vb:
                 continue
             has_recipe = False
             if _recipes is not None:
@@ -3445,7 +5431,8 @@ class BauplanTabs:
                         "src": _si.get("src", "esi"),
                         "q_esi": int(_si.get("esi", _used_q) or 0),
                         "q_manual": _si.get("manual"),
-                        "q_job": int(_si.get("job", 0) or 0)})
+                        "q_job": int(_si.get("job", 0) or 0),
+                        "inv_esi": int(_inv_vb)})
         rows.sort(key=lambda r: (_CAT_RANK.get(r["category"], 99),
                                  -r["missing"], r["name"]))
         # Daten fuer die Deckungs-Balken; angehaengt wird erst nach
@@ -3473,9 +5460,35 @@ class BauplanTabs:
                     _lauf_runs[int(_t_l)] = _n_l
             _lauf_verbr = _mwh_lv(plan.get("build_runs") or {},
                                   plan.get("build_mats") or {}, _lauf_runs)
+            # GESPEICHERTER PLAN (emm422): seine zugeordneten laufenden Jobs
+            # zaehlen in der Rechnung schon als erledigt - der Satz "der Plan
+            # zaehlt den Bedarf weiter, hake ab" waere dort falsch.
+            if getattr(self, "_bd_open_plan_id", None):
+                _lauf_verbr = {}
         except Exception as _lv_e:
             _lauf_verbr = {}
             self._log_exception("Materialien: laufend verbraucht", str(_lv_e))
+        # ESI HINKT HINTERHER (emm424, Nutzer: "die Warnung finde ich gut"):
+        # Jobs, die NACH dem ESI-Bestandsstand gestartet wurden, haben ihr
+        # Material im Spiel schon verbraucht, der Bestand hier zeigt es noch.
+        # Nur Auskunft an der Zeile, keine Zahl aendert sich.
+        try:
+            from .mw_helpers import lag_verbrauch as _mwh_lag
+            _rec_l = getattr(self, "_bd_recipes", None)
+
+            def _mats_l(pid, act):
+                if _rec_l is None or act not in (1, 9, 11):
+                    return None
+                _bp_l = (getattr(_rec_l, "product_to_bp", None) or {}).get(int(pid))
+                if not _bp_l:
+                    return None
+                return (getattr(_rec_l, "bp_materials", None) or {}).get(
+                    (_bp_l[0], _bp_l[1]))
+            _lag_verbr = _mwh_lag(getattr(self, "_bd_active_jobs_alle", None) or {},
+                                  getattr(self, "_bd_esi_stock_ts", None), _mats_l)
+        except Exception as _lg_e:
+            _lag_verbr = {}
+            self._log_exception("Materialien: ESI-Verzug", str(_lg_e))
 
         def _baubereit(tid):
             """True, wenn die Zutaten fuer die geplanten Runs dieses Items
@@ -3551,22 +5564,16 @@ class BauplanTabs:
                 _offen_runs = max(0, int(_rest_runs[int(r["tid"])]) - _lauf_runs)
                 _noch_bauen = _offen_runs * int(_out_je_run.get(int(r["tid"]), 1))
             if not stock:
-                have_txt = t("\u23f3 loading \u2026")
-                have_col = theme.MUTED
                 status_txt, status_col = t("Subtract assets needed"), theme.MUTED
             elif (r.get("gratis", 0) or 0) > 0:
                 # ERZ AUF DER BLACKLIST: wird gestellt, nicht gekauft - die
                 # Zeile zeigt die Menge, zaehlt aber nirgends als fehlend.
-                have_txt = f"{int(owned):,}".replace(",", "'") if owned else "0"
-                have_col = theme.MUTED
                 status_txt = t("on blacklist \u2013 provided, not bought")
                 status_col = theme.VIOLET
             elif (r.get("reprocessed", 0) or 0) > 0 and r["missing"] <= 0 and built <= 0:
                 # GEDECKT DURCH REPROCESSING (1.0.9, Weg B): nicht "genug" -
                 # im Hangar liegt noch nichts, das Erz muss erst durch die
                 # Anlage. Die Zeile sagt, woher es kommt.
-                have_txt = f"{int(owned):,}".replace(",", "'") if owned else "0"
-                have_col = theme.GREEN
                 status_txt = t("from reprocessing \u267b \u00b7 {n} units").format(
                     n=f"{int(r['reprocessed']):,}".replace(",", "'"))
                 status_col = theme.GREEN_BRIGHT
@@ -3575,8 +5582,6 @@ class BauplanTabs:
                                 "reprocessed and ticked there, the minerals must lie "
                                 "in stock.")
             elif r["missing"] <= 0 and built <= 0:
-                have_txt = f"{int(owned):,}".replace(",", "'")
-                have_col = theme.GREEN
                 _virt_n = int(_virt_tab.get(r["tid"], 0) or 0)
                 if _virt_n > 0:
                     # NUTZER-VORFALL (805 Ferrogel): "genug" stimmte nur
@@ -3604,8 +5609,6 @@ class BauplanTabs:
                 # nichts zu KAUFEN - aber der Rest über dem Bestand wird laut
                 # Plan selbst GEBAUT (Runplaner). Vorher stand hier fälschlich
                 # "genug ✓", weil der gebaute Anteil in "Benötigt" fehlte.
-                have_txt = f"{int(owned):,}".replace(",", "'")
-                have_col = theme.GREEN if owned > 0 else theme.MUTED
                 # NUTZER-FUND: "Rest wird gebaut" klang so, als h\u00e4tte man
                 # schon Bestand - bei owned=0 wird aber die GANZE Menge
                 # gebaut, da ist kein "Rest".
@@ -3663,8 +5666,6 @@ class BauplanTabs:
                 # Runs, die laengst gebaut oder in der Bauschleife sind.
                 # Hier steht deshalb, was WIRKLICH gilt - sonst kauft der
                 # Nutzer nach, was er nicht braucht.
-                have_txt = f"{int(owned):,}".replace(",", "'") if owned else "0"
-                have_col = theme.GREEN
                 status_txt = t("covered for the remaining runs \u2713")
                 status_col = theme.GREEN
             elif int(r["tid"]) in _verloren:
@@ -3675,8 +5676,6 @@ class BauplanTabs:
                 # Kauf-Posten verwechseln - nur an dieser Stelle darf die
                 # Einkaufsliste ueberhaupt wieder wachsen, und auch dann nur
                 # auf seinen Klick ("gekauft ist gekauft").
-                have_txt = f"{int(owned):,}".replace(",", "'") if owned else "0"
-                have_col = theme.AMBER
                 status_txt = t("was covered \u2013 {n} missing now").format(
                     n=f"{int(_verloren[int(r['tid'])]):,}".replace(",", "'"))
                 status_col = theme.RED
@@ -3685,8 +5684,6 @@ class BauplanTabs:
                 # teilweise vorhanden - ein Teil ist "gratis" (Bestand), der Rest
                 # muss noch dazugekauft werden. Eigene Farbe (Orange), damit klar
                 # ist: nicht bei NULL, nur eben nicht ganz genug.
-                have_txt = f"{int(owned):,}".replace(",", "'")
-                have_col = theme.GREEN
                 status_txt = t("partly \u2013 {n} still to buy").format(
                     n=f"{int(_rest_fehlt.get(int(r['tid']), r['missing'])):,}"
                       .replace(",", "'"))
@@ -3695,8 +5692,6 @@ class BauplanTabs:
             else:
                 # komplett nichts davon vorhanden (oder außerhalb der verknüpften
                 # Bau-/Reaktions-Struktur bzw. -Charaktere, siehe Info-Text oben).
-                have_txt = "0"
-                have_col = theme.RED
                 status_txt = t("missing completely \u2013 buy {n}").format(
                     n=f"{int(r['missing']):,}".replace(",", "'"))
                 status_col = theme.RED
@@ -3719,6 +5714,29 @@ class BauplanTabs:
                     "buy too much than too little); tick the running rows in "
                     "the run planner to take their material out of the "
                     "list.").format(n=f"{_lv_n:,}".replace(",", "'"))).strip()
+            # ESI-VERZUG (emm424): nur wo Bestand gezeigt wird - genau dort
+            # taeuscht ein "covered", wenn ein frischer Job es schon frass.
+            _lag_n = int(_lag_verbr.get(int(r["tid"]), 0) or 0)
+            if _lag_n > 0 and owned > 0:
+                _lag_txt = f"{min(_lag_n, int(owned)):,}".replace(",", "'")
+                status_txt += " · \u26a0 " + t(
+                    "up to {n} used since the stock check").format(n=_lag_txt)
+                status_col = theme.AMBER
+                r["reason"] = ((r.get("reason") or "") + "\n\n" + t(
+                    "ESI reports your hangar only about once an hour. Jobs "
+                    "started after the last stock check have already used up "
+                    "to {n} of this in game - the stock shown here may not be "
+                    "there any more. Nothing is recalculated; check in game "
+                    "before you rely on it.").format(n=_lag_txt)).strip()
+            if int(r.get("inv_esi") or 0) > 0:
+                _ie_txt = f"{int(r['inv_esi']):,}".replace(",", "'")
+                status_txt += " · " + t("{n} used by started invention jobs").format(
+                    n=_ie_txt)
+                r["reason"] = ((r.get("reason") or "") + "\n\n" + t(
+                    "ESI shows invention jobs of this plan started after it was "
+                    "frozen - they have already used {n} of this. It no longer "
+                    "counts as needed and is not on the shopping list.").format(
+                        n=_ie_txt)).strip()
             if r.get("grund_art") == "blacklist":
                 # Blacklist ist der einzige Grund, den "Alles selbst bauen" NICHT
                 # überstimmen kann - eigene, klar sichtbare Farbe statt normalem Rot.
@@ -4262,7 +6280,32 @@ class BauplanTabs:
             self._bd_runplan_erledigt = _erl
         _k = f"{_stufe}|{_tid}"
         _alt = int(_erl.get(_k, 0) or 0)
-        _erl[_k] = max(0, _alt + _runs) if an else max(0, _alt - _runs)
+        if an:
+            _erl[_k] = max(0, _alt + _runs)
+        else:
+            # NUTZER LOEST DEN HAKEN (emm417, "Oxygen Fuel Block wird
+            # staendig angehakt obwohl ich nichts anhacke"): ein ALTER
+            # Ueberhang (z. B. aus einer frueheren Verteilung mit mehr
+            # Runs) trug den Haken sonst bei JEDEM Neuaufbau wieder ein -
+            # der ESI-Autorefresh baut alle paar Minuten neu, Abhaken
+            # senkte den Rest nur um die Zeilen-Runs, und solange Rest >=
+            # Zeilen-Runs blieb, kam der Haken zurueck (haken_nachtragen).
+            # Deshalb KAPPEN auf das, was WIRKLICH noch angehakt ist:
+            # die Summe der Runs aller noch gehakten Zeilen dieses Items
+            # dieser Stufe. Haken-Zeilen, deren Schluessel der aktuelle
+            # Aufbau nicht kennt, zaehlen 0 - der Rest wird dadurch
+            # hoechstens KLEINER, also wird hoechstens MEHR gekauft
+            # (Regel 3, sichere Richtung).
+            _chk = getattr(self, "_bd_runplan_checked", None) or set()
+            _summe = 0
+            for _k2 in _chk:
+                if _k2 == key:
+                    continue
+                _p2 = _rk.get(_k2)
+                if (_p2 and int(_p2[0]) == _tid
+                        and str(_k2).split("|")[0] == _stufe):
+                    _summe += max(0, int(_p2[1] or 0))
+            _erl[_k] = min(max(0, _alt - _runs), _summe)
         # Zeitpunkt je Item mitfuehren (emm336): beim Setzen der juengste
         # Haken, ist nichts mehr erledigt, faellt er weg.
         _ets = getattr(self, "_bd_runplan_erledigt_ts", None)
@@ -4738,6 +6781,450 @@ class BauplanTabs:
         with open(_pfad, "a", encoding="utf-8") as _fh:
             _fh.write("\n".join(_zl) + "\n")
 
+    def _stufe_abschluss(self, tbl, kopf, status, zeilen=()):
+        """Stufen-Kopf nach `stufe_status` beschriften und einfaerben
+        (emm433/434, eine Stelle fuer Reprocessing und Science; die Bau-
+        Stufen machen dasselbe im eigenen Block): "bereit" -> Zusatz
+        "(Ready to deliver)", bleibt farbig; "erledigt" -> "(Completed)",
+        Kopf und Zeilen grau, Hintergrund weg, Symbol im Disabled-Modus."""
+        from ..sprache import t as _txt
+        if status == "bereit":
+            kopf.setText(0, kopf.text(0) + "  (" + _txt("Ready to deliver") + ")")
+            kopf.setData(0, Qt.UserRole + 11, "bereit")
+        elif status == "erledigt":
+            kopf.setText(0, kopf.text(0) + "  (" + _txt("Completed") + ")")
+            kopf.setData(0, Qt.UserRole + 11, "erledigt")
+            for _c in range(tbl.columnCount()):
+                kopf.setForeground(_c, QColor(theme.MUTED))
+                kopf.setBackground(_c, QBrush())
+            try:
+                _ic = kopf.icon(0)
+                if not _ic.isNull():
+                    kopf.setIcon(0, QIcon(_ic.pixmap(18, QIcon.Disabled)))
+            except Exception:
+                pass
+            for _z in (zeilen or ()):
+                for _c in range(tbl.columnCount()):
+                    _z.setForeground(_c, QColor(theme.MUTED))
+
+    def _science_block(self, tbl, names, klapp_vorher):
+        """Kopieren + Invention als eigene Runplaner-Bloecke (emm411, v2 emm425).
+
+        emm425 (Nutzer: "die Job Runs und Runs/Copy stimmen nicht, nicht so
+        wie ich es im Invention-Tab eingebe ... charaktere hinzuschalten wenn
+        die Slots nicht reichen ... der richtig gewaehlte Decryptor als amber
+        kopierbarer Knopf ... ein 4-Eck zum selber abhaken ... blauer/gruener
+        Punkt sobald ESI gegenprueft"):
+          * Zahlen = Invention-Karte: `_bd_invention_needs` + Regler
+            (`_bd_inv_split`) + Slots; die Karte frischt den Block nach jeder
+            Neuberechnung auf (`_science_block_auffrischen`) - vorher wurde er
+            nur beim Runplaner-Aufbau gezeichnet und zeigte veraltete Werte.
+          * Verteilung auf die Charaktere mit Haken "Copy" bzw. "Inv"
+            (`bau_copy_chars` / `bau_invention_chars`) nach ihren MAXIMALEN
+            Science-Slots (wie die Bau-Stufen, Entscheid Sitzung 11);
+            reichen sie nicht, kommt eine zweite Auflistung ("wave 2").
+          * Haken je Zeile (Schluessel "copy|cid|t1bp" / "inv|cid|t2bp",
+            Charakter "char|copy|cid" / "char|inv|cid") - gespeichert wie die
+            Bau-Haken, der Fehlklick-Abgleich (haken_ohne_job) prueft sie mit
+            gegen ESI (Produkt-ID der Science-Jobs = Blaupause). Sie wirken
+            auf KEINE Rechnung (die Schluessel stehen nicht in
+            `_bd_runplan_runs_by_key`).
+          * ESI-Punkt: laufender Kopier-/Invention-Job dieses Charakters =
+            blauer Punkt, fertig (abholbereit) = gruener Punkt."""
+        from ..sprache import t as _txt
+        from PySide6.QtWidgets import QTreeWidgetItem
+        from .mw_helpers import science_verteilen
+        self._bd_science_names = names          # fuer _science_block_auffrischen
+        needs = {int(b): i for b, i in
+                 (getattr(self, "_bd_invention_needs", None) or {}).items()
+                 if int((i or {}).get("attempts") or 0) > 0}
+        if not needs:
+            return
+        split = getattr(self, "_bd_inv_split", None) or {}
+        slots = int(getattr(self, "_bd_inv_slots", 10) or 10)
+        aktiv = getattr(self, "_bd_active_jobs_alle", None) or {}
+        checked = getattr(self, "_bd_runplan_checked", None)
+        if checked is None:
+            checked = set()
+        dec_map = getattr(self, "_bd_decryptor_map", None) or {}
+        # Namen: erst die des Plans, Luecken aus dem Namens-Cache (ohne Netz).
+        _ids = set(needs) | {int(i.get("t1") or 0) for i in needs.values()}
+        nm = dict(names or {})
+        _fehlen = [i for i in _ids if i and not nm.get(i)]
+        if _fehlen:
+            try:
+                nm.update(store.cached_names(_fehlen) or {})
+            except Exception:
+                pass
+
+        def _name(tid):
+            return str(nm.get(int(tid)) or f"#{tid}")
+
+        try:
+            _cnames = {int(c["character_id"]): c.get("character_name")
+                       for c in (store.list_characters() or [])}
+        except Exception:
+            _cnames = {}
+        _max = self.settings.get("bau_char_slots") or {}
+
+        def _chars(key):
+            """[(cid, science-slots)] der Charaktere mit diesem Haken."""
+            out = []
+            for c in (self.settings.get(key) or []):
+                try:
+                    _m = (_max.get(str(c)) or [0, 0, 0])
+                    out.append((int(c), int(_m[2]) if len(_m) > 2 else 0))
+                except (TypeError, ValueError):
+                    continue
+            return out
+
+        def _punkt(tid, act, cname):
+            """'run' / 'done' / None je ESI-Job dieses Charakters."""
+            _st = None
+            for j in (aktiv.get(int(tid)) or []):
+                if int(j.get("activity_id") or 0) != act:
+                    continue
+                if cname and j.get("char") and j.get("char") != cname:
+                    continue
+                if j.get("status") == "ready":
+                    _st = _st or "done"
+                elif j.get("status") in ("active", "paused"):
+                    _st = "run"
+            return _st
+
+        # GANZ OBEN (emm434, Nutzer: "Copy und Invention wuerde ich ganz nach
+        # oben setzen ueber Fuel, weil das kann man direkt ganz am Anfang
+        # machen"): die Koepfe kommen an Position 0 und 1 des Baums.
+        _pos_sc = [0]
+
+        def _kopf(text, key, tip):
+            it = QTreeWidgetItem([text, "", "", "", "", ""])
+            _f = it.font(0); _f.setBold(True); _f.setPointSize(_f.pointSize() + 2)
+            it.setFont(0, _f)
+            _bg = QColor(theme.VIOLET); _bg.setAlpha(38)
+            for _c in range(6):
+                it.setBackground(_c, QBrush(_bg))
+            it.setForeground(0, QColor(theme.VIOLET))
+            it.setIcon(0, icons.icon("flask", farbe=theme.VIOLET))
+            it.setToolTip(0, tip)
+            it.setFlags(it.flags() & ~Qt.ItemIsUserCheckable)
+            tbl.insertTopLevelItem(_pos_sc[0], it)
+            _pos_sc[0] += 1
+            # de_scan5: aus - interner Klapp-Schluessel, nie sichtbar
+            it.setData(0, Qt.UserRole + 6, "stufe|" + key)
+            # de_scan5: an
+            return it
+
+        def _struck(it):
+            for c in range(tbl.columnCount()):
+                f = it.font(c); f.setStrikeOut(True); it.setFont(c, f)
+                if it.data(c, Qt.UserRole + 5) is None:
+                    it.setData(c, Qt.UserRole + 5, it.foreground(c))
+                it.setForeground(c, QColor(theme.GREEN))
+
+        def _haken(it, key):
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setData(0, Qt.UserRole + 6, key)
+            if key in checked:
+                it.setCheckState(0, Qt.Checked)
+                _struck(it)
+            else:
+                it.setCheckState(0, Qt.Unchecked)
+
+        def _char_zeile(parent, cid, welle, jobs, cap, art):
+            _wsuf = f"|w{welle}" if welle > 1 else ""
+            _cn = _cnames.get(int(cid)) or (str(cid) if cid else _txt(
+                "no character ticked"))
+            ci = QTreeWidgetItem([
+                _cn + ("  ·  " + _txt("wave {n}").format(n=welle)
+                       if welle > 1 else ""),
+                "", _txt("{n}/{cap} slots").format(n=jobs, cap=cap), "", ""])
+            ci.setForeground(0, QColor(theme.CYAN))
+            if not cid:
+                ci.setToolTip(0, _txt(
+                    "Tick characters for „Copy“ / „Inv“ under "
+                    "Build characters – then the jobs are spread over "
+                    "their science slots."))
+            _haken(ci, f"char|{art}|{cid}{_wsuf}")
+            parent.addChild(ci)
+            return ci, _wsuf, _cn
+
+        def _knopf(text, tip, slot):
+            b = QPushButton(text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setMinimumHeight(24)
+            b.setToolTip(tip)
+            b.setStyleSheet(
+                f"QPushButton{{background:{theme.PANEL2}; "
+                f"border:1px solid {theme.AMBER_DIM}; color:{theme.AMBER}; "
+                f"border-radius:5px; padding:0px 10px; font-weight:700;}}"
+                f"QPushButton:hover{{border-color:{theme.AMBER}; "
+                f"background:{theme.PANEL};}}")
+            b.clicked.connect(slot)
+            return b
+
+        def _knopf_zeile(z, knoepfe):
+            _cw = QWidget(); _cl = QHBoxLayout(_cw)
+            _cl.setContentsMargins(4, 2, 4, 2); _cl.setSpacing(6)
+            for _b in knoepfe:
+                _cl.addWidget(_b)
+            _cl.addStretch()
+            _cw.adjustSize()
+            _h9 = max(30, _cw.sizeHint().height() + 6)
+            z.setSizeHint(2, QSize(0, _h9))
+            tbl.setItemWidget(z, 2, _cw)
+
+        # ABGELIEFERT (emm434): ESI-Jobs dieser Aktivitaet, NACH dem
+        # Einfrieren gestartet (ungespeichert/nicht eingefroren: nur Haken).
+        _seit_sc = None
+        _pid_sc = getattr(self, "_bd_open_plan_id", None)
+        if _pid_sc is not None:
+            for _p_sc in (self.settings.get("bau_saved_plans") or []):
+                if str(_p_sc.get("id")) == str(_pid_sc):
+                    _seit_sc = (_p_sc.get("frozen") or {}).get("ts")
+                    break
+        _gel_sc = getattr(self, "_bd_delivered_jobs", None) or []
+
+        def _geliefert(tid, act):
+            if _seit_sc is None:
+                return False
+            for _j in _gel_sc:
+                try:
+                    if (int(_j.get("product_type_id") or 0) != int(tid)
+                            or int(_j.get("activity_id") or 0) != act):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                _ts = self._iso_job_ts(_j.get("start_date"))
+                if _ts is not None and float(_ts) >= float(_seit_sc):
+                    return True
+            return False
+
+        def _zeilen_zustand(tid, act, cname, key):
+            """offen / laeuft / bereit / erledigt einer Science-Zeile."""
+            _p = _punkt(tid, act, cname)
+            if _p == "run":
+                return "laeuft"
+            if _p == "done":
+                return "bereit"
+            if _geliefert(tid, act) or key in checked:
+                return "erledigt"
+            return "offen"
+
+        def _abschluss(kopf, zust, zeilen):
+            from .mw_helpers import stufe_status as _ss
+            _st = _ss(bool(zust) and all(z != "offen" for z in zust),
+                      zust.count("laeuft"), zust.count("bereit"))
+            self._stufe_abschluss(tbl, kopf, _st, zeilen)
+            return _st
+
+        def _setze_punkt(z, st):
+            if st == "geliefert":
+                z.setIcon(0, icons.gruener_punkt())
+                z.setToolTip(0, _txt("ESI: this job is delivered."))
+            if st == "done":
+                z.setIcon(0, icons.gruener_punkt())
+                z.setToolTip(0, _txt("ESI: this job is finished – ready "
+                                     "to deliver."))
+            elif st == "run":
+                z.setIcon(0, icons.lauf_punkt())
+                z.setToolTip(0, _txt("ESI: this job is running."))
+
+        _sortiert = sorted(needs.items(), key=lambda kv: _name(kv[0]).lower())
+        _auf = {}
+        for bp, info in _sortiert:
+            _auf[bp] = industry.kopien_aufteilung(
+                int(info.get("attempts") or 0),
+                int(info.get("runs_je_kopie") or 1), slots=slots,
+                kopien=int(split.get(int(bp)) or split.get(str(bp)) or 1),
+                prob=info.get("prob"))
+
+        # ---- Kopieren: EIN Kopierjob je T1-Original -----------------------
+        _k = _kopf("⚗ " + _txt("Copying") + "  ·  "
+                   + _txt("science slots – runs parallel to the build"),
+                   "copying",
+                   _txt("Copy your T1 originals for invention. Same numbers "
+                        "as the Invention tab – the slider there sets the "
+                        "parallel copies."))
+        _copy_auftr = [(bp, 1) for bp, _i in _sortiert if _auf[bp].get("kopien")]
+        _k_zust, _k_zeilen = [], []
+        _copy_chars = _chars("bau_copy_chars") or [(0, max(1, slots))]
+        for cid, welle, liste in science_verteilen(_copy_auftr, _copy_chars):
+            _cap = dict(_copy_chars).get(cid, 0) or max(1, slots)
+            ci, _wsuf, _cn = _char_zeile(_k, cid, welle,
+                                         sum(n for _b, n in liste), _cap, "copy")
+            for bp, _n in liste:
+                info = needs[bp]
+                a = _auf[bp]
+                _t1 = int(info.get("t1") or 0)
+                _t1nm = _name(_t1)
+                _basis1 = (_t1nm[:-len(" Blueprint")]
+                           if _t1nm.endswith(" Blueprint") else _t1nm)
+                _dauer = (float(info.get("cpr") or 0)
+                          * a["kopien"] * a["runs_je_kopie"])
+                z = QTreeWidgetItem([_t1nm, str(a["kopien"]), "",
+                                     ("≈" + self._fmt_dur(_dauer)) if _dauer else "",
+                                     _txt("Copy job"), ""])
+                z.setTextAlignment(1, Qt.AlignCenter)
+                # Rechtsklick/Strg+C: Basis OHNE " Blueprint" - _bp_name_for
+                # haengt das Suffix selbst an (sonst stuende es doppelt da).
+                z.setData(0, Qt.UserRole + 8, _basis1)
+                z.setData(0, Qt.UserRole + 7, 1)
+                _haken(z, f"copy|{cid}|{_t1}{_wsuf}")
+                ci.addChild(z)
+                _setze_punkt(z, _punkt(_t1, 5, _cnames.get(int(cid))))
+                # de_scan6: aus - interner Haken-Schluessel, nie sichtbar
+                _zz = _zeilen_zustand(_t1, 5, _cnames.get(int(cid)),
+                                      f"copy|{cid}|{_t1}{_wsuf}")
+                # de_scan6: an
+                if _zz == "erledigt" and _geliefert(_t1, 5):
+                    _setze_punkt(z, "geliefert")
+                _k_zust.append(_zz)
+                _k_zeilen += [z, ci]
+                # de_scan6: aus - "Job Runs"/"Runs/Copy" sind die EVE-
+                # Feldnamen im Kopierfenster und bleiben in jeder
+                # Sprachfassung englisch (wie in der Invention-Karte).
+                _knopf_zeile(z, ([
+                    _knopf(_txt("Copy T1 Blueprint"),
+                           _txt("Click copies {name} – search for it in the "
+                                "industry window.").format(name=_t1nm),
+                           lambda _c=False, _v=_t1nm: self._copy_bp_name_value(_v))]
+                    if _t1nm and not _t1nm.startswith("#") else []) + [
+                    _knopf(f"Job Runs: {a['kopien']}",
+                           _txt("Click copies {r} – paste it into the "
+                                "field in game.").format(r=a["kopien"]),
+                           lambda _c=False, _v=a["kopien"], _n=_t1nm:
+                           self._copy_runs_value(_v, _n)),
+                    _knopf(f"Runs/Copy: {a['runs_je_kopie']}",
+                           _txt("Click copies {r} – paste it into the "
+                                "field in game.").format(r=a["runs_je_kopie"]),
+                           lambda _c=False, _v=a["runs_je_kopie"], _n=_t1nm:
+                           self._copy_runs_value(_v, _n))])
+                # de_scan6: an
+            # Charakterzeilen ZU wie bei den Bau-Stufen; der Nutzer-Klapp
+            # gewinnt (emm400-Gedaechtnis).
+            ci.setExpanded(bool(klapp_vorher.get(f"char|copy|{cid}{_wsuf}", False)))
+        _k_st = _abschluss(_k, _k_zust, _k_zeilen)
+        _k.setExpanded(bool(klapp_vorher.get("stufe|copying",
+                                             _k_st != "erledigt")))
+
+        # ---- Invention: je Kopie ein Job, verteilt auf die Inv-Charaktere -
+        _i = _kopf("⚗ " + _txt("Invention") + "  ·  "
+                   + _txt("science slots – runs parallel to the build"),
+                   "invention",
+                   _txt("Invention attempts after copying. Datacores and "
+                        "decryptors are on the shopping list."))
+        _inv_auftr = [(bp, int(_auf[bp].get("kopien") or 0))
+                      for bp, _i2 in _sortiert if _auf[bp].get("kopien")]
+        _inv_chars = _chars("bau_invention_chars") or [(0, max(1, slots))]
+        _i_zust, _i_zeilen = [], []
+        for cid, welle, liste in science_verteilen(_inv_auftr, _inv_chars):
+            _cap = dict(_inv_chars).get(cid, 0) or max(1, slots)
+            ci, _wsuf, _cn = _char_zeile(_i, cid, welle,
+                                         sum(n for _b, n in liste), _cap, "inv")
+            for bp, n_jobs in liste:
+                info = needs[bp]
+                a = _auf[bp]
+                _rpk = int(a.get("runs_je_kopie") or 1)
+                _dauer = float(info.get("ipa") or 0) * _rpk
+                _nm2 = _name(bp)
+                z = QTreeWidgetItem([
+                    _nm2, str(_rpk),
+                    "", ("≈" + self._fmt_dur(_dauer)) if _dauer else "",
+                    _txt("{n} job(s)").format(n=n_jobs), ""])
+                z.setTextAlignment(1, Qt.AlignCenter)
+                z.setData(0, Qt.UserRole + 8,
+                          _nm2[:-len(" Blueprint")]
+                          if _nm2.endswith(" Blueprint") else _nm2)
+                z.setData(0, Qt.UserRole + 7, 1)
+                _haken(z, f"inv|{cid}|{bp}{_wsuf}")
+                ci.addChild(z)
+                _setze_punkt(z, _punkt(bp, 8, _cnames.get(int(cid))))
+                # de_scan6: aus - interner Haken-Schluessel, nie sichtbar
+                _zz = _zeilen_zustand(bp, 8, _cnames.get(int(cid)),
+                                      f"inv|{cid}|{bp}{_wsuf}")
+                # de_scan6: an
+                if _zz == "erledigt" and _geliefert(bp, 8):
+                    _setze_punkt(z, "geliefert")
+                _i_zust.append(_zz)
+                _i_zeilen += [z, ci]
+                # T1-BLAUPAUSE ALS KOPIER-KNOPF (emm435, Nutzer: "es gibt
+                # keinen amber Copy-Knopf, um den Blueprint zu holen, den ich
+                # inventen moechte"): ins Invention-Fenster kommt die T1-Kopie.
+                _t1_inv = _name(int(info.get("t1") or 0)) if info.get("t1") else ""
+                _kn = []
+                if _t1_inv and not _t1_inv.startswith("#"):
+                    _kn.append(_knopf(
+                        _txt("Copy T1 Blueprint"),
+                        _txt("Click copies {name} – search for it in the "
+                             "industry window.").format(name=_t1_inv),
+                        lambda _c=False, _v=_t1_inv: self._copy_bp_name_value(_v)))
+                _kn += [_knopf(f"{n_jobs}× {_rpk}",
+                              _txt("{n} invention job(s) with {r} runs each "
+                                   "– click copies {r}.").format(
+                                       n=n_jobs, r=_rpk),
+                              lambda _c=False, _v=_rpk, _n=_nm2:
+                              self._copy_runs_value(_v, _n))]
+                # DECRYPTOR DER KARTE als Kopier-Knopf (Nutzer emm425).
+                _dec = dec_map.get(int(bp)) or dec_map.get(str(bp))
+                if _dec and _dec != KEIN_DECRYPTOR:
+                    _dec_nm = str(_dec)
+                    # de_scan6: aus - EVE-Itemname ("Accelerant Decryptor"),
+                    # in jeder Sprachfassung gleich (wie in der Karte)
+                    if not _dec_nm.endswith("Decryptor"):
+                        _dec_nm += " Decryptor"
+                    # de_scan6: an
+                    _kn.append(_knopf(
+                        _dec_nm,
+                        _txt("Click copies the decryptor name – the one "
+                             "chosen on the Invention tab."),
+                        lambda _c=False, _v=_dec_nm: self._copy_bp_name_value(_v)))
+                _knopf_zeile(z, _kn)
+            ci.setExpanded(bool(klapp_vorher.get(f"char|inv|{cid}{_wsuf}", False)))
+        _i_st = _abschluss(_i, _i_zust, _i_zeilen)
+        _i.setExpanded(bool(klapp_vorher.get("stufe|invention",
+                                             _i_st != "erledigt")))
+
+    def _science_block_auffrischen(self):
+        """Science-Bloecke im offenen Runplaner neu zeichnen (emm425), damit
+        sie der Invention-Karte folgen (Decryptor, Regler, Slots) - ohne den
+        ganzen Runplaner neu zu bauen. Entprellt ueber `_science_timer`."""
+        tbl = getattr(self, "_sched_tree_ref", None)
+        if tbl is None:
+            return
+        try:
+            _klapp = dict(getattr(self, "_bd_sched_klapp", None) or {})
+            tbl.blockSignals(True)
+            try:
+                for _i in reversed(range(tbl.topLevelItemCount())):
+                    _it = tbl.topLevelItem(_i)
+                    # de_scan5: aus - interne Klapp-Schluessel, nie sichtbar
+                    if str(_it.data(0, Qt.UserRole + 6) or "") in (
+                            "stufe|copying", "stufe|invention"):
+                        # de_scan5: an
+                        _k_alt = str(_it.data(0, Qt.UserRole + 6))
+                        _klapp.setdefault(_k_alt, _it.isExpanded())
+                        tbl.takeTopLevelItem(_i)
+                self._science_block(tbl, getattr(self, "_bd_science_names", None)
+                                    or {}, _klapp)
+            finally:
+                tbl.blockSignals(False)
+        except RuntimeError:
+            pass                      # Baum schon abgeraeumt (Fenster zu)
+        except Exception as _e:
+            self._log_exception("Runplaner: Science auffrischen", str(_e))
+
+    def _science_spaeter(self):
+        """Entprellt: die Karte rechnet beim Aufbau/Auto-Decryptor oft
+        mehrmals hintereinander - der Block wird nur EINMAL neu gezeichnet."""
+        _tm = getattr(self, "_science_timer", None)
+        if _tm is None:
+            _tm = self._science_timer = QTimer()
+            _tm.setSingleShot(True)
+            _tm.setInterval(150)
+            _tm.timeout.connect(lambda: self._science_block_auffrischen())
+        _tm.start()
+
     def _fill_bauplan_schedule(self, plan, names, type_id, qty, hdr, sub, tbl, bp_tbl=None,
                                bp_warn_lbl=None):
         from ..sprache import t as _txt   # `t` ist hier lokal belegt
@@ -4857,6 +7344,32 @@ class BauplanTabs:
             _stage_map_rp = {}
         jobs = []
         _enden_jobs = self._bd_enden(type_id, recipes)   # Buendel: alle Enden
+        # ENDE, DAS EIN ANDERES ENDE BRAUCHT (emm432): laeuft in der Stufe
+        # davor; die Zeile sagt, wie viel davon Endprodukt bleibt.
+        from .mw_helpers import enden_als_zutat as _eaz
+        _zutat_enden = _eaz(_enden_jobs, plan.get("build_runs") or {},
+                            recipes.product_to_bp,
+                            getattr(recipes, "bp_materials", None) or {})
+        _buendel_qty = industry.buendel_enden(recipes)
+        self._bd_ende_als_zutat = {int(_zt): int(_buendel_qty.get(_zt, 0) or 0)
+                                   for _zt in _zutat_enden}
+        _enden_jobs = set(_enden_jobs) - _zutat_enden
+        if _zutat_enden:
+            # HAKEN ZIEHEN MIT (emm432): Zeilen-Haken und erledigte Runs, die
+            # noch auf der alten End-Stufe stehen, gehoeren jetzt zur
+            # Komponenten-Stufe.
+            from .mw_helpers import haken_stufe_umziehen as _hsu
+            for _hattr in ("_bd_runplan_checked", "_bd_runplan_ts",
+                           "_bd_runplan_erledigt", "_bd_runplan_erledigt_ts"):
+                _hval = getattr(self, _hattr, None)
+                if _hval:
+                    _hneu = _hsu(_hval, _zutat_enden)
+                    if isinstance(_hval, set):
+                        _hval.clear()
+                        _hval.update(_hneu)
+                    else:
+                        _hval.clear()
+                        _hval.update(_hneu)
         for _tid, runs in plan.get("build_runs", {}).items():
             if runs < 1:
                 continue
@@ -5552,6 +8065,7 @@ class BauplanTabs:
             for _st0 in _rp0_sch:
                 _by_char0.setdefault(_st0.get("char"), []).append(_st0)
             _hakt_alle0 = getattr(self, "_bd_runplan_checked", None) or set()
+            _rp_zeilen0, _rp_erl0 = [], 0      # emm434: Stufen-Abschluss
             try:
                 _erz_bestand0 = set(self._erz_durch_bestand())
             except Exception:
@@ -5659,6 +8173,9 @@ class BauplanTabs:
                             "The ore is no longer needed and not on the "
                             "shopping list."))
                     _row0.setCheckState(0, Qt.Checked if _hakt0 else Qt.Unchecked)
+                    _rp_zeilen0.append(_row0)
+                    if _hakt0 or _key0 in _erz_bestand0:
+                        _rp_erl0 += 1
                     if _hakt0:
                         for _c0 in range(tbl.columnCount()):
                             _f0 = _row0.font(_c0); _f0.setStrikeOut(True); _row0.setFont(_c0, _f0)
@@ -5702,10 +8219,21 @@ class BauplanTabs:
                 # (Nutzer 19.09.2026, Screenshot); was der Nutzer selbst
                 # geklappt hat, gewinnt (emm400).
                 _citem0.setExpanded(bool(_klapp_vorher.get(_ckey_c0, False)))
+            # ERLEDIGT OHNE ESI (emm434, Nutzer: "Komprimieren habe ich
+            # theoretisch gemacht, aber dafuer gibt es keine ESI-Tracking-
+            # Funktion und somit graut es nicht aus"): Reprocessing kennt
+            # ESI nicht - erledigt ist die Stufe, wenn JEDE Zeile gehakt ist
+            # (oder ihre Minerale schon im Bestand liegen).
+            _rp_fertig0 = bool(_rp_zeilen0) and _rp_erl0 == len(_rp_zeilen0)
+            if _rp_fertig0:
+                self._stufe_abschluss(
+                    tbl, _item0, "erledigt",
+                    _rp_zeilen0 + [_item0.child(_i)
+                                   for _i in range(_item0.childCount())])
             # de_scan5: aus - interner Klapp-Schluessel, nie sichtbar
             _item0.setData(0, Qt.UserRole + 6, "stufe|" + str(_ckey0))
             _item0.setExpanded(bool(_klapp_vorher.get(
-                "stufe|" + str(_ckey0), True)))
+                "stufe|" + str(_ckey0), not _rp_fertig0)))
             # de_scan5: an
 
         _lbl_st0 = "0. " + _txt("Reprocessing")
@@ -5911,6 +8439,10 @@ class BauplanTabs:
             # Bis hierher zaehlte `_zustand is not None` AUCH "laeuft" als
             # erledigt - eine Stufe mit laufenden Jobs bekam den Haken.
             _stage_laeuft = 0
+            # FERTIG, ABER NOCH NICHT ABGELIEFERT (emm433, Nutzer: "wenn die
+            # Vorstufen komplett abgeschlossen sind ... (Bereit zum
+            # ausliefern)", danach "(Erledigt)" und alles grau).
+            _stage_bereit = 0
 
             def _wellen(alist, cap):
                 """[(Welle, Zuteilungen)] - ganze Kopien (`parts`) eines
@@ -6157,6 +8689,13 @@ class BauplanTabs:
                                     else "fertig")
                         # de_scan4: an
                         R = R_plan
+                        # BEREIT ZUM ABLIEFERN (emm433): Jobs dieses Items,
+                        # die ESI fertig meldet, aber noch nicht abgeholt.
+                        if _zustand != "laeuft" and any(
+                                _j.get("status") == "ready" for _j in
+                                ((getattr(self, "_bd_active_jobs_map", None)
+                                  or {}).get(_tid_a) or [])):
+                            _stage_bereit += 1
                     # Aufteilung in Blaupausen-Jobs - MIT Runs-Deckel je Job
                     # (`max_runs` aus schedule_build: BPC-Runs / SDE-Limit),
                     # kein Teil groesser als eine Kopie hergibt (17 -> 10 + 7).
@@ -6472,6 +9011,19 @@ class BauplanTabs:
                     # Aktivität merken (für "Blueprint-Name kopieren": Reaktion vs
                     # Fertigung -> "Reaction Formula" bzw. "Blueprint").
                     iit.setData(0, Qt.UserRole + 7, a.get("activity"))
+                    iit.setData(0, Qt.UserRole + 12, int(a["tid"]))   # Stock locations (emm459)
+                    _ez_n = (getattr(self, "_bd_ende_als_zutat", None) or {}).get(
+                        int(a.get("tid") or 0))
+                    if _ez_n is not None:
+                        iit.setText(0, iit.text(0) + " \u00b7 " + _txt(
+                            "also end product: {n}").format(
+                                n=f"{int(_ez_n):,}".replace(",", "'")))
+                        iit.setToolTip(0, _txt(
+                            "This end product is also an ingredient of another "
+                            "end product in the bundle, so it is built in this "
+                            "earlier stage. {n} of it stay as end product, the "
+                            "rest goes into the other end products.").format(
+                                n=f"{int(_ez_n):,}".replace(",", "'")))
                     # Der Blaupausen-Name haengt an der Zeile - fuer
                     # Rechtsklick/Strg+C (der Linksklick-Kopierweg ist seit
                     # emm401 raus: er kopierte, ohne den Run-Klick zu merken).
@@ -6538,6 +9090,7 @@ class BauplanTabs:
                         mit.setTextAlignment(1, Qt.AlignCenter)
                         mit.setForeground(0, QColor(theme.MUTED))
                         mit.setForeground(1, QColor(theme.MUTED))
+                        mit.setData(0, Qt.UserRole + 12, int(mat_id))  # Stock locations (emm459)
                         # NIE ABHAKBAR (Nutzer, 15.09.2026, mit Zoom-Bild:
                         # "dieser gruene Haken ist nicht von mir, den kann
                         # ich nicht setzen ... ich kann ihn auch nicht
@@ -6618,7 +9171,22 @@ class BauplanTabs:
                             # kurz sagen, dass sie unsicher ist.
                             _mit_anspruch = self._plan_mit_anspruch(
                                 _tid_a, _fremd_res)
-                            if _mit_anspruch:
+                            # ZUGEORDNET = NICHT MEHR UNSICHER (emm418,
+                            # Nutzer: "nach save assignment sind die
+                            # Fragezeichen immer noch da"). Die Marke
+                            # stammt aus Sitzung 16, VOR der Job-
+                            # Zuordnung. Seit emm268 stehen im
+                            # _bd_active_jobs_map eines GESPEICHERTEN
+                            # Plans nur Jobs, die laut job_zuordnung
+                            # DIESEM Plan gehoeren (Klick, eindeutig,
+                            # Prioritaet oder Nutzer-Antwort) - der
+                            # Anspruch des anderen Plans ist damit
+                            # beantwortet. Nur ein UNGESPEICHERTER Plan
+                            # kennt keine Zuordnung; dort bleibt die
+                            # Marke ehrlich stehen.
+                            if (_mit_anspruch
+                                    and not getattr(self, "_bd_open_plan_id",
+                                                    None)):
                                 iit.setText(0, iit.text(0) + "  "
                                             + _txt("\u2753 could belong to "
                                                    "another build plan"))
@@ -6851,9 +9419,19 @@ class BauplanTabs:
                                 and _stage_erledigt == _stage_items)
             # ECHT FERTIG ist die Stufe nur ohne laufende Position.
             _stufe_fertig = _stufe_abgedeckt and _stage_laeuft == 0
+            # emm433: fertig + noch etwas abzuholen = "Bereit zum Ausliefern"
+            # (bleibt farbig, es gibt noch zu tun); fertig + alles abgeholt
+            # = "Erledigt", die ganze Stufe grau (Nutzer: "somit ist immer
+            # nur das farbig, was zu erledigen gilt").
+            from .mw_helpers import stufe_status
+            _stufe_status = stufe_status(_stufe_abgedeckt, _stage_laeuft,
+                                         _stage_bereit)
             if _stufe_abgedeckt:
                 if _stufe_fertig:
-                    stage_item.setText(0, f"\u2713  {label}")
+                    stage_item.setText(0, f"\u2713  {label}" + (
+                        "  (" + _txt("Ready to deliver") + ")"
+                        if _stufe_status == "bereit" else
+                        "  (" + _txt("Completed") + ")"))
                     # DER ZEIT-REGLER WEICHT DER MELDUNG: eine fertige Stufe
                     # stellt niemand mehr ein, und die Zeile soll sagen, was
                     # sie geschafft hat - nicht, was man haette einstellen
@@ -6890,6 +9468,23 @@ class BauplanTabs:
                                 else QColor(theme.CYAN_RUN))
                 stage_item.setForeground(0, _stufe_farbe)
                 stage_item.setForeground(2, _stufe_farbe)
+                if _stufe_status == "erledigt":
+                    # ALLES GRAU: Text, Hintergrund, Symbol - keine Farbe mehr.
+                    for _c_g in range(tbl.columnCount()):
+                        stage_item.setForeground(_c_g, QColor(theme.MUTED))
+                        stage_item.setBackground(_c_g, QBrush())
+                    try:
+                        _ic_g = stage_item.icon(0)
+                        if not _ic_g.isNull():
+                            stage_item.setIcon(0, QIcon(_ic_g.pixmap(18, QIcon.Disabled)))
+                    except Exception:
+                        pass
+                    for _cf_g in _stage_citems:
+                        for _c_g in range(tbl.columnCount()):
+                            _cf_g.setForeground(_c_g, QColor(theme.MUTED))
+                    stage_item.setData(0, Qt.UserRole + 11, "erledigt")
+                elif _stufe_status == "bereit":
+                    stage_item.setData(0, Qt.UserRole + 11, "bereit")
             # DIE ZAEHL-ZEILE IST WEG (Nutzer, Sitzung 14). Sie war das
             # Gegenstueck zum Ausblenden ("Regel 6: nichts verschwindet
             # spurlos") - sie fasste zusammen, was der Baum nicht mehr zeigte.
@@ -7008,4 +9603,17 @@ class BauplanTabs:
             _ihdr.setData(0, Qt.UserRole + 6, "stufe|info")
             _ihdr.setExpanded(bool(_klapp_vorher.get("stufe|info", False)))
             # de_scan5: an
+
+        # --- SCIENCE-STUFEN: Kopieren + Invention (emm411, Nutzer "jaa";
+        # Discord Robust: "adding the Invention into the build planner").
+        # REINE ANZEIGE (v1, ohne Haken): nichts wird gespeichert, der Block
+        # laesst sich rueckstandsfrei wieder ausbauen. Zahlen aus DERSELBEN
+        # Quelle wie die Invention-Karte (_bd_invention_needs +
+        # industry.kopien_aufteilung) - keine zweite Rechnung (Regel 9).
+        # ANS ENDE gestellt (nach allen Stufen und der Info-Zeile): die
+        # Stufen-Positionen (b7u: Repro = topLevelItem(0)) bleiben unberuehrt.
+        try:
+            self._science_block(tbl, names, _klapp_vorher)
+        except Exception as _sb_e:
+            self._log_exception("Runplaner: Science-Block", str(_sb_e))
         tbl.blockSignals(False)

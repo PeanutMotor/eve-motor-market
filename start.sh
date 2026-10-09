@@ -10,10 +10,10 @@ echo "== 1/6 Abhaengigkeiten =="
 python3 -c "import PySide6, pyflakes" 2>/dev/null || \
     pip install --break-system-packages --quiet -r requirements.txt pyflakes
 
-echo "== 2/6 aa-Suite (SOLL 4904/4904) =="
+echo "== 2/6 aa-Suite (SOLL 5164/5164) =="
 timeout 280 python3 tests/test_bestand_herkunft.py | tail -3
 
-echo "== 3/6 b-Suite (SOLL 2112/2112, endet nach wenigen Sekunden) =="
+echo "== 3/6 b-Suite (SOLL 2371/2371, endet nach wenigen Sekunden) =="
 QT_QPA_PLATFORM=offscreen PYTHONPATH="$PWD" timeout 120 \
     python3 tests/test_bauplan_aufbau.py 2>/dev/null | tail -1
 
@@ -23,11 +23,11 @@ python3 tests/lint_order.py $(find eve_trader -name "*.py") main.py | tail -1
 echo "== 5/6 pyflakes (SOLL keine 'undefined name') =="
 python3 -m pyflakes eve_trader/ main.py | grep -c "undefined name"
 
-echo "== 6/6 Rotprobe-Anwendbarkeit (SOLL 1801/1801) =="
+echo "== 6/6 Rotprobe-Anwendbarkeit (SOLL 2041/2041) =="
 python3 tests/rotprobe.py --check
 
 echo ""
-echo "SOLL: aa 4904 | b 2112 | Lint 0 | pyflakes 0 | Mutationen 1801/1801 anwendbar."
+echo "SOLL: aa 5164 | b 2371 | Lint 0 | pyflakes 0 | Mutationen 2041/2041 anwendbar."
 echo "      de_scan 0 | de_scan2 0 | de_scan3 0 | de_scan4 0 | de_scan5 0 | de_scan6 0."
 echo "Vor jeder Veroeffentlichung beim Nutzer: python pruefe.py"
 echo ""

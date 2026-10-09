@@ -121,6 +121,12 @@ KATALOG = {
             "{n} Zwischenmaterialien \xfcber Unrefined-Reaktion",
         "Compressed ore checked: {ore} would be {pct} % more expensive than buying the mineral.":
             "Komprimiertes Erz gepr\xfcft: {ore} w\xe4re {pct} % teurer als der Kauf des Minerals.",
+        # emm491: der Markt gibt das Erz nicht her - der Grund ist der
+        # Markt, nicht der Preis.
+        "Compressed ore checked: not enough {ore} on sell orders at the hub - the rest stays bought as mineral.":
+            "Komprimiertes Erz gepr\xfcft: von {ore} liegt zu wenig auf den Sell-Orders am Hub – der Rest bleibt als Mineral gekauft.",
+        "market short of {n} ore(s)":
+            "Markt hat zu wenig von {n} Erz(en)",
         "Compressed ore \u267b":
             "Komprimiertes Erz \u267b",
         "Builds intermediates via their \u201eUnrefined \u2026 Reaction Formula\u201c when that is cheaper per unit than the normal reaction or buying.\nYield: 50 % \xd7 Scrapmetal Processing. The returned input is credited but stays on the shopping list.\nNeeds: hub scan + \u201eLoad skills\u201c.":
@@ -1084,6 +1090,10 @@ KATALOG = {
             'Neuer Bauplan',
         'My build plans':
             'Meine Baupläne',
+        # emm490: eigener Uebertitel fuer die beiden Ist-Zustand-Seiten
+        # (Industry jobs, Stock locations) - sie planen nichts.
+        'OVERVIEW':
+            'ÜBERSICHT',
         'SETUP':
             'SETUP',
         'Structures':
@@ -1369,8 +1379,8 @@ KATALOG = {
             "Haken bei {items} entfernt \u2013 ESI kennt 30 Minuten nach dem Abhaken bei keinem verkn\u00fcpften Charakter einen Job dazu.",
         "\u00d8 {v} sold per day at the hub (last 30 days, market history).":
             "\u00d8 {v} verkauft je Tag am Hub (letzte 30 Tage, Markt-Historie).",
-        "Profit per unit \u00f7 build cost per unit \u2013 the same margin as in the build plan, with your skills and structures (T2: with the best decryptor). Settings in the build plan can raise it further.":
-            "Gewinn je St\u00fcck \u00f7 Baukosten je St\u00fcck \u2013 dieselbe Marge wie im Bauplan, mit deinen Skills und Strukturen (T2: mit dem besten Decryptor). Einstellungen im Bauplan k\u00f6nnen sie weiter erh\u00f6hen.",
+        "Profit per unit \u00f7 build cost per unit \u2013 the same margin as in the build plan, with your skills and structures (T2: one run, no decryptor). Settings in the build plan can raise it further.":
+            "Gewinn je St\u00fcck \u00f7 Baukosten je St\u00fcck \u2013 dieselbe Marge wie im Bauplan, mit deinen Skills und Strukturen (T2: ein Run, kein Decryptor). Einstellungen im Bauplan k\u00f6nnen sie weiter erh\u00f6hen.",
         "skills, standings, industry jobs, blueprints":
             "Skills, Standings, Industrie-Jobs, Blaupausen",
         "implants":
@@ -1409,6 +1419,23 @@ KATALOG = {
             "In den letzten 30 Tagen am Hub nicht gehandelt.",
         "Thin market: only {v} sold per day.":
             "D\u00fcnner Markt: nur {v} verkauft je Tag.",
+        # PREIS-TREND (emm499): neutral, nie gruen/rot (Scam-Warnlampe).
+        "vs. 90d avg":
+            "vs. \u00d8 90 Tage",
+        "\u03947d":
+            "\u03947T",
+        "\u039430d":
+            "\u039430T",
+        "\u039490d":
+            "\u039490T",
+        "Current sell price vs. the 90-day average price at the hub (market history). Deliberately neutral: far ABOVE average can mean profit - or a short spike / market manipulation. The cell tooltip also shows the 7/30-day averages and the price movement. ? = history not loaded yet.":
+            "Aktueller Sell-Preis gegen den 90-Tage-Durchschnittspreis am Hub (Markt-Historie). Bewusst neutral: weit \u00dcBER dem Durchschnitt kann Gewinn hei\u00dfen \u2013 oder ein kurzer Spike / Markt-Manipulation. Der Zell-Tooltip zeigt auch die 7/30-Tage-Schnitte und die Preisbewegung. ? = Historie noch nicht geladen.",
+        "Price change vs. {n} days ago (market history of the hub region). Neutral on purpose - a big jump can be demand or manipulation.":
+            "Preisbewegung gegen vor {n} Tagen (Markt-Historie der Hub-Region). Bewusst neutral \u2013 ein gro\u00dfer Sprung kann Nachfrage oder Manipulation sein.",
+        "Current sell price vs. the 90-day average of the market history. Deliberately NOT colored: a price far above the average can mean market manipulation (scam) rather than profit. ? = history not loaded yet.":
+            "Aktueller Sell-Preis gegen den 90-Tage-Durchschnitt der Markt-Historie. Bewusst NICHT gef\u00e4rbt: ein Preis weit \u00fcber dem Durchschnitt kann Markt-Manipulation (Scam) statt Gewinn hei\u00dfen. ? = Historie noch nicht geladen.",
+        "Current sell price vs. the 90-day average of the market history.\n\u00d8 7d: {o7} \u00b7 \u00d8 30d: {o30} \u00b7 \u00d8 90d: {o90}\nChange: 7d {d7} \u00b7 30d {d30} \u00b7 90d {d90}":
+            "Aktueller Sell-Preis gegen den 90-Tage-Durchschnitt der Markt-Historie.\n\u00d8 7T: {o7} \u00b7 \u00d8 30T: {o30} \u00b7 \u00d8 90T: {o90}\nBewegung: 7T {d7} \u00b7 30T {d30} \u00b7 90T {d90}",
         "Click to show or hide the running jobs":
             "Klicken zeigt oder versteckt die laufenden Jobs",
         "Count completed plans in the profit total":
@@ -1457,8 +1484,125 @@ KATALOG = {
             "Wie viele Invention-Jobs gleichzeitig laufen \u2013 je eine T1-Kopie, je ein Science-Slot.\nLinks = 1 Job (langsam, 1 Slot belegt),\nrechts = alle freien Science-Slots (so schnell wie m\u00f6glich).\nDas \u00e4ndert NICHT, wie viele T2-Blaupausen du bekommst \u2013 das h\u00e4ngt an Menge und Decryptor.",
         "Copy your T1 original like this \u2192":
             "Kopiere dein T1-Original so \u2192",
+        # Science-Stufen im Runplaner (emm411)
+        "science slots \u2013 runs parallel to the build":
+            "Science-Slots \u2013 l\u00e4uft parallel zum Bau",
+        "Copy your T1 originals for invention. Same numbers as the "
+        "Invention tab \u2013 the slider there sets the parallel copies.":
+            "Kopiere deine T1-Originale f\u00fcr die Invention. Dieselben "
+            "Zahlen wie im Invention-Reiter \u2013 der Regler dort bestimmt "
+            "die parallelen Kopien.",
+        "Invention attempts after copying. Datacores and decryptors "
+        "are on the shopping list.":
+            "Invention-Versuche nach dem Kopieren. Datacores und "
+            "Decryptoren stehen auf der Einkaufsliste.",
+        "Copy job": "Kopierjob",
+        "Click copies {r} \u2013 paste it into the field in game.":
+            "Klick kopiert {r} \u2013 f\u00fcge es ingame ins Feld ein.",
+        "{n} job(s)": "{n} Job(s)",
+        "no character ticked": "kein Charakter angehakt",
+        "Tick characters for \u201eCopy\u201c / \u201eInv\u201c under Build "
+        "characters \u2013 then the jobs are spread over their science "
+        "slots.":
+            "Hake Charaktere bei \u201eCopy\u201c / \u201eInv\u201c unter Build "
+            "characters an \u2013 dann werden die Jobs auf ihre Science-Slots "
+            "verteilt.",
+        "ESI: this job is finished \u2013 ready to deliver.":
+            "ESI: dieser Job ist fertig \u2013 abholbereit.",
+        "ESI: this job is running.": "ESI: dieser Job l\u00e4uft.",
+        "{n} invention job(s) with {r} runs each \u2013 click copies {r}.":
+            "{n} Invention-Job(s) mit je {r} Runs \u2013 Klick kopiert {r}.",
+        "Click copies the decryptor name \u2013 the one chosen on the "
+        "Invention tab.":
+            "Klick kopiert den Decryptor-Namen \u2013 den im Invention-Reiter "
+            "gew\u00e4hlten.",
         "{n} science slot(s) busy": "{n} Science-Slot(s) belegt",
         "done in \u2248{d}": "fertig in \u2248{d}",
+        # Tages-Buchstabe in Dauer-Anzeigen ("2 d 20 h 24 m" / "2 T 20 h
+        # 24 m") - Discord LRKR, emm412; h und m sind sprachgleich.
+        "d": "T",
+        # Firesales-Tab (emm413, Discord Str1k3r2k4 Case B)
+        "Firesales": "Firesales",
+        "Min. price": "Mindestpreis",
+        "Contracts to check": "Contracts prüfen",
+        "Min. discount": "Mindest-Rabatt",
+        "Scan contracts": "Contracts scannen",
+        "Scanning contracts …": "Contracts werden gescannt …",
+        "The contract scan is already running.":
+            "Der Contract-Scan läuft schon.",
+        "Contract scan failed: {err}":
+            "Contract-Scan fehlgeschlagen: {err}",
+        "Each contract's content costs its own ESI call - the newest "
+        "contracts are checked first, up to this cap.":
+            "Der Inhalt jedes Contracts kostet einen eigenen ESI-Abruf - "
+            "geprüft werden die neuesten zuerst, bis zu diesem Deckel.",
+        "Public item-exchange contracts of the region, valued at the "
+        "prices of your last market scan. BPCs and items without a "
+        "price count as 0 - a contract can only look worse than it is, "
+        "never better. Contracts that ASK for items are skipped (common "
+        "scam pattern). Right-click a deal to open it in game.":
+            "\u00d6ffentliche Item-Exchange-Contracts der Region, bewertet "
+            "mit den Preisen deines letzten Markt-Scans. BPCs und Items "
+            "ohne Preis z\u00e4hlen 0 - ein Contract kann nur schlechter "
+            "aussehen, als er ist, nie besser. Contracts, die Items "
+            "VERLANGEN, werden \u00fcbersprungen (typisches Scam-Muster). "
+            "Rechtsklick auf einen Fund \u00f6ffnet ihn im Spiel.",
+        "No scan yet - pick a place and press \u201eScan contracts\u201c.":
+            "Noch kein Scan - Ort w\u00e4hlen und \u201eContracts "
+            "scannen\u201c dr\u00fccken.",
+        "Search at:": "Suchen bei:",
+        "The contracts of this place's REGION are searched; jumps are "
+        "counted from here. Your structures are listed too.":
+            "Gesucht werden die Contracts der REGION dieses Orts; die "
+            "Spr\u00fcnge z\u00e4hlen ab hier. Deine Strukturen stehen "
+            "auch in der Liste.",
+        "Value at:": "Bewerten zu:",
+        "Sell price (list a sell order)":
+            "Sell-Preis (Verkaufs-Order einstellen)",
+        "Buy price (sell instantly)": "Buy-Preis (sofort verkaufen)",
+        "Jumps": "Spr\u00fcnge",
+        # ESI-Verzug am Materials-Reiter (emm424)
+        "up to {n} used since the stock check":
+            "bis zu {n} seit dem Bestands-Check verbraucht",
+        "ESI reports your hangar only about once an hour. Jobs started "
+        "after the last stock check have already used up to {n} of this "
+        "in game - the stock shown here may not be there any more. "
+        "Nothing is recalculated; check in game before you rely on it.":
+            "ESI meldet deinen Hangar nur etwa einmal pro Stunde. Jobs, die "
+            "nach dem letzten Bestands-Check gestartet wurden, haben im "
+            "Spiel schon bis zu {n} davon verbraucht - der hier gezeigte "
+            "Bestand ist vielleicht nicht mehr da. Nichts wird umgerechnet; "
+            "pr\u00fcfe im Spiel, bevor du dich darauf verl\u00e4sst.",
+        "structure (no access)": "Struktur (kein Zugriff)",
+        "Run a market scan first - the contract value comes from its "
+        "sell prices.":
+            "Erst einen Markt-Scan laufen lassen - der Contract-Wert "
+            "kommt aus dessen Verkaufspreisen.",
+        "Items": "Items",
+        "Ask price": "Geforderter Preis",
+        "Market value": "Marktwert",
+        "Discount": "Rabatt",
+        "Volume (m³)": "Volumen (m³)",
+        "Issued": "Eingestellt",
+        "Note": "Hinweis",
+        "{n} deal(s) · checked {g} of {t} contracts (newest first) "
+        "· {s} skipped (they ASK for items) · {f} failed":
+            "{n} Deal(s) · {g} von {t} Contracts geprüft (neueste "
+            "zuerst) · {s} übersprungen (sie VERLANGEN Items) "
+            "· {f} fehlgeschlagen",
+        "{n} BPC - counted as 0": "{n} BPC - zählt 0",
+        "Open contract in game": "Contract ingame öffnen",
+        "Enable „Open in game“ in the settings and link a "
+        "character first.":
+            "Erst „Ingame öffnen“ in den Einstellungen "
+            "einschalten und einen Charakter verlinken.",
+        "✅ Sent to „{name}“ – the contract window "
+        "opens in game (this character must be logged in).":
+            "✅ An „{name}“ geschickt – das Contract-"
+            "Fenster öffnet sich im Spiel (dieser Charakter muss "
+            "eingeloggt sein).",
+        "{n} without market price - counted as 0":
+            "{n} ohne Marktpreis - zählt 0",
         "Buy or not?": "Kaufen oder nicht?",
         "Checked {n} blueprint(s): {chg} changed, {same} already on their best decryptor, {skip} skipped (Own BPC).":
             "{n} Blaupause(n) gepr\u00fcft: {chg} gewechselt, {same} hatten schon ihren besten Decryptor, {skip} \u00fcbersprungen (Eigene BPC).",
@@ -1722,6 +1866,74 @@ KATALOG = {
             "Zuordnung speichern",
         "{n} job(s) assigned.":
             "{n} Job(s) zugeordnet.",
+        # JOB-ZUORDNUNGEN UMHAENGEN (emm427)
+        "Job assignments":
+            "Job-Zuordnungen",
+        "Which industry jobs count for this plan – and move a job to "
+        "another plan if it was built for that one.":
+            "Welche Industrie-Jobs für diesen Plan zählen – und einen Job "
+            "einem anderen Plan geben, wenn er für den gebaut wurde.",
+        "Industry jobs of this plan, and jobs of its items that belong to "
+        "another open plan. Pick another plan if a job was built for it – "
+        "the plan that gets it counts the runs as built.":
+            "Industrie-Jobs dieses Plans und Jobs seiner Items, die einem "
+            "anderen offenen Plan gehören. Wähle einen anderen Plan, wenn ein "
+            "Job für ihn gebaut wurde – der Plan, der ihn bekommt, zählt die "
+            "Runs als gebaut.",
+        "Assigned by":
+            "Zugeordnet durch",
+        "copy button":
+            "Kopier-Knopf",
+        "only plan":
+            "einziger Plan",
+        "build priority":
+            "Bau-Priorität",
+        "you":
+            "dich",
+        "reservation":
+            "Reservierung",
+        "run count":
+            "Run-Zahl",
+        "No industry job is assigned to this plan yet.":
+            "Diesem Plan ist noch kein Industrie-Job zugeordnet.",
+        # STUFEN-STATUS (emm433)
+        "Ready to deliver":
+            "Bereit zum Ausliefern",
+        "Completed":
+            "Erledigt",
+        "Click copies {name} – search for it in the "
+        "industry window.":
+            "Klick kopiert {name} – im Industrie-Fenster danach suchen.",
+        "ESI: this job is delivered.":
+            "ESI: dieser Job ist abgeliefert.",
+        # ENDE ALS ZUTAT EINES ANDEREN ENDES (emm432)
+        "also end product: {n}":
+            "davon Endprodukt: {n}",
+        "This end product is also an ingredient of another "
+        "end product in the bundle, so it is built in this "
+        "earlier stage. {n} of it stay as end product, the "
+        "rest goes into the other end products.":
+            "Dieses Endprodukt ist auch Zutat eines anderen Endprodukts im "
+            "Bündel und wird deshalb in dieser früheren Stufe gebaut. {n} "
+            "davon bleiben Endprodukt, der Rest geht in die anderen "
+            "Endprodukte.",
+        # INVENTION-VERBRAUCH AUS ESI (emm431)
+        "{n} used by started invention jobs":
+            "{n} von gestarteten Invention-Jobs verbraucht",
+        "ESI shows invention jobs of this plan started after it was "
+        "frozen - they have already used {n} of this. It no longer "
+        "counts as needed and is not on the shopping list.":
+            "ESI zeigt Invention-Jobs dieses Plans, die nach dem Einfrieren "
+            "gestartet wurden - sie haben davon schon {n} verbraucht. Das "
+            "zählt nicht mehr als Bedarf und steht nicht auf der "
+            "Einkaufsliste.",
+        # JOB-FRAGE: VORSCHLAG NACH RUN-ZAHL (emm429)
+        "{n} runs open":
+            "{n} Runs offen",
+        "Suggested: this plan has exactly as many runs of the item "
+        "open as the job has.":
+            "Vorschlag: dieser Plan hat genau so viele Runs des Items offen, "
+            "wie der Job hat.",
         # VERKAUFSPREIS AUF DER PLAN-KARTE ANKLICKBAR (Nutzer 25.09.2026;
         # seit 26.09.2026 ein Knopf, s. "Sell {sell}").
         "Sale price {price} for {name} copied \u2013 that is the price at which THIS build plan reaches your target margin after fees. The market may pay more or less.":
@@ -2365,8 +2577,6 @@ KATALOG = {
             "kein Verkaufsangebot am Hub",
         "{p} cannot be undercut":
             "{p} nicht unterbietbar",
-        "\u23f3 loading \u2026":
-            "\u23f3 l\u00e4dt \u2026",
         "Subtract assets needed":
             "Assets abziehen n\u00f6tig",
         "can be built \u2713 \u00b7 {n} units":
@@ -2589,8 +2799,6 @@ KATALOG = {
             "Bei \u201eEigene BPC statt Invention\u201c wird die Erfindung \u00fcbersprungen - der Decryptor spielt dann keine Rolle mehr.",
         "Your simultaneously usable science slots (in game at the bottom left of the industry window, e.g. \u201eScience jobs 4/10\u201c). Limits how many copies can really work in parallel.":
             "Deine gleichzeitig nutzbaren Wissenschafts-Slots (Ingame unten links im Industry-Fenster, z.B. \u201eScience jobs 4/10\u201c). Begrenzt, wie viele Kopien wirklich parallel arbeiten k\u00f6nnen.",
-        " ({have} already in the hangar \u2192 {buy} more to buy)":
-            " ({have} schon im Hangar \u2192 noch {buy} kaufen)",
         "Owned ( frozen+live)":
             "Besitze ( eingefroren+live)",
         "Owned (ESI)":
@@ -4264,10 +4472,10 @@ KATALOG = {
             "Verkn\u00fcpfe diese Bau-Struktur mit ihrer echten EVE-Struktur, damit \u201eAssets abziehen\u201c nur das Material z\u00e4hlt, das wirklich HIER liegt (nicht in Jita o.\u00e4.). Die Liste kommt aus deinen bekannten Strukturen \u2013 fehlt eine, f\u00fcge sie oben im Hub/Struktur-Bereich hinzu.",
         "RESERVE stock for this plan: its material consumption (purchases + stock coverage + invention) is deducted from the stock of all OTHER build plans \u2013 so plan 2 does not count the purchases of plan 1 as free. The plan itself still sees its stock in full.":
             "Bestand f\u00fcr diesen Plan RESERVIEREN: sein Material-Verbrauch (Einkauf + Bestandsdeckung + Invention) wird bei allen ANDEREN Bauplaenen vom Bestand abgezogen \u2013 damit Plan 2 nicht die Einkaeufe von Plan 1 als frei z\u00e4hlt. Der Plan selbst sieht seinen Bestand weiterhin voll.",
-        "rows only: the decryptor with the highest profit/unit - compared across all options (incl. \u201eNo decryptor\u201c) with a real plan calculation. The row's build cost/profit include it.":
-            "Nur -Zeilen: der Decryptor mit dem h\u00f6chsten Gewinn/Stk - per echter Plan-Rechnung \u00fcber alle Optionen (inkl. \u201eKein Decryptor\u201c) verglichen. Baukosten/Gewinn der Zeile rechnen MIT ihm.",
-        "rows only: the matching optimal quantity = a full BPC batch (base runs + the decryptor's run modifier) x output/run. Invention cost and batch rounding are spread fairly over this quantity - smaller quantities cost more per unit.":
-            "Nur -Zeilen: die dazu passende optimale St\u00fcckzahl = voller BPC-Batch (Basis-Runs + Run-Mod des Decryptors) x Output/Run. Auf dieser Menge sind Invention-Kosten und Batch-Rundung fair verteilt - kleinere Mengen sind pro St\u00fcck teurer.",
+        "rows only: always \u201eNo decryptor\u201c \u2013 My Blueprints calculates the plain invention (ME 2 / TE 4). Choose a decryptor in the build plan (Auto-Decryptor), it can only get better there.":
+            "Nur -Zeilen: immer \u201eKein Decryptor\u201c \u2013 Meine Blueprints rechnet die reine Invention (ME 2 / TE 4). Den Decryptor w\u00e4hlst du im Bauplan (Auto-Decryptor), dort kann es nur besser werden.",
+        "rows only: the quantity the row is calculated for \u2013 one run. The whole invention cost lands on it, so the build plan with more units can only get cheaper per unit.":
+            "Nur -Zeilen: die Menge, f\u00fcr die die Zeile gerechnet ist \u2013 ein Run. Die ganzen Invention-Kosten liegen darauf, der Bauplan mit mehr St\u00fcck wird je St\u00fcck nur billiger.",
         "This plan was marked as completed BY HAND \u2013 regardless of what the ESI finished check counts (e.g. because the invention did not cover every unit).":
             "Dieser Plan wurde MANUELL als abgeschlossen markiert \u2013 unabh\u00e4ngig davon, was der ESI-Fertig-Check z\u00e4hlt (z.B. weil die Invention nicht f\u00fcr alle St\u00fcck gereicht hat).",        "Cannot be estimated \u2013 e.g. no market price for this item.":
             "Nicht sch\u00e4tzbar \u2013 z.B. kein Marktpreis f\u00fcr dieses Item.",
@@ -4814,6 +5022,8 @@ KATALOG = {
             "Corp",
         "Corp: {name}":
             "Corp: {name}",
+        "Buy orders are compared against every order whose range reaches this hub \u2013 region-wide orders from other systems included.":
+            "Kauf-Orders werden gegen jede Order verglichen, deren Reichweite diesen Hub erreicht \u2013 auch region-weite Orders aus anderen Systemen.",
         "Corp jobs run on the installer's job slots \u2013 they count on that character's card.":
             "Corp-Jobs laufen auf den Job-Slots des startenden Charakters \u2013 sie z\u00e4hlen auf dessen Karte.",
         "{n} corp job(s) \u2013 they run on this character's job slots.":
@@ -5744,6 +5954,9 @@ KATALOG = {
             "gemeinsamen Materialien. Rechtsklick f\u00fcgt sie diesem Plan hinzu.",
         "Suggestions for this plan": "Vorschl\u00e4ge f\u00fcr diesen Plan",
         "Shared": "Gemeinsam",
+        "Shared ISK": "Gemeinsam ISK",
+        "Part of this item that runs through reactions your plan builds itself (at its production depth) \u2013 only there do batches overflow. Shared ISK = that value per unit; the list is sorted by it.":
+            "Anteil dieses Items, der \u00fcber Reaktionen l\u00e4uft, die dein Plan selbst baut (bei seiner Production depth) \u2013 nur dort entsteht Batch-\u00dcberschuss. Gemeinsam ISK = dieser Wert je St\u00fcck; danach ist die Liste sortiert.",
         "Load your blueprints in \u201eMy Blueprints\u201c first \u2013 the suggestions "
         "come from their profit calculation.":
             "Lade zuerst deine Blaupausen in \u201eMy Blueprints\u201c \u2013 die "
@@ -6048,6 +6261,157 @@ KATALOG = {
             "Offener Bauplan \u201e{plan}\u201c (noch nicht gespeichert)",
         "{n} end products added \u2013 save the plan to keep it.":
             "{n} Endprodukte hinzugef\u00fcgt \u2013 speichere den Plan, um sie zu behalten.",
+        'Build from stock (Beta)':
+            'Aus Bestand bauen (Beta)',
+        'BUILD FROM STOCK (BETA)':
+            'AUS BESTAND BAUEN (BETA)',
+        'How many runs of each of your own blueprints the material in your hangar allows - the same stock rules as the build plan (structures, characters, corp hangar). Material reserved by locked build plans does not count. Missing components may be built from stock too, if you own their blueprint. Rounded up per run, only your blueprint ME - never more runs than really work.':
+            'Wie viele Runs jeder eigenen Blaupause das Material im Hangar hergibt - nach denselben Bestandsregeln wie der Bauplan (Strukturen, Charaktere, Corp-Hangar). Material gesperrter Baupläne zählt nicht. Fehlende Komponenten dürfen auch aus dem Bestand gebaut werden, wenn du ihre Blaupause besitzt. Je Run aufgerundet, nur die ME deiner Blaupause - nie mehr Runs, als wirklich gehen.',
+        'Only buildable':
+            'Nur baubare',
+        'Limited by':
+            'Begrenzt durch',
+        'Builds sub-steps':
+            'Baut Vorstufen',
+        'Profit total':
+            'Gewinn gesamt',
+        'From My Blueprints (materials valued at market price). Load My Blueprints once to see it.':
+            'Aus Meine Blueprints (Material zum Marktpreis bewertet). Lade Meine Blueprints einmal, um ihn zu sehen.',
+        'Loading failed.':
+            'Laden fehlgeschlagen.',
+        'Loading blueprints and stock …':
+            'Lade Blaupausen und Bestand …',
+        'blueprint copy runs':
+            'Runs der Kopien',
+        'Runs of these components are built from stock first.':
+            'Diese Komponenten werden zuerst aus dem Bestand gebaut.',
+        '{n} blueprints · {k} buildable from stock':
+            '{n} Blaupausen · {k} aus Bestand baubar',
+        '{n} item types partly reserved by locked plans (not counted)':
+            '{n} Item-Arten teils von gesperrten Plänen reserviert (nicht gezählt)',
+        'profit: load My Blueprints first':
+            'Gewinn: zuerst Meine Blueprints laden',
+        'Profit unknown - load My Blueprints first.':
+            'Gewinn unbekannt - lade zuerst Meine Blueprints.',
+        'Nothing matches the filters.':
+            'Nichts passt zu den Filtern.',
+        '⚠ No build structure linked - no stock counted. Link one under Structures or set stock to Everywhere.':
+            '⚠ Keine Bau-Struktur verknüpft - kein Bestand gezählt. Verknüpfe eine unter Strukturen oder stelle den Bestand auf Überall.',
+        '⚠ Could not read: {names}':
+            '⚠ Nicht lesbar: {names}',
+        'Open build plan with {n} units':
+            'Bauplan mit {n} Stück öffnen',
+        'Report written: {datei}':
+            'Bericht geschrieben: {datei}',
+        '⚠ Prices are from {scan}, the hub at the top is {hub} – run „Market scan“, then load again.':
+            '⚠ Preise stammen von {scan}, oben ist {hub} gewählt – „Market scan“ starten, dann neu laden.',
+        'Comparison running \u2026':
+            'Vergleich läuft \u2026',
+        # Stock locations (emm458)
+        'Stock locations (Beta)':
+            'Lagerorte (Beta)',
+        'STOCK LOCATIONS (BETA)':
+            'LAGERORTE (BETA)',
+        'Where the material of your saved, frozen build plans is lying: one card per station or structure, per item the character (or corp hangar) and the container, nested containers included. The game only takes material from the hangar of the character who starts the job - this page shows who has to move what. Counted as needed is only what the runs you have NOT built yet still take. Ship cargo and fittings do not count, like everywhere in Eve MoMa.':
+            'Wo das Material deiner gespeicherten, eingefrorenen Baupläne liegt: eine Karte je Station oder Struktur, je Item der Charakter (oder Hangar der Corp) und der Container, auch verschachtelt. Das Spiel nimmt Material nur aus dem Hangar des Charakters, der den Job startet - diese Seite zeigt, wer was verschieben muss. Als Bedarf zählt nur, was die noch NICHT gebauten Runs brauchen. Schiffsladung und Fittings zählen nicht, wie überall in Eve MoMa.',
+        "Which plans' material to list. Saved, frozen plans that are not completed. The search below finds any item regardless.":
+            'Welcher Pläne Material gelistet wird. Gespeicherte, eingefrorene, nicht abgeschlossene Pläne. Die Suche darunter findet jedes Item unabhängig davon.',
+        'Type or paste item names - one per line (a hangar copy with quantities works too)':
+            'Item-Namen tippen oder einfügen - einer je Zeile (eine Hangar-Kopie mit Mengen geht auch)',
+        'All frozen plans':
+            'Alle eingefrorenen Pläne',
+        'Expand all':
+            'Alle aufklappen',
+        'Collapse all':
+            'Alle zuklappen',
+        'Loading assets of all characters \u2026':
+            'Lade Assets aller Charaktere \u2026',
+        'in hangar (no container)':
+            'im Hangar (kein Container)',
+        'Stock not loaded for: {names} - what is lying there is missing here.':
+            'Bestand nicht geladen für: {names} – was dort liegt, fehlt hier.',
+        # Suche leeren (emm487)
+        'Clear search':
+            'Suche leeren',
+        'Back to all items – the search filters the cards as long as '
+        'text is in the box.':
+            'Zurück zu allen Items – die Suche filtert die Karten, solange '
+            'Text im Feld steht.',
+        # ESI-Fehlerbudget (emm480)
+        'ESI error budget used up (420) - CCP is answering nothing right '
+        'now. Wait a minute, then press Refresh.':
+            'ESI-Fehlerbudget erschöpft (420) – CCP antwortet gerade auf '
+            'nichts mehr. Eine Minute warten, dann Refresh drücken.',
+        # Karten je Ort (emm461)
+        'LOCATIONS':
+            'ORTE',
+        'ITEMS':
+            'ITEMS',
+        'MISSING':
+            'FEHLT',
+        'Material at a location you switch off counts nowhere - not in the shortfall either.':
+            'Material an einem abgeschalteten Ort zählt nirgends - auch nicht im Fehlbetrag.',
+        '{name} \u00b7 {n} units':
+            '{name} \u00b7 {n} Stück',
+        '{n} items missing':
+            '{n} fehlen',
+        '{i} item(s) \u00b7 {n} units':
+            '{i} Item(s) \u00b7 {n} Stück',
+        'missing {n}':
+            'es fehlen {n}',
+        'Still needed by plans: {b}':
+            'Noch gebraucht von den Plänen: {b}',
+        '{n} across all tracked locations':
+            '{n} über alle erfassten Orte',
+        'Nothing your plans still need lies here.':
+            'Hier liegt nichts, was deine Pläne noch brauchen.',
+        '{n} item(s) covered by jobs not yet assigned':
+            '{n} Material(ien) durch noch nicht zugeordnete Jobs gedeckt',
+        '{n} job(s) assigned automatically':
+            '{n} Job(s) automatisch zugeordnet',
+        '\u26a0 {n} job(s) belong to no plan - assign them':
+            '\u26a0 {n} Job(s) gehören keinem Plan – bitte zuordnen',
+        'Industry jobs not loaded - runs you have already built are missing here.':
+            'Industrie-Jobs nicht geladen – schon gebaute Runs fehlen hier.',
+        'ownership not loaded for: {names} – press Refresh':
+            'Besitz nicht geladen für: {names} – bitte Refresh drücken',
+        '⚠ Blueprints not loaded for: {names} – what they own is missing here.':
+            '⚠ Blaupausen nicht geladen für: {names} – was sie besitzen, fehlt hier.',
+        '{name}: ESI only sent {jetzt} of {vor} stacks - press Refresh.':
+            '{name}: ESI hat nur {jetzt} von {vor} Stapeln geschickt – bitte Refresh drücken.',
+        '\u26a0 INCOMPLETE DATA - do not buy from this list!':
+            '\u26a0 UNVOLLSTÄNDIGE DATEN – kauf nichts von dieser Liste!',
+        'Structure (no docking access) \u00b7 #{id}':
+            'Struktur (kein Andockrecht) \u00b7 #{id}',
+        'Not at any tracked location':
+            'An keinem erfassten Ort',
+        'tracked':
+            'erfasst',
+        'searched':
+            'gesucht',
+        'still needed by your plans':
+            'noch von deinen Plänen gebraucht',
+        'not enough across all characters':
+            'zu wenig über alle Charaktere',
+        '{n} location(s) switched off':
+            '{n} Ort(e) abgeschaltet',
+        'Search for this item':
+            'Nach diesem Item suchen',
+        'All off':
+            'Alle aus',
+        'Copy shopping list':
+            'Einkaufsliste kopieren',
+        "Everything that is really missing across ALL listed plans, as Name<TAB>quantity for EVE's multibuy. Only material your plans BUY - anything they build themselves stays out, so you never buy what you are about to produce. Your saved shopping list is not touched.":
+            'Alles, was über ALLE gelisteten Pläne wirklich fehlt, als Name<TAB>Menge für EVEs Multibuy. Nur Material, das deine Pläne KAUFEN - was sie selbst bauen, bleibt draußen, damit du nie kaufst, was du gerade produzierst. Deine gespeicherte Einkaufsliste bleibt unberührt.',
+        'Nothing is missing \u2013 nothing to buy.':
+            'Es fehlt nichts \u2013 nichts zu kaufen.',
+        "{n} materials copied for EVE's multibuy.":
+            '{n} Materialien für EVEs Multibuy kopiert.',
+        'Switch every location on - or, when all are on, off at once.':
+            'Alle Orte einschalten - oder, wenn alle an sind, auf einmal aus.',
+        # "Where is it?" (emm459)
+        'Where is it? (Stock locations)':
+            'Wo liegt es? (Lagerorte)',
     },
 }
 

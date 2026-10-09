@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from eve_trader import config, esi, store   # noqa: E402
 
-FASSUNG = 4
+FASSUNG = 5
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BERICHT = os.path.join(WURZEL, "berichte", "zuordnung_bericht.txt")
 
@@ -243,6 +243,34 @@ def main():
                                                     include_delivered=True)]
         except Exception as e:
             fehler[c.get("character_name") or cid] = f"{type(e).__name__}: {e}"
+    # CORP-JOBS ZAEHLEN WIE CHARAKTER-JOBS (emm483, REGEL CORP = CHARAKTER):
+    # auch ein Corp-Job kann einem Plan zugeordnet sein - ohne ihn fehlte in
+    # diesem Bericht genau die Zeile, um die es geht. Ein Abruf je Corp
+    # (corp.abrufplan); /characters/.../industry/jobs enthaelt keine
+    # Corp-Jobs (geprueft, emm389). Der BESTAND weiter unten bleibt bewusst
+    # nur die Charakter-Hangare - Corp-Bestand zeigen Stock locations und
+    # zeige_lagerorte.
+    if settings.get("use_corp"):
+        from eve_trader import corp
+        _cv, _rv = {}, {}
+        for c in chars:
+            cid = int(c["character_id"])
+            try:
+                _cv[cid] = esi.fetch_character_corporation(cid)
+                _rv[cid] = esi.fetch_character_roles(client_id, cid)
+            except Exception as e:
+                _rv[cid] = None
+                fehler[f"Corp-Rollen {c.get('character_name') or cid}"] = \
+                    f"{type(e).__name__}: {e}"
+        _pjobs, _ = corp.abrufplan(chars, _cv, _rv, corp.ROLLE_JOBS)
+        for _cjid, _cvia in sorted(_pjobs.items()):
+            try:
+                jobs += [dict(j, _char=f"Corp #{_cjid}")
+                         for j in esi.fetch_corporation_jobs(
+                             client_id, _cvia, _cjid,
+                             include_delivered=True) or []]
+            except Exception as e:
+                fehler[f"Corp-Jobs #{_cjid}"] = f"{type(e).__name__}: {e}"
     p("-" * 78)
     p(f"INDUSTRIE-JOBS von ESI: {len(jobs)} (aktiv, fertig und abgeliefert)")
     p("-" * 78)
@@ -297,12 +325,11 @@ def main():
                 continue
             if str(_o.get("id")) in _mitgl:
                 continue
-            for _k in (_o.get("reserve_map") or {}):
-                try:
-                    streit.setdefault(int(_k), []).append(
-                        str(_o.get("label") or _o.get("item_name") or "?"))
-                except (TypeError, ValueError):
-                    continue
+            # Fassung 5 (emm427): strittig nur, wenn der andere Plan das Item
+            # SELBST BAUT - dieselbe Regel wie im Werkzeug (plan_baut_items).
+            for _k in _MWH.plan_baut_items(_o):
+                streit.setdefault(int(_k), []).append(
+                    str(_o.get("label") or _o.get("item_name") or "?"))
         namen = {}
         try:
             namen = esi.resolve_names(sorted(set(runs) | set(bedarf)))

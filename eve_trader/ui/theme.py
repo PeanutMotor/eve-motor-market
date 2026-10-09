@@ -332,14 +332,18 @@ QPushButton#Primary:pressed {{ background: {CYAN_FILL_PRESS}; border: 1px solid 
 QPushButton#Danger:hover {{ border-color: {RED}; color: {RED}; padding: 3px 12px 7px 12px; }}
 QPushButton#Danger:pressed {{ background: {PANEL2}; padding: 7px 12px 3px 12px; }}
 
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
+/* QPlainTextEdit gehoert dazu (Nutzer: "die Suchleiste ist schwer
+   erkennbar, weil selbe Hintergrundfarbe") - ohne Eintrag hier faellt
+   ein mehrzeiliges Eingabefeld auf den Fensterhintergrund zurueck und
+   sieht aus wie Text, nicht wie ein Feld. */
+QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
     background: {PANEL2};
     border: 1px solid {BORDER};
     border-radius: 5px;
     padding: 3px 6px;
     color: {TEXT};
 }}
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
     border-color: {CYAN};
 }}
 QComboBox::drop-down {{ border: none; }}

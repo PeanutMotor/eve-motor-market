@@ -860,8 +860,9 @@ for _pend in ("_bd_bp_pending", "_bd_frozen_pending", "_bd_manual_pending",
 # Alle drei "neuer Plan"-Einstiege muessen fresh=True setzen,
 # _open_saved_plan hingegen NICHT (der soll ja den Plan wiederherstellen).
 # 4 seit emm298: der Reset-Knopf oeffnet den Einzelplan ebenfalls frisch.
-eq("aa19 vier Einstiege oeffnen frisch (drei neue Plaene + Reset)",
-   _src_txt.count("fresh=True)"), 4)
+# 5 seit emm436: "Build from stock" oeffnet einen neuen Plan mit Menge.
+eq("aa19 fuenf Einstiege oeffnen frisch (drei neue Plaene + Reset + Bestand)",
+   _src_txt.count("fresh=True)"), 5)
 check("aa19 gespeicherter Plan oeffnet NICHT frisch",
       'self.open_build_detail(p["type_id"], p["item_name"])' in _src_txt)
 check("aa19 Menge faellt auf 1 zurueck", "self._bd_qty = 1" in _src_txt)
@@ -1247,7 +1248,9 @@ check("aa29 Verkaufs-Hub wird mit dem Plan gespeichert",
       '"sell_hub": getattr(self, "_bd_sell_hub", None)' in _src_txt)
 check("aa29 und der geholte Preis auch (friert mit ein)",
       '"sell_hub_price": getattr(' in _src_txt)
-check("aa29 Standard ist Jita", 'self._bd_sell_hub = "jita"' in _src_txt)
+# emm437: Standard = der Hub oben (Discord elglebo), Jita nur als Rueckfall.
+check("aa29 Standard ist der Hub oben",
+      "self._bd_sell_hub = _shv(self.g_hub.currentData()" in _src_txt)
 
 # ---------------------------------------------------------------- (aa30)
 # NUTZER-BUG (mein Fehler): "Orte finden und alle verknuepfen" tat nichts.
@@ -5083,12 +5086,12 @@ eq("aa126 knapp UNTER der Schwelle ist keine Warnung",
 check("aa126 Balken bleibt in 0..100",
       all(0 <= _bw126({"under_pct": _m, "daily_vol": 500})[0] <= 100
           for _m in (-5.0, 0.0, 15.0, 30.0, 999.0)))
-# Die Liste selbst: vier Spalten, und die restlichen Zahlen sind NICHT
-# geloescht, sondern in den Zeilen-Tooltip gewandert.
-check("aa126 Trefferliste hat vier Spalten",
-      'QTableWidget(0, 4)' in _fn_src("_build_build_tab")
-      and '[t("Item"), t("Build margin"), t("Profit/unit"), t("Rating")]'
-      in _src_txt)
+# Die Liste selbst: fuenf Spalten (seit emm499 mit "vs. 90d avg"), und die
+# restlichen Zahlen sind NICHT geloescht, sondern im Zeilen-Tooltip.
+check("aa126 Trefferliste hat fuenf Spalten",
+      'QTableWidget(0, 5)' in _fn_src("_build_build_tab")
+      and '[t("Item"), t("Build margin"), t("Profit/unit"),' in _src_txt
+      and 't("vs. 90d avg"), t("Rating")]' in _src_txt)
 _rb126 = _fn_src("_render_build")
 for _kz in ("Build cost", "Profit/day", "daily volume", "Days of stock",
             "Volatility"):
@@ -13723,7 +13726,7 @@ check("aa275 die Fehlmenge wird zurueckgegeben, nicht verschluckt",
 # Sitzung 17: ohne Haken zieht `_menge` jetzt die Eigenproduktion ab
 # (aa304) - die Rechnung ist damit zweizeilig, die Zusage bleibt.
 check("aa275 die Liste UND die Mengen-Uebergabe nutzen dieselbe Rechnung",
-      "if _rest:\n                    return _rest_kaufmenge(r)" in _bf275
+      "if _rest_modus:\n                    return _rest_kaufmenge(r)" in _bf275
       and '"missing": (_rest_kaufmenge(r)' in _bf275)
 check("aa275 und NICHT mehr aus owned/built der Planzeile",
       "_need - _bes - _built_anteil" not in _bf275)
@@ -14176,6 +14179,17 @@ try:
                  if "undefined name" in _z]
     eq(f"aa288 pyflakes findet keinen undefinierten Namen ({len(_undef288)})",
        _undef288[:3], [])
+    # RATSCHE "ZUGEWIESEN, NIE GELESEN" (emm485, Nutzer: "schaust dir das
+    # ganze nochmal an und suchst fehler"): 21 solche Zuweisungen standen im
+    # Code, zwei Klassen davon taeuschten etwas vor - Variablen, die wie
+    # eine Anzeige AUSSEHEN (have_txt/have_col im Materialien-Tab, 9 Stellen,
+    # die Spalte fuellt laengst _esi_zelle), und ein berechneter, nie
+    # gezeigter Text (Optimierer-"why", jetzt angeschlossen). Stand: 0 -
+    # und 0 bleibt es.
+    _tot288 = [_z for _z in (_pfaus288 or "").splitlines()
+               if "assigned to but never used" in _z]
+    eq(f"aa288 pyflakes findet keine zugewiesene, nie gelesene Variable "
+       f"({len(_tot288)})", _tot288[:3], [])
 except (FileNotFoundError, _sp288.TimeoutExpired):
     pass
 
@@ -15429,7 +15443,7 @@ check("aa332 und ist breit genug fuer neun Stellen",
 _bpf333 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
 check("aa333 das Endprodukt wird aus der eigenen Blaupause vorbelegt",
       "self._bd_own_bpc_me_te(type_id)" in _bpf333
-      and 'if _me_te_in_header and not getattr(self, "_bd_me_manuell", False):' in _bpf333)
+      and '(_me_te_in_header and not getattr(self, "_bd_me_manuell", False)' in _bpf333)
 check("aa333 dieselbe Quelle wie bei den Zwischenstufen (schlechteste Kopie)",
       "def _bd_own_bpc_me_te" in open("eve_trader/ui/main_window.py",
                                       encoding="utf-8").read())
@@ -18911,7 +18925,7 @@ eq("aa387 sonst zaehlt die kleinste eigene Kopie aus dem Blaupausen-Cache",
 eq("aa387 Stork: 28 Runs, Kopien a 2", _ekl387(28, 0, 2, 14),
    {"copies": 14, "runs": 2})
 # WEISS NIEMAND ETWAS, WIRD NICHTS GERATEN. Frueher entstand genau hier die
-# Riesenkopie; "unbekannt" heisst jetzt unbegrenzt - wie bei T1/BPO.
+# Riesenkopie; "no_price" heisst jetzt unbegrenzt - wie bei T1/BPO.
 eq("aa387 ohne jede Angabe: kein Deckel (None), NICHT 'eine Kopie mit allem'",
    _ekl387(52, 0, 0, 0), None)
 eq("aa387 mehr Jobs als Blaupausen kann niemand fahren",
@@ -21093,7 +21107,7 @@ check("aa433 die Karte zeigt den Rang (#n) aus derselben Quelle",
       and "self._plan_rang_auffrischen()" in _fn_src("_sortiere_plan_karten")
       and "self._plan_rang_auffrischen()" in _fn_src("_plan_reihenfolge_merken"))
 check("aa433 die Prioritaets-Verteilung wird gespeichert (Quelle 'prioritaet')",
-      "self._prio_zuordnung_schreiben(_jobs)" in _fn_src("_job_zuordnung_nachfuehren")
+      "self._prio_zuordnung_schreiben(" in _fn_src("_job_zuordnung_nachfuehren")
       and '"prioritaet"' in _fn_src("_prio_zuordnung_schreiben"))
 
 # ---------------------------------------------------------------- (aa434)
@@ -21327,7 +21341,7 @@ check("aa437 der Runplaner filtert nach dem Zuordnen, der Abruf gleich beim Lade
 check("aa437 die Zuordnung selbst liest ALLE laufenden Jobs",
       '"_bd_active_jobs_alle"' in _fn_src("_job_zuordnung_nachfuehren"))
 check("aa437 laufende Jobs gehen durch Prioritaet und Frage",
-      "self._prio_zuordnung_schreiben(_jobs)" in _fn_src("_job_zuordnung_nachfuehren"))
+      "self._prio_zuordnung_schreiben(" in _fn_src("_job_zuordnung_nachfuehren"))
 check("aa437 die Zeile sagt 'laeuft, noch keinem Plan zugeordnet'",
       '"_bd_active_unzugeordnet"' in _fn_src("_fill_bauplan_schedule"))
 # DAS SZENARIO (werkzeuge/szenario_prioritaet.py) als Pruefung: dieselben
@@ -21343,6 +21357,8 @@ if _z437:
     check("aa437 Szenario: laeuft As Job, bleiben B und C offen (Rest X 10)",
           _z437["2"]["B"]["rest_X"] == 10 and _z437["2"]["C"]["rest_X"] == 10
           and _z437["2"]["A"]["rest_X"] == 0)
+    # emm430: Job 503 hat 6 Runs (kein exakter Treffer) - mit 10 waeren B
+    # und C mehrdeutig und er wuerde gefragt (aa491).
     check("aa437 Szenario: laufender Job ohne Klick geht per Prioritaet an B (#1 mit Platz)",
           _z437["2b"]["B"]["jobs"] == [503] and not _z437["2b"]["B"]["laeuft_offen"])
     check("aa437 Szenario: Zurueckschieben laesst jeden Job bei seinem Plan",
@@ -22240,7 +22256,9 @@ from eve_trader.ui.mw_helpers import (jobs_dauer_kurz as _jdk465,
                                       job_anzeigename as _jan465)
 eq("aa465 Restzeit kurz, zwei Einheiten",
    [_jdk465(x) for x in (0, 59, 60, 7199, 7200, 86400 + 5 * 3600 + 13 * 60)],
-   ["< 1 m", "< 1 m", "1 m", "1 h 59 m", "2 h 0 m", "1 T 5 h"])
+   ["< 1 m", "< 1 m", "1 m", "1 h 59 m", "2 h 0 m", "1 d 5 h"])
+# Tages-Buchstabe uebersetzt (emm412, Discord LRKR: "2T ... should be two
+# days in english"): Englisch "d", Deutsch "T"; b172 prueft beide Sprachen.
 _ch465 = {1: {"name": "A"}, 2: {"name": "B"}, 3: {"name": "C"}}
 eq("aa465 aus-geschaltete fallen weg (Text oder Zahl), ohne Liste alle",
    (sorted(_js465(_ch465, ["2"])), sorted(_js465(_ch465, [3])), sorted(_js465(_ch465, None))),
@@ -22452,6 +22470,2276 @@ finally:
 eq("aa459 Struktur-Orderbuch merkt order_ids je Item",
    {_t: _b.get("ids") for _t, _b in _s459.items()},
    {34: {900: 901400.0, 901: 901300.0}, 35: {5: 9.0}})
+
+# ---------------------------------------------------------------- (aa480)
+# BUY-SEITE MIT REICHWEITE (emm408, Discord LRKR + Nutzer: "die Order soll
+# immer den regionsweiten Preis ueberbieten"). Mit buy_reichweite=True
+# zaehlt die Buy-Seite auch Orders ANDERER Orte mit, deren Reichweite die
+# Station erreicht: range "region" exakt, Sprung-Reichweiten als Naeherung;
+# "station"/"solarsystem" an fremden Orten bleiben draussen. Sells bleiben
+# IMMER stationsgebunden. Ohne das Flag aendert sich nichts (alle anderen
+# Aufrufer: Portfolio-Livepreise, Ladder, Scanner).
+
+
+class _Antw480(_Antw459):
+    def json(self):
+        return [
+            {"order_id": 1, "price": 100.0, "volume_remain": 1,
+             "is_buy_order": True, "location_id": 60003760, "range": "station"},
+            {"order_id": 2, "price": 150.0, "volume_remain": 1,     # Perimeter,
+             "is_buy_order": True, "location_id": 123, "range": "region"},  # region-weit
+            {"order_id": 3, "price": 140.0, "volume_remain": 1,     # Sprung-Reichweite
+             "is_buy_order": True, "location_id": 123, "range": "5"},
+            {"order_id": 4, "price": 999.0, "volume_remain": 1,     # fremde Station
+             "is_buy_order": True, "location_id": 123, "range": "station"},
+            {"order_id": 5, "price": 998.0, "volume_remain": 1,     # fremdes System
+             "is_buy_order": True, "location_id": 123, "range": "solarsystem"},
+            {"order_id": 6, "price": 90.0, "volume_remain": 1,      # fremder SELL
+             "is_buy_order": False, "location_id": 123, "range": "region"},
+            {"order_id": 7, "price": 200.0, "volume_remain": 1,
+             "is_buy_order": False, "location_id": 60003760, "range": "station"},
+        ]
+
+
+_alt480 = _esi459._get_with_retry
+try:
+    _esi459._get_with_retry = lambda *a, **k: _Antw480()
+    _ohne480 = _esi459.fetch_type_orders(34, 60003760, 10000002)
+    _mit480 = _esi459.fetch_type_orders(34, 60003760, 10000002,
+                                        buy_reichweite=True)
+finally:
+    _esi459._get_with_retry = _alt480
+eq("aa480 ohne Flag: nur die Station (wie immer)",
+   (_ohne480["buy"], _ohne480["sell"]), ([(100.0, 1)], [(200.0, 1)]))
+eq("aa480 mit Flag: region-weit + Sprung-Naeherung zaehlen, "
+   "station/solarsystem fremd und fremde Sells NIE",
+   (_mit480["buy"], _mit480["sell"]),
+   ([(150.0, 1), (140.0, 1), (100.0, 1)], [(200.0, 1)]))
+check("aa480 das Order-Update ruft die Buy-Seite MIT Reichweite ab",
+      "buy_reichweite=True): _ti"
+      in open("eve_trader/ui/main_window.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa481)
+# HANDELS-PAAR AUCH FUER DEN EINSTAND (emm410, Nutzer "ja"). Char 1 kauft
+# 10 x 100 in Jita (Ort 60003760), gibt sie Char 2, der verkauft 6 in
+# 4-HWWF. OHNE Paar: die 10 Lots von Char 1 bleiben liegen (sein Verkauf
+# findet nichts), Bestand 10 @ 100. MIT Paar {1, 2}: der Verkauf verbraucht
+# 6 der 10 Lots -> Bestand 4 @ 100. Handrechnung, rein, ohne Qt.
+import eve_trader.market as _mk481
+_tx481 = [
+    {"date": "2026-09-01T10:00:00Z", "type_id": 7, "quantity": 10,
+     "unit_price": 100.0, "is_buy": True, "character_id": 1,
+     "location_id": 60003760},
+    {"date": "2026-09-02T10:00:00Z", "type_id": 7, "quantity": 6,
+     "unit_price": 150.0, "is_buy": False, "character_id": 2,
+     "location_id": 999},
+]
+_ohne481 = _mk481.aggregate_holdings(_tx481)
+_mit481 = _mk481.aggregate_holdings(_tx481, paar={1, 2})
+eq("aa481 ohne Paar bleiben die Lots des Einkaeufers liegen",
+   (_ohne481[7]["quantity"], _ohne481[7]["avg_buy"]), (10, 100.0))
+eq("aa481 mit Paar verbraucht der Verkaeufer die Lots des Einkaeufers",
+   (_mit481[7]["quantity"], _mit481[7]["avg_buy"]), (4, 100.0))
+# Fracht: dieselbe Topf-Regel. Hub = 999 (4-HWWF): die 4 verbliebenen
+# Stueck wurden in Jita gekauft -> 4 x 10 m3 x 50 ISK/m3 = 2'000 Fracht.
+_fr481 = _mk481.fracht_je_item(_tx481, {999}, 50.0, {7: 10.0}, paar={1, 2})
+eq("aa481 Fracht aus dem gemeinsamen Topf: 4 Stueck x 10 m3 x 50",
+   (_fr481[7]["menge"], _fr481[7]["menge_fracht"], _fr481[7]["fracht"]),
+   (4, 4, 2000.0))
+_fr481b = _mk481.fracht_je_item(_tx481, {999}, 50.0, {7: 10.0})
+eq("aa481 ohne Paar: alle 10 Lots liegen weiter (wie bisher)",
+   (_fr481b[7]["menge"], _fr481b[7]["fracht"]), (10, 5000.0))
+# Bestands-Modus: SEINE Items, bepreist aus dem Paar-Topf.
+_ha481 = _mk481.holdings_from_assets({7: 3}, _tx481, paar={1, 2})
+eq("aa481 Assets des Verkaeufers tragen den Paar-Einstand",
+   (_ha481[7]["quantity"], _ha481[7]["avg_buy"]), (3, 100.0))
+# Verdrahtung: Portfolio-Aufbau und Fracht-Karte reichen das Paar durch.
+_mw481 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa481 der Portfolio-Aufbau reicht das Handels-Paar durch",
+      "market.aggregate_holdings(transactions, paar=_paar_h)" in _mw481
+      and "paar=_paar_h)" in _mw481)
+check("aa481 die Fracht-Karte reicht das Handels-Paar durch",
+      "ohne, paar=_paar_f)" in _mw481)
+
+# ---------------------------------------------------------------- (aa482)
+# FIRESALES (emm413, Discord Str1k3r2k4 Case B: "verfuegbare Contracts
+# ... mit den aktuellen Marktpreisen vergleichen"; Nutzer: "firesales
+# koennte man den nennen"). Die reine Bewertung mit Handrechnung und die
+# drei Scam-Schutze: BPC zaehlt 0, unbekannter Preis zaehlt 0, ein
+# Contract, der Items VERLANGT, ist nicht bewertbar (gewinn None).
+from eve_trader import scanner as _sc482
+_pf482 = {100: 1000.0, 101: 0.0}.get
+_ct482 = {"price": 5000, "volume": 10, "contract_id": 7,
+          "date_issued": "2026-10-04T10:00:00Z", "title": "x"}
+_it482 = [{"type_id": 100, "quantity": 10, "is_included": True},
+          {"type_id": 101, "quantity": 5, "is_included": True},
+          {"type_id": 102, "quantity": 1, "is_included": True,
+           "is_blueprint_copy": True}]
+_b482 = _sc482.firesale_bewertung(_ct482, _it482, _pf482)
+eq("aa482 Handrechnung: Wert 10x1000, Gewinn 5000, Rabatt 50 %",
+   (_b482["wert"], _b482["gewinn"], _b482["rabatt_pct"]),
+   (10000.0, 5000.0, 50.0))
+eq("aa482 BPC zaehlt 0 und wird gezaehlt, unbekannter Preis gelistet",
+   (_b482["bpc_n"], _b482["no_price"]), (1, [101]))
+_b482v = _sc482.firesale_bewertung(
+    _ct482, _it482 + [{"type_id": 200, "quantity": 1,
+                       "is_included": False}], _pf482)
+eq("aa482 Contract VERLANGT Items -> gewinn None, verlangt True",
+   (_b482v["gewinn"], _b482v["rabatt_pct"], _b482v["verlangt"]),
+   (None, None, True))
+eq("aa482 kaputte Zeilen (tid/qty 0) fallen stumm raus",
+   _sc482.firesale_bewertung(_ct482, [{"type_id": 0, "quantity": 5},
+                                      {"type_id": 100, "quantity": 0}],
+                             _pf482)["enthalten"], [])
+# scan_firesales: Deckel nimmt die NEUESTEN, ein stummer Contract kippt
+# nichts - ESI gestubbt, kein Netz.
+_alt482 = (_sc482.esi.fetch_public_contracts, _sc482.esi.fetch_contract_items)
+try:
+    _cts482 = [{"contract_id": i, "price": 100, "volume": 1,
+                "date_issued": f"2026-10-0{i}T00:00:00Z"} for i in (1, 2, 3)]
+    _sc482.esi.fetch_public_contracts = (
+        lambda rid, min_price=0, min_volume=0, should_cancel=None,
+        progress=None: list(_cts482))
+    def _fi482(cid):
+        if cid == 3:
+            raise RuntimeError("stumm")
+        return [{"type_id": 100, "quantity": 1, "is_included": True}]
+    _sc482.esi.fetch_contract_items = _fi482
+    _r482 = _sc482.scan_firesales(10000002, _pf482, min_preis=0,
+                                  max_contracts=2)
+    eq("aa482 Deckel 2: die neuesten (3, 2), der stumme zaehlt als Fehler",
+       (_r482["gesamt"], _r482["geprueft"], _r482["fehler"],
+        sorted(z["contract_id"] for z in _r482["zeilen"])),
+       (3, 1, 1, [2]))
+    eq("aa482 roh traegt Contract + Inhalt fuer das Umrechnen (emm421)",
+       [(c["contract_id"], len(it)) for c, it in _r482["roh"]], [(2, 1)])
+finally:
+    _sc482.esi.fetch_public_contracts = _alt482[0]
+    _sc482.esi.fetch_contract_items = _alt482[1]
+
+# ---------------------------------------------------------------- (aa484)
+# FIRESALES ORT + SPRUENGE (emm421). firesale_orte mit Stub-Abrufen: je
+# Ort Name + System, je System Name/Sicherheit + Spruenge; ein Ort ohne
+# Zugriff (None) und ein Abruf-Fehler kippen nichts.
+_o484 = {60003760: {"name": "Jita IV", "system_id": 30000142},
+         1035000000001: None}
+def _ortfn484(i):
+    if i == 666:
+        raise RuntimeError("kaputt")
+    return _o484.get(i)
+_r484 = _sc482.firesale_orte(
+    [60003760, 1035000000001, 666, 0, 60003760], 30000144, _ortfn484,
+    lambda s: {"name": "Jita", "security": 0.95},
+    lambda a, b: 3 if (a, b) == (30000144, 30000142) else None)
+eq("aa484 Station: Name, System, Sicherheit, 3 Spruenge",
+   _r484.get(60003760), {"name": "Jita IV", "system": "Jita", "sec": 0.95,
+                          "spruenge": 3})
+eq("aa484 Struktur ohne Zugriff + Fehler-Ort: alles None, kein Absturz",
+   (_r484.get(1035000000001), _r484.get(666)),
+   ({"name": None, "system": None, "sec": None, "spruenge": None},
+    {"name": None, "system": None, "sec": None, "spruenge": None}))
+eq("aa484 Ort-ID 0 faellt raus, doppelte nur einmal", sorted(_r484),
+   [666, 60003760, 1035000000001])
+# fetch_route_jumps: gleiches System 0 ohne Abruf; sonst Laenge - 1 der
+# Route; Fehler -> None (nicht gemerkt). Netz gestubbt.
+from eve_trader import esi as _esi484
+_alt484 = _esi484._get_with_retry
+try:
+    _esi484._ROUTE_CACHE.clear()
+    class _A484:
+        status_code = 200
+        def json(self):
+            return [1, 2, 3, 4]
+    _rufe484 = []
+    _esi484._get_with_retry = (lambda url, **kw: _rufe484.append(url) or _A484())
+    eq("aa484 Route: gleiches System 0, sonst Stationen-1, zweiter Ruf gemerkt",
+       (_esi484.fetch_route_jumps(7, 7), _esi484.fetch_route_jumps(7, 9),
+        _esi484.fetch_route_jumps(7, 9), len(_rufe484)), (0, 3, 3, 1))
+    def _kaputt484(url, **kw):
+        raise RuntimeError("netz")
+    _esi484._get_with_retry = _kaputt484
+    eq("aa484 Route-Fehler -> None", _esi484.fetch_route_jumps(7, 11), None)
+finally:
+    _esi484._get_with_retry = _alt484
+    _esi484._ROUTE_CACHE.clear()
+
+# ---------------------------------------------------------------- (aa483)
+# BAUPLAN BLEIBT WAEHREND DER LADEPHASE VORN (emm416, Nutzer: "waehrend
+# er laedt rutscht er einfach nach hinten"). Die reine Entscheidung:
+# nach vorn NUR sichtbar + nicht minimiert + Cursor NICHT ueber dem
+# Hauptfenster (sonst war es ein Nutzer-Klick, und der gewinnt).
+from eve_trader.ui.mw_basis import vorne_halten_entscheid as _vh483
+eq("aa483 nach vorn nur sichtbar, nicht minimiert, Cursor nicht im Haupt",
+   (_vh483(True, False, False), _vh483(True, True, False),
+    _vh483(True, False, True), _vh483(False, False, False)),
+   (True, False, False, False))
+
+# ---------------------------------------------------------------- (aa485)
+# ESI-VERZUG-WARNUNG (emm424, Nutzer: "die Warnung finde ich gut"):
+# Technetium-Fall nachgerechnet - Platinum Technite x15, 100 Technetium je
+# Run (Basis), Start NACH dem Bestands-Check -> bis zu 1'500. Vor dem
+# Check gestartete und gelieferte Jobs zaehlen nicht, ohne Zeitpunkt {}.
+from eve_trader.ui.mw_helpers import lag_verbrauch as _lv485
+import datetime as _dt485
+_ts485 = _dt485.datetime(2026, 10, 4, 20, 40,
+                         tzinfo=_dt485.timezone.utc).timestamp()
+_jobs485 = {16662: [
+    {"status": "active", "start_date": "2026-10-04T20:57:40Z", "runs": 15,
+     "activity_id": 11, "product_type_id": 16662},
+    {"status": "active", "start_date": "2026-10-04T12:00:00Z", "runs": 9,
+     "activity_id": 11, "product_type_id": 16662},
+    {"status": "delivered", "start_date": "2026-10-04T21:00:00Z", "runs": 5,
+     "activity_id": 11, "product_type_id": 16662}]}
+_mats485 = lambda pid, act: [(16649, 100), (16644, 100)] if pid == 16662 else None
+eq("aa485 nur der nach dem Check gestartete Job zaehlt: 15 x 100",
+   _lv485(_jobs485, _ts485, _mats485), {16649: 1500, 16644: 1500})
+eq("aa485 ohne Bestands-Zeitpunkt keine Warnung",
+   _lv485(_jobs485, None, _mats485), {})
+eq("aa485 Job ohne Rezept / kaputtes Datum faellt still raus",
+   _lv485({1: [{"status": "active", "start_date": "kaputt", "runs": 3}],
+           2: [{"status": "active", "start_date": "2026-10-04T21:00:00Z",
+                "runs": 3, "activity_id": 1}]}, _ts485, _mats485), {})
+
+# ---------------------------------------------------------------- (aa486)
+# SCIENCE-JOBS VERTEILEN (emm425): der Reihe nach bis zu den Slots je
+# Charakter, Rest in die naechste Welle; 0-Slot-Charaktere fallen raus.
+from eve_trader.ui.mw_helpers import science_verteilen as _sv486
+eq("aa486 4 Jobs auf A(2)+B(3): A 2, B 2",
+   _sv486([("x", 4)], [(1, 2), (2, 3)]), [(1, 1, [("x", 2)]), (2, 1, [("x", 2)])])
+eq("aa486 zu wenig Slots -> Welle 2, zwei Auftraege geteilt",
+   _sv486([("x", 2), ("y", 1)], [(1, 1), (2, 1)]),
+   [(1, 1, [("x", 1)]), (2, 1, [("x", 1)]), (1, 2, [("y", 1)])])
+eq("aa486 ohne Slots / ohne Auftraege -> leer",
+   (_sv486([("x", 2)], [(1, 0)]), _sv486([], [(1, 3)])), ([], []))
+
+# ---------------------------------------------------------------- (aa487)
+# ROLLEN JE PLAN - BESTAND BLEIBT (emm426, Nutzer-Entscheid "Ja, Bestand
+# bleibt"): der Bestands-Pool = heutige Rollen + gemerkter Pool + Rollen
+# aller OFFENEN gespeicherten Plaene; abgeschlossene Plaene zaehlen nicht.
+from eve_trader.ui.main_window import MainWindow as _MW487
+eq("aa487 Pool: aktuelle Rollen + Pool + offene Plaene, ohne fertige",
+   sorted(_MW487._runplan_pool_char_ids({
+       "bau_build_chars": [1], "bau_rollen_pool": [2],
+       "bau_saved_plans": [{"rollen": {"bau_copy_chars": [3]}},
+                           {"done_manual": True,
+                            "rollen": {"bau_build_chars": [4]}}]})),
+   [1, 2, 3])
+from eve_trader import config as _cfg487
+_src487 = open(_cfg487.__file__, encoding="utf-8").read()
+check("aa487 Migration legt den Pool einmal aus den heutigen Rollen an",
+      'if "bau_rollen_pool" not in data:' in _src487)
+
+# ---------------------------------------------------------------- (aa500)
+# MY BLUEPRINTS: JOBKOSTEN JE STUFE (emm443, Nutzer: "nimmt My Blueprints
+# fuer Reactions die angegebene Reaktions-Struktur und fuer Components und
+# Endprodukt die angegebene Bau-Struktur?"). Endprodukt der Zeile ->
+# Endprodukt-Struktur, sonst die Stufe des Items; Cost-Rig 0 (pessimistisch).
+from eve_trader.ui.mw_helpers import JobkostenJeStufe as _JJS500
+from eve_trader import industry as _ind500
+_jj500 = _JJS500(1, lambda _t: "reaction_1" if _t == 5 else "components",
+                 {"endproduct": {"system_index": 0.10, "facility_tax": 0.0,
+                                 "role_bonus": 0.0, "cost_rig": 0.0},
+                  "components": {"system_index": 0.05, "facility_tax": 0.01,
+                                 "role_bonus": 0.0, "cost_rig": 0.0}})
+eq("aa500 Endprodukt / Komponente / Reaktion ohne Eintrag",
+   (_jj500.get(1)["system_index"], _jj500.get(2)["system_index"], _jj500.get(5)),
+   (0.10, 0.05, None))
+# Handrechnung _job_cost: EIV 100 x 10 = 1000; Endprodukt 1000 x (0.10 + 0.04
+# SCC) = 140; dasselbe Rezept als Komponente 1000 x (0.05 + 0.01 + 0.04) = 100.
+_o500 = {"adjusted_prices": {34: 10.0}, "jobcost_by_tid": _jj500,
+         "system_index_mfg": 0.5, "scc_surcharge": 0.04}
+eq("aa500 Jobkosten: Endprodukt-Struktur 140, Komponenten-Struktur 100",
+   (round(_ind500._job_cost([(34, 100)], 1, 1, _o500, type_id=1), 6),
+    round(_ind500._job_cost([(34, 100)], 1, 1, _o500, type_id=2), 6)),
+   (140.0, 100.0))
+_mw500 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa500 My Blueprints setzt je Zeile die Stufen-Jobkosten samt Cost-Rig",
+      'opts["jobcost_by_tid"] = _mb_jc_fuer(product_id)' in _mw500
+      and 'e = {"cost_rig": self._struct_cost_rig_pct(s),' in _mw500)
+
+# ---------------------------------------------------------------- (aa501)
+# MY BLUEPRINTS MIT STRUKTUR-BONI (emm445, Nutzer: "ja genau so" - Rig-Boni
+# der Strukturen fuer Material und Jobkosten auch in My Blueprints).
+# Handrechnung: Endprodukt 2 (Blaupause ME 10, Rig 4, Rolle 1):
+# 1 - 0.90 x 0.96 x 0.99 = 14.464 %; Komponente 1 (Vorgabe ME 5, Rig 2,
+# Rolle 1): 1 - 0.95 x 0.98 x 0.99 = 7.831 %; Reaktion 3 (Rig 2, keine
+# Rolle): 2 %.
+from eve_trader.ui.mw_helpers import struktur_me_karten as _smk501, \
+    FaulKarte as _FK501
+_re501 = {"components": (2.0, 1.0), "endproduct": (4.0, 1.0),
+          "reaction_1": (2.0, 0.0)}
+_k501 = _smk501(2, lambda _t: "reaction_1" if _t == 3 else "components",
+                lambda _t, _st: _re501[_st], {2: 10.0}, 5.0)
+eq("aa501 ME je Stufe: Endprodukt 14.464, Komponente 7.831, Reaktion 2.0",
+   (round(_k501["me_map"].get(2), 3), round(_k501["me_map"].get(1), 3),
+    round(_k501["me_map_reaction"].get(3), 3)), (14.464, 7.831, 2.0))
+eq("aa501 Rig-/Rollen-Karte fuer den Invention-Pfad (0 = nicht drin)",
+   (_k501["rig_me_map"].get(2), _k501["ec_me_map"].get(1),
+    3 in _k501["ec_me_map"], _k501["ec_me_map"].get(3, 0)), (4.0, 1.0, False, 0))
+_k501r = _smk501(3, lambda _t: "reaction_1" if _t == 3 else "components",
+                 lambda _t, _st: _re501[_st], {}, 5.0)
+eq("aa501 Reaktion als Endprodukt der Zeile bleibt Reaktions-Stufe",
+   round(_k501r["me_map_reaction"].get(3), 3), 2.0)
+eq("aa501 Jobkosten: Reaktion als Endprodukt -> Reaktions-Stufe (kein Eintrag)",
+   _JJS500(5, lambda _t: "reaction_1" if _t == 5 else "components",
+           {"endproduct": {"system_index": 0.1}}).get(5), None)
+_n501 = []
+_fk501 = _FK501(lambda _t: (_n501.append(_t) or 7.0) if _t != 9 else None)
+eq("aa501 FaulKarte: in/get/Rueckfall/wahr, je tid einmal gerechnet",
+   (1 in _fk501, _fk501.get(1), _fk501.get(9, "x"), 9 in _fk501,
+    bool(_fk501), len(_n501)), (True, 7.0, "x", False, True, 1))
+check("aa501 My Blueprints setzt je Zeile die Struktur-ME, Vergleich ebenso",
+      'opts.update(_mb_me_fuer(product_id))' in _mw500
+      and 'o0.update(mb["me_fuer"](tid))' in open(
+          "eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa502)
+# ME JE ITEM IM VERGLEICH (emm446): Blaupausen-ME aus der Gesamt-ME
+# zurueckgerechnet. Plan: Gesamt 14.464 bei Rig 4 + Rolle 1 -> Bp 10;
+# My Blueprints: kein Eintrag -> Vorgabe 5, kein Rig. Gleiches faellt raus.
+from eve_trader.ui.mw_helpers import me_vergleich as _mv502
+eq("aa502 Unterschied je Item: (Bp, Rig, Rolle) MB vs Plan, Gleiches raus",
+   _mv502([1, 2], {"me": 5.0, "me_map": {2: 3.0}},
+          {"me": 5.0, "me_map": {1: 14.464, 2: 3.0},
+           "rig_me_map": {1: 4.0}, "ec_me_map": {1: 1.0}}),
+   [(1, (5.0, 0.0, 0.0), (10.0, 4.0, 1.0))])
+
+# ---------------------------------------------------------------- (aa503)
+# VORSCHLAEGE "GEMEINSAM %" UEBER DIE KETTE (emm450, Nutzer: Vagabond-Plan
+# schlug Oneiros vor, die Claymore mit fast denselben Komponenten nur 4 %).
+# Handrechnung: E = 2 A + 1 H; A benutzt der Plan (gemeinsam, 2 x 100);
+# H baut nur der Kandidat -> zerlegt in 10 M (Rohstoff, 10 x 5, nie
+# gemeinsam) -> 200 / 250 = 80 %. H gekauft statt gebaut -> 200 / 260.
+# Nur derselbe ROHSTOFF -> 0 %.
+from eve_trader.ui.mw_helpers import synergie_anteil as _sa503
+_r503 = {1: ([(2, 2), (3, 1)], 1), 2: ([(9, 4)], 1), 3: ([(4, 10)], 1),
+         5: ([(4, 10)], 1)}
+_p503 = {2: 100.0, 3: 60.0, 4: 5.0, 9: 1.0}.get
+eq("aa503 gemeinsame Komponente + eigene Vorstufe: 80 % / gekauft 76.92 %",
+   (round(_sa503(1, _r503.get, {3}, {2, 4}, _p503), 2),
+    round(_sa503(1, _r503.get, set(), {2, 4}, _p503), 2)), (80.0, 76.92))
+eq("aa503 nur derselbe Rohstoff zaehlt nicht als gemeinsam",
+   _sa503(5, _r503.get, set(), {4}, _p503), 0.0)
+from eve_trader.ui.mw_helpers import synergie as _sy503
+# ISK je Stueck (emm451): gemeinsamer Wert / Stueck je Run. E macht 2 je Run
+# -> 200 / 2 = 100 ISK; Prozent bleibt 80.
+_r503b = dict(_r503); _r503b[1] = ([(2, 2), (3, 1)], 2)
+_s503 = _sy503(1, _r503b.get, {3}, {2, 4}, _p503)
+eq("aa503 Shared ISK je Stueck = gemeinsamer Wert / Stueck je Run",
+   (round(_s503[0], 2), round(_s503[1], 2)), (80.0, 100.0))
+eq("aa503 ohne Wert: (None, 0)", _sy503(7, _r503.get, set(), set(), _p503),
+   (None, 0.0))
+_mb503 = open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+check("aa503 das Vorschlags-Fenster rechnet ueber die Kette",
+      "out[tid] = synergie(" in _mb503)
+check("aa503 als gemeinsam zaehlen nur Reaktionen, die der Plan baut",
+      "if x in _rp0}" in _mb503)
+check("aa503 Kandidat bekommt dieselbe Production depth (never_build)",
+      '_o["never_build"] = (set(_o.get("never_build") or ())' in _mb503)
+check("aa503 Liste nach Shared ISK sortiert", "tbl.sortItems(6, Qt.DescendingOrder)" in _mb503)
+
+# ---------------------------------------------------------------- (aa504)
+# EINE STELLE FUER DIE DECRYPTOR-WAHL (emm455): build_cost, build_tree,
+# _inv_cost und die TE der Bauzeit lasen die Regel "Wahl je Item, sonst
+# global" je selbst abgeschrieben - vier Kopien, die auseinanderlaufen
+# koennten (ME und Kosten von verschiedenen Decryptoren). Jetzt alle ueber
+# industry.decryptor_fuer_bp.
+_ind504 = open("eve_trader/industry.py", encoding="utf-8").read()
+_mw504 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+eq("aa504 die Regel steht in industry genau einmal",
+   _ind504.count('(opts.get("inv_decryptor_map") or {}).get(bp_id)'), 1)
+check("aa504 die Bauzeit-TE fragt dieselbe Stelle",
+      "dv = industry.decryptor_fuer_bp(bp_id, opts)" in _mw504
+      and '(opts.get("inv_decryptor_map") or {}).get(bp_id)' not in _mw504)
+from eve_trader import industry as _I504
+_o504 = {"inv_decryptor_map": {7: (1.9, 2, 1, 4, 34203)},
+         "inv_prob_mult": 1.2, "inv_run_mod": 9, "inv_decryptor_id": 99}
+eq("aa504 Wahl je Item vor global, sonst global",
+   (_I504.decryptor_fuer_bp(7, _o504)[4], _I504.decryptor_fuer_bp(8, _o504)[4]),
+   (34203, 99))
+
+# ---------------------------------------------------------------- (aa505)
+# RUNPLANER-ZUFALLSPROBE (emm455, Nutzer: "danach suchen wir den Runplaner
+# durch"). Feste Zufallszahlen (seed), reine Funktionen: schedule_build an
+# 400 zufaelligen Plaenen (Charaktere mit/ohne Rolle, 0..11 Slots, Kopien-
+# und Runs-Deckel, Zielzeiten) und die Runplaner-Helfer (_bp_teile,
+# budget_eigene_zuerst, haken_nachtragen, science_verteilen) an je 3000
+# Faellen. Zusagen: jeder geplante Run landet genau einmal, nur bei
+# berechtigten Charakteren, nie mehr gleichzeitige Jobs als Blaupausen,
+# ganze Kopien (hoechstens EINE angefangene), Budgets bleiben in Summe
+# gleich, kein Haken ueber das Erledigte hinaus, Science nie ueber Slots.
+def _aa505():
+    import random
+    from collections import defaultdict
+    from eve_trader import industry as I
+    from eve_trader.ui import mw_helpers as H
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as MH
+    _P505 = defaultdict(list)
+    probs = _P505
+    for seed in range(400):
+        rnd = random.Random(seed)
+        nch = rnd.randint(1, 4)
+        chars = [{"id": 10+i, "name": f"c{i}", "mfg_slots": rnd.randint(0, 11),
+                  "reaction_slots": rnd.randint(0, 11), "can_mfg": rnd.random() < .85,
+                  "can_react": rnd.random() < .7} for i in range(nch)]
+        if not any(c["can_mfg"] for c in chars): chars[0]["can_mfg"] = True
+        if not any(c["can_react"] for c in chars): chars[0]["can_react"] = True
+        jobs = []; cap = {}; rcap = {}
+        for k in range(rnd.randint(1, 6)):
+            tid = 1000+k
+            act = I.REACTION if rnd.random() < .4 else I.MANUFACTURING
+            j = {"tid": tid, "name": f"i{k}", "runs": rnd.randint(1, 400), "activity": act,
+                 "base_time": rnd.choice([60, 600, 3600, 10800]), "is_end": (act == I.MANUFACTURING and rnd.random() < .3)}
+            if act == I.REACTION: j["reaction_tier"] = rnd.choice([1, 2])
+            if rnd.random() < .3: j["te_factor"] = rnd.choice([0.5, 0.8, 1.0])
+            jobs.append(j)
+            if rnd.random() < .4: cap[tid] = rnd.randint(1, 20)
+            if rnd.random() < .4 and act == I.MANUFACTURING: rcap[tid] = rnd.randint(1, 30)
+        kw = dict(te_factor=rnd.choice([1.0, 0.7]), mfg_bp=rnd.randint(1, 10), react_bp=rnd.randint(1, 10),
+                  per_item_cap=cap or None, per_item_runs_cap=rcap or None)
+        if rnd.random() < .3:
+            kw["stage_ziel"] = {s: rnd.choice([0, 3600, 86400]) for s in ("reaction_1","reaction_2","component","end")}
+        try:
+            r = I.schedule_build(jobs, chars, **kw)
+        except Exception as e:
+            probs["exception " + type(e).__name__ + ": " + str(e)[:60]].append(seed); continue
+        got = defaultdict(int); parts = defaultdict(list)
+        for a in r["assignments"]:
+            got[a["tid"]] += a["runs"]
+            ch = next(c for c in chars if c["id"] == a["char_id"])
+            if a["activity"] == I.REACTION and not ch["can_react"]: probs["reaction on non-react char"].append(seed)
+            if a["activity"] != I.REACTION and not ch["can_mfg"]: probs["mfg on non-mfg char"].append(seed)
+            if "parts" in a:
+                parts[a["tid"]] += a["parts"]
+                if sum(a["parts"]) != a["runs"]: probs["parts sum != runs"].append(seed)
+                if any(p > a["max_runs"] for p in a["parts"]): probs["part > max_runs"].append(seed)
+                if len(a["parts"]) != a["jobs"]: probs["len(parts) != jobs"].append(seed)
+            if a["runs"] <= 0: probs["runs<=0 assignment"].append(seed)
+        njobs = defaultdict(int)
+        for a in r["assignments"]:
+            njobs[a["tid"]] += a["jobs"]
+        for j in jobs:
+            t = j["tid"]
+            if t not in rcap:
+                if j["activity"] == I.REACTION: c0 = kw["react_bp"]
+                elif j["is_end"]: c0 = kw["mfg_bp"]
+                else: c0 = kw["mfg_bp"]
+                c = cap.get(t, c0)
+                if njobs[t] > c: probs["more parallel jobs than blueprints"].append((seed, t, c, njobs[t]))
+            if got[j["tid"]] != j["runs"]:
+                probs[f"runs mismatch"].append((seed, j["tid"], j["runs"], got[j["tid"]]))
+            t = j["tid"]
+            if t in rcap and t in parts:
+                ps = sorted(parts[t], reverse=True)
+                # ganze Kopien: hoechstens EINE kleinere Kopie
+                if sum(1 for p in ps if p < rcap[t]) > 1: probs["more than one partial copy"].append((seed, t, rcap[t], ps))
+    P = _P505
+    for seed in range(3000):
+        rnd = random.Random(seed)
+        # _bp_teile
+        R = rnd.randint(0, 500); nj = rnd.randint(1, 12); m = rnd.choice([None, 0, 1, 3, 10, 50])
+        parts = [rnd.randint(1, 30) for _ in range(rnd.randint(0, 5))] if rnd.random() < .5 else None
+        n, t = MH._bp_teile(R, nj, m, parts)
+        if R >= 1:
+            if sum(t) != R: P["bp_teile sum"].append((R, nj, m, parts, t))
+            if m and max(t) > m: P["bp_teile > max"].append((R, nj, m, parts, t))
+            if n != len(t): P["bp_teile n"].append((R, nj, m, parts, t))
+            if min(t) < 1: P["bp_teile zero part"].append((R, nj, m, parts, t))
+        # budget_eigene_zuerst
+        chars = ["A", "B", "C"]
+        zeilen = []; plan = defaultdict(int)
+        for i in range(rnd.randint(1, 6)):
+            tid = rnd.randint(1, 3); r = rnd.randint(0, 50); c = rnd.choice(chars)
+            zeilen.append((f"k{i}", tid, r, c)); plan[tid] += r
+        budget = {t: rnd.randint(0, plan[t] + 10) for t in plan}
+        eig = {t: {c: rnd.randint(0, 20) for c in chars if rnd.random() < .5} for t in plan}
+        ged, rest = H.budget_eigene_zuerst(zeilen, budget, eig)
+        for sk, tid, r, c in zeilen:
+            if ged.get(sk, 0) > r: P["budget > zeile"].append(seed)
+            if ged.get(sk, 0) < 0: P["budget < 0"].append(seed)
+        for t in plan:
+            used = sum(ged.get(sk, 0) for sk, tid, r, c in zeilen if tid == t)
+            if used + rest.get(t, 0) != budget[t]: P["budget sum"].append((seed, t, used, rest.get(t), budget[t]))
+        # haken_nachtragen
+        zl = [(f"z{i}", rnd.randint(1, 3), rnd.randint(0, 20)) for i in range(rnd.randint(1, 6))]
+        geh = {sk for sk, _, _ in zl if rnd.random() < .3}
+        erl = {ik: rnd.randint(0, 40) for _, ik, _ in zl}
+        neu = H.haken_nachtragen(zl, geh, erl)
+        for ik in erl:
+            tot = sum(r for sk, k, r in zl if k == ik and (sk in geh or sk in neu))
+            gehr = sum(r for sk, k, r in zl if k == ik and sk in geh)
+            if sum(r for sk, k, r in zl if k == ik and sk in neu) > max(0, erl[ik] - gehr):
+                P["nachtragen ueber erledigt"].append((seed, zl, geh, erl, neu))
+        if any(sk in geh for sk in neu): P["nachtragen doppelt"].append(seed)
+        # science_verteilen
+        auf = [(f"a{i}", rnd.randint(0, 25)) for i in range(rnd.randint(0, 4))]
+        ch = [(c, rnd.randint(0, 11)) for c in chars[:rnd.randint(1, 3)]]
+        out = H.science_verteilen(auf, ch)
+        tot = defaultdict(int); per_wave = defaultdict(int)
+        for cid, w, lst in out:
+            for k, n in lst: tot[k] += n; per_wave[(cid, w)] += n
+        slots = dict(ch)
+        if any(slots[c] > 0 for c in slots):
+            for k, n in auf:
+                if tot[k] != n: P["science fehlt"].append((seed, auf, ch, out))
+        for (cid, w), n in per_wave.items():
+            if n > slots[cid]: P["science ueber slots"].append((seed, auf, ch, out))
+    return {k: len(v) for k, v in _P505.items()}
+eq("aa505 Runplaner-Zufallsprobe ohne Befund", _aa505(), {})
+
+# ---------------------------------------------------------------- (aa506)
+# EINKAUFSLISTE-ZUFALLSPROBE (emm457, Nutzer: "dann die Einkaufsliste
+# durch"). 3000 zufaellige Plaene (feste seeds): der Restbedarf liegt nie
+# unter der exakten anteiligen Menge (Regel 3) und nie ueber der vollen;
+# mehr gelieferte Runs machen den Bedarf nie groesser, mehr Bestand den
+# Fehlbedarf nie groesser; die Datacore-Kaufmenge bleibt in ihren Grenzen.
+def _aa506():
+    import random
+    from collections import defaultdict
+    from eve_trader.ui import mw_helpers as H
+    _P506 = defaultdict(list)
+    P = _P506
+    for seed in range(3000):
+        rnd = random.Random(seed)
+        items = list(range(1, rnd.randint(2, 7)))
+        br = {t: rnd.randint(1, 60) for t in items if rnd.random() < .7}
+        if not br: br = {1: 5}
+        bm = {}
+        for t in br:
+            mats = []
+            for m in rnd.sample(range(1, 12), rnd.randint(1, 4)):
+                if m != t:
+                    mats.append((m, rnd.randint(1, 2000)))   # krumme Mengen, sonst ceil == floor
+            bm[t] = mats
+        deliv = {t: rnd.randint(0, br[t] + 3) for t in br if rnd.random() < .6}
+        rem, need = H.restbedarf_map(br, bm, deliv)
+        # Sicher: Restbedarf >= exakte anteilige Menge, <= volle
+        for t, mats in bm.items():
+            pass
+        full = defaultdict(int)
+        for t, mats in bm.items():
+            for m, q in mats: full[m] += q
+        for m, q in need.items():
+            if q > full[m]: P["rest > voll"].append(seed)
+        exact = defaultdict(float)
+        for t, mats in bm.items():
+            r = max(0, br[t] - deliv.get(t, 0))
+            for m, q in mats: exact[m] += q * r / br[t]
+        for m, v in exact.items():
+            if need.get(m, 0) + 1e-9 < v: P["rest < exakt"].append(seed)
+        # Monotonie: mehr geliefert -> nie mehr Bedarf
+        d2 = dict(deliv); t0 = rnd.choice(list(br)); d2[t0] = d2.get(t0, 0) + rnd.randint(1, 5)
+        _r2, need2 = H.restbedarf_map(br, bm, d2)
+        for m in set(need) | set(need2):
+            if need2.get(m, 0) > need.get(m, 0): P["mehr geliefert -> mehr bedarf"].append(seed)
+        # fehlbedarf: mehr Bestand -> nie mehr fehlt
+        oq = {t: rnd.choice([1, 1, 10, 100]) for t in br}
+        live = {m: rnd.randint(0, 500) for m in range(1, 12) if rnd.random() < .5}
+        f1 = {m: f for m, f, *_ in H.fehlbedarf_vorschau(br, bm, oq, deliv, live)}
+        live2 = dict(live); mm = rnd.randint(1, 11); live2[mm] = live2.get(mm, 0) + rnd.randint(1, 100)
+        f2 = {m: f for m, f, *_ in H.fehlbedarf_vorschau(br, bm, oq, deliv, live2)}
+        for m in set(f1) | set(f2):
+            if f2.get(m, 0) > f1.get(m, 0): P["mehr bestand -> mehr fehlt"].append(seed)
+        # inv_kaufmenge
+        pf, bn, be = rnd.randint(0, 100), rnd.randint(0, 100), rnd.randint(0, 100)
+        k = H.inv_kaufmenge(pf, bn, be)
+        if k < 0 or k > pf or k > max(0, bn - be): P["inv_kaufmenge"].append((pf, bn, be, k))
+    return {k: len(v) for k, v in _P506.items()}
+eq("aa506 Einkaufsliste-Zufallsprobe ohne Befund", _aa506(), {})
+
+# ---------------------------------------------------------------- (aa507)
+# LAGERORTE (emm458, Nutzer: "wo die Materialien der Bauplaene rumliegen,
+# bei welchem Charakter was liegt ... Container, Frachtcontainer"). Reine
+# Logik ohne Fenster: Hangar + Behaelter (verschachtelt) zaehlen, Schiffs-
+# ladung nicht; Corp ueber Buero/Division zur Struktur; Baum Item -> Ort ->
+# Besitzer -> Behaelterkette; Bedarf aus dem Schnappschuss; Suche je Zeile
+# ueber hangar_name.
+from eve_trader import lagerorte as _L507
+_a507 = [
+    {"item_id": 1, "type_id": 11688, "quantity": 5, "location_id": 60003760,
+     "location_flag": "Hangar"},
+    {"item_id": 900, "type_id": 3296, "quantity": 1, "location_id": 60003760,
+     "location_flag": "Hangar"},
+    {"item_id": 2, "type_id": 11688, "quantity": 293, "location_id": 900,
+     "location_flag": "Unlocked"},
+    {"item_id": 901, "type_id": 3296, "quantity": 1, "location_id": 900,
+     "location_flag": "Unlocked"},
+    {"item_id": 3, "type_id": 11688, "quantity": 7, "location_id": 901,
+     "location_flag": "Unlocked"},
+    {"item_id": 950, "type_id": 587, "quantity": 1, "location_id": 60003760,
+     "location_flag": "Hangar"},
+    {"item_id": 4, "type_id": 11688, "quantity": 3, "location_id": 950,
+     "location_flag": "Cargo"},
+    {"item_id": 5, "type_id": 34, "quantity": 100, "location_id": 1030000000001,
+     "location_flag": "Hangar"},
+]
+_z507 = _L507.zeilen_aus_assets(_a507, {3296}, 111, "char")
+eq("aa507 Particle: lose 5 + Behaelter 293 + Behaelter im Behaelter 7, Schiffsladung nie",
+   sorted((z["menge"], z["pfad"]) for z in _z507 if z["tid"] == 11688),
+   [(5, []), (7, [900, 901]), (293, [900])])
+eq("aa507 Behaelter-ids und -typen", (_L507.behaelter_ids(_z507),
+                                      _L507.behaelter_typen(_z507)),
+   ({900, 901}, {900: 3296, 901: 3296}))
+_c507 = [
+    {"item_id": 70, "type_id": 27, "quantity": 1, "location_id": 60003760,
+     "location_flag": "OfficeFolder"},
+    {"item_id": 71, "type_id": 11688, "quantity": 50, "location_id": 70,
+     "location_flag": "CorpSAG3"},
+    {"item_id": 72, "type_id": 11688, "quantity": 8, "location_id": 70,
+     "location_flag": "CorpSAG5"},
+]
+_zc507 = _L507.zeilen_aus_assets(_c507, {3296}, 98000001, "corp", divisions=[1, 3])
+eq("aa507 Corp: nur gewaehlte Divisions, Ort = Station ueber das Buero",
+   [(z["menge"], z["ort"], z["flag"]) for z in _zc507], [(50, 60003760, "CorpSAG3")])
+_b507 = _L507.baum(_z507 + _zc507, {11688: "Particle", 34: "Trit", 3296: "Box", 587: "Rifter"},
+                   {60003760: "Jita", 1030000000001: "Dock"},
+                   {("char", 111): "Berry", ("corp", 98000001): "Corp X"},
+                   {900: "Components", 901: "Box"},
+                   bedarf={11688: [("Plan A", 600)], 999: [("Plan A", 10)]})
+_p507 = _b507[0]
+eq("aa507 Baum: Items mit Bedarf zuerst, Summe, Fehlbetrag",
+   (_p507["name"], _p507["menge"], _p507["short"]), ("Particle", 355, 245))
+eq("aa507 Baum: Ort -> Besitzer (Menge absteigend) -> Pfade",
+   [(o["name"], [(b["name"], b["menge"], [(p, q) for p, q in b["pfade"]])
+                 for b in o["besitzer"]]) for o in _p507["orte"]],
+   [("Jita", [("Berry", 305, [(["Components"], 293), (["Components", "Box"], 7), ([], 5)]),
+              ("Corp X", 50, [([], 50)])])])
+eq("aa507 Bedarf ohne Bestand erscheint trotzdem (ganz fehlend)",
+   [(x["name"], x["menge"], x["short"]) for x in _b507 if x["tid"] == 999],
+   [("#999", 0, 10)])
+eq("aa507 nur_tids filtert, Suche ueberstimmt den Filter",
+   ([x["tid"] for x in _L507.baum(_z507, {34: "Trit", 11688: "Particle"}, {}, {}, {},
+                                   nur_tids={34})],
+    [x["tid"] for x in _L507.baum(_z507, {34: "Trit", 11688: "Particle"}, {}, {}, {},
+                                   nur_tids={34}, begriffe={"partic"})]),
+   ([34], [11688]))
+eq("aa507 Suchbegriffe aus Hangar-Kopie (Tab + Menge, '*')",
+   _L507.suchbegriffe("Particle Accelerator Unit*\t293\n\nTritanium\t5"),
+   {"particle accelerator unit", "tritanium"})
+_pl507 = [{"id": 1, "label": "A", "frozen": {"ts": 1, "plan_snapshot": {
+              "build_mats": {"10": [[11688, 600], [34, 5]]}, "inv_buy": {"20": 3}}}},
+          {"id": 2, "label": "B"},
+          {"id": 3, "label": "C", "done_manual": True,
+           "frozen": {"ts": 1, "plan_snapshot": {"build_mats": {}}}}]
+eq("aa507 Plaene fuer die Seite: gespeichert + eingefroren, nicht fertig",
+   [p["id"] for p in _L507.plaene_fuer_lagerorte({"bau_saved_plans": _pl507})], [1])
+eq("aa507 Bedarf aus dem Schnappschuss: Zutaten + Datacores, je Plan",
+   _L507.bedarf_aus_plaenen(_pl507[:1]), {11688: [("A", 600)], 34: [("A", 5)], 20: [("A", 3)]})
+
+# ---------------------------------------------------------------- (aa510)
+# NUR DER NOCH OFFENE BEDARF (emm463, Nutzer: "von allen aktiven, noch nicht
+# abgeschlossenen Bauplaenen bin ich bei allen schon beim Endprodukt - ich
+# braeuchte theoretisch nichts mehr, da steht aber viel auf Rot in Short.
+# Nicht moeglich"). Vorher stand hier die VOLLE Planmenge. Handrechnung:
+# 200 Runs Vorstufe (je Run 1'000 Trit), 150 davon als ESI-Job zugeordnet
+# -> 1'000 x 50/200 = 250 Trit.
+_p510 = {"id": 7, "label": "P", "type_id": 99,
+         "frozen": {"ts": 1, "plan_snapshot": {
+             "build_runs": {"99": 10, "50": 200},
+             "build_mats": {"99": [[50, 20]], "50": [[34, 1000]]},
+             "inv_buy": {"20": 40}}}}
+eq("aa510 ohne Belege: voller Bedarf",
+   _L507.bedarf_aus_plaenen([_p510]),
+   {50: [("P", 20)], 34: [("P", 1000)], 20: [("P", 40)]})
+_z510 = {1: {"plan_id": 7, "type_id": 50, "runs": 150},
+         2: {"plan_id": 8, "type_id": 50, "runs": 50}}   # fremder Plan zaehlt nicht
+eq("aa510 150 von 200 Runs gebaut -> nur noch 250 Trit (Datacores sind dann "
+   "schon verbraucht, s. aa512)",
+   _L507.bedarf_aus_plaenen([_p510], _z510), {50: [("P", 20)], 34: [("P", 250)]})
+_p510h = dict(_p510); _p510h["checked_runplan_runs"] = {"component|50": 200}
+eq("aa510 alles abgehakt -> die Zutat faellt ganz weg",
+   _L507.bedarf_aus_plaenen([_p510h], _z510), {50: [("P", 20)]})
+eq("aa510 Haken und Job meinen DIESELBEN Runs (Maximum, nie Summe)",
+   _L507.gebaute_runs(_p510h, _z510), {50: 200})
+_p510e = dict(_p510); _p510e["checked_runplan_runs"] = {"end|99": 10}
+eq("aa510 Invention-Material haengt an den offenen Endprodukt-Runs",
+   _L507.bedarf_aus_plaenen([_p510e], None).get(20), None)
+_p510o = {"id": 9, "label": "Alt", "frozen": {"ts": 1, "plan_snapshot": {
+    "build_mats": {"10": [[34, 7]]}}}}
+eq("aa510 alter Schnappschuss ohne build_runs: voller Bedarf statt gar keiner",
+   _L507.bedarf_aus_plaenen([_p510o], _z510), {34: [("Alt", 7)]})
+_tb510 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa510 die Seite reicht die lokale Job-Zuordnung durch (ohne Abruf)",
+      "_zuord = store.job_zuordnung_details()" in _tb510
+      and "lagerorte.bedarf_aus_plaenen(plaene, _zuord, _extra)" in _tb510)
+
+# ---------------------------------------------------------------- (aa511)
+# GIANT SHOPPING LIST (emm464, Nutzer: "verschwundenes Material soll wieder
+# in der Einkaufsliste landen ... und/oder ueber alle Bauplaene hinweg im
+# Stock-locations-Tab eine Giant Shopping List"; Rueckfrage -> "nur echte
+# Verluste" + "in die Zwischenablage"). Rein: nur Items mit Fehlbetrag, nie
+# etwas, das ein Plan SELBST BAUT (sonst kauft man, was man produziert), nie
+# ein Item ohne aufgeloesten Namen.
+_it511 = [{"tid": 34, "name": "Tritanium", "short": 500},
+          {"tid": 50, "name": "Komponente", "short": 9},
+          {"tid": 99, "name": "#99", "short": 3},
+          {"tid": 7, "name": "Fertig", "short": 0}]
+eq("aa511 nur echte Fehlbetraege, nichts Selbstgebautes, keine #id",
+   _L507.einkaufsliste(_it511, gebaut={50}), [("Tritanium", 500)])
+eq("aa511 groesster Fehlbetrag zuerst",
+   _L507.einkaufsliste([{"tid": 1, "name": "B", "short": 5},
+                        {"tid": 2, "name": "A", "short": 90}]),
+   [("A", 90), ("B", 5)])
+eq("aa511 Multibuy-Format wie im Bauplan: Name<TAB>Menge je Zeile",
+   _L507.multibuy_text([("Tritanium", 500), ("Pyerite", 12)]),
+   "Tritanium\t500\nPyerite\t12")
+_p511 = [{"id": 1, "frozen": {"ts": 1, "plan_snapshot": {
+              "build_runs": {"50": 3, "77": 0}, "build_mats": {"50": [[34, 9]]}}}},
+         {"id": 2, "label": "ohne Schnappschuss"}]
+eq("aa511 selbst gebaut = jedes Item mit Runs > 0, ueber ALLE Plaene",
+   _L507.gebaute_tids(_p511), {50})
+_tb511 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa511 der Knopf nimmt dieselben Zeilen wie die Anzeige und schreibt "
+      "NICHT in die gespeicherte Einkaufsliste",
+      "self._lager_fehl_items = list(_fehl_items.values())" in _tb511
+      and "lagerorte.einkaufsliste(" in _tb511
+      and "add_shopping" not in _tb511)
+
+# ---------------------------------------------------------------- (aa512)
+# KEIN FEHLALARM FUER DAS, WAS DER PLAN SELBST BAUT (emm465, Nutzer: "ich
+# habe alle T2 Blueprints schon inventet und bin bei allen Bauplaenen schon
+# an den Endprodukten - Datacores koennen nicht fehlen" + "andere Sachen
+# sind aktuell in der Bauschleife und werden auch nicht fehlen").
+# (1) Ein Item, das der Plan selbst baut, bekommt NIE einen Fehlbetrag -
+#     sein Nachschub kommt aus der eigenen Produktion.
+# (2) Invention-Material zaehlt nur, solange der Plan noch GAR NICHTS
+#     gebaut hat (Invention laeuft vor dem Bau).
+# Komp liegt mit 5 Stueck da - damit laeuft es ueber den Bestands-Zweig
+# (mit leeren Zeilen kaeme es nur aus dem "liegt nirgends"-Zweig, und die
+# Mutation auf dem Bestands-Zweig blieb BLIND).
+_z512 = [{"tid": 50, "menge": 5, "ort": 10, "besitzer": "A", "art": "char",
+          "flag": "Hangar", "pfad": [], "item_id": 1}]
+_b512 = _L507.baum(_z512, {50: "Komp", 34: "Trit"}, {}, {}, {},
+                   bedarf={50: [("P", 20)], 34: [("P", 250)]},
+                   selbst_gebaut={50})
+eq("aa512 selbst gebautes Item: Bedarf ja, Fehlbetrag nein",
+   sorted((x["name"], x["short"]) for x in _b512), [("Komp", 0), ("Trit", 250)])
+_k512, _f512 = _L507.karten([], {50: "Komp", 34: "Trit"}, {}, {}, {},
+                            bedarf={50: [("P", 20)], 34: [("P", 250)]},
+                            selbst_gebaut={50})
+eq("aa512 ... und es landet nicht in 'liegt nirgends' (da gibt es nichts zu tun)",
+   [(x["name"], x["short"]) for x in _f512], [("Trit", 250)])
+_p512 = {"id": 7, "label": "P", "type_id": 99, "frozen": {"ts": 1, "plan_snapshot": {
+    "build_runs": {"99": 10, "50": 200},
+    "build_mats": {"99": [[50, 20]], "50": [[34, 1000]]}, "inv_buy": {"20": 40}}}}
+eq("aa512 noch nichts gebaut: Datacores zaehlen",
+   _L507.bedarf_aus_plaenen([_p512]).get(20), [("P", 40)])
+eq("aa512 schon am Bauen: Datacores sind verbraucht, zaehlen nicht mehr",
+   _L507.bedarf_aus_plaenen([_p512], {1: {"plan_id": 7, "type_id": 50, "runs": 150}}
+                            ).get(20), None)
+
+# ---------------------------------------------------------------- (aa513)
+# JEDER EINGESCHALTETE ORT BEKOMMT EINE KARTE (Nutzer: "R&R Yard und Space
+# Resources Institute sehe ich nicht, die Karten muessten da sein, denn da
+# liegt Material"). Eine fehlende Karte sieht aus wie ein Fehler - eine
+# leere sagt, dass dort nichts liegt, was die Plaene noch brauchen.
+_z513 = [{"tid": 34, "menge": 300, "ort": 10, "besitzer": "A", "art": "char",
+          "flag": "Hangar", "pfad": [], "item_id": 1},
+         {"tid": 77, "menge": 9, "ort": 20, "besitzer": "A", "art": "char",
+          "flag": "Hangar", "pfad": [], "item_id": 2}]
+_k513, _f513 = _L507.karten(_z513, {34: "Trit"}, {10: "Bau", 20: "Lager"},
+                            {}, {}, bedarf={34: [("P", 500)]},
+                            nur_tids={34}, nur_orte=[10, 20])
+eq("aa513 beide eingeschalteten Orte haben eine Karte",
+   [(k["name"], len(k["items"])) for k in _k513], [("Bau", 1), ("Lager", 0)])
+eq("aa513 die leere Karte steht hinten und zaehlt nichts",
+   (_k513[-1]["menge"], _k513[-1]["short"]), (0, 0))
+_k513b, _ = _L507.karten(_z513, {34: "Trit"}, {10: "Bau", 20: "Lager"},
+                         {}, {}, bedarf={34: [("P", 500)]}, nur_tids={34})
+eq("aa513 ohne Ortsauswahl (None) werden keine Karten erfunden",
+   [k["name"] for k in _k513b], ["Bau"])
+_tb513 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa513 eine leere Karte sagt es und baut gar keinen Baum",
+      'if not k["items"] and not fehlt:' in _tb513
+      and "Nothing your plans still need lies here." in _tb513)
+check("aa513 eine Struktur ohne Andockrecht heisst nicht nur '#id'",
+      "Structure (no docking access)" in _tb513)
+# Das mehrzeilige Suchfeld sieht aus wie ein FELD, nicht wie Text (Nutzer:
+# "die Suchleiste ist schwer erkennbar, weil selbe Hintergrundfarbe") -
+# QPlainTextEdit steht in derselben QSS-Regel wie QLineEdit, also mit
+# Flaeche, Rahmen und Cyan beim Tippen.
+_th513 = open("eve_trader/ui/theme.py", encoding="utf-8").read()
+check("aa513 Eingabefelder-Regel umfasst QPlainTextEdit (Flaeche + Rahmen)",
+      "QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {{"
+      in _th513)
+check("aa513 ... und der Fokus-Rahmen auch",
+      "QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus" in _th513)
+
+# ---------------------------------------------------------------- (aa514)
+# NOCH NICHT ZUGEORDNETE JOBS ZAEHLEN MIT (emm475). DER SCHADEN, der das
+# ausgeloest hat (Nutzer 08.10.2026): "ja toll jetzt habe ich schon
+# nachgekauft, das darf auf keinen fall jemals wieder passieren" - vier
+# laufende Jobs eines Riggs-1-Endes gehoerten keinem Plan, ihr Material war
+# im Spiel weg, die Seite zeigte den Bedarf aber voll -> 888 rot -> Nachkauf.
+# REGEL: eindeutig (genau EIN Plan baut das Item) wird mitgezaehlt, alles
+# andere kommt als sichtbare Warnung zurueck - nie still.
+_pR514 = {"id": "R", "label": "Riggs", "type_id": 100,
+          "enden": [[100, 200], [200, 200]],
+          "frozen": {"ts": 1000, "plan_snapshot": {
+              "build_runs": {"100": 200, "200": 200},
+              "build_mats": {"100": [[300, 3000]], "200": [[300, 5200]]}}}}
+_jobs514 = [{"job_id": 1, "activity_id": 1, "product_type_id": 200,
+             "runs": 10, "start_date": "2100-01-01T00:00:00Z"},
+            {"job_id": 2, "activity_id": 1, "product_type_id": 200,
+             "runs": 10, "start_date": "2100-01-01T00:00:00Z"},
+            {"job_id": 3, "activity_id": 1, "product_type_id": 200,
+             "runs": 10, "start_date": "2100-01-01T00:00:00Z"},
+            {"job_id": 4, "activity_id": 1, "product_type_id": 200,
+             "runs": 10, "start_date": "2100-01-01T00:00:00Z"}]
+_zu514, _of514 = _L507.unzugeordnete_runs(_jobs514, [_pR514], {})
+eq("aa514 SZENARIO A: vier eindeutige, nicht zugeordnete Jobs zaehlen",
+   (_zu514, _of514), ({"R": {200: 40}}, []))
+# Handrechnung: Ende 100 ist fertig (200 Runs zugeordnet), Ende 200 hat 40
+# der 200 Runs gebaut -> 5'200 x 160/200 = 4'160 statt 5'200.
+_zuord514 = {9: {"plan_id": "R", "type_id": 100, "runs": 200}}
+eq("aa514 ohne die Jobs verlangt der Plan das volle Material (der Schaden)",
+   _L507.bedarf_aus_plaenen([_pR514], _zuord514).get(300), [("Riggs", 5200)])
+eq("aa514 MIT den Jobs sinkt der Bedarf auf den offenen Rest",
+   _L507.bedarf_aus_plaenen([_pR514], _zuord514, _zu514).get(300),
+   [("Riggs", 4160)])
+_k514, _f514 = _L507.karten(
+    [{"tid": 300, "menge": 4200, "ort": 10, "besitzer": "A", "art": "char",
+      "flag": "Hangar", "pfad": [], "item_id": 1}],
+    {300: "Interface Circuit"}, {10: "Dockside"}, {}, {},
+    bedarf=_L507.bedarf_aus_plaenen([_pR514], _zuord514, _zu514),
+    nur_tids={300}, nur_orte=[10])
+eq("aa514 ... und der rote Fehlbetrag verschwindet (4'200 im Hangar)",
+   [(i["name"], i["short"]) for k in _k514 for i in k["items"]],
+   [("Interface Circuit", 0)])
+# SZENARIO A2 (von b194 gefunden): ESI liefert denselben Job bei mehreren
+# Charakteren (Corp-Jobs, emm389) - zweimal gezaehlt waere der Bedarf ZU
+# KLEIN, also zu wenig Material. Dedupe ueber job_id; ohne job_id gar nicht.
+eq("aa514 SZENARIO A2: derselbe Job zweimal in der Liste zaehlt EINMAL",
+   _L507.unzugeordnete_runs(_jobs514[:1] + [dict(_jobs514[0])], [_pR514], {}),
+   ({"R": {200: 10}}, []))
+eq("aa514 ... ein Job ohne job_id zaehlt nie (nicht pruefbar, ob doppelt)",
+   _L507.unzugeordnete_runs(
+       [{k: v for k, v in _jobs514[0].items() if k != "job_id"}],
+       [_pR514], {}), ({}, []))
+# SZENARIO B: zwei eingefrorene Plaene bauen dasselbe Item -> mehrdeutig,
+# NICHT gezaehlt, aber gemeldet (sonst wird still zu wenig gekauft).
+_pB514 = {"id": "B", "label": "Zweiter", "frozen": {"ts": 1000, "plan_snapshot": {
+    "build_runs": {"200": 50}, "build_mats": {"200": [[300, 100]]}}}}
+_zuB, _ofB = _L507.unzugeordnete_runs(_jobs514[:1], [_pR514, _pB514], {})
+eq("aa514 SZENARIO B: mehrdeutig -> nichts gezaehlt, aber gemeldet",
+   (_zuB, [j["job_id"] for j in _ofB]), ({}, [1]))
+# SZENARIO C: ein ANDERER offener Plan (nicht auf dieser Seite) baut es
+# ebenfalls -> ebenfalls mehrdeutig.
+_zuC, _ofC = _L507.unzugeordnete_runs(_jobs514[:1], [_pR514], {},
+                                      fremde_bauer={200})
+eq("aa514 SZENARIO C: fremder offener Plan baut es auch -> nur Warnung",
+   (_zuC, len(_ofC)), ({}, 1))
+# SZENARIO D: Job VOR dem Einfrieren = anderer Durchlauf, zaehlt nicht und
+# ist keine Warnung (er hat das Material dieses Plans nie angefasst).
+_jD = [dict(_jobs514[0], start_date="1970-01-01T00:00:00Z")]
+eq("aa514 SZENARIO D: Job vor dem Einfrieren zaehlt nicht, keine Warnung",
+   _L507.unzugeordnete_runs(_jD, [_pR514], {}), ({}, []))
+# SZENARIO E: schon zugeordneter Job -> hier NICHT noch einmal (sonst
+# doppelt gezaehlt = zu wenig Material).
+eq("aa514 SZENARIO E: zugeordneter Job wird nicht doppelt gezaehlt",
+   _L507.unzugeordnete_runs(_jobs514[:1], [_pR514], {1: "R"}), ({}, []))
+# SZENARIO F: der Nutzer hat "zu keinem Plan" geantwortet -> seine Antwort
+# gilt, keine Warnung.
+eq("aa514 SZENARIO F: 'zu keinem Plan' bleibt die Antwort des Nutzers",
+   _L507.unzugeordnete_runs(_jobs514[:1], [_pR514], {1: "-"}), ({}, []))
+# SZENARIO G: Kopieren (5) und Invention (8) nehmen kein Material aus
+# diesem Stapel -> nie mitzaehlen.
+_jG = [dict(_jobs514[0], activity_id=5), dict(_jobs514[1], activity_id=8)]
+eq("aa514 SZENARIO G: Science-Jobs zaehlen nie mit",
+   _L507.unzugeordnete_runs(_jG, [_pR514], {}), ({}, []))
+# SZENARIO H: ein Job mit MEHR Runs als der Plan vorhat darf den Bedarf
+# nie unter 0 druecken (Deckel in restbedarf_map).
+_zuH, _ = _L507.unzugeordnete_runs(
+    [dict(_jobs514[0], runs=99999)], [_pR514], {})
+_bH = _L507.bedarf_aus_plaenen([_pR514], _zuord514, _zuH)
+eq("aa514 SZENARIO H: Deckel - Material des Endes faellt auf 0, nie negativ",
+   _bH.get(300), None)
+# SZENARIO I: Hand-Haken UND unzugeordneter Job - beide Belege addieren
+# sich (verschiedene Runs), gedeckelt auf die Plan-Runs.
+_pI = dict(_pR514, checked_runplan_runs={"end|200": 100})
+eq("aa514 SZENARIO I: Haken 100 + Job 40 = 140 von 200 Runs gebaut",
+   _L507.gebaute_runs(_pI, _zuord514, {200: 40}).get(200), 140)
+eq("aa514 ... Material also 5'200 x 60/200 = 1'560",
+   _L507.bedarf_aus_plaenen([_pI], _zuord514, {"R": {200: 40}}).get(300),
+   [("Riggs", 1560)])
+# ZUFALLSPROBE (feste seeds): der Bedarf MIT mitgezaehlten Jobs ist nie
+# hoeher als ohne (sonst kauft er zu viel) und nie negativ, und ein Plan,
+# dessen Runs alle belegt sind, verlangt nichts mehr.
+import random as _rnd514
+_rr514 = _rnd514.Random(514)
+_schlimm514 = []
+for _i514 in range(3000):
+    _runs = {"1": _rr514.randint(1, 200), "2": _rr514.randint(1, 50)}
+    _mats = {"1": [[300, _rr514.randint(1, 9999)]],
+             "2": [[300, _rr514.randint(1, 9999)]]}
+    _p = {"id": "Z", "label": "Z", "frozen": {"ts": 10, "plan_snapshot": {
+        "build_runs": _runs, "build_mats": _mats}}}
+    _ex = {"Z": {1: _rr514.randint(0, 300), 2: _rr514.randint(0, 80)}}
+    _ohne = dict(_L507.bedarf_aus_plaenen([_p])).get(300) or [("Z", 0)]
+    _mit = dict(_L507.bedarf_aus_plaenen([_p], None, _ex)).get(300) or [("Z", 0)]
+    if _mit[0][1] > _ohne[0][1] or _mit[0][1] < 0:
+        _schlimm514.append((_runs, _mats, _ex, _ohne, _mit))
+    _voll = {"Z": {1: int(_runs["1"]), 2: int(_runs["2"])}}
+    if _L507.bedarf_aus_plaenen([_p], None, _voll).get(300):
+        _schlimm514.append(("voll gebaut verlangt noch Material", _runs, _mats))
+eq("aa514 Zufallsprobe 3000 Plaene: Bedarf sinkt nie unter 0 und nie "
+   "ueber den vollen Bedarf, voll gebaut = 0", _schlimm514[:2], [])
+# VERDRAHTUNG: die Seite holt die Jobs, rechnet sie ein UND zeigt die
+# mehrdeutigen an (nie still).
+_tb514 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa514 die Seite reicht die nicht zugeordneten Jobs in den Bedarf",
+      "lagerorte.zuteilbare_jobs(" in _tb514
+      and "lagerorte.bedarf_aus_plaenen(plaene, _zuord, _extra)" in _tb514)
+check("aa514 mehrdeutige Jobs werden SICHTBAR gemeldet, nicht verschwiegen",
+      "{n} job(s) belong to no plan - assign them" in _tb514
+      and "Industry jobs not loaded - runs you have already" in _tb514)
+
+# ---------------------------------------------------------------- (aa515)
+# NUR DER LAUFENDE DURCHLAUF + RIEGEL GEGEN DEN NACHKAUF (emm476, Nutzer:
+# "jetzt ist es noch schlimmer geworden"). Sein Bildschirm meldete
+# "218 Job(s) gehoeren keinem Plan" - das waren die abgelieferten Jobs
+# mehrerer Monate. Eine Warnung, die 218 Mal ruft, ist keine Warnung.
+_pA515 = {"id": "A", "label": "A", "frozen": {"ts": 1000.0, "plan_snapshot": {
+    "build_runs": {"77": 200}, "build_mats": {"77": [[300, 10]]}}}}
+_pB515 = {"id": "B", "label": "B", "frozen": {"ts": 5000.0, "plan_snapshot": {
+    "build_runs": {"77": 100}, "build_mats": {"77": [[300, 10]]}}}}
+
+
+def _j515(jid, iso, runs=10):
+    return {"job_id": jid, "activity_id": 1, "product_type_id": 77,
+            "runs": runs, "start_date": iso, "status": "delivered"}
+
+
+# 1970-01-01T00:16:40Z = ts 1000, ...01:23:20Z = 5000, ...02:30:00Z = 9000
+_ALT515 = "1970-01-01T00:08:20Z"      # ts 500: vor BEIDEN Einfrierzeiten
+_MITT515 = "1970-01-01T00:50:00Z"     # ts 3000: nach A, vor B
+_NEU515 = "1970-01-01T02:30:00Z"      # ts 9000: nach beiden
+
+_zu, _of = _L507.unzugeordnete_runs([_j515(1, _ALT515)], [_pA515, _pB515], {})
+eq("aa515 ein Job von VOR dem Einfrieren beider Plaene wird weder "
+   "gezaehlt noch gemeldet (die 218 vom 08.10.2026)", (_zu, len(_of)), ({}, 0))
+
+_zu, _of = _L507.unzugeordnete_runs([_j515(2, _MITT515)], [_pA515, _pB515], {})
+eq("aa515 nach dem Einfrieren von NUR EINEM Plan ist der Job eindeutig - "
+   "er zaehlt, statt zu warnen", (_zu, len(_of)), ({"A": {77: 10}}, 0))
+
+_zu, _of = _L507.unzugeordnete_runs([_j515(3, _NEU515)], [_pA515, _pB515], {})
+eq("aa515 nach dem Einfrieren BEIDER Plaene bleibt der Job mehrdeutig und "
+   "wird gemeldet", (_zu, [j["job_id"] for j in _of]), ({}, [3]))
+
+_j_ohne = _j515(4, None)
+_zu, _of = _L507.unzugeordnete_runs([_j_ohne], [_pA515, _pB515], {})
+eq("aa515 ohne Startzeit ist nicht entscheidbar - gemeldet, nie still "
+   "gezaehlt (Regel 3)", (_zu, [j["job_id"] for j in _of]), ({}, [4]))
+
+_zu, _of = _L507.unzugeordnete_runs([_j515(5, _ALT515)], [_pA515], {})
+eq("aa515 auch bei nur EINEM Plan zaehlt ein Job von vor dem Einfrieren "
+   "nicht", (_zu, len(_of)), ({}, 0))
+
+# UNVOLLSTAENDIGE DATEN SIND KEINE EINKAUFSLISTE - EINE Stelle fuer die
+# rote Zeile und die Sperre (Regel 9).
+check("aa515 es gibt EINE Stelle, die sagt warum die Zahlen zu hoch sind",
+      "def _lager_unvollstaendig_grund(self, res):" in _tb514
+      and "def _lager_unvollstaendig_zeigen(self, res):" in _tb514)
+check("aa515 der Einkaufs-Knopf wird bei unvollstaendigen Daten gesperrt",
+      "btn.setEnabled(not grund)" in _tb514)
+check("aa515 das Kopieren der Einkaufsliste bricht bei unvollstaendigen "
+      "Daten ab",
+      "_grund = self._lager_unvollstaendig_grund(self._lager_daten or {})"
+      in _tb514)
+# ---------------------------------------------------------------- (aa516)
+# STILL ZU KLEINER ASSET-ABRUF (emm477). GEMESSEN an zwei Berichten des
+# Nutzers, eine Stunde auseinander: Dockside 41'464'561 -> 3'079'105 Stueck,
+# Asset-Zeilen 3'886 -> 2'501, 16 andere Orte unveraendert. Material
+# verdampft nicht - ESI hat still zu wenig geliefert, und der Fehlbetrag
+# war damit zu hoch.
+_w516, _s516 = _L507.bestand_schrumpf(
+    {"Berry": 2501}, {"Berry": {"ok": 3886, "letzte": 3886}})
+eq("aa516 ein stark gesunkener Abruf wird gemeldet (sein Fall)",
+   _w516, [("Berry", 3886, 2501)])
+eq("aa516 ... und der bestaetigte Wert bleibt stehen, bis es wieder passt",
+   _s516["Berry"], {"ok": 3886, "letzte": 2501})
+
+_w516b, _s516b = _L507.bestand_schrumpf({"Berry": 2501}, _s516)
+eq("aa516 zweimal dieselbe kleinere Zahl = neue Wahrheit (der Nutzer hat "
+   "geleert), keine Dauerwarnung", (_w516b, _s516b["Berry"]["ok"]), ([], 2501))
+
+_w516c, _s516c = _L507.bestand_schrumpf(
+    {"Berry": 3800}, {"Berry": {"ok": 3886, "letzte": 3886}})
+eq("aa516 ein kleiner Rueckgang ist normal (verbraucht/verkauft)",
+   (_w516c, _s516c["Berry"]["ok"]), ([], 3800))
+
+_w516d, _s516d = _L507.bestand_schrumpf(
+    {"Berry": 10}, {"Berry": {"ok": 40, "letzte": 40}})
+eq("aa516 kleine Charaktere schwanken - unter 50 Zeilen wird nicht geurteilt",
+   _w516d, [])
+
+_w516e, _s516e = _L507.bestand_schrumpf({}, {"Berry": {"ok": 3886, "letzte": 0}})
+eq("aa516 ein Charakter, dessen Abruf scheiterte, behaelt seinen "
+   "bestaetigten Wert",
+   (_w516e, (_s516e.get("Berry") or {}).get("ok")), ([], 3886))
+
+_w516f, _s516f = _L507.bestand_schrumpf({"Neu": 900}, {})
+eq("aa516 der erste Lauf meldet nie etwas", (_w516f, _s516f["Neu"]["ok"]),
+   ([], 900))
+
+check("aa516 die Seite zaehlt die Asset-Zeilen je Charakter und prueft sie",
+      "asset_n[name] = len(z)" in _tb514
+      and "lagerorte.bestand_schrumpf(" in _tb514
+      and '"schrumpf": _schrumpf' in _tb514)
+check("aa516 ein still zu kleiner Abruf sperrt die Einkaufsliste",
+      'for _nm, _vor, _jetzt in ((res or {}).get("schrumpf") or []):' in _tb514)
+
+check("aa515 die Warnungen stehen VORN in der Statuszeile (sie wird rechts "
+      "abgeschnitten)",
+      _tb514.find("{n} job(s) belong to no plan - assign them")
+      < _tb514.find("{n} location(s) switched off"))
+
+# ---------------------------------------------------------------- (aa517)
+# EINDEUTIGE JOBS WERDEN FESTGESCHRIEBEN (emm478, Nutzer: "gibts es eine
+# automatisierendere Loesung?" -> Entscheid "Still festschreiben"). Bisher
+# lief die Job-Zuordnung NUR beim Aufbau des Runplaners eines Plans - wer
+# Jobs startet und den Plan danach nicht oeffnet, hatte sie nirgends.
+# `zuteilbare_jobs` traegt jetzt die Logik und nennt die JOB-IDs; die
+# Huelle `unzugeordnete_runs` liefert daraus genau wie vorher die Runs je
+# Plan - EINE Wahrheit (Regel 9).
+_tr517, _of517 = _L507.zuteilbare_jobs(
+    [_j515(11, _MITT515), _j515(12, _NEU515)], [_pA515, _pB515], {})
+eq("aa517 zuteilbare_jobs nennt die Job-ID, den Plan, das Item und die "
+   "Runs (sonst kann nichts festgeschrieben werden)",
+   (_tr517, [j["job_id"] for j in _of517]),
+   ([(11, "A", 77, 10, 1)], [12]))
+
+_zu517, _of517b = _L507.unzugeordnete_runs(
+    [_j515(11, _MITT515), _j515(12, _NEU515)], [_pA515, _pB515], {})
+eq("aa517 die Huelle rechnet genau dasselbe wie vorher (keine zweite "
+   "Wahrheit)", (_zu517, [j["job_id"] for j in _of517b]),
+   ({"A": {77: 10}}, [12]))
+
+_tr517c, _ = _L507.zuteilbare_jobs(
+    [_j515(13, _MITT515, runs=4), _j515(14, _MITT515, runs=6)],
+    [_pA515, _pB515], {})
+eq("aa517 mehrere eindeutige Jobs werden je Job einzeln genannt (jeder "
+   "braucht seine eigene Zeile in job_zuordnung)",
+   sorted(_tr517c), [(13, "A", 77, 4, 1), (14, "A", 77, 6, 1)])
+
+_tr517d, _of517d = _L507.zuteilbare_jobs(
+    [_j515(15, _MITT515)], [_pA515, _pB515], {15: "A"})
+eq("aa517 ein schon zugeordneter Job wird nicht noch einmal "
+   "festgeschrieben", (_tr517d, _of517d), ([], []))
+
+check("aa517 die Seite schreibt jeden eindeutigen Job dauerhaft fest "
+      "(Quelle \"eindeutig\", erste Entscheidung gewinnt)",
+      "store.job_zuordnung_setzen(" in _tb514
+      and '_jid, _pid, _tid, _runs, "eindeutig")' in _tb514
+      and '"job_fest": _fest' in _tb514)
+check("aa517 das Festschreiben laeuft NIE bei gescheitertem Job-Abruf",
+      "if not _job_fehler:" in _tb514
+      and _tb514.find("if not _job_fehler:")
+      < _tb514.find("store.job_zuordnung_setzen("))
+check("aa517 die Statuszeile sagt, was festgeschrieben wurde (nie still)",
+      "{n} job(s) assigned automatically" in _tb514
+      and "{n} item(s) covered by jobs not yet assigned" in _tb514)
+
+# ---------------------------------------------------------------- (aa518)
+# EIN GESCHEITERTER BLAUPAUSEN-ABRUF IST KEIN "DU HAST SIE NICHT" (emm479,
+# Nutzer: "der Bauplan behauptet ich haette 2 Blueprints nicht, ich habe sie
+# aber"). `_bd_fetch_all_owned_blueprints` verschluckte jeden Fehlschlag
+# STILL (`except Exception: continue`) - die Blaupausen dieses Charakters
+# fehlten dann in der Zaehlung, und der Reiter schrieb rot "completely
+# missing". Dieselbe Fehlerklasse wie der stille Asset-Abruf (emm476/477).
+_mw518 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+_i518 = _mw518.find("def _bd_fetch_all_owned_blueprints")
+_blk518 = _mw518[_i518:_i518 + 3200]
+check("aa518 ein gescheiterter Blaupausen-Abruf wird protokolliert, nicht "
+      "verschluckt",
+      "except Exception:\n                    continue" not in _blk518
+      and "self._log_exception(" in _blk518)
+check("aa518 ... und der Charakter wird gemerkt (EINE Stelle)",
+      "self._bd_bp_fehler = fehler" in _blk518
+      and "fehler.append(" in _blk518)
+check("aa518 unvollstaendiger Besitz erzeugt KEINE Kaufliste",
+      "None if (owned is None or _bp_fehler) else [" in _mw518)
+check("aa518 ... und die Zeile behauptet dann nicht 'fehlt komplett'",
+      "elif _bp_fehler:" in _mw518
+      and "ownership not loaded for: {names}" in _mw518
+      and (_mw518.find("elif _bp_fehler:")
+           < _mw518.find('status_txt = t("completely missing')))
+_fe518 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+check("aa518 der Blueprints-Reiter sagt es sichtbar",
+      "Blueprints not loaded for: {names}" in _fe518)
+
+# ---------------------------------------------------------------- (aa519)
+# DAS ESI-FEHLERBUDGET WIRD MITGELESEN (emm480). Belegt in seiner fehler.log
+# vom 09.10.2026 13:33: CCP wies JEDEN Abruf mit 420 ab - Jobs, Blaupausen
+# UND Assets, fuer jeden Charakter plus Corp. Das war die WURZEL von emm477
+# (Bestand 41 Mio -> 3 Mio) und emm479 (zwei eigene Blaupausen "fehlen").
+# ESI sagt in jeder Antwort, wie viel Budget noch da ist - das wurde
+# weggeworfen. Jetzt steht es an EINER Stelle (Regel 9).
+import eve_trader.esi as _esi519
+
+
+class _Ant519:
+    """Antwort mit Budget-Headern, wie requests sie liefert."""
+
+    def __init__(self, status, remain=None, reset=None):
+        self.status_code = status
+        self.headers = {}
+        if remain is not None:
+            self.headers["X-Esi-Error-Limit-Remain"] = str(remain)
+        if reset is not None:
+            self.headers["X-Esi-Error-Limit-Reset"] = str(reset)
+
+
+_bud519 = dict(_esi519._BUDGET)
+# Die Diagnose protokolliert absichtlich (WER frisst das Budget) - in der
+# Suite soll sie nicht auf stderr landen.
+_lvl519 = _esi519._log.level
+_esi519._log.setLevel(60)
+try:
+    _esi519._BUDGET.update(
+        {"remain": None, "reset": None, "ts": 0.0, "sperre_bis": 0.0})
+    _esi519._budget_merken(_Ant519(200, 95, 60), "x")
+    _s519 = _esi519.fehlerbudget()
+    check(f"aa519 der Stand einer GELUNGENEN Antwort wird gelesen "
+          f"(remain {_s519.get('remain')}, reset {_s519.get('reset')})",
+          _s519.get("remain") == 95 and _s519.get("reset") == 60
+          and not _esi519.budget_erschoepft())
+    # Knapp: wird protokolliert (sonst sieht man das Leerlaufen nie kommen),
+    # aber NICHTS wird gesperrt - es antwortet ja noch.
+    _esi519._BUDGET_LOG_TS = 0.0
+    _esi519._budget_merken(_Ant519(200, 3, 42), "y")
+    check("aa519 knappes Budget sperrt nichts (ESI antwortet noch)",
+          _esi519.fehlerbudget().get("remain") == 3
+          and not _esi519.budget_erschoepft()
+          and _esi519.BUDGET_WARNSCHWELLE >= 3)
+    # 420: ab jetzt ist JEDE Zahl aus ESI unvollstaendig, und zwar so lange,
+    # wie der Reset-Header sagt.
+    _jetzt519 = __import__("time").time()
+    _esi519._budget_merken(_Ant519(420, 0, 55), "z")
+    _sp519 = _esi519.fehlerbudget().get("sperre_bis") or 0.0
+    check(f"aa519 ein 420 sperrt bis +Reset ({round(_sp519 - _jetzt519)} s)",
+          _esi519.budget_erschoepft()
+          and 50 <= (_sp519 - _jetzt519) <= 60)
+    check("aa519 ... und nach Ablauf der Sperre nicht mehr",
+          not _esi519.budget_erschoepft(now=_sp519 + 1))
+    # Ohne Reset-Header raten wir NICHT auf 0, sondern nehmen eine Minute.
+    _esi519._BUDGET["sperre_bis"] = 0.0
+    _esi519._budget_merken(_Ant519(420), "z2")
+    check("aa519 ein 420 ohne Reset-Header sperrt trotzdem",
+          _esi519.budget_erschoepft())
+finally:
+    _esi519._BUDGET.update(_bud519)
+    _esi519._log.setLevel(_lvl519)
+_es519 = open("eve_trader/esi.py", encoding="utf-8").read()
+_g519 = _es519.find("def _get_with_retry")
+_blk519 = _es519[_g519:_g519 + 3000]
+check("aa519 der Header wird VOR raise_for_status gelesen (sonst geht "
+      "ausgerechnet der 420 verloren)",
+      "_budget_merken(r, url)" in _blk519
+      and _blk519.find("_budget_merken(r, url)")
+      < _blk519.find("r.raise_for_status()"))
+_tb519 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa519 Stock locations nennt den 420 und sperrt den Einkauf",
+      '"budget_420": esi.budget_erschoepft()' in _tb519
+      and 'get("budget_420") or esi.budget_erschoepft()' in _tb519
+      and "ESI error budget used up (420)" in _tb519)
+_i519 = _tb519.find("def _lager_unvollstaendig_grund")
+_gr519 = _tb519[_i519:_i519 + 2000]
+check("aa519 ... und zwar als ERSTES (es ist die Ursache der uebrigen "
+      "Meldungen)",
+      _gr519.find('get("budget_420")') < _gr519.find('get("failed")'))
+# EIN FENSTER KANN WEG SEIN, WAEHREND SEIN TIMER NOCH FEUERT. Qt-Objekte
+# haben zwei Leben (Python-Zeiger und C++-Objekt); `hasattr`/`getattr` sehen
+# nur das erste. Gefunden hat es nur b162 (Update-Check 02.10. und
+# 09.10.2026, Spinner 09.10.2026) - in einem Slot frisst Qt die Ausnahme.
+import eve_trader.ui.mw_basis as _basis519
+
+
+class _Tot519:
+    def objectName(self):
+        raise RuntimeError("libshiboken: object already deleted")
+
+
+class _Lebt519:
+    def objectName(self):
+        return "lebt"
+
+
+check("aa519 `zerstoert` erkennt ein weggeraeumtes Qt-Objekt",
+      _basis519.zerstoert(_Tot519()) is True
+      and _basis519.zerstoert(_Lebt519()) is False
+      and _basis519.zerstoert(None) is True)
+_mw519 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+_u519 = _mw519.find("def check_programm_update")
+_cu519 = _mw519[_u519:_u519 + 2600]
+check("aa519 der Update-Check fragt danach, statt zu krachen",
+      "if not zerstoert(_b):" in _cu519
+      and "if not zerstoert(self):" in _cu519)
+_s519i = _mw519.find("    def _spin_tick(self):")
+_sp519 = _mw519[_s519i:_s519i + 1800]
+check("aa519 Spinner und Overlay fragen danach (ihre Timer feuern weiter)",
+      _sp519.count("zerstoert(getattr(self,") >= 6
+      and "hasattr(self, \"_spin_timer\")" not in _sp519)
+
+# ---------------------------------------------------------------- (aa520)
+# STOCK-LOCATIONS-ZUFALLSPROBE (emm481, Nutzer: "kannst du noch mehr testen
+# Buildplan und Stock Locations"). Feste Zufallszahlen, reine Funktionen aus
+# lagerorte.py - EIGENSCHAFTEN statt Nachbau (ein Zeilen-Spiegel der
+# Funktion bewiese nur, dass sie sich selbst gleicht):
+#   * zuteilbare_jobs: jeder Treffer haelt JEDE Regel (Aktivitaet 1/9/11,
+#     nicht vergeben, genau EIN Plan baut es nach seinem Einfrieren, nicht
+#     fremd, Start lesbar); Treffer und offen ueberschneiden sich nie;
+#     Corp-Doppelte (gleiche job_id) aendern NICHTS; ein nachtraeglich
+#     vergebener Treffer-Job faellt heraus, der Rest bleibt;
+#     unzugeordnete_runs ist exakt die Summe der Treffer (Regel 9).
+#   * bedarf_aus_plaenen: nie <= 0; mit gebauten Runs nie HOEHER als ohne
+#     (monotonic); Haken und Jobs ueber dieselben Runs zaehlen als MAXIMUM,
+#     nicht doppelt; Plaene sind unabhaengig (Summe je Plan == zusammen);
+#     alter Schnappschuss ohne build_runs meldet den VOLLEN Bedarf (Regel 3).
+#   * baum/karten: Mengen-Summen stimmen auf die Einheit, ein abgewaehlter
+#     Ort zaehlt NIRGENDS, jeder gewaehlte Ort bekommt eine Karte,
+#     Selbstgebautes ist nie "short", fehlt_ganz = Bedarf ohne Bestand.
+#   * einkaufsliste: nur short > 0, nie Selbstgebautes, nie "#id",
+#     groesster Fehlbetrag zuerst; multibuy_text = Name<TAB>Menge.
+def _aa520():
+    import math
+    import random
+    from collections import defaultdict
+    from datetime import datetime, timezone
+    from eve_trader import lagerorte as L
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as MH
+    probs = defaultdict(list)
+    BASIS = 1_700_000_000.0
+
+    def _iso(ts):
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+
+    for seed in range(3000):
+        rnd = random.Random(900_000 + seed)
+        mats = [910001 + i for i in range(rnd.randint(2, 5))]
+        items = [920001 + i for i in range(rnd.randint(1, 4))]
+        plaene = []
+        for pi in range(rnd.randint(1, 3)):
+            br, bm = {}, {}
+            for t in items:
+                if rnd.random() < .75:
+                    br[t] = rnd.randint(1, 50)
+                    bm[t] = [[m, rnd.randint(1, 500)] for m in
+                             rnd.sample(mats, rnd.randint(1, len(mats)))]
+            enden = [[t, rnd.randint(1, 5)] for t in
+                     rnd.sample(list(br) or items, min(2, len(br) or 1))
+                     if rnd.random() < .7]
+            snap = {"build_runs": br, "build_mats": bm,
+                    "inv_buy": {m: rnd.randint(1, 40) for m in
+                                rnd.sample(mats, rnd.randint(0, 2))},
+                    "inv_stock_used": {}}
+            haken = {f"component|{t}": rnd.randint(1, 80)
+                     for t in br if rnd.random() < .4}
+            p = {"id": f"p{pi}", "label": f"Plan {pi}", "enden": enden,
+                 "frozen": {"ts": BASIS + rnd.randint(-5000, 5000),
+                            "plan_snapshot": snap},
+                 "checked_runplan_runs": haken}
+            if enden:
+                p["type_id"] = enden[0][0]
+            # Hin und wieder ein Plan OHNE Schnappschuss (gespeichert, nie
+            # eingefroren): plan_baut_items faellt auf die reserve_map
+            # zurueck, bedarf_aus_plaenen liefert fuer ihn nichts.
+            if rnd.random() < .15:
+                p = {"id": f"p{pi}", "label": f"Plan {pi}", "enden": [],
+                     "reserve_map": {str(t): 1 for t in
+                                     rnd.sample(items, rnd.randint(0, len(items)))}}
+            plaene.append(p)
+        jobs, vergeben = [], {}
+        for jid in range(1, rnd.randint(1, 12)):
+            j = {"job_id": jid,
+                 "activity_id": rnd.choice([1, 1, 1, 9, 11, 5, 8]),
+                 "product_type_id": rnd.choice(items + mats + [0]),
+                 "runs": rnd.randint(0, 30),
+                 "start_date": _iso(BASIS + rnd.randint(-10000, 10000))}
+            if rnd.random() < .08:
+                j["job_id"] = None
+            if rnd.random() < .12:
+                j["start_date"] = rnd.choice([None, "kaputt"])
+            jobs.append(j)
+            if rnd.random() < .2:
+                vergeben[jid] = rnd.choice([plaene[0]["id"], "-"])
+        fremd = {t for t in items if rnd.random() < .2}
+        # Corp-Doppelte: derselbe Job kommt von mehreren Charakteren.
+        doppelt = jobs + [dict(j) for j in jobs if rnd.random() < .5]
+        rnd.shuffle(doppelt)
+        treffer, offen = L.zuteilbare_jobs(jobs, plaene, vergeben, fremd)
+        t2, o2 = L.zuteilbare_jobs(doppelt, plaene, vergeben, fremd)
+        if sorted(treffer) != sorted(t2) or \
+                sorted(x.get("job_id") or -1 for x in offen) != \
+                sorted(x.get("job_id") or -1 for x in o2):
+            probs["Corp-Doppelte aendern das Ergebnis"].append(seed)
+        frost = {str(p["id"]): float(((p.get("frozen") or {}).get("ts")
+                                      or 0) or 0) for p in plaene}
+        bauer = defaultdict(set)
+        for p in plaene:
+            for t in MH.plan_baut_items(p):
+                bauer[int(t)].add(str(p["id"]))
+        gesehen = set()
+        for _jid, _pid, _tid, _runs, _akt in treffer:
+            if _jid in gesehen:
+                probs["Job doppelt in den Treffern"].append(seed)
+            gesehen.add(_jid)
+            if _akt not in (1, 9, 11) or _runs <= 0:
+                probs["Treffer mit falscher Aktivitaet/Runs"].append(seed)
+            if str(vergeben.get(_jid, "") or ""):
+                probs["vergebener Job wurde neu vergeben"].append(seed)
+            if _tid in fremd:
+                probs["fremdes Item wurde zugeteilt"].append(seed)
+            if _pid not in bauer.get(_tid, set()):
+                probs["Plan baut das Item gar nicht"].append(seed)
+            _j = next(j for j in jobs if j.get("job_id") == _jid)
+            _ts = MH._iso_job_ts(_j.get("start_date"))
+            if _ts is None:
+                probs["Job ohne lesbaren Start wurde zugeteilt"].append(seed)
+            elif _ts < frost.get(_pid, 0.0):
+                probs["Job von VOR dem Einfrieren zugeteilt"].append(seed)
+            elif len([p for p in bauer.get(_tid, set())
+                      if _ts >= frost.get(p, 0.0)]) != 1:
+                probs["mehrdeutiger Job wurde zugeteilt"].append(seed)
+        if gesehen & {x.get("job_id") for x in offen}:
+            probs["Job zugleich Treffer und offen"].append(seed)
+        zu, _of = L.unzugeordnete_runs(jobs, plaene, vergeben, fremd)
+        _agg = defaultdict(lambda: defaultdict(int))
+        for _jid, _pid, _tid, _runs, _akt in treffer:
+            _agg[_pid][_tid] += _runs
+        if {k: dict(v) for k, v in _agg.items()} != zu:
+            probs["Huelle rechnet anders als zuteilbare_jobs"].append(seed)
+        if treffer:
+            _jid0 = treffer[0][0]
+            _t3, _ = L.zuteilbare_jobs(
+                jobs, plaene, {**vergeben, _jid0: "-"}, fremd)
+            if sorted(_t3) != sorted(t for t in treffer if t[0] != _jid0):
+                probs["'-' nimmt mehr als den einen Job heraus"].append(seed)
+        # ---- bedarf_aus_plaenen: Eigenschaften
+        zuordnung = {}
+        for _jid, _pid, _tid, _runs, _akt in treffer:
+            zuordnung[_jid] = {"plan_id": _pid, "type_id": _tid, "runs": _runs}
+        ohne = L.bedarf_aus_plaenen(plaene)
+        mit = L.bedarf_aus_plaenen(plaene, zuordnung)
+        for b in (ohne, mit):
+            for m, lst in b.items():
+                if any(q <= 0 for _l, q in lst):
+                    probs["Bedarf <= 0 gemeldet"].append(seed)
+        def _summe(b):
+            out = defaultdict(lambda: defaultdict(int))
+            for m, lst in b.items():
+                for lbl, q in lst:
+                    out[m][lbl] += q
+            return out
+        _so, _sm = _summe(ohne), _summe(mit)
+        for m, je in _sm.items():
+            for lbl, q in je.items():
+                if q > _so.get(m, {}).get(lbl, 0):
+                    probs["Bedarf steigt durch gebaute Runs"].append(seed)
+        einzeln = _summe({})
+        for p in plaene:
+            for m, je in _summe(L.bedarf_aus_plaenen([p], zuordnung)).items():
+                for lbl, q in je.items():
+                    einzeln.setdefault(m, defaultdict(int))[lbl] += q
+        if {m: dict(v) for m, v in einzeln.items()} != \
+                {m: dict(v) for m, v in _sm.items()}:
+            probs["Plaene beeinflussen sich gegenseitig"].append(seed)
+        # Haken und Jobs ueber DIESELBEN Runs: Maximum, nie Summe.
+        p0 = plaene[0]
+        _snap0 = ((p0.get("frozen") or {}).get("plan_snapshot") or {})
+        _br0 = _snap0.get("build_runs") or {}
+        if _br0:
+            _t0 = sorted(_br0)[0]
+            _r0 = min(int(_br0[_t0]), 7)
+            _zj = {77001: {"plan_id": p0["id"], "type_id": _t0, "runs": _r0}}
+            _po = dict(p0, checked_runplan_runs={})
+            _ph = dict(p0, checked_runplan_runs={f"component|{_t0}": _r0})
+            _rest = plaene[1:]
+            _nur_job = _summe(L.bedarf_aus_plaenen([_po] + _rest, _zj))
+            _beide = _summe(L.bedarf_aus_plaenen([_ph] + _rest, _zj))
+            if _nur_job != _beide:
+                probs["Haken + Job zaehlen doppelt statt Maximum"].append(seed)
+        # Alter Schnappschuss ohne build_runs: VOLLER Bedarf (Regel 3).
+        _alt = {"id": "alt", "label": "Alt", "enden": [],
+                "frozen": {"ts": BASIS, "plan_snapshot": {
+                    "build_runs": {}, "build_mats": {items[0]: [[mats[0], 123]]},
+                    "inv_buy": {}, "inv_stock_used": {}}}}
+        _ba = L.bedarf_aus_plaenen([_alt], zuordnung)
+        if _summe(_ba).get(mats[0], {}).get("Alt") != 123:
+            probs["alter Schnappschuss meldet nicht voll"].append(seed)
+        # ---- baum/karten/einkaufsliste: Eigenschaften
+        orte = [60001 + i for i in range(rnd.randint(1, 4))]
+        zeilen = []
+        for _ in range(rnd.randint(0, 25)):
+            zeilen.append({"tid": rnd.choice(mats + items),
+                           "ort": rnd.choice(orte),
+                           "besitzer": rnd.choice([111, 222]),
+                           "art": rnd.choice(["char", "corp"]),
+                           "pfad": rnd.choice([[], [5], [5, 6]]),
+                           "menge": rnd.randint(1, 900),
+                           "item_id": rnd.randint(1, 10**6)})
+        namen = {t: f"M {t}" for t in mats + items}
+        if mats and rnd.random() < .3:
+            namen.pop(mats[0])      # unaufgeloester Name -> "#id"
+        gebaut = L.gebaute_tids(plaene)
+        nur = {o for o in orte if rnd.random() < .7} or {orte[0]}
+        kk, fehlt_ganz = L.karten(zeilen, namen, {}, {}, {}, bedarf=mit,
+                                  nur_orte=nur, selbst_gebaut=gebaut)
+        if {k["ort"] for k in kk} != nur:
+            probs["nicht jeder gewaehlte Ort hat eine Karte"].append(seed)
+        _summe_karten = sum(k["menge"] for k in kk)
+        _summe_zeilen = sum(z["menge"] for z in zeilen if z["ort"] in nur)
+        if _summe_karten != _summe_zeilen:
+            probs["Kartensumme != Zeilensumme der gewaehlten Orte"].append(seed)
+        _items_alle = [it for k in kk for it in k["items"]] + fehlt_ganz
+        for it in _items_alle:
+            if it["tid"] in gebaut and it["short"] > 0:
+                probs["Selbstgebautes ist short"].append(seed)
+            if it["short"] < 0:
+                probs["negativer Fehlbetrag"].append(seed)
+            _ges = sum(q for _l, q in it["bedarf"])
+            _da = sum(z["menge"] for z in zeilen
+                      if z["tid"] == it["tid"] and z["ort"] in nur)
+            if it["bedarf"] and it["tid"] not in gebaut and \
+                    it["short"] != max(0, _ges - _da):
+                probs["short != Bedarf - Bestand (gewaehlte Orte)"].append(seed)
+        for it in fehlt_ganz:
+            if any(z["tid"] == it["tid"] and z["ort"] in nur for z in zeilen):
+                probs["fehlt_ganz trotz Bestand an gewaehltem Ort"].append(seed)
+        for k in kk:
+            if k["short"] != sum(1 for it in k["items"] if it["short"] > 0):
+                probs["Karten-short zaehlt falsch"].append(seed)
+        posten = L.einkaufsliste(_items_alle, gebaut)
+        _je_tid = {}
+        for it in _items_alle:
+            _je_tid.setdefault(it["tid"], it)
+        for n, q in posten:
+            if q <= 0 or n.startswith("#") or not n:
+                probs["Einkaufsliste mit 0/#id"].append(seed)
+        if [q for _n, q in posten] != sorted((q for _n, q in posten),
+                                             reverse=True):
+            probs["Einkaufsliste nicht absteigend"].append(seed)
+        if any(namen.get(t) == n for n, _q in posten
+               for t in gebaut if namen.get(t) == n):
+            probs["Selbstgebautes auf der Einkaufsliste"].append(seed)
+        _txt = L.multibuy_text(posten)
+        if posten and _txt.split("\n")[0] != f"{posten[0][0]}\t{posten[0][1]}":
+            probs["Multibuy-Format kaputt"].append(seed)
+    return {k: v[:3] for k, v in probs.items()}
+
+
+eq("aa520 Stock-locations-Zufallsprobe ohne Befund", _aa520(), {})
+
+# ---------------------------------------------------------------- (aa521)
+# BAUPLAN-ZUFALLSPROBE: MATERIALBILANZ von production_plan (emm481). Die
+# Bilanz aus emm349 ("Bedarf = Kauf + Bestand + Bau - Ueberschuss exakt 0"),
+# dort an EINEM echten Plan gemessen - hier an zufaelligen Rezeptbaeumen
+# (Rohstoffe -> Komponenten/Reaktionen -> Endprodukt, zufaellige ME, Preise,
+# Bestand, Blacklist). Zusagen je Plan:
+#   * je Material: Kauf + verbrauchter Bestand + eigene Produktion
+#     deckt den Bedarf EXAKT (Rest == surplus, nie Unterdeckung - Regel 3),
+#   * das Endprodukt wird immer gebaut (Output >= Menge),
+#   * Blacklist/never_build wird nie gebaut,
+#   * die Kosten-Zerlegungen summieren sich exakt auf ihre Totale
+#     (buy/stock/job/inv-Items, total = Summe der vier - aa375 an
+#     Zufallsdaten statt an einem Handfall).
+def _aa521():
+    import math
+    import random
+    from collections import defaultdict
+    from eve_trader import industry as I
+    probs = defaultdict(list)
+    for seed in range(2000):
+        rnd = random.Random(770_000 + seed)
+        raws = [940001 + i for i in range(rnd.randint(2, 4))]
+        comps = [950001 + i for i in range(rnd.randint(1, 3))]
+        end = 960001
+        p2b, bpm, at, reakt = {}, {}, {}, set()
+
+        class _R:
+            activity_max_runs = {}
+            invention_for_bpc = {}
+            bp_products = {}
+            item_cat = {}
+        for i, c in enumerate(comps):
+            bp = 955001 + i
+            akt = I.REACTION if rnd.random() < .4 else I.MANUFACTURING
+            opr = rnd.choice([1, 1, 10, 100]) if akt == I.REACTION else 1
+            p2b[c] = (bp, akt, opr)
+            bpm[(bp, akt)] = [(m, rnd.randint(1, 40)) for m in
+                              rnd.sample(raws, rnd.randint(1, len(raws)))]
+            at[(bp, akt)] = 3600
+            if akt == I.REACTION:
+                reakt.add(c)
+        ebp = 965001
+        p2b[end] = (ebp, I.MANUFACTURING, 1)
+        bpm[(ebp, I.MANUFACTURING)] = (
+            [(c, rnd.randint(1, 8)) for c in comps]
+            + [(m, rnd.randint(1, 60)) for m in
+               rnd.sample(raws, rnd.randint(0, len(raws)))])
+        at[(ebp, I.MANUFACTURING)] = 3600
+        _R.product_to_bp = p2b
+        _R.bp_materials = bpm
+        _R.activity_time = at
+        _R.reaction_products = reakt
+        preise = {m: rnd.uniform(1, 200) for m in raws}
+        for c in comps:
+            # mal lohnt Kaufen, mal Bauen
+            preise[c] = rnd.choice([rnd.uniform(1, 500), rnd.uniform(1e5, 1e7)])
+        preise[end] = 1e12
+        opts = {"invention": False, "build_reactions": True, "job_pct": 0,
+                "me": rnd.choice([0, 5, 10]), "me_map": {},
+                "adjusted_prices": dict(preise),
+                "system_index_mfg": 0.05, "system_index_reaction": 0.05,
+                "facility_tax": 0.01}
+        if rnd.random() < .5:
+            opts["stock"] = {t: rnd.randint(0, 400)
+                             for t in rnd.sample(raws + comps, 2)}
+        sperr = {c for c in comps if rnd.random() < .25}
+        if sperr and rnd.random() < .7:
+            opts["never_build"] = set(sperr)
+        else:
+            sperr = set()
+        qty = rnd.randint(1, 40)
+        try:
+            plan = I.production_plan(end, qty, preise.get, _R(), opts)
+        except Exception as e:
+            probs["exception " + type(e).__name__ + ": " + str(e)[:60]].append(seed)
+            continue
+        buy = plan.get("buy") or {}
+        runs = plan.get("build_runs") or {}
+        stock_used = plan.get("stock_used") or {}
+        surplus = plan.get("surplus") or {}
+        bm_out = plan.get("build_mats") or {}
+        bedarf = defaultdict(int)
+        for t, lst in bm_out.items():
+            for m, q in lst:
+                bedarf[int(m)] += int(q)
+        opr_von = {t: int(p2b[t][2]) for t in p2b}
+        for m in set(bedarf) | set(buy) | set(stock_used) | set(runs):
+            if m == end:
+                continue
+            _zu = (int(buy.get(m, 0)) + int(stock_used.get(m, 0))
+                   + int(runs.get(m, 0)) * opr_von.get(m, 0))
+            _rest = _zu - bedarf.get(m, 0)
+            if _rest < 0:
+                probs["UNTERDECKUNG (zu wenig gekauft/gebaut)"].append(
+                    (seed, m, _rest))
+            elif _rest != int(surplus.get(m, 0)):
+                probs["Bilanzrest != surplus"].append((seed, m))
+        _out_end = int(runs.get(end, 0)) * opr_von[end]
+        if _out_end < qty:
+            probs["Endprodukt-Output < Menge"].append(seed)
+        if _out_end - qty != int(surplus.get(end, 0)):
+            probs["End-Ueberschuss falsch"].append(seed)
+        for c in sperr:
+            if runs.get(c):
+                probs["never_build wurde gebaut"].append(seed)
+        for feld, total in (("buy_cost_items", "mat_cost"),
+                            ("stock_cost_items", "stock_cost"),
+                            ("job_cost_items", "job_cost"),
+                            ("inv_cost_items", "inv_cost")):
+            _items = plan.get(feld)
+            if _items is None:
+                probs[f"{feld} fehlt"].append(seed)
+                continue
+            _s = sum(_items.values())
+            if abs(_s - float(plan.get(total) or 0.0)) > 1e-6 * max(1.0, _s):
+                probs[f"Summe {feld} != {total}"].append(seed)
+        _t = (float(plan["mat_cost"]) + float(plan["stock_cost"])
+              + float(plan["job_cost"]) + float(plan["inv_cost"]))
+        if abs(_t - float(plan["total_cost"])) > 1e-6 * max(1.0, _t):
+            probs["total != mat+stock+job+inv"].append(seed)
+    return {k: v[:3] for k, v in probs.items()}
+
+
+eq("aa521 Bauplan-Zufallsprobe (Materialbilanz) ohne Befund", _aa521(), {})
+
+# ---------------------------------------------------------------- (aa525)
+# INVENTION-ZUFALLSPROBE (emm486, Nutzer: "ja punkt 1" - aa521 lief ohne
+# Invention, Invention ist aber die teuerste Rechenklasse; Nutzer
+# 03.10.2026: "ein Rechenfehler ist das Schlimmste ueberhaupt").
+# Zufaellige T2-Welten (Datacores, Decryptor als Tupel in
+# inv_decryptor_map, Skill-Modifikator, eigene Kopien-Runs, manuelle
+# Versuche - auch halbe -, Bestand, Datacore == Rohstoff). Zusagen:
+#   * inv_buy + inv_stock_used == HANDRECHNUNG der Versuche (dieselben
+#     oeffentlichen Formeln: Rest = Runs - eigene, Erfolge = ceil(Rest /
+#     Runs je Kopie), invention_attempts_for_confidence(..., 0.75),
+#     angefangener Versuch zaehlt ganz - Regel 3),
+#   * inv_stock_used nimmt NIE Bestand, den die Fertigung schon verbraucht
+#     hat (inv_stock_used + stock_used <= stock, auch wenn der Datacore
+#     zugleich Baumaterial ist),
+#   * inv_cost == Versuche x Datacore/Decryptor-Preis (ohne Sci-Index
+#     keine Gebuehr), und Datacores stehen NIE zusaetzlich in `buy`
+#     (sonst bepreiste mat_cost sie ein zweites Mal),
+#   * "Own BPC" und invention=False kosten exakt nichts,
+#   * mehr eigene Kopien-Runs -> nie mehr Einkauf (Monotonie).
+def _aa525():
+    import random
+    from collections import defaultdict
+    from eve_trader import industry as I
+    probs = defaultdict(list)
+    for seed in range(3000):
+        rnd = random.Random(660_000 + seed)
+        raws = [941001 + i for i in range(rnd.randint(2, 3))]
+        dcs = [942001 + i for i in range(rnd.randint(1, 2))]
+        dcy = 942900
+        end, t2_bp, t1_bp = 961001, 966001, 966002
+
+        class _R:
+            activity_max_runs = {}
+            bp_products = {}
+            item_cat = {}
+            reaction_products = set()
+            invention_copy_mats = {}
+        opr = rnd.choice([1, 1, 5])
+        _R.product_to_bp = {end: (t2_bp, I.MANUFACTURING, opr)}
+        # Manchmal ist ein Datacore ZUGLEICH Baumaterial - dann muss der
+        # Bestand sauber zwischen Fertigung und Invention geteilt werden.
+        ueberlapp = rnd.random() < .3
+        _bm = [(m, rnd.randint(1, 40)) for m in raws]
+        if ueberlapp:
+            _bm.append((dcs[0], rnd.randint(1, 10)))
+        _R.bp_materials = {(t2_bp, I.MANUFACTURING): _bm}
+        _R.activity_time = {(t2_bp, I.MANUFACTURING): 3600}
+        inv_runs = rnd.choice([1, 10])
+        prob = rnd.uniform(0.2, 0.5)
+        cores = [(d, rnd.randint(1, 4)) for d in dcs]
+        _R.invention_for_bpc = {t2_bp: (t1_bp, inv_runs, prob, list(cores))}
+        preise = {m: rnd.uniform(1, 100) for m in raws}
+        for d in dcs:
+            preise[d] = rnd.uniform(10, 1000)
+        preise[dcy] = rnd.uniform(100, 5000)
+        preise[end] = 1e12
+        opts = {"invention": True, "build_reactions": True, "job_pct": 0,
+                "me": 0, "me_map": {}, "adjusted_prices": dict(preise),
+                "system_index_mfg": 0.05, "system_index_reaction": 0.05,
+                "facility_tax": 0.01}
+        pm, rm = 1.0, 0
+        use_dec = rnd.random() < .4
+        if use_dec:
+            pm, rm = rnd.choice([(1.0, 0), (1.2, 2), (1.8, -1), (0.6, 9)])
+            opts["inv_decryptor_map"] = {t2_bp: (pm, rm, 0, 0, dcy)}
+        if rnd.random() < .3:
+            opts["inv_skill_modifier"] = {t2_bp: rnd.uniform(1.0, 1.4)}
+        owned = rnd.randint(0, 6) if rnd.random() < .4 else 0
+        if owned:
+            opts["inv_owned_runs"] = {t2_bp: owned}
+        manual = None
+        if rnd.random() < .25:
+            manual = rnd.choice([0, 2, 5, 3.5, 7.25])
+            opts["inv_manual_attempts"] = {t2_bp: manual}
+        stock = {}
+        if rnd.random() < .5:
+            stock = {d: rnd.randint(0, 30) for d, _q in cores}
+            if use_dec and rnd.random() < .5:
+                stock[dcy] = rnd.randint(0, 5)
+            if ueberlapp and rnd.random() < .7:
+                stock[dcs[0]] = rnd.randint(0, 400)
+            opts["stock"] = dict(stock)
+        qty = rnd.randint(1, 40)
+        try:
+            plan = I.production_plan(end, qty, preise.get, _R(), opts)
+        except Exception as e:
+            probs["exception " + type(e).__name__ + ": "
+                  + str(e)[:60]].append(seed)
+            continue
+        runs_end = int((plan.get("build_runs") or {}).get(end, 0) or 0)
+        prob_eff = min(1.0, prob * (opts.get("inv_skill_modifier")
+                                    or {}).get(t2_bp, 1.0)) * pm
+        ir = inv_runs + rm
+        if manual is not None:
+            att = max(0.0, float(manual))
+        else:
+            rest = max(0, runs_end - owned)
+            succ = -(-rest // ir) if ir > 0 else 0
+            att = I.invention_attempts_for_confidence(succ, prob_eff) or 0
+        if prob_eff <= 0 or ir <= 0:
+            att = 0
+        n = int(-(-float(att) // 1)) if att > 0 else 0
+        exp = {}
+        if n:
+            for d, q in cores:
+                exp[d] = exp.get(d, 0) + n * q
+            if use_dec:
+                exp[dcy] = exp.get(dcy, 0) + n
+        inv_buy = plan.get("inv_buy") or {}
+        inv_su = plan.get("inv_stock_used") or {}
+        got = defaultdict(int)
+        for src in (inv_buy, inv_su):
+            for t, q in src.items():
+                got[int(t)] += int(q)
+        if dict(got) != exp:
+            probs["inv_buy+inv_stock_used != Handrechnung"].append(
+                (seed, dict(got), exp))
+            continue
+        _su = plan.get("stock_used") or {}
+        for t, q in inv_su.items():
+            if int(q) + int(_su.get(t, 0) or 0) > int(stock.get(int(t), 0) or 0):
+                probs["Invention nimmt Bestand, den die Fertigung schon "
+                      "verbraucht hat"].append(seed)
+        dc_cost = sum(preise[d] * q for d, q in cores) \
+            + (preise[dcy] if use_dec else 0.0)
+        exp_cost = float(att) * dc_cost if n else 0.0
+        if abs(float(plan.get("inv_cost") or 0.0) - exp_cost) \
+                > 1e-6 * max(1.0, exp_cost):
+            probs["inv_cost != Versuche x Datacore-Preis"].append(seed)
+        for d in [x for x, _q in cores if not (ueberlapp and x == dcs[0])] \
+                + ([dcy] if use_dec else []):
+            if d in (plan.get("buy") or {}):
+                probs["Datacore/Decryptor zusaetzlich in buy "
+                      "(doppelt bepreist)"].append(seed)
+        o2 = dict(opts, inv_manual_override={t2_bp: True})
+        p2 = I.production_plan(end, qty, preise.get, _R(), o2)
+        if (p2.get("inv_cost") or 0) != 0 or (p2.get("inv_buy") or {}) \
+                or (p2.get("inv_stock_used") or {}):
+            probs["Own BPC kostet trotzdem Invention"].append(seed)
+        o3 = dict(opts)
+        o3["invention"] = False
+        p3 = I.production_plan(end, qty, preise.get, _R(), o3)
+        if (p3.get("inv_cost") or 0) != 0 or (p3.get("inv_buy") or {}):
+            probs["invention=False kostet trotzdem"].append(seed)
+        if manual is None:
+            o4 = dict(opts, inv_owned_runs={t2_bp: owned + 5})
+            p4 = I.production_plan(end, qty, preise.get, _R(), o4)
+            _s4 = sum((p4.get("inv_buy") or {}).values()) \
+                + sum((p4.get("inv_stock_used") or {}).values())
+            if _s4 > sum(got.values()):
+                probs["mehr eigene Kopien -> MEHR Einkauf"].append(seed)
+        _t = (float(plan["mat_cost"]) + float(plan["stock_cost"])
+              + float(plan["job_cost"]) + float(plan["inv_cost"]))
+        if abs(_t - float(plan["total_cost"])) > 1e-6 * max(1.0, _t):
+            probs["total != mat+stock+job+inv"].append(seed)
+        _s = sum((plan.get("inv_cost_items") or {}).values())
+        if abs(_s - float(plan["inv_cost"])) > 1e-6 * max(1.0, _s):
+            probs["Summe inv_cost_items != inv_cost"].append(seed)
+    return {k: v[:3] for k, v in probs.items()}
+
+
+eq("aa525 Invention-Zufallsprobe ohne Befund", _aa525(), {})
+
+# ---------------------------------------------------------------- (aa522)
+# CORP-JOBS ZAEHLEN UEBERALL WIE CHARAKTER-JOBS (emm482, Nutzer: "Corp Jobs
+# funktionieren exakt gleich wie normale Jobs? und auch in Moma ist alles
+# auf die selbe weise gemacht"). GEMESSEN am Code: an drei Stellen stimmte
+# das NICHT - (1) die Stock-locations-Seite holte nur Charakter-Jobs (ein
+# Corp-Job wurde weder festgeschrieben noch mitgezaehlt, Fehlbetrag zu
+# hoch), (2) der Fehlklick-Abgleich `_haken_jobs` entstand VOR dem
+# Corp-Merge (ein Haken auf einen Corp-Job galt als Fehlklick), (3) der
+# Fortschrittsbalken der Plan-Karten zaehlte nur Charakter-Jobs.
+_tb522 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+_i522 = _tb522.find("def _lager_laden")
+_lw522 = _tb522[_i522:_i522 + 16000]
+check("aa522 Stock locations holt Corp-Jobs (mit Abgelieferten)",
+      "for _c482, _v482 in sorted(_corp_jobs_plan.items()):" in _lw522
+      and "esi.fetch_corporation_jobs(" in _lw522
+      and _lw522.count("include_delivered=True) or []") >= 2)
+check("aa522 ... unbekannte Rollen gelten als 'Jobs nicht geladen'",
+      "if _corp_jobs_plan is None:\n                _job_fehler = True"
+      in _lw522)
+check("aa522 ... und der Corp-Abruf steht VOR dem Festschreiben (ein Fehler "
+      "sperrt es)",
+      _lw522.find("esi.fetch_corporation_jobs(")
+      < _lw522.find("if not _job_fehler:"))
+_fe522 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+check("aa522 _corp_bau_daten meldet einen gescheiterten Job-Abruf (jobs_ok)",
+      '"jobs_ok": True' in _fe522
+      and 'out["jobs_ok"] = False' in _fe522)
+check("aa522 der Fehlklick-Abgleich kennt die Corp-Jobs (nach dem Merge)",
+      'for _cjl in (_corp.get("jobs") or {}).values():' in _fe522
+      and _fe522.find('_haken_jobs = {"aktiv"')
+      < _fe522.find('for _cjl in (_corp.get("jobs") or {}).values():'))
+check("aa522 ... und ein gescheiterter Corp-Job-Abruf sperrt das Entfernen",
+      'if _corp.get("aktiv") and not _corp.get("jobs_ok", True):' in _fe522
+      and '_haken_jobs["voll"] = False' in _fe522)
+_mw522 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+_j522 = _mw522.find("all_jobs.extend(esi.fetch_delivered_jobs")
+_pb522 = _mw522[_j522:_j522 + 2600]
+check("aa522 der Plan-Karten-Fortschritt zaehlt Corp-Jobs mit",
+      "for _cid482, _via482 in sorted((_pj482 or {}).items()):" in _pb522
+      and "esi.fetch_corporation_jobs(" in _pb522)
+check("aa522 ... geliefert nur HERSTELLEND (1/9/11, wie "
+      "fetch_delivered_jobs)",
+      "esi.HERSTELLENDE_AKTIVITAETEN" in _pb522)
+
+# ---------------------------------------------------------------- (aa523)
+# REGEL CORP = CHARAKTER (emm483, Nutzer 09.10.2026: "ob ein Spieler eine
+# Corp hat oder nicht sollte keinen Unterschied machen wenn ich ueber EVE
+# MoMa Industry betreiben will. alles muss gleich funktionieren ohne
+# Ausnahmen, auch in Zukunft! unbedingt vermerken"). Der Waechter: JEDE
+# Datei, die Charakter-Jobs von ESI holt, holt auch die Corp-Jobs - eine
+# neue Seite, die die Corp vergisst, wird hier rot. Genau das ist dreimal
+# passiert (Stock locations, Fehlklick-Abgleich, Fortschrittsbalken;
+# emm482). Datei-Ebene genuegt als Ratsche: die Stellen-Ebene sichern
+# aa522 und die Mutationen.
+import glob as _gl523
+_ohne523 = []
+for _f523 in (sorted(_gl523.glob("eve_trader/*.py"))
+              + sorted(_gl523.glob("eve_trader/ui/*.py"))
+              + sorted(_gl523.glob("werkzeuge/*.py"))):
+    _s523 = open(_f523, encoding="utf-8").read()
+    if "esi.fetch_active_jobs(" in _s523 and \
+            "fetch_corporation_jobs(" not in _s523:
+        _ohne523.append(_f523.replace("\\", "/"))
+eq("aa523 REGEL CORP=CHARAKTER: jede Datei mit Charakter-Jobs holt auch "
+   "Corp-Jobs", _ohne523, [])
+check("aa523 ... und die Regel steht dauerhaft in CLAUDE.md",
+      not os.path.exists("CLAUDE.md")
+      or "REGEL CORP = CHARAKTER" in open("CLAUDE.md", encoding="utf-8").read())
+
+# ---------------------------------------------------------------- (aa524)
+# RUN-ZAHL + BAU-PRIORITAET AUCH AUF DER STOCK-LOCATIONS-SEITE (emm484,
+# Nutzer: "ja unbedingt genau so bauen!"). Bisher kannte das stille
+# Festschreiben der Seite nur die "eindeutig"-Stufe; bauen ZWEI Plaene
+# dasselbe Item, blieb der Job eine Warnung, bis man einen Plan im
+# Runplaner oeffnete. Jetzt laufen dort DIESELBEN Stufen - und zwar ueber
+# DIESELBEN Helfer (Regel 9: signatur_zuteilen, prio_jobs_zuteilen,
+# Plaene aus _prio_plaene) statt eines Nachbaus. Die Verhaltens-Pruefungen
+# fahren in b194 am echten Fenster; hier die Anker.
+_tb524 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+_i524 = _tb524.find("def _lager_stufen_zuordnen")
+_st524 = _tb524[_i524:_i524 + 6500]
+check("aa524 die Seite nutzt DIESELBEN Helfer wie der Runplaner (Regel 9)",
+      "signatur_zuteilen(_js, _plaene, _verg, _ir)" in _st524
+      and "prio_jobs_zuteilen(" in _st524
+      and _st524.count("self._prio_plaene()") == 2)
+check("aa524 Run-Zahl laeuft VOR der Prioritaet, und mehrdeutige Treffer "
+      "laesst die Prioritaet liegen (emm430)",
+      _st524.find("signatur_zuteilen(") < _st524.find("prio_jobs_zuteilen(")
+      and 'and int(j["job_id"]) not in _mehr]' in _st524)
+check("aa524 die Quellen heissen wie im Runplaner (signatur/prioritaet)",
+      '"signatur")' in _st524 and '"prioritaet")' in _st524)
+check("aa524 gezaehlt wird nur, was wirklich geschrieben wurde "
+      "(INSERT OR IGNORE -> False zaehlt nicht)",
+      _st524.count("fest += 1\n                        zugeteilt[") >= 1
+      and _st524.count("fest += 1\n                            zugeteilt[") >= 1)
+check("aa524 ohne Rezeptdaten wird NICHT zugeteilt (Regel 3), die Jobs "
+      "bleiben Warnung",
+      "return offen, 0" in _st524
+      and _st524.find("recipes_cached()") < _st524.find("return offen, 0", _st524.find("recipes_cached()")))
+check("aa524 geliefert zaehlt ab dem Abliefern, laufend ab dem Start "
+      "(wie der Runplaner)",
+      '"delivered":' in _st524
+      and '_iso_job_ts(j.get("completed_date"))' in _st524
+      and '_iso_job_ts(j.get("start_date"))' in _st524)
+_w524 = _tb524.find("def _lager_laden")
+_lw524 = _tb524[_w524:_w524 + 16000]
+check("aa524 verdrahtet: die Stufen laufen im Worker NACH der "
+      "eindeutig-Stufe",
+      "self._lager_stufen_zuordnen(" in _lw524
+      and _lw524.find('"eindeutig")') < _lw524.find("self._lager_stufen_zuordnen("))
+
+# ---------------------------------------------------------------- (aa509)
+# STOCK LOCATIONS ALS KARTEN JE ORT (emm461, Nutzer: "hier erkenne ich gar
+# nichts ... ich haette lieber die Locations als Karten ... eine Legende
+# rechts, wo man waehlen kann, auf welchen Strukturen Materialien ueberhaupt
+# getrackt werden"). Reine Logik: je Ort eine Karte, Items mit Fehlbetrag
+# zuerst; ein ABGEWAEHLTER Ort zaehlt nirgends - auch nicht im Fehlbetrag
+# (mehr Fehlbetrag = sichere Richtung, Regel 3).
+_z509 = [
+    {"tid": 1, "menge": 5, "ort": 10, "besitzer": 111, "art": "char",
+     "flag": "Hangar", "pfad": [], "item_id": 1},
+    {"tid": 1, "menge": 50, "ort": 20, "besitzer": 112, "art": "char",
+     "flag": "Hangar", "pfad": [], "item_id": 2},
+    {"tid": 2, "menge": 7, "ort": 10, "besitzer": 111, "art": "char",
+     "flag": "Hangar", "pfad": [900], "item_id": 3},
+]
+# Das Item MIT Fehlbetrag heisst "Zeta" - alphabetisch HINTER "Alpha".
+# Sonst waere die Sortier-Zusage nicht pruefbar (Rotprobe emm461: blind).
+_n509 = {1: "Zeta", 2: "Alpha", 9: "Gamma"}
+_on509 = {10: "Dock", 20: "Jita"}
+_bn509 = {("char", 111): "Berry", ("char", 112): "Fredy"}
+eq("aa509 Ortsliste fuer die Legende: Menge absteigend",
+   _L507.orte_mit_bestand(_z509, _on509), [(20, "Jita", 50), (10, "Dock", 12)])
+_k509, _f509 = _L507.karten(_z509, _n509, _on509, _bn509, {900: "Box"},
+                            bedarf={1: [("P", 100)], 9: [("P", 3)]})
+eq("aa509 je Ort eine Karte, Fehlbetrag-Zaehler, Menge am Ort",
+   [(k["name"], k["menge"], k["short"],
+     [(i["name"], i["menge"], i["short"], i["gesamt"]) for i in k["items"]])
+    for k in _k509],
+   [("Dock", 12, 1, [("Zeta", 5, 45, 55), ("Alpha", 7, 0, 7)]),
+    ("Jita", 50, 1, [("Zeta", 50, 45, 55)])])
+eq("aa509 Bedarf, der an keinem Ort liegt, kommt in die eigene Liste",
+   [(x["name"], x["short"]) for x in _f509], [("Gamma", 3)])
+_k509b, _ = _L507.karten(_z509, _n509, _on509, _bn509, {900: "Box"},
+                         bedarf={1: [("P", 100)]}, nur_orte={10})
+eq("aa509 abgewaehlter Ort zaehlt NIRGENDS - Fehlbetrag steigt 45 -> 95",
+   [(k["name"], [(i["name"], i["menge"], i["short"]) for i in k["items"]])
+    for k in _k509b],
+   [("Dock", [("Zeta", 5, 95), ("Alpha", 7, 0)])])
+_k509c, _ = _L507.karten(_z509, _n509, _on509, _bn509, {900: "Box"},
+                         bedarf={1: [("P", 1)]})
+eq("aa509 ohne Fehlbetrag: Items mit Bedarf zuerst (Zeta), dann der Rest",
+   [i["name"] for i in _k509c[0]["items"]], ["Zeta", "Alpha"])
+eq("aa509 Besitzer und Container-Kette haengen am Item der Karte",
+   [(b["name"], [(list(p), q) for p, q in b["pfade"]])
+    for b in _k509[0]["items"][1]["besitzer"]], [("Berry", [(["Box"], 7)])])
+_tb509 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa509 das Karten-Raster haengt alte Karten SOFORT ab (sonst liegen sie "
+      "bis zur naechsten Ereignisrunde ueber den neuen)",
+      "k.setParent(None)\n            k.deleteLater()" in _tb509)
+check("aa509 Kachel-Stil kommt aus EINER Stelle (Industry jobs + Stock locations)",
+      _tb509.count("def _industrie_kachel(") == 1
+      and _tb509.count("self._industrie_kachel(") == 2)
+
+# ---------------------------------------------------------------- (aa508)
+# "WHERE IS IT?" (emm459): Runplaner (Item- und Material-Zeilen) und
+# Materialien-Reiter fuehren per Rechtsklick auf Stock locations. Die
+# Material-Warnung im Runplaner wurde auf Nutzer-Wunsch wieder AUSGEBAUT
+# ("sonst stehen da ueberall Warnungen" - er reicht Material gezielt an
+# den Charakter weiter, der die Runs startet).
+_fe508 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+_tb508 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa508 Runplaner-Zeilen tragen die type_id fuer Stock locations (Item + Material)",
+      _tb508.count("Qt.UserRole + 12, int(") == 2)
+check("aa508 Rechtsklick kennt Where is it? (Runplaner + Materialien-Reiter)",
+      "self._wo_liegt_aktion(m, int(_lt)," in _fe508
+      and "_kopier_menue(mat_tab_tbl, self._mat_tab_menue)" in _fe508)
+check("aa508 keine Material-Warnung im Runplaner (Nutzer 07.10.2026)",
+      "eigener_bestand_hinweis" not in _tb508
+      and "own hangar" not in _tb508)
+
+# ---------------------------------------------------------------- (aa499)
+# MY BLUEPRINTS NIE OPTIMISTISCHER ALS DER BAUPLAN (emm441, Nutzer: "nur 1
+# Produkt ... wenn My Blueprints mehr Gewinn verspricht als der Bauplan
+# erreichen kann, stimmt etwas nicht"). Handrechnung: Kosten = 100 je Stk +
+# 1000 Invention je Plan. Voller Batch (4) -> 350/Stk, ein Run -> 1100/Stk.
+from eve_trader.ui.main_window import MainWindow as _MW499
+_opt499 = [("ohne", (1.0, 0, 0, 0, None)), ("plus3", (1.0, 3, 0, 0, 1))]
+_pc499 = lambda q, dv: 100.0 * q + 1000.0
+_b499a = _MW499._best_invention_option(1, 1, _opt499, _pc499, 2000.0)
+_b499b = _MW499._best_invention_option(1, 1, _opt499, _pc499, 2000.0, qty_fest=1)
+eq("aa499 ohne feste Menge: voller Batch schoent (4 Stk, 350/Stk)",
+   (_b499a["opt_qty"], _b499a["cost_unit"]), (4, 350.0))
+eq("aa499 feste Menge 1: jede Option bei 1 Stk (1100/Stk)",
+   (_b499b["opt_qty"], _b499b["cost_unit"]), (1, 1100.0))
+_mw499 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa499 My Blueprints rechnet T2 mit EINEM Run",
+      "base_runs, out_per_run, _dec_opts, _pc, net_sell,\n"
+      "                                qty_fest=out_per_run)" in _mw499)
+# emm442 (Nutzer: "besser My Blueprints waehlt nie einen Decryptor").
+check("aa499 My Blueprints probiert nur 'Kein Decryptor'",
+      "_dec_opts = [(KEIN_DECRYPTOR, (1.0, 0, 0, 0, None))]\n" in _mw499
+      and "+ list(self._decryptor_list()))" not in _mw499)
+check("aa499 My Blueprints nimmt die Jobkosten-Parameter des Bauplans",
+      "                    **_jc_mb," in _mw499
+      and "_jc_mb = self._bau_jobcost_opts()" in _mw499)
+
+# ---------------------------------------------------------------- (aa498)
+# ALLES VOM HUB OBEN (emm437, Nutzer-Entscheid): My Blueprints rechnet nur,
+# wenn der letzte Market scan vom Hub oben stammt - sonst verlangt es den Scan.
+_mw498 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa498 My Blueprints rechnet nur mit Scan vom Hub oben",
+      "if industry.sde_ready() and snapshot and _hub_ok:" in _mw498
+      and "_hub_ok = (not _scan_l0) or (self._short_hub_label(_scan_l0)\n"
+          "                                         == self._short_hub_label(_hub_l0))"
+      in _mw498)
+check("aa498 ... und sagt es in der Statuszeile",
+      'elif res.get("hub_falsch"):' in _mw498 and '"hub_falsch": not _hub_ok,' in _mw498)
+
+# ---------------------------------------------------------------- (aa497)
+# MY BLUEPRINTS vs BAUPLAN ZERLEGEN (emm437, Discord elglebo Golem): vom
+# Start-Eingang Schritt fuer Schritt zum Ziel; das letzte Ergebnis IST die
+# Ziel-Rechnung. Handrechnung: je Stk = Preis + job, dazu fix je Plan.
+from eve_trader.ui.mw_helpers import kosten_zerlegen as _kz497, sell_hub_vorgabe as _shv497
+def _r497(q, pf, rc, op):
+    return {"total_cost": q * (pf(1) + op.get("job", 0)) + op.get("fix", 0),
+            "mat_cost": q * pf(1), "job_cost": q * op.get("job", 0)}
+_rz497 = object()
+_s497 = _kz497(_r497,
+               {"qty": 10, "pfn": (lambda _t: 100), "recipes": _rz497,
+                "opts": {"job": 5, "x": 1}},
+               {"qty": 1, "pfn": (lambda _t: 120), "recipes": _rz497,
+                "opts": {"job": 8, "fix": 50}})
+eq("aa497 Schritte: Start, Menge, Preise, dann abweichende opts (alphabetisch)",
+   [(z["schritt"], round(z["je_stk"], 6)) for z in _s497],
+   [("start", 105.0), ("qty", 105.0), ("prices", 125.0), ("opts:fix", 175.0),
+    ("opts:job", 178.0), ("opts:x", 178.0)])
+eq("aa497 letzter Schritt = Ziel direkt gerechnet (1 x (120 + 8) + 50)",
+   _s497[-1]["je_stk"], 178.0)
+eq("aa497 Deltas je Schritt", [z["delta"] for z in _s497[1:]],
+   [0.0, 20.0, 50.0, 3.0, 0.0])
+eq("aa497 Teile je Stueck (Material/Job)",
+   (_s497[0]["teile"]["mat"], _s497[0]["teile"]["job"]), (100.0, 5.0))
+eq("aa497 Verkaufsort neuer Plan = Hub oben (Amarr / Struktur / sonst Jita)",
+   (_shv497(10000043), _shv497({"structure_id": 7}), _shv497(None), _shv497(4)),
+   ("amarr", ("struct", 7), "jita", "jita"))
+
+# ---------------------------------------------------------------- (aa496)
+# BUILD FROM STOCK (emm436, Nutzer-Entscheide: eigene Seite, Vorstufen aus
+# dem Hangar bauen, reserviertes Material zaehlt nicht). Handrechnungen.
+from eve_trader import aus_bestand as _ab496
+_p2b496 = {100: (10, 1, 1), 200: (20, 1, 10), 300: (30, 11, 200),
+           400: (40, 8, 1)}
+_m496 = {(10, 1): [(200, 5), (34, 10)], (20, 1): [(34, 3)],
+         (30, 11): [(34, 1)], (40, 8): [(34, 1)]}
+_me496, _cap496 = _ab496.blaupausen_lage([
+    {"type_id": 10, "is_bpo": True}, {"type_id": 20, "runs": 3},
+    {"type_id": 30, "is_bpo": True}, {"type_id": 40, "is_bpo": True}])
+# Reaktion 1 x Stoff 34 je Run, 100 da -> 100 Runs, Grenze 34.
+eq("aa496 Reaktion: 100 Runs aus 100 Stueck, Grenze ist das Material",
+   _ab496.max_runs(300, _p2b496, _m496, {34: 100}, _me496, _cap496),
+   {"runs": 100, "grenze": 34, "baut": {}})
+# Vorstufe: 6 Runs brauchen 30 x 200 (2 da, 3 Runs a 10 gebaut = Kopie
+# voll), 34: 60 + 9 = 69 <= 100; der 7. Run braeuchte eine 4. Kopie.
+eq("aa496 Vorstufe aus dem Hangar gebaut, Kopien-Runs deckeln (6 Runs)",
+   _ab496.max_runs(100, _p2b496, _m496, {34: 100, 200: 2}, _me496, _cap496),
+   {"runs": 6, "grenze": 200, "baut": {200: 3}})
+eq("aa496 ohne Vorstufen-Bau: 2 Stueck reichen fuer keinen Run",
+   _ab496.max_runs(100, _p2b496, _m496, {34: 100, 200: 2}, _me496, _cap496,
+                   vorstufen=False)["runs"], 0)
+_me496b, _cap496b = _ab496.blaupausen_lage([{"type_id": 10, "is_bpo": True}])
+# ROT WERDEN, NICHT KRACHEN (Lehre aa393): ohne die Sperre suchte der Code
+# die fremde Blaupause in cap - KeyError statt rotem Ergebnis.
+try:
+    _r496b = _ab496.max_runs(100, _p2b496, _m496, {34: 100, 200: 2},
+                             _me496b, _cap496b)
+except Exception as _e496:
+    _r496b = f"Fehler: {type(_e496).__name__}"
+eq("aa496 Vorstufe ohne eigene Blaupause wird nie gebaut",
+   _r496b, {"runs": 0, "grenze": 200, "baut": {}})
+# ME je Run AUFGERUNDET: 15 x 0,9 = 13,5 -> 14 je Run, 100 da -> 7 Runs.
+_me496c, _cap496c = _ab496.blaupausen_lage([
+    {"type_id": 50, "is_bpo": True, "material_efficiency": 10}])
+eq("aa496 ME 10 % zaehlt: 100 Stueck -> 7 Runs (ohne ME nur 6)",
+   _ab496.max_runs(500, {500: (50, 1, 1)}, {(50, 1): [(34, 15)]}, {34: 100},
+                   _me496c, _cap496c)["runs"], 7)
+# 108 Stueck: je Run 14 -> 7 Runs (98); auf den ganzen Job gerundet waeren
+# es 8 (8 x 13,5 = 108) - Regel 3, der Job darf nie an 1 Stueck scheitern.
+eq("aa496 ME je Run aufgerundet (14 statt 13,5): 108 Stueck -> 7 Runs",
+   _ab496.max_runs(500, {500: (50, 1, 1)}, {(50, 1): [(34, 15)]}, {34: 108},
+                   _me496c, _cap496c)["runs"], 7)
+eq("aa496 Kopien: Runs x Stueck addiert, ein Original macht unbegrenzt",
+   (_ab496.blaupausen_lage([{"type_id": 1, "runs": 5, "quantity": 2},
+                            {"type_id": 1, "runs": 3}])[1],
+    _ab496.blaupausen_lage([{"type_id": 1, "runs": 5},
+                            {"type_id": 1, "is_bpo": True}])[1]),
+   ({1: 13}, {1: None}))
+eq("aa496 nur bauende Blaupausen (Invention bleibt draussen)",
+   sorted(_ab496.produkte_der_blaupausen(_cap496, _p2b496).items()),
+   [(10, 100), (20, 200), (30, 300)])
+_l496 = _ab496.bestand_liste([{"type_id": 30, "is_bpo": True}], _p2b496, _m496,
+                             {34: 7})
+eq("aa496 Liste: Units = Runs x Stueck je Run (7 x 200)",
+   [(z["bp"], z["runs"], z["units"]) for z in _l496], [(30, 7, 1400)])
+_tb496 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa496 Seite zieht gesperrte Reservierungen vom Bestand ab",
+      "reserv = self._reserved_by_other_plans(self.settings, None)[0] or {}"
+      in _tb496
+      and "r = int(q) - int(reserv.get(int(tid), 0) or 0)" in _tb496)
+check("aa496 Seite rechnet mit Vorstufen (Nutzer-Entscheid)",
+      "zeilen = aus_bestand.bestand_liste(owned, rec.product_to_bp,\n"
+      "                                               rec.bp_materials, frei)"
+      in _tb496)
+
+# ---------------------------------------------------------------- (aa495)
+# REPROCESSING OHNE ESI (emm434, Nutzer: "Komprimieren habe ich gemacht,
+# aber dafuer gibt es kein ESI-Tracking und somit graut es nicht aus"):
+# alle Zeilen gehakt (oder Minerale schon da) = Stufe erledigt.
+_tb495 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa495 Stufe 0 wird mit allen Haken 'erledigt' und grau",
+      "_rp_fertig0 = bool(_rp_zeilen0) and _rp_erl0 == len(_rp_zeilen0)" in _tb495
+      and "                    if _hakt0 or _key0 in _erz_bestand0:\n"
+          "                        _rp_erl0 += 1\n" in _tb495
+      and 'self._stufe_abschluss(\n                    tbl, _item0, "erledigt",' in _tb495)
+
+# ---------------------------------------------------------------- (aa494)
+# STUFEN-STATUS (emm433, Nutzer: "(Bereit zum ausliefern)" ... "(Erledigt)",
+# dann alles grau - "somit ist immer nur das farbig, was zu erledigen gilt").
+from eve_trader.ui.mw_helpers import stufe_status as _ss494
+eq("aa494 offen / im Bau / bereit / erledigt",
+   (_ss494(False, 0, 0), _ss494(True, 2, 1), _ss494(True, 0, 3), _ss494(True, 0, 0)),
+   ("offen", "im_bau", "bereit", "erledigt"))
+
+# ---------------------------------------------------------------- (aa493)
+# ENDE, DAS EIN ANDERES ENDE BRAUCHT (emm432, Nutzer: Linsen-Buendel -
+# Multifrequency XL ist Ende UND Zutat von Scorch XL): Komponenten-Stufe.
+from eve_trader.ui.mw_helpers import enden_als_zutat as _eaz493
+_p2b493 = {10: (110, 1, 1), 20: (120, 1, 4), 30: (130, 1, 1), 40: (140, 1, 1)}
+_mat493 = {(110, 1): [(1, 5)], (120, 1): [(10, 4), (2, 3)], (130, 1): [(1, 1)],
+           (140, 1): [(30, 2)]}
+eq("aa493 Ende 10 steckt in Ende 20 -> Zutat; 30 nur in einem Bau-Item ohne Runs nicht",
+   (sorted(_eaz493({10, 20, 30}, {10: 400, 20: 50, 30: 200}, _p2b493, _mat493)),
+    sorted(_eaz493({10, 20, 30}, {10: 400, 20: 50, 30: 200, 40: 0}, _p2b493, _mat493)),
+    sorted(_eaz493({10, 20, 30}, {10: 400, 20: 50, 30: 200, 40: 3}, _p2b493, _mat493)),
+    sorted(_eaz493({20}, {10: 400, 20: 50}, _p2b493, _mat493))),
+   ([10], [10], [10, 30], []))
+eq("aa493 ein Ende in seinem EIGENEN Rezept macht es nicht zur Zutat",
+   sorted(_eaz493({10, 30}, {10: 1, 30: 1}, _p2b493,
+                  {(110, 1): [(1, 5)], (130, 1): [(30, 1)]})), [])
+from eve_trader.ui.mw_helpers import haken_stufe_umziehen as _hsu493
+eq("aa493 Haken ziehen mit: Zeilen-Haken, Wellen, erledigte Runs - andere bleiben",
+   (sorted(_hsu493({"end|5|10", "end|5|10|w2", "end|5|20", "char|end|5",
+                    "component|6|10"}, {10})),
+    _hsu493({"end|10": 400, "end|20": 50, "component|10": 100}, {10})),
+   (["char|end|5", "component|5|10", "component|5|10|w2", "component|6|10",
+     "end|5|20"], {"component|10": 400, "end|20": 50}))
+_tb493 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+_mw493 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa493 Runplaner UND Blaupausen-Stufen nehmen Zutat-Enden aus der End-Stufe",
+      "        _enden_jobs = set(_enden_jobs) - _zutat_enden\n" in _tb493
+      and "_enden = set(_enden) - _eaz7(" in _mw493)
+
+# ---------------------------------------------------------------- (aa492)
+# DATACORES AUS ESI (emm431, Nutzer: "zuviele Datacores und Decryptoren sind
+# immer schlecht, baue die ESI-Variante"): gestartete Invention-Jobs des
+# eingefrorenen Plans haben ihr Material verbraucht.
+from eve_trader.ui.mw_helpers import (invention_verbraucht as _iv492,
+                                      MainWindowHelpers as _MWH492)
+_iso492 = _MWH492._iso_job_ts
+_je492 = {500: {1: 2, 2: 2, 9: 1}, 600: {1: 3}}
+_jobs492 = [
+    {"job_id": 1, "activity_id": 8, "product_type_id": 500, "runs": 10,
+     "start_date": "2026-10-02T10:00:00Z"},
+    {"job_id": 1, "activity_id": 8, "product_type_id": 500, "runs": 10,      # doppelt
+     "start_date": "2026-10-02T10:00:00Z"},
+    {"job_id": 2, "activity_id": 8, "product_type_id": 500, "runs": 5,       # vor Einfrieren
+     "start_date": "2026-09-01T10:00:00Z"},
+    {"job_id": 3, "activity_id": 5, "product_type_id": 500, "runs": 7,       # Kopieren
+     "start_date": "2026-10-02T10:00:00Z"},
+    {"job_id": 4, "activity_id": 8, "product_type_id": 600, "runs": 50,      # ueber Plan
+     "start_date": "2026-10-03T10:00:00Z"}]
+_seit492 = _iso492("2026-10-01T00:00:00Z")
+eq("aa492 Handrechnung: 10 Versuche x (2+2+1 Decryptor) + 20 (Deckel) x 3",
+   _iv492(_jobs492, _seit492, _je492, {500: 40, 600: 20}, _iso492),
+   ({1: 20 + 60, 2: 20, 9: 10}, {500: 10, 600: 20}))
+eq("aa492 ohne Einfrier-Zeit nichts, umstrittene Blaupause zaehlt nicht",
+   (_iv492(_jobs492, None, _je492, {500: 40}, _iso492),
+    _iv492(_jobs492, _seit492, _je492, {500: 40, 600: 20}, _iso492, umstritten=[600])),
+   (({}, {}), ({1: 20, 2: 20, 9: 10}, {500: 10})))
+class _W492:
+    _iso_job_ts = staticmethod(_iso492)
+    _bd_open_plan_id = 77
+    settings = {"bau_saved_plans": [
+        {"id": 77, "frozen": {"ts": _seit492}},
+        {"id": 78, "frozen": {"ts": 1, "plan_snapshot": {"build_runs": {"6000": 1}}}}]}
+    _bd_invention_needs = {500: {"attempts": 40, "datacores": [(1, 80), (2, 80)],
+                                 "decryptor_id": 9},
+                           600: {"attempts": 20, "datacores": [(1, 60)],
+                                 "decryptor_id": None}}
+    class _bd_recipes:
+        product_to_bp = {5000: (500, 1, 1), 6000: (600, 1, 1)}
+    _bd_active_jobs_alle = {500: [dict(_jobs492[0], status="active")]}
+    _bd_delivered_jobs = [_jobs492[4]]
+_w492 = _W492()
+eq("aa492 Fenster: Karte + ESI, 600 erfindet auch Plan 78 (baut 6000) -> zaehlt nicht",
+   _MWH492._inv_verbraucht_esi(_w492), {1: 20, 2: 20, 9: 10})
+_w492._bd_open_plan_id = None
+eq("aa492 ungespeicherter Plan: nichts", _MWH492._inv_verbraucht_esi(_w492), {})
+_tb492 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa492 Materials-Reiter zieht den ESI-Verbrauch von Invention-Material ab",
+      "_inv_esi = self._inv_verbraucht_esi() if _inv_ids else {}" in _tb492
+      and "                total -= _inv_vb\n" in _tb492)
+
+# ---------------------------------------------------------------- (aa491)
+# RUN-ZAHL ENTSCHEIDET, PRIORITAET STILL (emm430, Nutzer: "gefragt werden
+# muss nur, wenn ein Plan existiert, der auch genau dieselbe Anzahl Runs
+# machen muss vom selben Item" + "Prioritaet, still").
+from eve_trader.ui.mw_helpers import signatur_zuteilen as _sz491
+_pl491 = [{"id": "M", "runs": {7: 3600, 8: 10}, "seit": 100.0, "belegt": {}},
+          {"id": "C", "runs": {7: 600, 8: 10}, "seit": 100.0, "belegt": {}},
+          {"id": "S", "runs": {7: 600}, "seit": 500.0, "belegt": {}}]
+_j491 = lambda jid, t, n, ts, a=1: {"job_id": jid, "product_type_id": t, "runs": n,
+                                    "activity_id": a, "_ts": ts}
+eq("aa491 genau ein Plan mit gleich vielen offenen Runs -> ihm (S erst spaeter eingefroren)",
+   _sz491([_j491(1, 7, 600, 200.0)], _pl491, [], lambda t: False), ({1: "C"}, set()))
+eq("aa491 zwei exakte Treffer -> mehrdeutig, keiner bekommt ihn",
+   _sz491([_j491(2, 8, 10, 200.0)], _pl491, [], lambda t: False), ({}, {2}))
+eq("aa491 kein exakter Treffer -> nichts (Prioritaet macht es danach)",
+   _sz491([_j491(3, 7, 300, 200.0)], _pl491, [], lambda t: False), ({}, set()))
+eq("aa491 vergeben, falsche Aktivitaet, belegter Rest zaehlen nicht",
+   (_sz491([_j491(4, 7, 600, 200.0)], _pl491, [4], lambda t: False),
+    _sz491([_j491(5, 7, 600, 200.0, a=9)], _pl491, [], lambda t: False),
+    _sz491([_j491(6, 7, 600, 200.0)],
+           [dict(_pl491[1], belegt={7: 600})], [], lambda t: False)),
+   (({}, set()), ({}, set()), ({}, set())))
+eq("aa491 ein vergebener Job senkt den Rest fuer den naechsten",
+   _sz491([_j491(7, 7, 600, 200.0), _j491(8, 7, 600, 210.0)],
+          _pl491[1:2], [], lambda t: False), ({7: "C"}, set()))
+_mh491 = open("eve_trader/ui/mw_helpers.py", encoding="utf-8").read()
+_i491a = _mh491.find("_mehrdeutig = self._signatur_zuordnung_schreiben(_jobs)")
+_i491b = _mh491.find("self._prio_zuordnung_schreiben(\n")
+check("aa491 Run-Zahl laeuft VOR der Prioritaet, Mehrdeutige gehen nicht an sie",
+      0 < _i491a < _i491b and
+      "[_j for _j in _jobs if int(_j[\"job_id\"]) not in _mehrdeutig]" in _mh491)
+check("aa491 Prioritaet wird nicht mehr zur Pruefung vorgelegt",
+      "        self._bd_job_prio = []\n" in _mh491
+      and "self._bd_job_prio = self._prio_zur_pruefung(" not in _mh491)
+
+# ---------------------------------------------------------------- (aa490)
+# JOB-FRAGE SCHLAEGT NACH RUN-ZAHL VOR (emm429, Nutzer: "wie weiss ich, wie
+# ich die assignment Frage beantworten soll" -> "ja bau das").
+from eve_trader.ui.mw_helpers import (plan_offene_runs as _por490,
+                                      job_vorschlag as _jv490)
+_pl490 = {"frozen": {"plan_snapshot": {"build_runs": {"7": 600, "8": 5}}}}
+_zu490 = {1: {"type_id": 7, "runs": 100}, 2: {"type_id": 7, "runs": 50},
+          3: {"type_id": 8, "runs": 5}}
+eq("aa490 offene Runs = Plan - eigene Jobs (gefragte Jobs ausgenommen), ohne Schnappschuss None",
+   (_por490(_pl490, 7, _zu490), _por490(_pl490, 7, _zu490, ausser=[2]),
+    _por490(_pl490, 8, _zu490), _por490(_pl490, 9, {}), _por490({}, 7, {}),
+    _por490(_pl490, 7, {9: {"type_id": 7, "runs": 9999}})),
+   (450, 500, 0, 0, None, 0))
+eq("aa490 Vorschlag nur bei GENAUEM Treffer, hoehere Prioritaet gewinnt",
+   (_jv490(600, [("A", 3000), ("B", 600)]), _jv490(600, [("A", 600), ("B", 600)]),
+    _jv490(500, [("A", 3000), ("B", 600)]), _jv490(600, [("A", None)]),
+    _jv490(0, [("A", 0)]), _jv490(None, [("A", 1)])),
+   ("B", "A", None, None, None, None))
+
+# ---------------------------------------------------------------- (aa489)
+# VERKAUFSLISTE: "Name*" AUS DEM HANGAR (emm428, Discord): EVE haengt an
+# unverpackte Items ein "*" - die Zeile fand ihr Item nicht (Preis "?").
+from eve_trader.store import hangar_name as _hn489
+eq("aa489 Hangar-Zeile: erste Tab-Spalte ohne Sternchen",
+   (_hn489("'Arbalest' Rocket Launcher I*\t4"), _hn489("Tritanium\t100\tMineral"),
+    _hn489("  Gleam XL * \t2"), _hn489(""), _hn489(None)),
+   ("'Arbalest' Rocket Launcher I", "Tritanium", "Gleam XL", "", ""))
+_mw489 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa489 'Copy undercut sell' liest den Namen ueber hangar_name",
+      "name = store.hangar_name(roh)" in _mw489)
+
+# ---------------------------------------------------------------- (aa488)
+# STREIT NUR UNTER BAUENDEN PLAENEN (emm427, Nutzer 05.10.2026: Linsen fragte
+# nach Tungsten Carbide, weil Caldari es nur in der reserve_map hatte; das
+# Dropdown bot nur den offenen Plan). Quelle: Bau-Runs des Schnappschusses,
+# ohne Schnappschuss die reserve_map (Regel 3).
+from eve_trader.ui.mw_helpers import (MainWindowHelpers as _MWH488,
+                                      zuordnung_uebersicht as _zu488)
+_A488 = {"id": 1, "frozen": {"ts": 100, "plan_snapshot": {"build_runs": {"7": 36, "8": 0}}},
+         "reserve_map": {"7": 360000, "9": 5}}
+_B488 = {"id": 2, "frozen": {"ts": 50, "plan_snapshot": {"build_runs": {"5": 10}}},
+         "reserve_map": {"7": 1000, "5": 1}}          # verbraucht 7 nur
+_C488 = {"id": 3, "reserve_map": {"7": 1}}           # ohne Schnappschuss
+_D488 = {"id": 4, "done_manual": True,
+         "frozen": {"ts": 1, "plan_snapshot": {"build_runs": {"7": 3}}}}
+eq("aa488 plan_baut_items: Bau-Runs > 0, ohne Schnappschuss reserve_map",
+   (sorted(_MWH488.plan_baut_items(_A488)), sorted(_MWH488.plan_baut_items(_B488)),
+    sorted(_MWH488.plan_baut_items(_C488)), sorted(_MWH488.plan_baut_items(None))),
+   ([7], [5], [7], []))
+eq("aa488 strittig: wer nur VERBRAUCHT (B) macht nichts strittig, fertige nie",
+   (sorted(_MWH488._umstrittene_items({"bau_saved_plans": [_A488, _B488, _D488]}, 1)),
+    sorted(_MWH488._umstrittene_items({"bau_saved_plans": [_A488, _C488]}, 1))),
+   ([5], [7]))
+eq("aa488 strittig-seit folgt derselben Quelle",
+   _MWH488._umstrittene_seit({"bau_saved_plans": [_A488, _B488]}, 1), {5: 50.0})
+class _K488:
+    _bd_open_plan_id = 1
+    settings = {"bau_saved_plans": [
+        dict(_A488, label="Linsen"), dict(_B488, label="Caldari"),
+        dict(_D488, label="Alt"),
+        {"id": 6, "label": "Modules",
+         "frozen": {"ts": 1, "plan_snapshot": {"build_runs": {"7": 12}}}}]}
+_k488 = _MWH488._job_plan_kandidaten(_K488(), 7)
+eq("aa488 Dropdown = offene Plaene, die das Item BAUEN (offener zuerst)",
+   [n for _, n in _k488], ["Linsen", "Modules"])
+_det488 = {11: {"plan_id": "1", "type_id": 7, "runs": 12, "quelle": "prioritaet"},
+           12: {"plan_id": "6", "type_id": 7, "runs": 600, "quelle": "nutzer"},
+           13: {"plan_id": "4", "type_id": 7, "runs": 3, "quelle": "klick"},
+           14: {"plan_id": "-", "type_id": 7, "runs": 2, "quelle": "nutzer"},
+           15: {"plan_id": "6", "type_id": 99, "runs": 1, "quelle": "nutzer"}}
+eq("aa488 Uebersicht: eigene + Items-des-Plans bei offenen/keinem, nie fertige/fremde Items",
+   [z["job_id"] for z in _zu488(_det488, 1, {7}, [1, 2, 6], "-")], [11, 12, 14])
 
 # ---------------------------------------------------------------- (aa458)
 # RESERVIERUNGSFRAGE BEIM SPEICHERN NUR NACH FREEZE (emm315, Nutzer
@@ -22956,11 +25244,11 @@ check("aa427 ... der Optimierer holt die Enden-Namen aus _bd_names_ref",
 # Veroeffentlichung lassen wir immer einen Test laufen, um eine fehlerfreie
 # Veroeffentlichung zu gewaehrleisten"). Die Veroeffentlichung bricht bei
 # Rot ab, BEVOR committet wird; eigener Starter per Doppelklick. CRLF.
-_rel426b = open("release/veroeffentliche_1.1.1.bat", "rb").read()
+_rel426b = open("release/veroeffentliche_1.1.2.bat", "rb").read()
 _rel426 = _rel426b.replace(b"\r\n", b"\n")      # Logik unabhaengig vom Zeilenende
 _p426 = _rel426.find(b"python pruefe.py < nul\n")
 _f426 = _rel426.find(b"if errorlevel 1 (\n  echo ROT: pruefe.py", _p426)
-check("aa426 veroeffentliche_1.1.1.bat prueft ZUERST und bricht bei Rot ab",
+check("aa426 veroeffentliche_1.1.2.bat prueft ZUERST und bricht bei Rot ab",
       0 < _p426 < _f426 < _rel426.find(b"git commit")
       and 0 < _rel426.find(b"  goto ende\n)\necho gruen", _f426))
 check("aa426 ... und hat Windows-Zeilenenden (CRLF)",
@@ -23083,6 +25371,373 @@ finally:
         else:
             os.environ[_v] = _x
     _sh424.rmtree(_w424, ignore_errors=True)
+
+# ---------------------------------------------------------------- (aa526)
+# MARKTTIEFE BEIM ERZ-TAUSCH (emm491, Nutzer 09.10.2026: "Bauplan schlaegt
+# mir vor Compressed Ore zu kaufen ... leider lassen die vorhandenen market
+# orders in Jita es nicht zu. wir muessen ueberpruefen ob auch genug
+# material auf dem Markt ueberhaupt vorhanden ist, ansonsten muss der
+# Bauplan ... einen anderen ausweg finden"): plane_erz_einkauf(vorrat=)
+# plant je Erz nie mehr ein, als am Hub auf Sell-Orders liegt - abgerundet
+# auf VOLLE Portionen; der ungedeckte Rest bleibt als Mineral gekauft.
+# Handrechnung: Erz 62516 (1 ISK, Portion 100) -> je Portion
+# floor(400 x 0.83854) = 335 Testmat (100 ISK); Bedarf 700 Testmat.
+try:
+    import eve_trader.reprocess as _rp526
+    _kand526 = {62516: {"portion": 100, "out": {200: 400}}}
+    _pf526 = {62516: 1.0, 200: 100.0}.get
+    _af526 = lambda erz: (0.83854, 1)                         # noqa: E731
+    _buy526 = {200: 700}
+    _alt526 = _rp526.plane_erz_einkauf(_buy526, _pf526, _kand526, _af526)
+    _r0 = _rp526.plane_erz_einkauf(_buy526, _pf526, _kand526, _af526,
+                                   vorrat=None)
+    check("aa526 vorrat=None: exakt die alte Rechnung (Zahl fuer Zahl)",
+          _r0["buy"] == _alt526["buy"] == {62516: 300}
+          and _r0["ersparnis"] == _alt526["ersparnis"]
+          and _r0["markt_knapp"] == [])
+    _r9 = _rp526.plane_erz_einkauf(_buy526, _pf526, _kand526, _af526,
+                                   vorrat={62516: 10 ** 9})
+    check("aa526 riesiger Vorrat: ebenfalls unveraendert",
+          _r9["buy"] == _alt526["buy"]
+          and _r9["ersparnis"] == _alt526["ersparnis"])
+    _r1 = _rp526.plane_erz_einkauf(_buy526, _pf526, _kand526, _af526,
+                                   vorrat={62516: 99})
+    check("aa526 99 am Markt (< 1 Portion): KEIN Tausch, Minerale bleiben, "
+          "abgelehnt nennt den Markt",
+          _r1["buy"] == {200: 700} and not _r1["schritte"]
+          and _r1["abgelehnt"][200].get("markt_leer") is True
+          and _r1["markt_knapp"] == [62516])
+    _r2 = _rp526.plane_erz_einkauf(_buy526, _pf526, _kand526, _af526,
+                                   vorrat={62516: 250})
+    _deckt526 = sum(_s["deckt"].get(200, 0) for _s in _r2["schritte"])
+    check("aa526 250 am Markt: nur 2 VOLLE Portionen (200 Erz, nie 300), "
+          "der Rest bleibt Mineral - Bilanz exakt",
+          _r2["buy"] == {200: 30, 62516: 200}
+          and _deckt526 + _r2["buy"][200] == 700
+          and all(_s["markt_begrenzt"] for _s in _r2["schritte"])
+          and _r2["markt_knapp"] == [62516]
+          and _r2["abgelehnt"][200].get("markt_leer") is True)
+    _r3 = _rp526.plane_erz_einkauf(_buy526, _pf526, _kand526, _af526,
+                                   gratis={62516}, vorrat={62516: 0})
+    check("aa526 Gratis-Erz (Blacklist) kennt keinen Vorrat - es wird "
+          "nicht gekauft, also tauscht es auch bei Markt 0",
+          bool(_r3["schritte"]) and 62516 not in _r3["buy"])
+    # Ein Erz, das ohnehin TEURER waere, warnt nicht, nur weil der Markt
+    # leer ist - markt_knapp nennt nur Erze, die den Plan begrenzt haben.
+    _kand526b = dict(_kand526)
+    _kand526b[62517] = {"portion": 100, "out": {200: 1}}
+    _pf526b = {62516: 1.0, 62517: 99999.0, 200: 100.0}.get
+    _r4 = _rp526.plane_erz_einkauf(_buy526, _pf526b, _kand526b, _af526,
+                                   vorrat={62516: 10 ** 9, 62517: 0})
+    check("aa526 leeres, aber ohnehin teureres Erz: keine Markt-Warnung",
+          _r4["markt_knapp"] == [] and _r4["buy"] == {62516: 300})
+    # ZUFALLSPROBE (Muster aa505/aa506, fester Seed): bei beliebigem
+    # Vorrat gilt IMMER - geplantes Erz <= Vorrat (volle Portionen),
+    # Bilanz je Mineral (gedeckt + gekauft == Bedarf), und mit weniger
+    # Vorrat wird nie MEHR Erz geplant (Monotonie).
+    import random as _rnd526
+    _rng526 = _rnd526.Random(526)
+    _zufall_ok = True
+    for _i526 in range(400):
+        _portion = _rng526.choice([1, 10, 100])
+        _out = {200: _rng526.randint(1, 500)}
+        _k5 = {62516: {"portion": _portion, "out": _out}}
+        _bedarf = _rng526.randint(1, 5000)
+        _v5 = _rng526.randint(0, 3000)
+        _pf5 = {62516: float(_rng526.randint(1, 50)),
+                200: float(_rng526.randint(1, 500))}.get
+        _rA = _rp526.plane_erz_einkauf({200: _bedarf}, _pf5, _k5, _af526,
+                                       vorrat={62516: _v5})
+        _geplant = _rA["buy"].get(62516, 0)
+        if _geplant > _v5 or _geplant % _portion != 0:
+            _zufall_ok = False
+            break
+        _dk = sum(_s["deckt"].get(200, 0) for _s in _rA["schritte"])
+        if _dk + _rA["buy"].get(200, 0) != _bedarf:
+            _zufall_ok = False
+            break
+        _rB = _rp526.plane_erz_einkauf({200: _bedarf}, _pf5, _k5, _af526,
+                                       vorrat={62516: _v5 // 2})
+        if _rB["buy"].get(62516, 0) > _geplant:
+            _zufall_ok = False
+            break
+    check(f"aa526 Zufallsprobe (400 Welten, Seed 526): nie ueber den "
+          f"Vorrat, nur volle Portionen, Bilanz exakt, monoton "
+          f"(Fall {_i526})", _zufall_ok)
+    # VERDRAHTUNG: der Oeffnen-Job baut _bd_vorrat aus sell_qty desselben
+    # Scans, und BEIDE plane_erz_einkauf-Aufrufe des Fensters reichen ihn
+    # durch (auch der Ein-Charakter-Zweitlauf).
+    _mwsrc526 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                  "main_window.py"), encoding="utf-8").read()
+    check("aa526 verdrahtet: der Oeffnen-Job merkt sell_qty als _bd_vorrat",
+          'self._bd_vorrat = {int(s["type_id"]): int(s.get("sell_qty") or 0)'
+          in _mwsrc526)
+    _fsrc526 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                 "mw_bauplan_fenster.py"),
+                    encoding="utf-8").read()
+    check("aa526 ... und beide Fenster-Aufrufe reichen vorrat durch",
+          _fsrc526.count("vorrat=_vorrat") == 2
+          and '_vorrat = getattr(self, "_bd_vorrat", None)' in _fsrc526)
+except Exception as _e526:                               # pragma: no cover
+    _fail.append(f"aa526 Markttiefe Erz-Tausch: {type(_e526).__name__}: {_e526}")
+
+# ---------------------------------------------------------------- (aa527)
+# BUILD-FROM-STOCK-ZUFALLSPROBE (emm494) - aus_bestand war die letzte
+# grosse Rechenklasse ohne Zufallsprobe (Muster aa505/506/520/521/525:
+# feste Seeds, EIGENSCHAFTEN statt Zeilen-Spiegel). Die Sicherheits-
+# Zusage (Regel 3): die Seite behauptet NIE mehr Runs, als der Hangar
+# wirklich hergibt - wer danach baut, steht nie vor einem Job, der nicht
+# startet. Zuerst Handrechnungen mit festen Zahlen, dann die Probe.
+try:
+    from eve_trader import aus_bestand as _AB527
+    from eve_trader import industry as _I527
+
+    # Handrechnung 1: 95 Rohstoff, 10 je Run, ME 10 -> je Run
+    # ceil(10 x 0.9) = 9 (je Run AUFgerundet) -> 95 // 9 = 10 Runs,
+    # Grenze ist der Rohstoff.
+    _top527, _bp527t, _raw527, _mid527, _bp527m = (971001, 972001,
+                                                   970001, 970500, 972500)
+    _p2b_a = {_top527: (_bp527t, _I527.MANUFACTURING, 1)}
+    _mats_a = {(_bp527t, _I527.MANUFACTURING): [(_raw527, 10)]}
+    _r527 = _AB527.max_runs(_top527, _p2b_a, _mats_a, {_raw527: 95},
+                            {_bp527t: 10}, {_bp527t: None})
+    eq("aa527 Handrechnung 95/10/ME10: 10 Runs, Grenze = Rohstoff",
+       (_r527["runs"], _r527["grenze"]), (10, _raw527))
+    # Handrechnung 2: Kopie mit 4 Runs deckelt - Grenze = das Produkt
+    # selbst ("blueprint copy runs" in der Anzeige).
+    _r527 = _AB527.max_runs(_top527, _p2b_a, _mats_a, {_raw527: 10**6},
+                            {_bp527t: 0}, {_bp527t: 4})
+    eq("aa527 Kopie mit 4 Runs: Deckel haelt, Grenze = Produkt",
+       (_r527["runs"], _r527["grenze"]), (4, _top527))
+    # Handrechnung 3: Vorstufe wird mitgebaut (Reaktion, 2 je Run, ME der
+    # Vorstufe zaehlt bei Reaktionen NICHT): Top braucht 5 Mid je Run,
+    # Mid braucht 3 Rohstoff je Run; 100 Rohstoff ->
+    # 3 x ceil(5n / 2) <= 100 -> n = 13. Ohne Vorstufenbau: 0 Runs.
+    _p2b_b = {_top527: (_bp527t, _I527.MANUFACTURING, 1),
+              _mid527: (_bp527m, _I527.REACTION, 2)}
+    _mats_b = {(_bp527t, _I527.MANUFACTURING): [(_mid527, 5)],
+               (_bp527m, _I527.REACTION): [(_raw527, 3)]}
+    _me_b = {_bp527t: 0, _bp527m: 10}
+    _cap_b = {_bp527t: None, _bp527m: None}
+    _r527 = _AB527.max_runs(_top527, _p2b_b, _mats_b, {_raw527: 100},
+                            _me_b, _cap_b, vorstufen=True)
+    eq("aa527 Vorstufe mitgebaut: 13 Runs, 33 Mid-Runs",
+       (_r527["runs"], _r527["baut"]), (13, {_mid527: 33}))
+    _r527 = _AB527.max_runs(_top527, _p2b_b, _mats_b, {_raw527: 100},
+                            _me_b, _cap_b, vorstufen=False)
+    eq("aa527 ohne Vorstufenbau: 0 Runs, Grenze = Mid",
+       (_r527["runs"], _r527["grenze"]), (0, _mid527))
+    # blaupausen_lage: ein BPO hebt den Deckel auf (egal in welcher
+    # Reihenfolge), ME ist das Maximum, Kopien = Summe Runs x Stueck.
+    _o1 = [{"type_id": _bp527t, "is_bpo": True, "material_efficiency": 3},
+           {"type_id": _bp527t, "runs": 7, "quantity": 2,
+            "material_efficiency": 9}]
+    eq("aa527 blaupausen_lage: BPO hebt auf, ME = Maximum",
+       _AB527.blaupausen_lage(_o1), ({_bp527t: 9}, {_bp527t: None}))
+    eq("aa527 ... auch in umgekehrter Reihenfolge",
+       _AB527.blaupausen_lage(list(reversed(_o1))),
+       ({_bp527t: 9}, {_bp527t: None}))
+    eq("aa527 nur Kopien: 7x2 + 5x1 = 19 Runs Deckel",
+       _AB527.blaupausen_lage(
+           [{"type_id": _bp527t, "runs": 7, "quantity": 2},
+            {"type_id": _bp527t, "runs": 5, "quantity": 1}]),
+       ({_bp527t: 0}, {_bp527t: 19}))
+
+    def _aa527():
+        import random
+        from collections import defaultdict
+        AB, I = _AB527, _I527
+        probs = defaultdict(list)
+        # 800 Welten: haelt die aa-Suite unter der Tempo-Grenze
+        # (gemessen: 1'200 Welten kosteten ~11 s).
+        for seed in range(800):
+            rnd = random.Random(527_000 + seed)
+            raws = [980001 + i for i in range(rnd.randint(2, 4))]
+            mids = [981001 + i for i in range(rnd.randint(0, 3))]
+            top = 982001
+            p2b, mats = {}, {}
+
+            def _rezept(tid, unten):
+                bp = tid + 5000
+                act = rnd.choice([I.MANUFACTURING, I.MANUFACTURING,
+                                  I.REACTION])
+                out = rnd.choice([1, 1, 2, 10])
+                p2b[tid] = (bp, act, out)
+                zut = rnd.sample(unten, rnd.randint(1, min(3, len(unten))))
+                mats[(bp, act)] = [(m, rnd.randint(1, 20)) for m in zut]
+                return bp
+            mid_bps = [_rezept(m, raws) for m in mids]
+            top_bp = _rezept(top, raws + mids)
+            owned = []
+
+            def _own(bp):
+                if rnd.random() < .5:
+                    owned.append({"type_id": bp, "is_bpo": True,
+                                  "material_efficiency": rnd.randint(0, 10)})
+                else:
+                    for _ in range(rnd.randint(1, 2)):
+                        owned.append({"type_id": bp, "is_bpo": False,
+                                      "runs": rnd.randint(1, 40),
+                                      "quantity": rnd.randint(1, 3),
+                                      "material_efficiency":
+                                          rnd.randint(0, 10)})
+            if rnd.random() < .9:
+                _own(top_bp)
+            for _b in mid_bps:
+                if rnd.random() < .7:
+                    _own(_b)
+            bestand = {m: rnd.randint(0, 5000) for m in raws}
+            for m in mids:
+                if rnd.random() < .4:
+                    bestand[m] = rnd.randint(0, 300)
+            vor = rnd.random() < .8
+            me, cap = AB.blaupausen_lage(owned)
+            # blaupausen_lage haelt ihre drei Zusagen (BPO -> None,
+            # Kopien-Summe, ME-Maximum).
+            for _b in owned:
+                _bp = int(_b["type_id"])
+                if _b.get("is_bpo") and cap.get(_bp, 0) is not None:
+                    probs["BPO hebt den Deckel nicht auf"].append(seed)
+                if int(_b.get("material_efficiency") or 0) > me.get(_bp, -1):
+                    probs["ME nicht das Maximum"].append(seed)
+            vorher = dict(bestand)
+            r = AB.max_runs(top, p2b, mats, bestand, me, cap, vorstufen=vor)
+            if bestand != vorher:
+                probs["max_runs veraendert den Bestand"].append(seed)
+            n = int(r["runs"])
+            gebaut = dict(r["baut"])
+            if n < 0:
+                probs["negative Runs"].append(seed)
+            if top in gebaut:
+                probs["top steht in baut"].append(seed)
+            if not vor and gebaut:
+                probs["vorstufen=False baut trotzdem"].append(seed)
+            if n > 0:
+                # DIE BILANZ (Regel 3): Verbrauch je Material - ueber
+                # dieselbe oeffentliche Formel material_menge (je Run
+                # AUFgerundet) - nie groesser als Bestand + Eigenbau.
+                alle = dict(gebaut)
+                alle[top] = n
+                verbrauch = defaultdict(int)
+                for tid, rn in alle.items():
+                    if tid not in p2b:
+                        probs["baut ein Item ohne Rezept"].append(seed)
+                        continue
+                    bp, act, out = p2b[tid]
+                    if bp not in cap:
+                        probs["baut ohne eigene Blaupause"].append(seed)
+                    if cap.get(bp) is not None and rn > cap[bp]:
+                        probs["Kopien-Deckel ueberschritten"].append(seed)
+                    _mef = (1.0 - float(me.get(bp, 0) or 0) / 100.0
+                            if act == I.MANUFACTURING else 1.0)
+                    for m, q in mats[(bp, act)]:
+                        verbrauch[m] += I.material_menge(q, rn, _mef)
+                for m, v in verbrauch.items():
+                    _prod = 0
+                    if m in gebaut:
+                        _prod = gebaut[m] * max(1, int(p2b[m][2] or 1))
+                    if v > bestand.get(m, 0) + _prod:
+                        probs["Bilanz: mehr verbraucht als Bestand + "
+                              "Eigenbau"].append(seed)
+            # Monotonie: mehr Bestand -> nie weniger Runs; ohne
+            # Vorstufenbau -> nie mehr Runs.
+            mehr = {k: v * 2 + 7 for k, v in bestand.items()}
+            if AB.max_runs(top, p2b, mats, mehr, me, cap,
+                           vorstufen=vor)["runs"] < n:
+                probs["mehr Bestand -> weniger Runs"].append(seed)
+            if vor and AB.max_runs(top, p2b, mats, bestand, me, cap,
+                                   vorstufen=False)["runs"] > n:
+                probs["ohne Vorstufenbau MEHR Runs"].append(seed)
+            # bestand_liste: genau die eigenen bauenden Blaupausen,
+            # units = Runs x Stueck, groesste zuerst.
+            zeilen = AB.bestand_liste(owned, p2b, mats, dict(bestand),
+                                      vorstufen=vor)
+            if {z["bp"] for z in zeilen} != set(
+                    AB.produkte_der_blaupausen(cap, p2b)):
+                probs["bestand_liste: falsche Blaupausen-Menge"].append(seed)
+            if [z["produkt"] for z in zeilen] != [
+                    z["produkt"] for z in
+                    sorted(zeilen, key=lambda z: (-z["units"], z["produkt"]))]:
+                probs["bestand_liste unsortiert"].append(seed)
+            for z in zeilen:
+                if z["units"] != z["runs"] * max(
+                        1, int((p2b.get(z["produkt"]) or (0, 0, 1))[2] or 1)):
+                    probs["units != Runs x Stueck"].append(seed)
+        return {k: v[:3] for k, v in probs.items()}
+
+    eq("aa527 Build-from-stock-Zufallsprobe ohne Befund", _aa527(), {})
+except Exception as _e527:                               # pragma: no cover
+    _fail.append(f"aa527 Build-from-stock-Zufallsprobe: "
+                 f"{type(_e527).__name__}: {_e527}")
+
+# ---------------------------------------------------------------- (aa528)
+# PREIS-TREND-HELFER (emm499, Nutzer: "eine Columne ... wieviel % das Item
+# gerade ueber oder unter dem durchschnittlichen marktpreis liegt ... ein 3
+# Monate avarage finde ich besser"; Discord HerrLades: Bewegung 7/30/90
+# Tage). Handrechnungen gegen preis_schnitt / preis_bewegung /
+# preis_abweichung - rein, ohne Qt. Regel 1 steckt in der Bewegung: eine
+# kurze Historie darf keine 90-Tage-Bewegung BEHAUPTEN (Toleranz tage/2).
+try:
+    from eve_trader.ui.mw_helpers import (preis_schnitt as _ps528,
+                                          preis_bewegung as _pb528,
+                                          preis_abweichung as _pa528)
+
+    def _r528(d, a):
+        return {"date": d, "average": a}
+
+    # SCHNITT: Fenster = letzte `tage` Tage bis zum juengsten Tag.
+    _zehn528 = [_r528(f"2026-01-{_i:02d}", float(_i)) for _i in range(1, 11)]
+    eq("aa528 Schnitt 5 Tage von 10: (6+7+8+9+10)/5 = 8",
+       _ps528(_zehn528, 5), 8.0)
+    eq("aa528 Schnitt ueber alles: (1+..+10)/10 = 5.5",
+       _ps528(_zehn528, 90), 5.5)
+    # Tage ohne Handel fehlen bei ESI und zaehlen NICHT (kein 0-Verwaessern).
+    _luecke528 = [_r528("2026-01-01", 10.0), _r528("2026-01-10", 20.0)]
+    eq("aa528 Luecken-Historie: Schnitt nur ueber vorhandene Tage = 15",
+       _ps528(_luecke528, 90), 15.0)
+    eq("aa528 ... und das 5-Tage-Fenster sieht nur den juengsten Tag = 20",
+       _ps528(_luecke528, 5), 20.0)
+    eq("aa528 average 0 zaehlt nicht mit",
+       _ps528(_zehn528 + [_r528("2026-01-09", 0.0)], 5), 8.0)
+    eq("aa528 fester Stichtag: 3 Tage bis zum 05. = (3+4+5)/3 = 4",
+       _ps528(_zehn528, 3, heute="2026-01-05"), 4.0)
+    eq("aa528 ohne brauchbare Historie: None",
+       (_ps528([], 90), _ps528([_r528("2026-01-01", 0.0)], 90),
+        _ps528([{"average": 5.0}], 90)), (None, None, None))
+
+    # BEWEGUNG: juengster Tag gegen den Tag am naechsten an (ende - tage),
+    # Abstand hoechstens tage, mindestens tage/2 - sonst None (Regel 1).
+    _bw528 = [_r528("2026-04-03", 100.0), _r528("2026-04-06", 150.0),
+              _r528("2026-04-10", 200.0)]
+    eq("aa528 Bewegung 7d: Zieltag exakt getroffen -> 200 gegen 100 = +100 %",
+       _pb528(_bw528, 7), 100.0)
+    check("aa528 nur der 4-Tage-Nachbar da: 200 gegen 150 = +33.3 %",
+          abs((_pb528([_r528("2026-04-06", 150.0),
+                       _r528("2026-04-10", 200.0)], 7) or 0)
+              - 100.0 / 3.0) < 1e-9)
+    eq("aa528 Abstand unter tage/2 (2 von 7 Tagen): None - keine 7-Tage-"
+       "Bewegung behaupten, die 2 Tage misst",
+       _pb528([_r528("2026-04-08", 150.0), _r528("2026-04-10", 200.0)], 7),
+       None)
+    eq("aa528 Abstand ueber tage (10 von 7): None",
+       _pb528([_r528("2026-03-31", 150.0), _r528("2026-04-10", 200.0)], 7),
+       None)
+    eq("aa528 eine einzige Zeile: None", _pb528([_r528("2026-04-10", 5.0)], 7),
+       None)
+    check("aa528 fester Stichtag verschiebt das Fenster (Ziel 06.04. -> "
+          "+33.3 %)",
+          abs((_pb528(_bw528, 7, heute="2026-04-13") or 0)
+              - 100.0 / 3.0) < 1e-9)
+
+    # ABWEICHUNG: (preis - schnitt) / schnitt * 100, None bei Luecken/<=0.
+    eq("aa528 150 gegen Schnitt 100 = +50 %", _pa528(150.0, 100.0), 50.0)
+    eq("aa528 50 gegen Schnitt 100 = -50 %", _pa528(50.0, 100.0), -50.0)
+    eq("aa528 Abweichung None-Faelle",
+       (_pa528(None, 100.0), _pa528(100.0, None), _pa528(0, 100.0),
+        _pa528(100.0, 0), _pa528("x", 100.0)),
+       (None, None, None, None, None))
+except Exception as _e528:                               # pragma: no cover
+    _fail.append(f"aa528 Preis-Trend-Helfer: {type(_e528).__name__}: {_e528}")
 
 print(f"(aa) Bestand-Herkunft: {_ok}/{_ok + len(_fail)} gruen")
 for f in _fail:

@@ -149,7 +149,7 @@ def kandidaten(karte: dict, names: dict, cats: dict, price_fn, gratis=()) -> dic
 
 
 def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
-                      steuer=0.0) -> dict:
+                      steuer=0.0, vorrat=None) -> dict:
     """Ersetzt Mineral-Kaeufe durch Erz-Kaeufe, wo es guenstiger ist.
 
     buy:          {type_id: Menge} aus production_plan()["buy"]
@@ -163,6 +163,23 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
                   CCPs Schaetzpreise liegen nicht vor). Sie verteuert jeden
                   Tauschschritt und schrumpft die Ersparnis; auch Gratis-Erz
                   (Blacklist) zahlt sie - reprocesst wird trotzdem.
+    vorrat:       MARKTTIEFE (emm491, Nutzer 09.10.2026: "Bauplan schlaegt
+                  mir vor Compressed Ore zu kaufen ... leider lassen die
+                  vorhandenen market orders in Jita es nicht zu"):
+                  {erz_id: Stueck auf den Sell-Orders am Hub} aus dem
+                  Markt-Scan (sell_qty). Der Tausch plant je Erz NIE mehr
+                  ein, als der Markt hergibt - abgerundet auf VOLLE
+                  Portionen (Portionsregel: reprocesst wird nur in
+                  Bloecken; eine angebrochene Portion waere gekauft und
+                  nie getauscht). Was der Markt nicht deckt, bleibt als
+                  Mineral auf der Einkaufsliste - der "andere Ausweg".
+                  None = keine Tiefen-Daten -> wie bisher unbegrenzt
+                  (eingefrorene Plaene, alte Aufrufer); ein Erz, das im
+                  Dict fehlt, gilt ebenfalls als unbegrenzt (der Aufrufer
+                  baut das Dict aus denselben Scan-Zeilen wie die Preise -
+                  fehlt die Zeile, gibt es keinen Preis und das Erz ist
+                  ohnehin kein Kandidat). Gratis-Erz (Blacklist) wird
+                  nicht gekauft und kennt deshalb keinen Vorrat.
 
     Gierig, deterministisch: in jeder Runde das (Erz, Ziel-Material)-Paar mit
     der groessten Ersparnis; Nebenprodukte werden dem Plan gutgeschrieben,
@@ -179,6 +196,20 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
     # der Rechnung 0, gewinnt also ueberall, wo es etwas Gebrauchtes liefert,
     # und landet NICHT auf der Einkaufsliste (Schritt traegt "gratis").
     gratis = set(int(g) for g in (gratis or ()))
+    if vorrat is not None:
+        vorrat = {int(k): int(v or 0) for k, v in (vorrat or {}).items()}
+    geplant = {}          # je Erz schon eingeplante Stueck (gegen vorrat)
+    markt_knapp = set()   # Erze, die der Markt begrenzt oder verhindert hat
+
+    def _max_portionen(erz, portion):
+        """Volle Portionen, die der Markt fuer dieses Erz noch hergibt.
+        None = unbegrenzt (keine Tiefen-Daten oder Gratis-Erz)."""
+        if vorrat is None or erz in gratis:
+            return None
+        v = vorrat.get(erz)
+        if v is None:
+            return None
+        return max(0, (v - geplant.get(erz, 0)) // portion)
 
     def _preis(tid):
         try:
@@ -209,6 +240,14 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
             p_erz = _preis_erz(erz)
             if p_erz <= 0.0 and erz not in gratis:
                 continue
+            maxp = _max_portionen(erz, portion)
+            if maxp is not None and maxp < 1:
+                # Der Markt gibt keine volle Portion mehr her - dieses Erz
+                # faellt aus. In markt_knapp kommt es erst, wenn es den
+                # Plan WIRKLICH begrenzt hat (begrenzter Schritt oder
+                # bestes Erz eines liegen gebliebenen Ziels) - sonst
+                # warnte die Karte vor Erzen, die ohnehin teurer waeren.
+                continue
             for ziel in sorted(need):
                 q_ziel = je_portion.get(ziel, 0)
                 if q_ziel <= 0 or need[ziel] <= 0:
@@ -217,9 +256,15 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
                 if p_ziel <= 0.0:
                     continue
                 portionen = int(math.ceil(need[ziel] / float(q_ziel)))
+                if maxp is not None and portionen > maxp:
+                    portionen = maxp
                 kosten = (portionen * portion * p_erz
                           + steuer * wert_portion * portionen)
-                ersetzt = need[ziel] * p_ziel
+                # Mit Markt-Deckel deckt der Schritt das Ziel evtl. nur
+                # TEILWEISE - bewertet wird nur, was er wirklich ersetzt.
+                # Ohne Deckel ist min(...) == need[ziel] (ceil deckt immer
+                # alles): exakt die alte Rechnung, Zahl fuer Zahl.
+                ersetzt = min(q_ziel * portionen, need[ziel]) * p_ziel
                 for mat, q in je_portion.items():
                     if mat == ziel:
                         continue
@@ -237,6 +282,10 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
         _k, erz, ziel, portionen, kosten, ersetzt = best
         a, cid, je_portion, wert_portion = ausg[erz]
         portion = kand[erz]["portion"]
+        # Markt-begrenzt? VOR dem Abbuchen von need gemessen (danach waere
+        # der Bedarf schon kleiner und der Vergleich verfaelscht).
+        _begrenzt = portionen < int(math.ceil(
+            need[ziel] / float(je_portion[ziel])))
         deckt = {}
         ueb = {}
         for mat, q in je_portion.items():
@@ -253,6 +302,9 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
                 ueberschuss[mat] = ueberschuss.get(mat, 0) + ganz - gedeckt
         if erz not in gratis:
             buy[erz] = buy.get(erz, 0) + portionen * portion
+            geplant[erz] = geplant.get(erz, 0) + portionen * portion
+        if _begrenzt:
+            markt_knapp.add(erz)
         ersparnis_gesamt += ersetzt - kosten
         schritte.append({"erz": erz, "portionen": portionen, "portion": portion,
                          "menge": portionen * portion, "ausbeute": a, "char": cid,
@@ -260,7 +312,8 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
                          "deckt": deckt, "ueberschuss": ueb,
                          "kosten": kosten, "ersetzt": ersetzt,
                          "steuer_kosten": steuer * wert_portion * portionen,
-                         "gratis": erz in gratis})
+                         "gratis": erz in gratis,
+                         "markt_begrenzt": _begrenzt})
     # WARUM NICHT? (Nutzer 18.09.2026: "ist es richtig, dass Mexallon und
     # Isogen trotzdem gekauft werden?") Je Material, das gekauft bleibt und
     # das irgendein Kandidat liefern koennte: das beste geprueft Erz und
@@ -290,9 +343,21 @@ def plane_erz_einkauf(buy: dict, price_fn, kand: dict, ausbeute_von, gratis=(),
             pct = (kosten - ersetzt) / ersetzt * 100.0 if ersetzt > 0 else None
             if pct is not None and (best_pct is None or pct < best_pct):
                 best_erz, best_pct = erz, pct
-        abgelehnt[ziel] = {"erz": best_erz, "aufpreis_pct": best_pct}
+        eintrag = {"erz": best_erz, "aufpreis_pct": best_pct}
+        # MARKT LEER (emm491): das beste Erz waere vielleicht sogar
+        # GUENSTIGER (pct < 0), aber der Markt gibt keine volle Portion
+        # mehr her - dann ist DAS der Grund, nicht der Preis. Der Aufpreis
+        # bleibt als Zahl stehen (ohne Deckel gerechnet), die Anzeige
+        # nennt aber den Markt.
+        if best_erz is not None:
+            _mp = _max_portionen(best_erz, kand[best_erz]["portion"])
+            if _mp is not None and _mp < 1:
+                eintrag["markt_leer"] = True
+                markt_knapp.add(best_erz)
+        abgelehnt[ziel] = eintrag
     return {"buy": buy, "schritte": schritte, "ersparnis": ersparnis_gesamt,
-            "ueberschuss": ueberschuss, "abgelehnt": abgelehnt}
+            "ueberschuss": ueberschuss, "abgelehnt": abgelehnt,
+            "markt_knapp": sorted(markt_knapp)}
 
 
 def ausbeute_funktion(basis, skills_by_char, implant_by_char, skill_ids, erz_skill,

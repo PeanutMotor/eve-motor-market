@@ -135,6 +135,68 @@ def assets_age_seconds(character_id: int):
     return (time.time() - ts) if ts else None
 
 
+# ----------------------------------------------------------------- Budget
+# DAS ESI-FEHLERBUDGET (emm480, GEMESSEN in der fehler.log des Nutzers am
+# 09.10.2026 13:33): CCP wies dort JEDEN Abruf mit 420 ab - Jobs, Blaupausen
+# UND Assets, fuer jeden Charakter plus die Corp. Folgen im Werkzeug: zwei
+# eigene Blaupausen standen rot als "completely missing", und der Bestand
+# einer Struktur fiel von 41 Mio auf 3 Mio Stueck (der Fall aus emm477).
+# Beides sah aus wie "du hast es nicht" - der Nutzer kaufte nach.
+#
+# ESI sagt in JEDER Antwort, wie viel Budget noch da ist
+# (X-Esi-Error-Limit-Remain) und wann es sich zurueckstellt (-Reset,
+# Sekunden). Das wurde bisher weggeworfen. Jetzt steht es an EINER Stelle
+# (Regel 9): die Oberflaeche kann sagen "unvollstaendig, kauf nichts nach",
+# und wer das Budget aufbraucht, steht im Log.
+BUDGET_WARNSCHWELLE = 30      # darunter wird geloggt (von 100)
+_BUDGET = {"remain": None, "reset": None, "ts": 0.0, "sperre_bis": 0.0}
+_BUDGET_LOG_TS = 0.0
+
+
+def fehlerbudget():
+    """Letzter bekannter Stand des ESI-Fehlerbudgets (rein lesend):
+    {remain, reset, ts, sperre_bis}. `sperre_bis` ist der Zeitpunkt, bis zu
+    dem ESI nach einem 420 nichts mehr beantwortet - solange ist JEDE Zahl
+    aus ESI unvollstaendig."""
+    return dict(_BUDGET)
+
+
+def budget_erschoepft(now=None):
+    """True, solange ein 420 nachwirkt. Keine Zahl, die waehrenddessen
+    entsteht, darf als "fehlt" verkauft werden (Regel 3)."""
+    return float(_BUDGET.get("sperre_bis") or 0.0) > (now or time.time())
+
+
+def _budget_merken(r, url):
+    """Budget-Header JEDER Antwort mitlesen - auch der erfolgreichen. Nur so
+    sieht man das Leerlaufen kommen, statt erst den 420 zu sehen."""
+    global _BUDGET_LOG_TS
+    try:
+        _rem = r.headers.get("X-Esi-Error-Limit-Remain")
+        _res = r.headers.get("X-Esi-Error-Limit-Reset")
+        _now = time.time()
+        if _rem is not None:
+            _BUDGET["remain"] = int(_rem)
+            _BUDGET["ts"] = _now
+        if _res is not None:
+            _BUDGET["reset"] = int(_res)
+        if r.status_code == 420:
+            _BUDGET["sperre_bis"] = _now + float(int(_res or 60))
+            _log.error("error budget EXHAUSTED (420), blocked for %ss: %s",
+                       _res, url)
+            return
+        # WER FRISST DAS BUDGET: solange es knapp ist, wird jede URL
+        # protokolliert (hoechstens einmal pro Sekunde, sonst flutet es).
+        if (_BUDGET["remain"] is not None
+                and _BUDGET["remain"] <= BUDGET_WARNSCHWELLE
+                and _now - _BUDGET_LOG_TS > 1.0):
+            _BUDGET_LOG_TS = _now
+            _log.warning("error budget low: %s left (reset in %ss) - %s",
+                         _BUDGET["remain"], _BUDGET.get("reset"), url)
+    except Exception:          # eine Diagnose darf nie einen Abruf kippen
+        pass
+
+
 def _get_with_retry(url, headers=None, params=None, timeout=30, retries=2):
     """GET mit kurzem Retry bei transienten ESI-Fehlern (5xx/Timeout) -
     CCPs Tranquility-Gateway hat gelegentlich kurze Aussetzer (z.B. 502/503/504),
@@ -158,6 +220,9 @@ def _get_with_retry(url, headers=None, params=None, timeout=30, retries=2):
                 time.sleep(1.5 * (attempt + 1))
                 continue
             raise
+        # Budget-Header JEDER Antwort mitlesen - VOR raise_for_status, sonst
+        # geht ausgerechnet der 420 verloren (emm480).
+        _budget_merken(r, url)
         if r.status_code >= 500 and attempt < retries:
             time.sleep(1.5 * (attempt + 1))
             continue
@@ -1478,6 +1543,38 @@ def resolve_station(station_id: int) -> dict:
     return r.json()   # {name, system_id, type_id, owner, ...}
 
 
+_ROUTE_CACHE = {}
+
+
+def fetch_route_jumps(origin_system: int, dest_system: int):
+    """Spruenge auf dem kuerzesten Weg zwischen zwei Sonnensystemen
+    (oeffentlich, /route/{origin}/{destination}/ - keine Anmeldung). Fuer
+    Firesales (emm421, Nutzer: "Ort + Spruenge"). None = kein Weg bekannt
+    (z. B. Wurmloch) oder Abruf gescheitert. Erfolgreiche Antworten werden
+    je Paar fuer die Sitzung gemerkt - die Route aendert sich nicht."""
+    try:
+        o, d = int(origin_system or 0), int(dest_system or 0)
+    except (TypeError, ValueError):
+        return None
+    if not o or not d:
+        return None
+    if o == d:
+        return 0
+    k = (o, d)
+    if k in _ROUTE_CACHE:
+        return _ROUTE_CACHE[k]
+    try:
+        r = _get_with_retry(f"{config.ESI_BASE}/route/{o}/{d}/",
+                            headers={"User-Agent": _USER_AGENT}, timeout=20)
+        if r.status_code != 200:
+            return None
+        wert = max(0, len(r.json() or []) - 1)
+    except Exception:
+        return None
+    _ROUTE_CACHE[k] = wert
+    return wert
+
+
 # NPC-Stationen liegen in diesem ID-Bereich. Upwell-Strukturen fangen erst
 # bei einer Billion an, Container und Schiffe ebenso - die koennen also nicht
 # versehentlich als Station durchgehen. Als eigene Konstanten, damit ein
@@ -1541,12 +1638,24 @@ def station_location_ids(client_id: str, character_id: int) -> set:
 
 
 def fetch_type_orders(type_id: int, station: int = config.JITA_STATION,
-                      region: int = config.FORGE_REGION) -> dict:
+                      region: int = config.FORGE_REGION,
+                      buy_reichweite: bool = False) -> dict:
     """Full order ladder for one item at a station.
     Returns {'sell': [(price, qty) ascending], 'buy': [(price, qty) descending],
     'ids': {order_id: price}}. `ids` (emm321): das Orderbuch ist frischer als
     /characters/{id}/orders/ - eine eben geaenderte EIGENE Order steht hier
-    schon mit neuem Preis; ueber die order_id erkennt das Order-Update sie."""
+    schon mit neuem Preis; ueber die order_id erkennt das Order-Update sie.
+
+    `buy_reichweite=True` (emm408, Discord LRKR + Nutzer: "die Order soll
+    immer den regionsweiten Preis ueberbieten"): die BUY-Seite zaehlt
+    zusaetzlich Orders an ANDEREN Orten der Region mit, deren Reichweite
+    die Station erreicht - im Spiel verkauft ein Verkaeufer an die hoechste
+    Order, die ihn erreicht, egal wo sie haengt. Mitgezaehlt: range
+    "region" (exakt) und Sprung-Reichweiten 1..40 (NAEHERUNG, wir haben
+    keine Sprungkarte - lieber einen Konkurrenten zu viel sehen als einen
+    echten uebersehen, Regel 3). "station"/"solarsystem" an fremden Orten
+    erreichen die Station (fast) nie und bleiben draussen. SELL-Orders
+    haben im Spiel keine Reichweite - sie bleiben immer stationsgebunden."""
     url = f"{config.ESI_BASE}/markets/{region}/orders/"
     sell, buy = [], []
     ids = {}
@@ -1558,7 +1667,9 @@ def fetch_type_orders(type_id: int, station: int = config.JITA_STATION,
         data = r.json()
         for o in data:
             if o["location_id"] != station:
-                continue
+                if not (buy_reichweite and o.get("is_buy_order")
+                        and str(o.get("range")) not in ("station", "solarsystem")):
+                    continue
             (buy if o["is_buy_order"] else sell).append((o["price"], o["volume_remain"]))
             if o.get("order_id") is not None:
                 ids[int(o["order_id"])] = float(o["price"])
@@ -1631,6 +1742,30 @@ def open_info_window(client_id: str, character_id: int, target_id: int):
     if r.status_code in (500, 520):
         raise RuntimeError(_txt(_ESI_NICHT_EINGELOGGT).format(code=r.status_code, body=body))
     raise RuntimeError(f"HTTP {r.status_code} \u2013 {body}")
+
+
+def open_contract_window(client_id: str, character_id: int, contract_id: int):
+    """Oeffnet einen Contract INGAME (emm415, Nutzer: "man muesste den
+    contract den man findet per rechtsklick im spiel oeffnen koennen").
+    Gleicher Weg und gleicher Scope wie das Markt-Fenster
+    (esi-ui.open_window.v1); der Charakter muss im Spiel eingeloggt sein."""
+    url = f"{config.ESI_BASE}/ui/openwindow/contract/"
+    r = _session.post(url, params={"contract_id": int(contract_id),
+                                   "datasource": "tranquility"},
+                      headers=_auth_headers(client_id, character_id), timeout=20)
+    if r.status_code in (200, 204):
+        return {"ok": True, "status": r.status_code, "character_id": character_id}
+    body = ""
+    try:
+        body = r.json().get("error", "")
+    except Exception:
+        body = (r.text or "")[:160]
+    from .sprache import t as _txt
+    if r.status_code == 403:
+        raise RuntimeError(_txt(_ESI_403_TEXT))
+    if r.status_code in (500, 520):
+        raise RuntimeError(_txt(_ESI_NICHT_EINGELOGGT).format(code=r.status_code, body=body))
+    raise RuntimeError(f"HTTP {r.status_code} – {body}")
 
 
 def open_market_window(client_id: str, character_id: int, type_id: int):

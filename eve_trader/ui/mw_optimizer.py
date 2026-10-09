@@ -677,12 +677,16 @@ class Optimizer:
                                "surplus": _txt("batches divide up well"),
                                "absorption": _txt("still fully sellable at the market")
                                }.get(weakest, "")
+                        # `why` stand hier seit jeher berechnet, aber NIE im
+                        # Text (pyflakes-Fund emm485) - der Kommentar oben
+                        # versprach es ("die schwaechste Achse nennen").
                         score_summary.setText(_txt(
                             "RECOMMENDATION: build {qty} \u00b7 profit {profit} "
                             "\u00b7 {cost}/unit (balanced score {score}/100)").format(
                             qty=_qty_full(score_best['qty']), profit=isk(score_best['profit']),
                             cost=isk(score_best['cost_unit']),
-                            score=f"{score_best['score']:.0f}"))
+                            score=f"{score_best['score']:.0f}")
+                            + ((" \u00b7 " + why) if why else ""))
                 else:
                     score_summary.setText(_txt(
                         "Enter a sale price to get a quantity recommendation "

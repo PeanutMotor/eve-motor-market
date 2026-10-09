@@ -489,6 +489,26 @@ def combos_ohne_mausrad(fenster):
     return fenster
 
 
+def zerstoert(w):
+    """True, wenn das C++-Objekt hinter `w` schon weg ist (emm480).
+
+    Qt-Objekte haben zwei Leben: den Python-Zeiger und das C++-Objekt. Nach
+    `deleteLater`/Fenster-Schliessen bleibt der Zeiger, das Objekt nicht -
+    `hasattr`/`getattr`/`is not None` sehen das NICHT, und der erste
+    Methodenaufruf wirft RuntimeError. In einem Slot frisst Qt die Ausnahme
+    still; gesehen hat sie nur b162 (Update-Check 02.10. und 09.10.2026,
+    Spinner 09.10.2026) - beide Male feuerte ein Timer eines Fensters, das
+    es nicht mehr gab. EINE Frage dafuer (Regel 9), statt an jeder Stelle
+    ein eigenes try."""
+    if w is None:
+        return True
+    try:
+        w.objectName()
+        return False
+    except RuntimeError:
+        return True
+
+
 def ohne_mausrad(w):
     """Bedienelement nur per Klick/Tastatur: das Mausrad scrollt die Seite."""
     w.installEventFilter(_RadSperre(w))
@@ -769,6 +789,73 @@ class ZahlVorneSpin(IskGroupedSpin):
     def valueFromText(self, text):
         z = self._vorne(text)
         return z if z is not None else self.value()
+
+
+def vorne_halten_entscheid(sichtbar, minimiert, cursor_im_haupt):
+    """Soll das Bauplan-Fenster nach einer Aktivierung des HAUPTfensters
+    wieder nach vorn? (emm416, Nutzer: "waehrend er laedt rutscht er
+    einfach nach hinten, und ich muss ihn ueber die Taskleiste
+    hervorholen".) Rein und testbar.
+
+    JA nur, wenn das Fenster sichtbar und NICHT minimiert ist und der
+    Mauszeiger NICHT ueber dem Hauptfenster steht - steht er darueber,
+    hat der Nutzer selbst geklickt, und sein Klick gewinnt IMMER."""
+    return bool(sichtbar) and not bool(minimiert) and not bool(cursor_im_haupt)
+
+
+class FensterVorneHalter(QObject):
+    """Haelt ein parentloses Werkzeug-Fenster (Bauplan) waehrend seiner
+    LADEPHASE vor dem Hauptfenster (emm416). Ursache der Meldung war hier
+    nicht nachstellbar (offscreen ohne Fenster-Manager, Regel 5) - deshalb
+    kein Blindschuss auf einen einzelnen Ausloeser, sondern ein Waechter:
+    aktiviert IRGENDETWAS das Hauptfenster, waehrend der Bauplan laedt,
+    kommt der Bauplan wieder nach vorn. Zeitlich begrenzt (Vorgabe 20 s),
+    damit ein bewusster Wechsel zum Hauptfenster danach nie bekaempft
+    wird; ein Klick AUFS Hauptfenster gewinnt auch innerhalb der Frist
+    (Cursor-Pruefung in vorne_halten_entscheid)."""
+
+    def __init__(self, dlg, haupt, dauer_ms=20000):
+        super().__init__(haupt)
+        self._dlg = dlg
+        self._haupt = haupt
+        haupt.installEventFilter(self)
+        QTimer.singleShot(max(1000, int(dauer_ms)), self.abschalten)
+        try:
+            dlg.finished.connect(lambda *_a: self.abschalten())
+        except Exception:
+            pass
+
+    def abschalten(self):
+        try:
+            self._haupt.removeEventFilter(self)
+        except Exception:
+            pass
+        self._dlg = None
+
+    def eventFilter(self, obj, ev):
+        if (self._dlg is not None and obj is self._haupt
+                and ev.type() == QEvent.WindowActivate):
+            d = self._dlg
+            try:
+                from PySide6.QtGui import QCursor
+                # "Cursor ueberm Hauptfenster" heisst: ueber dem Haupt-
+                # fenster UND NICHT ueber dem Bauplan (emm419, Nutzer:
+                # "verschwindet immernoch"). Der Bauplan liegt beim
+                # Oeffnen MITTEN AUF dem Hauptfenster - rein geometrisch
+                # war der Cursor damit fast immer "im Haupt", die erste
+                # Fassung hielt das fuer einen Nutzer-Klick und hob nie.
+                _pos = QCursor.pos()
+                _im_haupt = (self._haupt.frameGeometry().contains(_pos)
+                             and not d.frameGeometry().contains(_pos))
+                if vorne_halten_entscheid(
+                        d.isVisible(),
+                        bool(d.windowState() & Qt.WindowMinimized),
+                        _im_haupt):
+                    QTimer.singleShot(0, lambda: d.raise_()
+                                      or d.activateWindow())
+            except Exception:
+                pass          # Nach-vorn-Halten ist Komfort, nie kritisch
+        return False
 
 
 class MinimizableDialog(QDialog):

@@ -279,10 +279,21 @@ class MainWindowHelpers:
             seit_ts, umstritten_seit=_um_seit)
         for _jid, (_t, _r) in _eind.items():
             _st.job_zuordnung_setzen(_jid, _pid, _t, _r, "eindeutig")
-        # BAU-PRIORITAET (Kartenreihenfolge): was jetzt noch niemandem
-        # gehoert, verteilt die Rangfolge - gespeichert, s. dort.
+        # RUN-ZAHL (emm430): hat genau EIN Plan so viele Runs offen wie der
+        # Job, gehoert er ihm - ohne Frage. Mehrere exakte Treffer bleiben
+        # liegen und werden gefragt (die Prioritaet darf sie nicht nehmen).
+        _mehrdeutig = set()
         try:
-            self._prio_zuordnung_schreiben(_jobs)
+            _mehrdeutig = self._signatur_zuordnung_schreiben(_jobs)
+        except Exception as _se:
+            self._log_exception("Run-Zahl: Jobs", str(_se))
+        # BAU-PRIORITAET (Kartenreihenfolge): was jetzt noch niemandem
+        # gehoert, verteilt die Rangfolge - gespeichert, s. dort. SEIT
+        # emm430 STILL (Nutzer: "Prioritaet, still"): keine Pruef-Frage mehr,
+        # korrigiert wird ueber "Job assignments".
+        try:
+            self._prio_zuordnung_schreiben(
+                [_j for _j in _jobs if int(_j["job_id"]) not in _mehrdeutig])
         except Exception as _pe:
             self._log_exception("Bau-Prioritaet: Jobs", str(_pe))
         # WAS DANACH NOCH OFFEN IST, wird EINMAL gefragt (Stufe C, Teil 2).
@@ -295,11 +306,69 @@ class MainWindowHelpers:
                 _jobs, _plan_runs, _is_react, _st.job_zuordnung_alle(),
                 self._umstrittene_items(getattr(self, "settings", None), _pid),
                 seit_ts, umstritten_seit=_um_seit)]
-        try:
-            self._bd_job_prio = self._prio_zur_pruefung(_plan_runs)
-        except Exception as _pp:
-            self._bd_job_prio = []
-            self._log_exception("Bau-Prioritaet: Pruefliste", str(_pp))
+        # emm430: Prioritaets-Zuordnungen werden nicht mehr zur Pruefung
+        # vorgelegt (`_prio_zur_pruefung` bleibt fuer die Pruefungen stehen).
+        self._bd_job_prio = []
+
+    def _inv_verbraucht_esi(self):
+        """{material: Menge}, die gestartete Invention-Jobs DIESES
+        eingefrorenen Plans schon verbraucht haben (emm431). Quelle: die
+        Invention-Karte (`_bd_invention_needs`: Datacores, Decryptor,
+        Versuche) und ESI (`_bd_active_jobs_alle` + `_bd_delivered_jobs`).
+        Ungespeichert oder nicht eingefroren -> {} (kein Startzeitpunkt,
+        ab dem gezaehlt werden duerfte)."""
+        self._bd_inv_esi_versuche = {}
+        _pid = getattr(self, "_bd_open_plan_id", None)
+        if _pid is None:
+            return {}
+        _s = getattr(self, "settings", None) or {}
+        _ich = None
+        for _p in (_s.get("bau_saved_plans") or []):
+            if str(_p.get("id")) == str(_pid):
+                _ich = _p
+                break
+        _seit = ((_ich or {}).get("frozen") or {}).get("ts")
+        if _seit is None:
+            return {}
+        _je, _max = {}, {}
+        for _bp, _i in (getattr(self, "_bd_invention_needs", None) or {}).items():
+            _n = int((_i or {}).get("attempts") or 0)
+            if _n <= 0:
+                continue
+            _per = {}
+            for _d, _q in ((_i or {}).get("datacores") or []):
+                _per[int(_d)] = _per.get(int(_d), 0) + int(_q or 0) // _n
+            if (_i or {}).get("decryptor_id"):
+                _per[int(_i["decryptor_id"])] = _per.get(int(_i["decryptor_id"]), 0) + 1
+            _je[int(_bp)] = _per
+            _max[int(_bp)] = _n
+        if not _je:
+            return {}
+        # UMSTRITTEN: erfindet ein anderer offener Plan dasselbe (baut er
+        # das T2-Produkt dieser Blaupause), zaehlt der Job nirgends.
+        _p2b = getattr(getattr(self, "_bd_recipes", None), "product_to_bp", None) or {}
+        _prod = {}
+        for _t, _v in _p2b.items():
+            try:
+                if int(_v[0]) in _je:
+                    _prod[int(_v[0])] = int(_t)
+            except (TypeError, ValueError, IndexError):
+                continue
+        _andere = set()
+        _mitgl = MainWindowHelpers.buendel_mitglieder(_s)
+        for _p in (_s.get("bau_saved_plans") or []):
+            if (_p.get("done_manual") or str(_p.get("id")) == str(_pid)
+                    or str(_p.get("id")) in _mitgl):
+                continue
+            _andere |= MainWindowHelpers.plan_baut_items(_p)
+        _um = {b for b, t in _prod.items() if t in _andere}
+        _jobs = [j for js in (getattr(self, "_bd_active_jobs_alle", None) or {}).values()
+                 for j in (js or [])]
+        _jobs += list(getattr(self, "_bd_delivered_jobs", None) or [])
+        mats, vers = invention_verbraucht(_jobs, _seit, _je, _max,
+                                          MainWindowHelpers._iso_job_ts, _um)
+        self._bd_inv_esi_versuche = vers
+        return mats
 
     def _aktive_jobs_filtern(self):
         """Laufende Jobs NUR fuer den Plan, dem sie gehoeren (Nutzer
@@ -362,12 +431,55 @@ class MainWindowHelpers:
         im Format von `_job_zuordnung_nachfuehren` (fertig_ts). Rueckgabe:
         {job_id: plan_id} der neu geschriebenen."""
         from .. import store as _st
-        _s = getattr(self, "settings", None) or {}
-        _rang = MainWindowHelpers.plan_rang(_s)
         _jobs = [dict(_j, _ts=_j.get("fertig_ts")) for _j in (jobs_geliefert or [])
                  if _j.get("fertig_ts") is not None and _j.get("job_id") is not None]
-        if not _rang or not _jobs:
+        _plaene = self._prio_plaene() if _jobs else []
+        if not _plaene:
             return {}
+        _rp = set(getattr(getattr(self, "_bd_recipes", None),
+                          "reaction_products", None) or ())
+        _, _verteilt = prio_jobs_zuteilen(
+            _jobs, _plaene, _st.job_zuordnung_alle().keys(),
+            lambda _t: int(_t) in _rp)
+        _nach_job = {int(_j["job_id"]): _j for _j in _jobs}
+        _neu = {}
+        for _jid, _pid in _verteilt.items():
+            _j = _nach_job.get(int(_jid)) or {}
+            if _st.job_zuordnung_setzen(int(_jid), _pid, _j.get("product_type_id"),
+                                        _j.get("runs"), "prioritaet"):
+                _neu[int(_jid)] = _pid
+        return _neu
+
+    def _signatur_zuordnung_schreiben(self, jobs):
+        """`signatur_zuteilen` ueber alle offenen, eingefrorenen Plaene;
+        eindeutige Treffer gespeichert ("signatur"). -> {mehrdeutige job_ids}
+        (emm430)."""
+        from .. import store as _st
+        _jobs = [dict(_j, _ts=_j.get("fertig_ts")) for _j in (jobs or [])
+                 if _j.get("fertig_ts") is not None and _j.get("job_id") is not None]
+        _plaene = self._prio_plaene() if _jobs else []
+        if not _plaene:
+            return set()
+        _rp = set(getattr(getattr(self, "_bd_recipes", None),
+                          "reaction_products", None) or ())
+        _verteilt, _mehr = signatur_zuteilen(
+            _jobs, _plaene, _st.job_zuordnung_alle().keys(),
+            lambda _t: int(_t) in _rp)
+        _nach_job = {int(_j["job_id"]): _j for _j in _jobs}
+        for _jid, _pid in _verteilt.items():
+            _j = _nach_job.get(int(_jid)) or {}
+            _st.job_zuordnung_setzen(int(_jid), _pid, _j.get("product_type_id"),
+                                     _j.get("runs"), "signatur")
+        return set(_mehr)
+
+    def _prio_plaene(self):
+        """Offene, eingefrorene Plaene in Bau-Prioritaet, mit Bau-Runs und
+        schon belegten Runs - fuer Prioritaet UND Run-Zahl (eine Quelle)."""
+        from .. import store as _st
+        _s = getattr(self, "settings", None) or {}
+        _rang = MainWindowHelpers.plan_rang(_s)
+        if not _rang:
+            return []
         _nach_id = {str(p.get("id")): p for p in (_s.get("bau_saved_plans") or [])}
         _plaene = []
         for _pid_s, _r in sorted(_rang.items(), key=lambda kv: kv[1]):
@@ -388,19 +500,7 @@ class MainWindowHelpers:
                     continue
             _plaene.append({"id": _p.get("id"), "runs": _runs, "seit": _seit,
                             "belegt": _bel})
-        _rp = set(getattr(getattr(self, "_bd_recipes", None),
-                          "reaction_products", None) or ())
-        _, _verteilt = prio_jobs_zuteilen(
-            _jobs, _plaene, _st.job_zuordnung_alle().keys(),
-            lambda _t: int(_t) in _rp)
-        _nach_job = {int(_j["job_id"]): _j for _j in _jobs}
-        _neu = {}
-        for _jid, _pid in _verteilt.items():
-            _j = _nach_job.get(int(_jid)) or {}
-            if _st.job_zuordnung_setzen(int(_jid), _pid, _j.get("product_type_id"),
-                                        _j.get("runs"), "prioritaet"):
-                _neu[int(_jid)] = _pid
-        return _neu
+        return _plaene
 
     def _prio_zur_pruefung(self, plan_runs):
         """Nach Prioritaet verteilte, noch nicht bestaetigte Jobs, die DIESEN
@@ -416,10 +516,15 @@ class MainWindowHelpers:
                 continue
             if _t not in _pr:
                 continue
+            _kand = self._job_plan_kandidaten(_t)
+            # emm427: baut nur EIN offener Plan das Item, gibt es nichts zu
+            # pruefen - die Prioritaet hatte gar keine Wahl.
+            if len(_kand) <= 1:
+                continue
             aus.append({"job_id": int(_jid), "type_id": _t,
                         "runs": int(_e.get("runs") or 0),
                         "fertig_ts": _e.get("ts"), "prio_plan": _e.get("plan_id"),
-                        "kandidaten": self._job_plan_kandidaten(_t)})
+                        "kandidaten": _kand})
         return aus
 
     def _job_plan_kandidaten(self, type_id):
@@ -443,18 +548,14 @@ class MainWindowHelpers:
             # Buendel-Mitglied: zur Wahl steht das Buendel, nicht sein Teil.
             if str(_id) in _mitgl:
                 continue
-            # Die Schluessel der reserve_map sind mal Text, mal Zahl (JSON
-            # macht daraus Text) - deshalb ueber int() vergleichen, nie
-            # ueber die Schreibweise.
-            _hat = False
-            for _k, _v in (_p.get("reserve_map") or {}).items():
-                try:
-                    if int(_k) == _tid and int(_v or 0) > 0:
-                        _hat = True
-                        break
-                except (TypeError, ValueError):
-                    continue
-            if not _hat:
+            # DIESELBE REGEL WIE DIE FRAGE (emm427, Nutzer: "ich kann immer
+            # nur dem Plan zuordnen, den ich gerade offen habe"): vorher las
+            # die Frage die SCHLUESSEL der reserve_map, das Dropdown aber nur
+            # Werte > 0 - der Plan, ueber den gestritten wurde, stand nicht
+            # zur Wahl. Jetzt beide: offene Plaene, die das Item SELBST BAUEN.
+            if _p.get("done_manual"):
+                continue
+            if _tid not in MainWindowHelpers.plan_baut_items(_p):
                 continue
             if str(_id) in _gesehen:
                 continue
@@ -1018,9 +1119,44 @@ class MainWindowHelpers:
         return raus
 
     @staticmethod
+    def plan_baut_items(p):
+        """type_ids, die dieser gespeicherte Plan SELBST BAUT (emm427).
+
+        Nutzer 05.10.2026 (Linsen, Tungsten Carbide): "hier soll ich wieder
+        irgendetwas zuordnen" - gefragt wurde, weil MulitPlan Caldari das
+        Item in seiner reserve_map hatte. Die reserve_map ist aber der
+        MATERIAL-Anspruch (Kauf, Bestand, Selbstgebautes) - ein Plan, der ein
+        Item nur verbraucht, startet nie einen Job dafuer. Die Frage "wer
+        koennte diesen Job gebaut haben" beantworten die BAU-Runs des
+        Schnappschusses. Ohne Schnappschuss (gespeichert, nie eingefroren)
+        bleibt der Rueckfall auf die reserve_map: lieber eine Frage zu viel
+        (Regel 3).
+        """
+        _snap = ((p or {}).get("frozen") or {}).get("plan_snapshot")
+        _br = _snap.get("build_runs") if isinstance(_snap, dict) else None
+        raus = set()
+        if isinstance(_br, dict):
+            for k, v in _br.items():
+                try:
+                    if int(v or 0) > 0:
+                        raus.add(int(k))
+                except (TypeError, ValueError):
+                    continue
+            return raus
+        for k in ((p or {}).get("reserve_map") or {}):
+            try:
+                raus.add(int(k))
+            except (TypeError, ValueError):
+                continue
+        return raus
+
+    @staticmethod
     def _umstrittene_items(settings, exclude_plan_id):
         """type_ids, die mindestens ein ANDERER gespeicherter Plan beansprucht.
 
+        SEIT emm427 heisst "beansprucht": der Plan BAUT das Item selbst
+        (`plan_baut_items`, Bau-Runs des Schnappschusses); die reserve_map
+        nur noch als Rueckfall ohne Schnappschuss. Alter Text:
         Gelesen wird `reserve_map` - die schreibt jeder Plan beim Speichern,
         UNABHAENGIG vom Schloss. Das ist hier die richtige Quelle: die Frage
         lautet nicht "wer hat reserviert", sondern "wer koennte denselben
@@ -1055,11 +1191,8 @@ class MainWindowHelpers:
                     continue
             except (TypeError, ValueError):
                 pass
-            for k in (p.get("reserve_map") or {}):
-                try:
-                    raus.add(int(k))
-                except (TypeError, ValueError):
-                    continue
+            # emm427: nur wer das Item SELBST BAUT, kann den Job gebaut haben.
+            raus |= MainWindowHelpers.plan_baut_items(p)
         return raus
 
     @staticmethod
@@ -1096,11 +1229,7 @@ class MainWindowHelpers:
                 _ts = float((p.get("frozen") or {}).get("ts") or 0.0)
             except (TypeError, ValueError):
                 _ts = 0.0
-            for k in (p.get("reserve_map") or {}):
-                try:
-                    _t = int(k)
-                except (TypeError, ValueError):
-                    continue
+            for _t in MainWindowHelpers.plan_baut_items(p):   # emm427
                 raus[_t] = min(raus.get(_t, _ts), _ts)
         return raus
 
@@ -1889,6 +2018,85 @@ def job_zuordnen_eindeutig(jobs, plan_runs, is_react, vergeben, umstritten,
     return aus
 
 
+def science_verteilen(auftraege, chars):
+    """Science-Jobs auf Charaktere verteilen (emm425, Nutzer: "charaktere
+    hinzuschalten koennen, wenn die Slots von einem Charakter nicht
+    reichen"). Rein.
+
+    `auftraege` = [(schluessel, anzahl Jobs)] in Reihenfolge, `chars` =
+    [(cid, slots)] in Reihenfolge. Jeder Charakter bekommt der Reihe nach
+    bis zu `slots` Jobs; sind alle Slots belegt, beginnt die naechste
+    Welle (2. Auflistung - startet, sobald Slots frei werden). Charaktere
+    mit 0 Slots fallen raus; ohne brauchbare Charaktere -> [].
+    Rueckgabe [(cid, welle, [(schluessel, n)])], nur Eintraege mit Jobs."""
+    ch = [(c, int(s or 0)) for c, s in (chars or []) if int(s or 0) > 0]
+    rest = [[k, max(0, int(n or 0))] for k, n in (auftraege or [])]
+    rest = [r for r in rest if r[1] > 0]
+    if not ch or not rest:
+        return []
+    out = []
+    welle = 1
+    while rest:
+        for cid, cap in ch:
+            if not rest:
+                break
+            frei = cap
+            liste = []
+            while rest and frei > 0:
+                k, n = rest[0]
+                nimm = min(n, frei)
+                liste.append((k, nimm))
+                frei -= nimm
+                rest[0][1] -= nimm
+                if rest[0][1] <= 0:
+                    rest.pop(0)
+            if liste:
+                out.append((cid, welle, liste))
+        welle += 1
+    return out
+
+
+def lag_verbrauch(jobs_alle, seit_ts, mats_je_run):
+    """Material, das Jobs NACH dem letzten ESI-Bestandsstand schon
+    verbraucht haben (emm424, Nutzer: "die Warnung finde ich gut" - der
+    Materials-Reiter zeigte "covered" fuer 1'858 Technetium, im Spiel lagen
+    nur noch 391: ein Job hatte 1'467 verbraucht, ESI meldet den Hangar
+    aber nur etwa stuendlich neu). Rein, nur AUSKUNFT - rechnet nichts um.
+
+    `jobs_alle` = {product_tid: [job {status, start_date, runs,
+    activity_id, product_type_id}]} (alle Jobs der Bau-Charaktere, egal
+    welchem Plan zugeordnet - der Hangar ist gemeinsam), `seit_ts` =
+    Zeitpunkt des ESI-Bestands (epoch) oder None, `mats_je_run(pid, act)`
+    = [(material, menge je Run)] oder None. Mit BASISmengen (ohne ME)
+    ist das Ergebnis eine Obergrenze - daher "bis zu".
+    Rueckgabe {material: Menge}; ohne Zeitpunkt {}."""
+    import datetime as _dt
+    if not seit_ts:
+        return {}
+    out = {}
+    for _pid, js in (jobs_alle or {}).items():
+        for j in (js or []):
+            if j.get("status") not in ("active", "paused", "ready"):
+                continue
+            try:
+                st = _dt.datetime.fromisoformat(
+                    str(j.get("start_date") or "").replace("Z", "+00:00")
+                ).timestamp()
+            except (ValueError, TypeError):
+                continue
+            if st <= float(seit_ts):
+                continue
+            try:
+                mats = mats_je_run(int(j.get("product_type_id") or _pid),
+                                   int(j.get("activity_id") or 0)) or []
+            except Exception:
+                mats = []
+            runs = max(0, int(j.get("runs") or 0))
+            for m, q in mats:
+                out[int(m)] = out.get(int(m), 0) + int(q) * runs
+    return out
+
+
 def laufend_verbraucht(build_runs, build_mats, laufend):
     """Wie viel von jedem Material steckt schon in LAUFENDEN Jobs?
 
@@ -1932,6 +2140,90 @@ def laufend_verbraucht(build_runs, build_mats, laufend):
                 continue
             aus[_mid] = aus.get(_mid, 0) + (_jq * lauf_t) // runs_t
     return {k: v for k, v in aus.items() if v > 0}
+
+
+def plan_offene_runs(plan, type_id, zuordnung, ausser=()):
+    """Offene Runs eines gespeicherten Plans fuer ein Item (emm429): Bau-Runs
+    des Schnappschusses minus die Runs der Jobs, die ihm schon gehoeren.
+    `zuordnung` wie `store.job_zuordnung_fuer_plan`; `ausser` = job_ids, die
+    gerade gefragt werden (ein Prioritaets-Job gehoert dem Plan vorlaeufig
+    schon und darf seinen eigenen Rest nicht verbrauchen). Ohne
+    Schnappschuss None (unbekannt). Rein."""
+    _snap = ((plan or {}).get("frozen") or {}).get("plan_snapshot")
+    _br = _snap.get("build_runs") if isinstance(_snap, dict) else None
+    if not isinstance(_br, dict):
+        return None
+    try:
+        _t = int(type_id)
+        _plan_r = int(_br.get(str(_t), _br.get(_t, 0)) or 0)
+    except (TypeError, ValueError):
+        return None
+    _aus = {int(j) for j in (ausser or ())}
+    _belegt = 0
+    for _jid, _e in (zuordnung or {}).items():
+        try:
+            if int(_jid) in _aus or int((_e or {}).get("type_id") or 0) != _t:
+                continue
+            _belegt += int((_e or {}).get("runs") or 0)
+        except (TypeError, ValueError):
+            continue
+    return max(0, _plan_r - _belegt)
+
+
+def job_vorschlag(runs, kandidaten_rest):
+    """Welcher Plan hat GENAU so viele offene Runs wie der Job? (emm429,
+    Nutzer: "wie weiss ich, wie ich die assignment Frage beantworten soll")
+
+    `kandidaten_rest` = [(plan_id, offene Runs | None)] in Bau-Prioritaet.
+    Nur ein exakter Treffer schlaegt etwas vor - "passt irgendwie hinein"
+    waere geraten. Bei mehreren gewinnt die hoehere Prioritaet. Rein."""
+    try:
+        _r = int(runs)
+    except (TypeError, ValueError):
+        return None
+    if _r <= 0:
+        return None
+    for _pid, _rest in (kandidaten_rest or []):
+        if _rest is not None and int(_rest) == _r:
+            return _pid
+    return None
+
+
+def zuordnung_uebersicht(details, plan_id, meine_items, offene_ids, keiner="-"):
+    """Zeilen fuer "Job assignments" (emm427, Nutzer: eine bestaetigte
+    Zuordnung liess sich nie mehr aendern - Particle Accelerator Unit lag
+    bei Modules 1, gebaut war sie fuer Caldari).
+
+    Gezeigt werden (rein, ohne Fenster pruefbar):
+      * jeder Job, der DIESEM Plan gehoert;
+      * Jobs fuer Items, die dieser Plan baut, die einem anderen OFFENEN Plan
+        gehoeren oder "keinem" - so kann man einen Job von beiden Seiten
+        zurueckholen. Jobs abgeschlossener Plaene bleiben draussen (sonst
+        stuenden hunderte alte Eintraege in der Liste).
+    `details` wie `store.job_zuordnung_details`. Rueckgabe: Liste
+    [{job_id, plan_id, type_id, runs, quelle, ts}], nach Item und Job sortiert.
+    """
+    _mein = str(plan_id)
+    _items = {int(t) for t in (meine_items or ())}
+    _offen = {str(i) for i in (offene_ids or ())}
+    raus = []
+    for _jid, _e in (details or {}).items():
+        try:
+            _t = int((_e or {}).get("type_id") or 0)
+            _pid = str((_e or {}).get("plan_id"))
+        except (TypeError, ValueError):
+            continue
+        if _pid == _mein:
+            pass
+        elif _t in _items and (_pid in _offen or _pid == str(keiner)):
+            pass
+        else:
+            continue
+        _z = dict(_e)
+        _z["job_id"] = int(_jid)
+        raus.append(_z)
+    raus.sort(key=lambda z: (int(z.get("type_id") or 0), z["job_id"]))
+    return raus
 
 
 def offene_job_fragen(jobs, plan_runs, is_react, vergeben, umstritten,
@@ -2077,6 +2369,129 @@ def fehlt_spalte(fehlt_hangar, fehlt_live):
     if _l > _h:
         return _l, True
     return _h, False
+
+
+def stufe_status(abgedeckt, laufend, bereit):
+    """Zustand einer Runplaner-Stufe (emm433): "offen" (noch nicht alles
+    abgedeckt), "im_bau" (abgedeckt, aber Jobs laufen), "bereit" (alles
+    fertig gebaut, mindestens ein Job ist noch nicht abgeholt) oder
+    "erledigt" (fertig und alles abgeliefert bzw. von Hand abgehakt). Rein."""
+    if not abgedeckt:
+        return "offen"
+    if int(laufend or 0) > 0:
+        return "im_bau"
+    if int(bereit or 0) > 0:
+        return "bereit"
+    return "erledigt"
+
+
+def enden_als_zutat(enden, build_runs, product_to_bp, bp_materials):
+    """Endprodukte, die ein ANDERES Bau-Item des Plans als Zutat braucht
+    (emm432, Nutzer: Linsen-Buendel - Multifrequency XL und Ultraviolet XL
+    sind Enden UND Zutat von Scorch XL / Gleam XL; der Runplaner plante sie
+    gleichzeitig in der Endprodukt-Stufe, obwohl Scorch/Gleam sie ZUERST
+    brauchen). Nutzer-Entscheid "Ganz nach vorn": solche Enden laufen in
+    der Stufe davor (Komponenten). Rein. -> set(type_id)."""
+    _enden = {int(e) for e in (enden or ())}
+    raus = set()
+    for y, runs in (build_runs or {}).items():
+        try:
+            if int(runs or 0) < 1:
+                continue
+            bp = (product_to_bp or {}).get(y) or (product_to_bp or {}).get(int(y))
+            if not bp:
+                continue
+            for m, _q in ((bp_materials or {}).get((bp[0], bp[1])) or []):
+                if int(m) in _enden and int(m) != int(y):
+                    raus.add(int(m))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return raus
+
+
+def haken_stufe_umziehen(sammlung, tids, alt="end", neu="component"):
+    """Haken-Schluessel eines Items, das die Stufe gewechselt hat, mitnehmen
+    (emm432: Zutat-Enden wandern von "end" nach "component" - ohne Umzug
+    stuenden ihre Haken auf Zeilen, die es nicht mehr gibt, und die schon
+    gestarteten Runs gaelten wieder als offen = Material doppelt).
+    Formen: "stufe|cid|tid[|wN]" (Zeilen-Haken) und "stufe|tid" (erledigte
+    Runs). Set -> Set, Dict -> Dict (Werte bleiben; trifft ein Umzug auf
+    einen vorhandenen neuen Schluessel, gewinnt der groessere Wert). Rein."""
+    _t = {str(int(x)) for x in (tids or ())}
+
+    def _neu(k):
+        p = str(k).split("|")
+        if p and p[0] == alt and ((len(p) >= 3 and p[2] in _t)
+                                  or (len(p) == 2 and p[1] in _t)):
+            return "|".join([neu] + p[1:])
+        return k
+    if isinstance(sammlung, dict):
+        raus = {}
+        for k, v in sammlung.items():
+            nk = _neu(k)
+            if nk in raus:
+                try:
+                    raus[nk] = max(raus[nk], v)
+                except TypeError:
+                    pass
+            else:
+                raus[nk] = v
+        return raus
+    return {_neu(k) for k in (sammlung or ())}
+
+
+def invention_verbraucht(jobs, seit_ts, je_versuch, max_versuche, iso_ts,
+                         umstritten=()):
+    """Datacores/Decryptoren, die GESTARTETE Invention-Jobs schon verbraucht
+    haben (emm431, Nutzer 05.10.2026: "zuviele Datacores und Decryptoren
+    sind immer schlecht, baue die ESI-Variante" - statt Haken, auf die man
+    sich nicht verlassen kann).
+
+    `jobs`: ESI-Jobs (laufend, fertig, abgeliefert) mit job_id, activity_id,
+    product_type_id (bei Invention die T2-Blaupause), runs (= Versuche),
+    start_date. Gezaehlt wird nur Aktivitaet 8, nur Blaupausen dieses Plans
+    (`je_versuch` {bp: {material: Menge je Versuch}}), nur Jobs, die NACH
+    dem Einfrieren gestartet wurden (`seit_ts`; ohne -> nichts), je job_id
+    einmal, je Blaupause hoechstens die geplanten Versuche (`max_versuche`
+    - sonst wuerde ein Ueberschuss bei A den Datacore-Bedarf von B senken).
+    `umstritten`: Blaupausen, die auch ein anderer offener Plan erfindet -
+    dort ist nicht klar, wessen Job es war: sie zaehlen nicht (Regel 3:
+    lieber zu viel gekauft). Rein. -> ({material: Menge}, {bp: Versuche})."""
+    if seit_ts is None:
+        return {}, {}
+    try:
+        _seit = float(seit_ts)
+    except (TypeError, ValueError):
+        return {}, {}
+    _um = {int(b) for b in (umstritten or ())}
+    versuche, gesehen = {}, set()
+    for j in (jobs or []):
+        try:
+            if int(j.get("activity_id") or 0) != 8:
+                continue
+            bp = int(j.get("product_type_id") or 0)
+            jid = j.get("job_id")
+            n = int(j.get("runs") or 0)
+        except (TypeError, ValueError):
+            continue
+        if bp not in je_versuch or bp in _um or n <= 0:
+            continue
+        if jid is not None:
+            if int(jid) in gesehen:
+                continue
+            gesehen.add(int(jid))
+        _ts = iso_ts(j.get("start_date"))
+        if _ts is None or float(_ts) < _seit:
+            continue
+        versuche[bp] = versuche.get(bp, 0) + n
+    mats = {}
+    for bp, n in list(versuche.items()):
+        n = min(n, max(0, int((max_versuche or {}).get(bp, 0) or 0)))
+        versuche[bp] = n
+        for m, q in (je_versuch.get(bp) or {}).items():
+            if int(q or 0) > 0 and n > 0:
+                mats[int(m)] = mats.get(int(m), 0) + n * int(q)
+    return mats, {b: n for b, n in versuche.items() if n > 0}
 
 
 def inv_kaufmenge(plan_fehlt, benoetigt, bestand):
@@ -2542,6 +2957,24 @@ def reservierung_fragen(eintrag, multi_von=None):
                 and e.get("reserve_map") and not multi_von)
 
 
+def verlinkte_struktur_ids(settings):
+    """Die Bau-Strukturen, die mit einer ECHTEN Struktur im Spiel verlinkt
+    sind (`link_structure_id`), in der Reihenfolge der Einstellungen, ohne
+    Doppelte.
+
+    EINE STELLE (emm490): der Bestands-Abruf von "Build from stock" fragt
+    danach, wo er ueberhaupt suchen soll, und die Bau-Leiste laesst den
+    Strukturen-Knopf blinken, solange die Liste leer ist. Zwei Kopien
+    waeren zwei Wahrheiten - eine angelegte, aber nicht verlinkte Struktur
+    zaehlt hier NICHT: ohne Verlinkung kennt Eve MoMa ihren Hangar nicht."""
+    out = []
+    for bs in ((settings or {}).get("bau_structures") or []):
+        sid = (bs or {}).get("link_structure_id")
+        if sid and int(sid) not in out:
+            out.append(int(sid))
+    return out
+
+
 def hub_ort_id(hub_daten):
     """Ort-Nummer des gewaehlten Hubs (emm313): Struktur-Hub = structure_id
     (die Hub-Box traegt dort ein dict), NPC-Hub = Station aus hubs.NPC_HUBS
@@ -2786,6 +3219,62 @@ def vorstufen_ins_budget(rest_budget, plan_runs, build_mats, erledigt, schon_fer
     return out
 
 
+def signatur_zuteilen(jobs, plaene, vergeben, ist_reaktion):
+    """RUN-ZAHL ENTSCHEIDET (emm430, Nutzer 05.10.2026: "muss es ueberhaupt
+    gefragt werden ... gefragt werden muss nur, wenn ein Plan existiert, der
+    auch genau dieselbe Anzahl Runs machen muss vom selben Item").
+
+    Je noch NIEMANDEM gehoerendem Job: welche offenen, eingefrorenen Plaene
+    haben fuer sein Item GENAU so viele Runs offen, wie der Job hat?
+      * genau EINER  -> der Job gehoert ihm (gespeichert als "signatur");
+      * ZWEI ODER MEHR -> echte Mehrdeutigkeit, NICHT verteilen - der Job
+        kommt in die Frage (und die Prioritaet laesst ihn liegen);
+      * keiner       -> nichts; danach verteilt die Prioritaet still.
+    Dieselben Regeln wie `prio_jobs_zuteilen`: Format von `plaene`/`jobs`,
+    nur Jobs nach dem Einfrieren des Plans, Aktivitaet passend zum Item,
+    aelteste zuerst, ein vergebener Job senkt den Rest fuer die naechsten.
+    Rein. Rueckgabe ({job_id: plan_id}, {job_id mehrdeutig}).
+    """
+    rest = {}
+    for p in plaene or []:
+        _b = p.get("belegt") or {}
+        rest[p["id"]] = {int(t): max(0, int(r or 0) - int(_b.get(int(t), 0) or 0))
+                         for t, r in (p.get("runs") or {}).items()}
+    _verg = set()
+    for _j in (vergeben or ()):
+        try:
+            _verg.add(int(_j))
+        except (TypeError, ValueError):
+            continue
+    verteilt, mehrdeutig = {}, set()
+    for j in sorted([j for j in (jobs or []) if j.get("job_id") is not None],
+                    key=lambda j: (float(j.get("_ts") or 0.0),
+                                   int(j.get("job_id") or 0))):
+        try:
+            jid = int(j["job_id"])
+            tid = int(j.get("product_type_id") or 0)
+            n = int(j.get("runs") or 0)
+        except (TypeError, ValueError):
+            continue
+        if jid in _verg or n <= 0 or j.get("_ts") is None:
+            continue
+        _act = j.get("activity_id")
+        if ist_reaktion(tid):
+            if _act not in (9, 11):
+                continue
+        elif _act != 1:
+            continue
+        treffer = [p["id"] for p in (plaene or [])
+                   if float(j["_ts"]) >= float(p.get("seit") or 0.0)
+                   and rest[p["id"]].get(tid, 0) == n]
+        if len(treffer) == 1:
+            verteilt[jid] = treffer[0]
+            rest[treffer[0]][tid] = 0
+        elif len(treffer) > 1:
+            mehrdeutig.add(jid)
+    return verteilt, mehrdeutig
+
+
 def prio_jobs_zuteilen(jobs, plaene, vergeben, ist_reaktion):
     """Strittige, noch NIEMANDEM zugeordnete gelieferte Jobs nach BAU-
     PRIORITAET verteilen (Nutzer-Entscheid 28.09.2026, Kartenreihenfolge).
@@ -2896,6 +3385,64 @@ def vorschlag_kandidaten(econ, techs, vorhanden, plan_marge):
                     "isk_h": e.get("isk_h"), "opt_qty": e.get("opt_qty")})
     out.sort(key=lambda x: (-x["marge"], x["tid"]))
     return out
+
+
+def synergie(ende, mats_fn, gebaut, plan_items, preis, tiefe=12):
+    """"Gemeinsam" der Vorschlaege (emm450/emm451, Nutzer: Vagabond-Plan
+    schlug die Oneiros vor, die Claymore - fast dieselben Komponenten - nur
+    mit 4 %; dann: "der einzige Ort, wo Overflow entsteht, ist bei
+    Reactions" und "abhaengig von der Production depth").
+
+    Vom Endprodukt abwaerts. Ein Material in `plan_items` zaehlt mit seinem
+    Wert als gemeinsam und beendet den Abstieg - der AUFRUFER gibt dort nur
+    die REAKTIONEN, die der Plan selbst baut (nur dort entsteht Overflow).
+    Ein Item, das der Kandidat selbst baut (`gebaut`, nach derselben
+    Production depth), wird in seine Zutaten zerlegt; alles andere
+    (gekauft, Rohstoff) zaehlt als nicht gemeinsam. Rohstoffe ohne Rezept
+    zaehlen nie als gemeinsam.
+    `mats_fn(tid)` -> ([(mat, menge_je_run)], stueck_je_run) oder None;
+    `preis(tid)` -> ISK oder None.
+    -> (Prozent oder None, gemeinsamer Wert in ISK je Stueck). Rein."""
+    werte = {"gem": 0.0, "ges": 0.0}
+    plan_items = {int(x) for x in (plan_items or ())}
+    gebaut = {int(x) for x in (gebaut or ())}
+
+    def _p(t):
+        try:
+            return float(preis(int(t)) or 0)
+        except Exception:
+            return 0.0
+
+    def _geh(tid, faktor, d):
+        r = mats_fn(tid)
+        if not r:
+            return
+        mats, _out = r
+        for m, q in mats or []:
+            m = int(m)
+            menge = float(q or 0) * faktor
+            if menge <= 0:
+                continue
+            if m in plan_items and mats_fn(m):
+                v = menge * _p(m)
+                werte["gem"] += v
+                werte["ges"] += v
+            elif m in gebaut and d < tiefe and mats_fn(m):
+                _geh(m, menge / (float(mats_fn(m)[1] or 1) or 1.0), d + 1)
+            else:
+                werte["ges"] += menge * _p(m)
+
+    _geh(int(ende), 1.0, 0)
+    _r0 = mats_fn(int(ende))
+    _je = float((_r0[1] if _r0 else 1) or 1) or 1.0
+    if werte["ges"] <= 0:
+        return None, 0.0
+    return werte["gem"] / werte["ges"] * 100.0, werte["gem"] / _je
+
+
+def synergie_anteil(ende, mats_fn, gebaut, plan_items, preis, tiefe=12):
+    """Nur der Prozentwert von `synergie` (aa503)."""
+    return synergie(ende, mats_fn, gebaut, plan_items, preis, tiefe)[0]
 
 
 def gemeinsam_anteil(kand_buy, plan_buy, preis):
@@ -3231,7 +3778,9 @@ def jobs_dauer_kurz(sek):
     h, s = divmod(s, 3600)
     m = s // 60
     if d:
-        return f"{d} T {h} h"
+        # Tages-Buchstabe uebersetzt wie in _fmt_dur (emm412): EN "d", DE "T".
+        from ..sprache import t as _txt
+        return f"{d} " + _txt("d") + f" {h} h"
     if h:
         return f"{h} h {m} m"
     return f"{m} m" if m else "< 1 m"
@@ -3449,6 +3998,95 @@ def absatz_stufe(tage):
     return "thin"
 
 
+def preis_schnitt(rows, tage, heute=None):
+    """Durchschnittspreis der letzten `tage` Tage am Hub (emm499, Nutzer:
+    "eine Columne ... wieviel % das Item gerade ueber oder unter dem
+    durchschnittlichen Marktpreis liegt" + "ein 3 Monate avarage finde ich
+    besser"). Grundlage: die Markt-Historie (je Tag eine Zeile mit dem
+    Tages-Durchschnitt "average"); Tage ohne Handel fehlen bei ESI und
+    zaehlen NICHT mit (ein Tag ohne Handel hat keinen Preis). Fenster wie
+    `tagesvolumen`: die letzten `tage` Tage bis `heute` bzw. bis zum
+    juengsten Tag der Historie. None = keine brauchbare Historie. Rein."""
+    import datetime as _d
+    zeilen = [r for r in (rows or []) if r.get("date")]
+    if not zeilen:
+        return None
+    try:
+        ende = _d.date.fromisoformat(
+            str(heute or max(str(r["date"]) for r in zeilen))[:10])
+    except ValueError:
+        return None
+    start = ende - _d.timedelta(days=int(tage) - 1)
+    summe = 0.0
+    n = 0
+    for r in zeilen:
+        try:
+            tag = _d.date.fromisoformat(str(r["date"])[:10])
+            avg = float(r.get("average") or 0)
+        except (ValueError, TypeError):
+            continue
+        if avg > 0 and start <= tag <= ende:
+            summe += avg
+            n += 1
+    return (summe / n) if n else None
+
+
+def preis_bewegung(rows, tage, heute=None):
+    """Preisbewegung in Prozent: juengster Tages-Durchschnitt gegen den
+    Tages-Durchschnitt vor `tage` Tagen (emm499, Discord HerrLades: "price
+    movement of the finished product for the last 7, 30 and 90 days").
+    "Damals" ist der vorhandene Tag, der der Zielmarke (juengster Tag -
+    `tage`) am naechsten liegt - aber hoechstens `tage` und mindestens die
+    Haelfte davon zurueck: eine kuerzere Historie soll keine 90-Tage-
+    Bewegung BEHAUPTEN, die in Wahrheit nur 10 Tage misst (Regel 1).
+    None = zu wenig Historie. Rein."""
+    import datetime as _d
+    paare = []
+    for r in (rows or []):
+        try:
+            tag = _d.date.fromisoformat(str(r.get("date"))[:10])
+            avg = float(r.get("average") or 0)
+        except (ValueError, TypeError):
+            continue
+        if avg > 0:
+            paare.append((tag, avg))
+    if len(paare) < 2:
+        return None
+    paare.sort()
+    ende, jetzt = paare[-1]
+    if heute:
+        try:
+            ende = _d.date.fromisoformat(str(heute)[:10])
+        except ValueError:
+            return None
+    ziel = ende - _d.timedelta(days=int(tage))
+    kandidat = None
+    for tag, avg in paare[:-1]:
+        abstand = (ende - tag).days
+        if abstand > int(tage) or abstand < int(tage) / 2.0:
+            continue
+        if kandidat is None or abs((tag - ziel).days) < abs((kandidat[0] - ziel).days):
+            kandidat = (tag, avg)
+    if kandidat is None or kandidat[1] <= 0:
+        return None
+    return (jetzt - kandidat[1]) / kandidat[1] * 100.0
+
+
+def preis_abweichung(preis, schnitt):
+    """Wie viel Prozent `preis` ueber (+) oder unter (-) dem Durchschnitt
+    liegt. None, wenn eine der beiden Zahlen fehlt. Rein. BEWUSST ohne
+    Farb-Urteil (Nutzer emm499: "faerbe es nicht rot oder gruen ein ...
+    das Risiko, dass es ein market scam ist ... ist hoch")."""
+    try:
+        p = float(preis)
+        s = float(schnitt)
+    except (TypeError, ValueError):
+        return None
+    if p <= 0 or s <= 0:
+        return None
+    return (p - s) / s * 100.0
+
+
 def job_anzeigename(name, activity_id):
     """Bei Science-Jobs (alles ausser Fertigung/Reaktion) ist das Produkt
     eine Blaupause - das Kuerzel davor sagt es schon, " Blueprint" am Ende
@@ -3518,3 +4156,214 @@ def jobs_einzeln(zeilen, now):
                      "fortschritt": job_fortschritt(z.get("start"), ende, now)})
     lauf.sort(key=lambda g: (g["paused"], g["rest"] is None, g["rest"] or 0, g["tid"]))
     return {"ready": gr["ready"], "laufend": lauf}
+
+
+def kosten_zerlegen(rechne, start, ziel):
+    """WOHER KOMMT DER UNTERSCHIED? (emm437, Nutzer: Golem in My Blueprints
+    +64.8M, im Bauplan -7.3M - "koennen wir das testen?").
+
+    `start` und `ziel` sind Rechen-Eingaenge {"qty", "pfn", "recipes",
+    "opts"}; `rechne(qty, pfn, recipes, opts)` liefert den Plan (dict mit
+    total_cost, mat_cost, job_cost, inv_cost, stock_cost). Vom Start aus wird
+    SCHRITT FUER SCHRITT ein Teil des Ziels uebernommen - Menge, Preise,
+    Rezepte, dann jeder abweichende opts-Schluessel (alphabetisch),
+    kumulativ. Das letzte Ergebnis IST die Ziel-Rechnung.
+
+    -> [{"schritt", "je_stk", "delta", "teile": {mat, job, inv, stock} je
+    Stueck}]. Die Zuordnung haengt an der Reihenfolge (Wechselwirkungen
+    landen beim spaeteren Schritt) - das steht im Bericht dazu. Rein."""
+    def _teile(pl, q):
+        q = max(1, int(q or 1))
+        return {k: float((pl or {}).get(k + "_cost", 0.0) or 0.0) / q
+                for k in ("mat", "job", "inv", "stock")}
+
+    cur = {"qty": start["qty"], "pfn": start["pfn"],
+           "recipes": start["recipes"], "opts": dict(start["opts"])}
+    raus = []
+    vorher = None
+
+    def _messen(name):
+        nonlocal vorher
+        try:
+            pl = rechne(cur["qty"], cur["pfn"], cur["recipes"], dict(cur["opts"]))
+            je = float((pl or {}).get("total_cost", 0.0) or 0.0) / max(1, int(cur["qty"]))
+            teile = _teile(pl, cur["qty"])
+        except Exception as ex:                  # ein Schritt darf scheitern
+            raus.append({"schritt": name, "je_stk": None, "delta": None,
+                         "teile": {}, "fehler": str(ex)[:120]})
+            return
+        raus.append({"schritt": name, "je_stk": je,
+                     "delta": None if vorher is None else je - vorher,
+                     "teile": teile})
+        vorher = je
+
+    _messen("start")
+    if int(ziel["qty"]) != int(cur["qty"]):
+        cur["qty"] = ziel["qty"]
+        _messen("qty")
+    if ziel["pfn"] is not cur["pfn"]:
+        cur["pfn"] = ziel["pfn"]
+        _messen("prices")
+    if ziel["recipes"] is not cur["recipes"]:
+        cur["recipes"] = ziel["recipes"]
+        _messen("recipes")
+    zo = ziel["opts"]
+    for k in sorted(set(cur["opts"]) | set(zo), key=str):
+        if repr(cur["opts"].get(k)) == repr(zo.get(k)):
+            continue
+        if k in zo:
+            cur["opts"][k] = zo[k]
+        else:
+            cur["opts"].pop(k, None)
+        _messen("opts:" + str(k))
+    return raus
+
+
+def sell_hub_vorgabe(hub_daten):
+    """Verkaufsort eines NEUEN Bauplans = der Hub oben (emm437, Nutzer:
+    "er hat den Verkaufsort zu Amarr gewechselt und den globalen Hub auch").
+    NPC-Hub (Region-Nr.) -> sein Schluessel, Struktur -> ("struct", id),
+    unbekannt -> "jita" wie bisher. Rein."""
+    from .. import hubs as _hubs
+    if isinstance(hub_daten, dict) and hub_daten.get("structure_id"):
+        return ("struct", int(hub_daten["structure_id"]))
+    if isinstance(hub_daten, int):
+        for k, _l, r, _s in _hubs.NPC_HUBS:
+            if r == hub_daten:
+                return k
+    return "jita"
+
+
+class JobkostenJeStufe:
+    """`opts["jobcost_by_tid"]` fuer My Blueprints (emm443, Nutzer: "nimmt
+    My Blueprints fuer Reactions die angegebene Reaktions-Struktur und fuer
+    Components und Endprodukt die angegebene Bau-Struktur?" - vorher nur EINE
+    Fertigungs- und EINE Reaktions-Struktur). Je Item die Struktur SEINER
+    STUFE (dieselbe Stufen-Regel wie der Bauplan, `stufe_fn`), `ende` ist das
+    Endprodukt der Zeile. `je_stufe` {stufe: Eintrag} - ohne Eintrag gilt der
+    Pauschalwert der Aktivitaet. Antwortet nur auf .get() - mehr fragt
+    industry nicht. Rein."""
+
+    def __init__(self, ende, stufe_fn, je_stufe):
+        self.ende = ende
+        self.stufe_fn = stufe_fn
+        self.je_stufe = dict(je_stufe or {})
+
+    def get(self, tid, default=None):
+        # Reaktion bleibt Reaktion, auch als Endprodukt der Zeile (emm445) -
+        # dieselbe Regel wie `_bau_stufe_fuer_item` im Bauplan.
+        st = self.stufe_fn(tid)
+        if tid == self.ende and not str(st).startswith("reaction"):
+            st = "endproduct"
+        e = self.je_stufe.get(st)
+        return e if e else default
+
+    def __bool__(self):
+        return bool(self.je_stufe)
+
+    def __repr__(self):
+        return "JobkostenJeStufe(%r, %r)" % (self.ende, sorted(self.je_stufe))
+
+
+class FaulKarte:
+    """{tid: wert}, der erst beim Fragen gerechnet wird (emm445). industry
+    fragt die ME-Karten nur mit `in`, `.get` und als Wahrheitswert - mehr
+    braucht es nicht. `wert_fn(tid)` -> Wert oder None (None = nicht drin,
+    industry nimmt dann seinen Rueckfall). Gemerkt je tid. Rein."""
+
+    def __init__(self, wert_fn, name="FaulKarte"):
+        self._fn = wert_fn
+        self._memo = {}
+        self._name = name
+
+    def _wert(self, tid):
+        if tid not in self._memo:
+            self._memo[tid] = self._fn(tid)
+        return self._memo[tid]
+
+    def __contains__(self, tid):
+        return self._wert(tid) is not None
+
+    def get(self, tid, default=None):
+        v = self._wert(tid)
+        return default if v is None else v
+
+    def __getitem__(self, tid):
+        v = self._wert(tid)
+        if v is None:
+            raise KeyError(tid)
+        return v
+
+    def __bool__(self):
+        return True
+
+    def __repr__(self):
+        return "%s(%d)" % (self._name, len(self._memo))
+
+
+def me_vergleich(items, mb_opts, plan_opts):
+    """WELCHES ITEM MACHT DEN ME-UNTERSCHIED? (emm446, Damnation: nach emm445
+    blieb im Vergleich nur noch "opts:me_map -12.6M"). Je Fertigungs-Item
+    die Blaupausen-ME, Rig und Rolle in My Blueprints und im Bauplan; die
+    Blaupausen-ME wird aus der Gesamt-ME zurueckgerechnet (Gesamt =
+    1 - (1-Bp)(1-Rig)(1-Rolle)). Nur Items mit Unterschied.
+    -> [(tid, (bp, rig, rolle) MB, (bp, rig, rolle) Plan)]. Rein."""
+    def _drei(o, tid):
+        mm = o.get("me_map") or {}
+        ges = float(mm.get(tid) if tid in mm else (o.get("me", 0) or 0))
+        rig = float((o.get("rig_me_map") or {}).get(tid, 0) or 0)
+        ec = float((o.get("ec_me_map") or {}).get(tid, 0) or 0)
+        n = (1 - rig / 100.0) * (1 - ec / 100.0)
+        bp = (1 - (1 - ges / 100.0) / n) * 100.0 if n > 0 else ges
+        return (round(bp, 2), round(rig, 2), round(ec, 2))
+    raus = []
+    for tid in items:
+        a, b = _drei(mb_opts or {}, tid), _drei(plan_opts or {}, tid)
+        if a != b:
+            raus.append((tid, a, b))
+    return raus
+
+
+def struktur_me_karten(ende, stufe_fn, rig_ec_fn, basis, me_vorgabe):
+    """MY BLUEPRINTS MIT DEN STRUKTUR-BONI (emm445, Nutzer: "ja genau so" auf
+    "Rig-Boni der Strukturen (Material und Jobkosten) auch in My Blueprints
+    einrechnen - der Bauplan waere nur noch durch Decryptor, Skills und
+    Bestand besser, nie schlechter").
+
+    Je Item die Struktur SEINER STUFE (`stufe_fn(tid)`; das Endprodukt der
+    Zeile `ende` -> "endproduct", ausser es ist eine Reaktion - wie
+    `_bau_stufe_fuer_item`), `rig_ec_fn(tid, stufe)` -> (Rig-ME %, Rollen-
+    ME %). Blaupausen-ME bleibt die von My Blueprints (`basis` je Produkt,
+    sonst `me_vorgabe`) - der Bauplan nimmt seine genaue ME, wird also nur
+    besser. Kombiniert wie im Spiel und im Bauplan: EINE Formel
+    (`industry.me_invented_pct`, multiplikativ).
+    -> {"me_map", "me_map_reaction", "rig_me_map", "ec_me_map"}. Rein."""
+    from .. import industry as _ind
+
+    def _stufe(tid):
+        st = stufe_fn(tid)
+        if tid == ende and not str(st).startswith("reaction"):
+            st = "endproduct"
+        return st
+
+    def _re(tid):
+        return rig_ec_fn(tid, _stufe(tid))
+
+    # basis: {tid: ME} oder Funktion tid -> ME (emm447: Kategorie-Regel
+    # des Bauplans je Item).
+    if callable(basis):
+        _bas = basis
+    else:
+        _bd = basis or {}
+
+        def _bas(t):
+            return _bd.get(t, me_vorgabe)
+    return {
+        "me_map": FaulKarte(lambda t: _ind.me_invented_pct(
+            _bas(t), *_re(t)), "me_map"),
+        "me_map_reaction": FaulKarte(lambda t: _ind.me_invented_pct(
+            0.0, *_re(t)), "me_map_reaction"),
+        "rig_me_map": FaulKarte(lambda t: (_re(t)[0] or None), "rig_me_map"),
+        "ec_me_map": FaulKarte(lambda t: (_re(t)[1] or None), "ec_me_map"),
+    }
+

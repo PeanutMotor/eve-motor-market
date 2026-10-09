@@ -1582,3 +1582,159 @@ def scan_capital_contract_prices(region_id, capital_type_ids, should_cancel=None
         if progress:
             progress(i + 1, total)
     return aggregate_contract_prices(prices_by_type, bundles_by_type)
+
+
+def firesale_bewertung(ct, items, preis_fn):
+    """Bewertet EINEN oeffentlichen Item-Exchange-Contract gegen den Markt
+    (emm413, Discord Str1k3r2k4: "verfuegbare Contracts ... mit den
+    aktuellen Marktpreisen vergleichen"). Rein und testbar.
+
+    REGEL 3 / SCAM-SCHUTZ - die drei klassischen Contract-Fallen:
+      * BPCs (is_blueprint_copy) haben KEINEN Marktpreis und sind der
+        haeufigste Fueller wertloser "Schnaeppchen" -> zaehlen 0, werden
+        gezaehlt (bpc_n) und in der Zeile angesagt.
+      * Items ohne Marktpreis (preis_fn liefert 0/None) zaehlen 0 und
+        stehen in `no_price` - der Contract sieht dadurch hoechstens
+        SCHLECHTER aus, nie besser.
+      * `verlangt=True`: der Contract FORDERT Items vom Kaeufer
+        (is_included False) - typisches Tausch-/Scam-Muster; gewinn ist
+        dann None (nicht bewertbar), der Aufrufer sortiert ihn aus.
+
+    Rueckgabe: {preis, wert, gewinn, rabatt_pct, enthalten:[(tid, qty)],
+    bpc_n, unbekannt:[tid], verlangt, volumen, contract_id, date_issued,
+    title}."""
+    preis = float(ct.get("price") or 0)
+    enthalten = []
+    wert = 0.0
+    bpc_n = 0
+    unbekannt = []
+    verlangt = False
+    for it in (items or []):
+        tid = int(it.get("type_id") or 0)
+        qty = int(it.get("quantity") or 0)
+        if not it.get("is_included", True):
+            verlangt = True
+            continue
+        if tid <= 0 or qty <= 0:
+            continue
+        enthalten.append((tid, qty))
+        if it.get("is_blueprint_copy"):
+            bpc_n += 1
+            continue                      # BPC: Marktwert 0, nie schaetzen
+        try:
+            p = float(preis_fn(tid) or 0)
+        except Exception:
+            p = 0.0
+        if p > 0:
+            wert += p * qty
+        elif tid not in unbekannt:
+            unbekannt.append(tid)
+    gewinn = None if verlangt else (wert - preis)
+    rabatt = ((gewinn / wert * 100.0)
+              if (gewinn is not None and wert > 0) else None)
+    return {"preis": preis, "wert": wert, "gewinn": gewinn,
+            "rabatt_pct": rabatt, "enthalten": enthalten, "bpc_n": bpc_n,
+            "no_price": unbekannt, "verlangt": verlangt,
+            "volumen": float(ct.get("volume") or 0),
+            "contract_id": int(ct.get("contract_id") or 0),
+            "date_issued": str(ct.get("date_issued") or ""),
+            "title": str(ct.get("title") or ""),
+            # Ort des Contracts (emm421): Station oder Struktur-ID.
+            "ort_id": int(ct.get("start_location_id") or 0)}
+
+
+def scan_firesales(region_id, preis_fn, min_preis=1_000_000,
+                   max_contracts=300, should_cancel=None, progress=None):
+    """Firesales-Scan (emm413): oeffentliche Item-Exchange-Contracts einer
+    Region gegen die Marktpreise des letzten Scans bewerten.
+
+    DECKEL, ehrlich angesagt: die Contract-Liste verraet die Items nicht,
+    je Contract kostet der Inhalt einen EIGENEN Abruf (The Forge hat
+    tausende). Geprueft werden deshalb hoechstens `max_contracts`, die
+    JUENGSTEN zuerst (alte Schnaeppchen sind laengst weg); die Rueckgabe
+    nennt gesamt/geprueft/fehler, die Oberflaeche sagt es dazu.
+
+    Rueckgabe: {"zeilen": [firesale_bewertung...], "gesamt": n,
+    "geprueft": n, "fehler": n}."""
+    cts = esi.fetch_public_contracts(
+        region_id, min_price=max(0, float(min_preis or 0)),
+        should_cancel=should_cancel)
+    gesamt = len(cts)
+    cts.sort(key=lambda c: str(c.get("date_issued") or ""), reverse=True)
+    cts = cts[:max(1, int(max_contracts or 1))]
+    zeilen = []
+    roh = []
+    fehler = 0
+    done_n = 0
+    with cf.ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(esi.fetch_contract_items, c["contract_id"]): c
+                for c in cts if c.get("contract_id")}
+        for f in cf.as_completed(futs):
+            done_n += 1
+            if progress:
+                progress(done_n, max(1, len(futs)))
+            if should_cancel and should_cancel():
+                break
+            try:
+                items = f.result() or []
+            except Exception:
+                fehler += 1              # ein stummer Contract kippt nichts
+                continue
+            zeilen.append(firesale_bewertung(futs[f], items, preis_fn))
+            roh.append((futs[f], items))
+    # `roh` (emm421): Contract + Inhalt, damit die Oberflaeche OHNE neuen
+    # Abruf auf eine andere Wertbasis umrechnen kann (Sell/Buy).
+    return {"zeilen": zeilen, "roh": roh, "gesamt": gesamt,
+            "geprueft": len(zeilen), "fehler": fehler}
+
+
+def firesale_orte(ort_ids, start_system, ort_fn, system_fn, route_fn,
+                  max_workers=8):
+    """Ort, Sicherheit und Spruenge je Contract-Ort (emm421, Nutzer: "Ort +
+    Spruenge"). Rein bis auf die uebergebenen Abruf-Funktionen:
+      ort_fn(location_id)  -> {"name", "system_id"} oder None (Struktur
+                              ohne Andockrecht: None)
+      system_fn(system_id) -> {"name", "security"}
+      route_fn(a, b)       -> Spruenge oder None
+    Je ORT ein Abruf, je SYSTEM ein Info- und ein Routen-Abruf (parallel).
+    Ein Fehler kippt nie den Rest - unbekannt bleibt None.
+    Rueckgabe: {ort_id: {"name", "system", "sec", "spruenge"}}."""
+    ids = sorted({int(i) for i in (ort_ids or ()) if i})
+    orte = {}
+
+    def _ort(i):
+        try:
+            return i, (ort_fn(i) or {})
+        except Exception:
+            return i, {}
+    with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for i, o in ex.map(_ort, ids):
+            orte[i] = o
+    systeme = sorted({int(o.get("system_id")) for o in orte.values()
+                      if o.get("system_id")})
+    info, spr = {}, {}
+
+    def _sys(s):
+        try:
+            inf = system_fn(s) or {}
+        except Exception:
+            inf = {}
+        try:
+            j = route_fn(start_system, s) if start_system else None
+        except Exception:
+            j = None
+        return s, inf, j
+    with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for s, inf, j in ex.map(_sys, systeme):
+            info[s] = inf
+            spr[s] = j
+    out = {}
+    for i in ids:
+        o = orte.get(i) or {}
+        s = int(o.get("system_id") or 0)
+        inf = info.get(s) or {}
+        out[i] = {"name": o.get("name") or None,
+                  "system": inf.get("name"),
+                  "sec": inf.get("security"),
+                  "spruenge": spr.get(s) if s else None}
+    return out

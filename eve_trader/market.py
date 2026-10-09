@@ -22,18 +22,27 @@ class Holding:
     flag: bool = False
 
 
-def aggregate_holdings(transactions) -> dict:
+def aggregate_holdings(transactions, paar=None) -> dict:
     """FIFO lot tracking PER CHARACTER (each character's sells consume only that
     character's own buy lots), then merged per type_id. So combining several
     characters can't mismatch one character's sells against another's buys – the
     combined view is exactly the sum of the individual characters.
-    Returns {type_id: {"quantity", "avg_buy", "oldest"}} for qty > 0."""
+    Returns {type_id: {"quantity", "avg_buy", "oldest"}} for qty > 0.
+
+    `paar` (emm410, Nutzer: Handels-Paar auch fuer den Einstand): die
+    Charaktere dieser Menge teilen sich EINEN Lot-Topf - verkauft der
+    Verkaeufer-Charakter, werden die Kauf-Lots des Einkaeufers wirklich
+    verbraucht, statt ewig liegenzubleiben und den Ø-Einkauf zu mischen.
+    Dieselbe Regel wie in `realized_trades`. Leer/None = wie bisher."""
     from collections import defaultdict, deque
+    paar = {int(c) for c in (paar or []) if str(c).lstrip("-").isdigit()}
     lots = defaultdict(deque)  # (character_id, type_id) -> deque[[qty, price, date]]
     # buys before sells on the same day so FIFO consumes correctly
     ordered = sorted(transactions, key=lambda x: (x["date"], 0 if x["is_buy"] else 1))
     for t in ordered:
-        key = (t.get("character_id"), t["type_id"])
+        _cid = t.get("character_id")
+        key = (("paar" if (_cid is not None and int(_cid) in paar) else _cid),
+               t["type_id"])
         if t["is_buy"]:
             lots[key].append([t["quantity"], t["unit_price"], t["date"]])
         else:
@@ -79,7 +88,8 @@ def ist_container(gruppenname) -> bool:
     # de_scan4: an
 
 
-def fracht_je_item(transactions, hub_orte, satz, volumen, ohne=()) -> dict:
+def fracht_je_item(transactions, hub_orte, satz, volumen, ohne=(),
+                   paar=None) -> dict:
     """FRACHT JE ITEM aus den echten Kaeufen (Nutzer 29.09.2026: "ich muss
     die Frachtkosten VOR dem Verkauf auf die Marge obendrauf schlagen
     koennen" - und die Menge darf NICHT aus dem Warenkorb kommen, "oft fuegt
@@ -106,10 +116,14 @@ def fracht_je_item(transactions, hub_orte, satz, volumen, ohne=()) -> dict:
         return {}
     hub = {int(o) for o in (hub_orte or ()) if o}
     ohne = {int(x) for x in (ohne or ())}
+    # Handels-Paar teilt sich EINEN Lot-Topf (emm410) - wie aggregate_holdings.
+    paar = {int(c) for c in (paar or []) if str(c).lstrip("-").isdigit()}
     lots = defaultdict(deque)       # (char, tid) -> [[menge, ort], ...]
     ordered = sorted(transactions, key=lambda x: (x["date"], 0 if x["is_buy"] else 1))
     for t in ordered:
-        key = (t.get("character_id"), t["type_id"])
+        _cid = t.get("character_id")
+        key = (("paar" if (_cid is not None and int(_cid) in paar) else _cid),
+               t["type_id"])
         if t["is_buy"]:
             lots[key].append([t["quantity"], t.get("location_id") or 0])
         else:
@@ -310,11 +324,12 @@ def fill_buy(sell_ladder, qty):
     return _fill(sell_ladder, qty, buy=True)
 
 
-def holdings_from_assets(assets: dict, transactions) -> dict:
+def holdings_from_assets(assets: dict, transactions, paar=None) -> dict:
     """Real inventory (from the assets endpoint) priced with the FIFO cost basis
     derived from transactions. assets = {type_id: quantity}.
-    Items you hold but never bought on the market show avg_buy = 0 (unknown)."""
-    lots = aggregate_holdings(transactions)
+    Items you hold but never bought on the market show avg_buy = 0 (unknown).
+    `paar` wird an aggregate_holdings durchgereicht (emm410)."""
+    lots = aggregate_holdings(transactions, paar=paar)
     holdings = {}
     for tid, qty in assets.items():
         if qty <= 0:

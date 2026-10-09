@@ -158,7 +158,10 @@ def szenario(zeigen=True):
         z["2"] = _zustand(welt)
         # 2b. Ein zweiter X-Job laeuft OHNE Klick (X brauchen alle drei):
         # die Prioritaet gibt ihn beim Oeffnen gleich #1 mit Platz (B).
-        welt["jobs"].append({"job_id": 503, "product_type_id": X, "runs": 10,
+        # emm430: 6 statt 10 Runs - mit 10 haetten B UND C genau so viele
+        # offen (echte Mehrdeutigkeit -> Frage, s. aa491); hier soll die
+        # Prioritaet greifen.
+        welt["jobs"].append({"job_id": 503, "product_type_id": X, "runs": 6,
                              "activity_id": 11, "status": "active",
                              "start_date": _iso(t0 + 300), "completed_date": None})
         z["2b_vor"] = _zustand(welt)

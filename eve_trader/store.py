@@ -1071,6 +1071,19 @@ def job_zuordnung_alle() -> dict:
     return {int(r["job_id"]): r["plan_id"] for r in rows}
 
 
+def job_zuordnung_details() -> dict:
+    """{job_id: {plan_id, type_id, runs, quelle, ts}} ALLER Eintraege - fuer
+    die Uebersicht "Job assignments" (emm427, Umhaengen bestaetigter Jobs)."""
+    init_job_zuordnung()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT job_id,plan_id,type_id,runs,quelle,ts FROM job_zuordnung"
+        ).fetchall()
+    return {int(r["job_id"]): {"plan_id": r["plan_id"], "type_id": r["type_id"],
+                               "runs": r["runs"], "quelle": r["quelle"],
+                               "ts": r["ts"]} for r in rows}
+
+
 def job_zuordnung_mit_quelle(quelle) -> dict:
     """{job_id: {plan_id, type_id, runs, ts}} aller Jobs einer Quelle."""
     init_job_zuordnung()
@@ -1313,6 +1326,25 @@ def item_name_rein(name) -> str:
     while s and (s[0] in _NAME_MARKER or s[0].isspace()):
         s = s[1:]
     return s.strip()
+
+
+def hangar_name(zeile) -> str:
+    """Item-Name aus EINER Zeile einer Ingame-Hangar-Kopie (Strg+C).
+
+    Erste Tab-Spalte, ohne das Sternchen am Ende (emm428, Discord: die
+    Verkaufsliste bekam "'Arbalest' Rocket Launcher I*" und fand das Item
+    nicht -> Preis "?"). WOHER das "*" kommt, ist NICHT geklaert: die
+    Vermutung "unverpackt" war FALSCH (Discord-Nutzer: 25 frisch in Jita
+    gekaufte, gestapelte Items). Sein Verkaufsfenster zeigte auch den
+    STATIONSNAMEN mit "*" ("Caldari Navy Montagewerk*", deutscher Client,
+    englische Item-Namen) - Verdacht: eine Anzeige-/Spracheinstellung des
+    Clients. Im Item-Namen selbst kommt "*" nie vor. Der Bestands-Import im
+    Bauplan streift es laengst ab.
+    """
+    s = str(zeile or "").split("\t")[0].strip()
+    while s.endswith("*"):
+        s = s[:-1].rstrip()
+    return s
 
 
 def add_shopping(type_id, name, qty, buy=0.0, sell=0.0, source="", sugg_qty=0):

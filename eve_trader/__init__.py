@@ -1,5 +1,5 @@
 """EVE Motor Market - Industrie- und Handelswerkzeug fuer EVE Online."""
-__version__ = "1.1.1"   # MUSS zur Release-Marke auf Github passen
+__version__ = "1.1.2"   # MUSS zur Release-Marke auf Github passen
 
 # ANZEIGENAME - EINE Wahrheit (Regel 9). Er steht im Fenstertitel, in den
 # Einstellungen, im Update-Hinweis und als Name der gebauten EXE. Stand er

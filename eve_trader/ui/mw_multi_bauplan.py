@@ -700,12 +700,25 @@ class MultiBauplan:
         e["label"] = t("{name} (copy)").format(name=_alt)
         return e
 
+    def _multi_ende_me_te_vorgabe(self, tid):
+        """ME/TE eines NEUEN Endes im Multiplan (emm452, Nutzer "ja, wie
+        Einzelplan"): dieselbe Regel wie ein neuer Einzelplan - die
+        schlechteste eigene Blaupause aus dem Blaupausen-Cache, sonst 0/0
+        (Nichtwissen darf keine guenstige Zahl erzeugen). Vorher kam hier die
+        VERSTECKTE Einstellung bau_me/bau_te (Vorgabe 10/0) - Regel 7a."""
+        try:
+            rec = (getattr(self, "_bd_recipes", None)
+                   or industry.recipes_cached())
+            return self._bd_own_bpc_me_te(int(tid), recipes=rec)
+        except Exception:
+            return 0, 0
+
     def _multi_ende_anhaengen(self, eintrag, tid, qty, me=None, te=None,
                               own_bpc=False, own_bpc_runs=0):
         """NEUER Eintrag = `eintrag` (Einzelplan ODER Buendel) + Ende tid x qty.
         Aendert `eintrag` nicht. Gleiches Ende noch einmal -> Mengen addiert
-        (wie _multi_plan_aus_quellen). ME/TE des neuen Endes: Vorgabe aus
-        den Einstellungen (bau_me/bau_te), wie bei einem neuen Bauplan."""
+        (wie _multi_plan_aus_quellen). ME/TE des neuen Endes: wie bei einem
+        neuen Einzelplan (`_multi_ende_me_te_vorgabe`)."""
         e = dict(eintrag or {})
         tid = int(tid)
         qty = max(1, int(qty or 1))
@@ -732,10 +745,12 @@ class MultiBauplan:
             enden[int(a)] = enden.get(int(a), 0) + int(b)
         enden[tid] = enden.get(tid, 0) + qty
         e["enden"] = [[a, b] for a, b in sorted(enden.items())]
-        for _k, _v in (("me_je_ende", me if me is not None
-                        else int(self.settings.get("bau_me", 10) or 0)),
-                       ("te_je_ende", te if te is not None
-                        else int(self.settings.get("bau_te", 0) or 0)),
+        if me is None or te is None:
+            _vme, _vte = self._multi_ende_me_te_vorgabe(tid)
+            me = _vme if me is None else me
+            te = _vte if te is None else te
+        for _k, _v in (("me_je_ende", int(me)),
+                       ("te_je_ende", int(te)),
                        ("own_bpc_je_ende", bool(own_bpc)),
                        ("own_bpc_runs_je_ende", int(own_bpc_runs or 0))):
             _d = dict(e.get(_k) or {})
@@ -933,10 +948,10 @@ class MultiBauplan:
         if _m is None:
             return None
         erst = _m[0]
+        _me0, _te0 = self._multi_ende_me_te_vorgabe(int(erst["tid"]))
         e = {"type_id": int(erst["tid"]), "qty": int(erst["qty"]),
              "item_name": erst["name"],
-             "me": int(self.settings.get("bau_me", 10) or 0),
-             "te": int(self.settings.get("bau_te", 0) or 0),
+             "me": _me0, "te": _te0,
              "label": self._multi_standard_name(
                  [{"item_name": x["name"]} for x in _m])}
         for x in _m[1:]:
@@ -1383,7 +1398,7 @@ class MultiBauplan:
         (im Hintergrund, fuer die besten VORSCHLAG_RECHNEN)."""
         from PySide6.QtWidgets import QDialog
         from .mw_basis import kopier_menue, kontext_menue
-        from .mw_helpers import gemeinsam_anteil
+        from .mw_helpers import synergie
         from .. import workers as _wk
         kand, marge, techs, grund = self._multi_vorschlag_daten()
         names = dict((getattr(self, "_bp_econ_stand", None) or {}).get("names") or {})
@@ -1407,17 +1422,29 @@ class MultiBauplan:
         info = QLabel("")
         info.setWordWrap(True)
         lay.addWidget(info)
-        tbl = QTableWidget(0, 6)
+        tbl = QTableWidget(0, 7)
         tbl.setHorizontalHeaderLabels(
             [t("End product"), t("Margin") + " (%)", t("Profit/unit"),
-             t("Build cost/unit"), t("ISK/h"), t("Shared") + " (%)"])
+             t("Build cost/unit"), t("ISK/h"), t("Shared") + " (%)",
+             t("Shared ISK")])
         tbl.verticalHeader().setVisible(False)
+        # GEMEINSAM = REAKTIONEN, DIE DEIN PLAN SELBST BAUT (emm451, Nutzer:
+        # "der einzige Ort, wo Overflow entsteht, ist bei Reactions") - nach
+        # der Production depth des Plans, fuer Plan UND Kandidat.
+        for _c in (5, 6):
+            _sh = tbl.horizontalHeaderItem(_c)
+            if _sh is not None:
+                _sh.setToolTip(t("Part of this item that runs through reactions "
+                                 "your plan builds itself (at its production "
+                                 "depth) \u2013 only there do batches overflow. "
+                                 "Shared ISK = that value per unit; the list is "
+                                 "sorted by it."))
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSelectionBehavior(QTableWidget.SelectRows)
         tbl.setSelectionMode(QTableWidget.ExtendedSelection)
         hh = tbl.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.Stretch)
-        for c in range(1, 6):
+        for c in range(1, 7):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         lay.addWidget(tbl)
         self._bd_vorschlag_dlg = dlg          # fuer die b-Suite
@@ -1482,6 +1509,7 @@ class MultiBauplan:
             tbl.setItem(r, 4, NumericItem(isk(_ih, suffix=False) if _ih else "\u2014",
                                           float(_ih or 0)))
             tbl.setItem(r, 5, NumericItem("\u2026", -1.0))
+            tbl.setItem(r, 6, NumericItem("\u2026", -1.0))
         tbl.setSortingEnabled(True)
 
         def _zeilen_items(row):
@@ -1509,9 +1537,14 @@ class MultiBauplan:
                 self._multi_vorschlag_hinzufuegen(items)
         kopier_menue(tbl, _menue)
 
-        # "Gemeinsam %" im Hintergrund fuer die besten Kandidaten.
-        plan_buy = dict(((getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {})
-                        .get("buy") or {})
+        # "Gemeinsam %" im Hintergrund fuer die besten Kandidaten - ueber
+        # ALLES, was der Plan benutzt (gebaut, gekauft, aus dem Bestand),
+        # nicht nur ueber seine Einkaufsliste (emm450, `synergie_anteil`).
+        _pl0 = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
+        _rp0 = set(getattr(getattr(self, "_bd_recipes", None),
+                           "reaction_products", None) or ())
+        plan_items = {x for x in (_pl0.get("build_runs") or {}) if x in _rp0}
+        _vnamen = dict(getattr(self, "_bd_names_ref", None) or {})
         pm = dict(getattr(self, "_bd_pricemap", None) or {})
         # Dieselben Plan-Optionen wie das Fenster (Strukturen, ME, Tiefe) -
         # nur ohne Bestand: gefragt ist, was der Kandidat EINKAUFEN wuerde.
@@ -1533,8 +1566,39 @@ class MultiBauplan:
                 try:
                     bpi = rec.product_to_bp.get(tid)
                     n = int(bpi[2]) if bpi and len(bpi) >= 3 and bpi[2] else 1
-                    pl = industry.production_plan(tid, n, pm.get, rec, dict(_opts))
-                    out[tid] = gemeinsam_anteil(pl.get("buy") or {}, plan_buy, pm.get)
+                    def _mats(t0, _rec=rec):
+                        b = _rec.product_to_bp.get(t0)
+                        if not b:
+                            return None
+                        m = _rec.bp_materials.get((b[0], b[1]))
+                        return (m, b[2] if len(b) >= 3 else 1) if m else None
+                    # DIESELBE PRODUCTION DEPTH FUER DEN KANDIDATEN (emm451):
+                    # `never_build` des Plans kennt nur SEINE Items - die
+                    # Regel wird hier fuer die Kette des Kandidaten angewandt.
+                    _o = dict(_opts)
+                    try:
+                        _ids, _st = set(), [tid]
+                        while _st:
+                            _x = _st.pop()
+                            if _x in _ids:
+                                continue
+                            _ids.add(_x)
+                            _mx = _mats(_x)
+                            if _mx:
+                                _st.extend(int(m) for m, _q in _mx[0])
+                        _grp = industry.group_names(list(_ids)) or {}
+                        _o["never_build"] = (set(_o.get("never_build") or ())
+                                             | set(self._bau_cant_build(
+                                                 list(_ids), _grp,
+                                                 rec.reaction_products, _vnamen,
+                                                 tid, recipes=rec) or ()))
+                    except Exception as _nbe:
+                        self._log_exception("Multiplan-Vorschlag: Tiefe",
+                                            str(_nbe))
+                    pl = industry.production_plan(tid, n, pm.get, rec, _o)
+                    out[tid] = synergie(
+                        tid, _mats, (pl.get("build_runs") or {}).keys(),
+                        plan_items, pm.get)
                 except Exception:
                     out[tid] = None
             return {"gemeinsam": out, "namen": _namen}
@@ -1554,15 +1618,18 @@ class MultiBauplan:
                     it.setText(str(_nm[tid]))
                 if not _liste:
                     continue
-                if tid not in res:
+                if tid not in res or res.get(tid) is None:
                     tbl.setItem(r, 5, NumericItem("\u2014", -1.0))
+                    tbl.setItem(r, 6, NumericItem("\u2014", -1.0))
                     continue
-                v = res.get(tid)
+                v, v_isk = res.get(tid)
                 tbl.setItem(r, 5, NumericItem(f"{v:.0f} %" if v is not None else "\u2014",
                                               float(v) if v is not None else -1.0))
+                tbl.setItem(r, 6, NumericItem(isk(v_isk, suffix=False),
+                                              float(v_isk or 0)))
             tbl.setSortingEnabled(True)
             if _liste:
-                tbl.sortItems(5, Qt.DescendingOrder)
+                tbl.sortItems(6, Qt.DescendingOrder)
         if _liste or _fehlende_namen:
             self._run(_wk.Worker(job), done,
                       fail_cb=lambda _m: self._log_exception(
