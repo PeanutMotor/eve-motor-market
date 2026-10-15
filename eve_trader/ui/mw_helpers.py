@@ -17,9 +17,69 @@ REGELN FUER DIESES MODUL:
 
 class MainWindowHelpers:
     @staticmethod
-    def _bp_copies_by_tid(owned_bp, build_runs, product_to_bp):
+    def bp_besitz_zaehlen(owned_bp):
+        """{bp_type_id: Stueck BPO}, {bp_type_id: Summe BPC-Runs} aus der
+        FREIEN Blaupausen-Rohliste - die EINE Zaehlung des Blueprints-
+        Reiters (emm536).
+
+        NUTZER-BEFUND 11.10.2026 ("jetzt wird behauptet ich habe nicht alle
+        blueprints, aber ich habe sie"): der Reiter zeigte Hobgoblin I,
+        Particle Accelerator Unit und R.A.M.- Robotics rot als "completely
+        missing", waehrend sein Blaupausen-Bericht 15 Minuten vorher fuer
+        genau diese drei "BPO x1 / x2 / x1" meldete; nach "Alles aus ESI
+        laden" waren sie da. Ursache: die Zaehlung entstand NUR in
+        `_apply_bp_ownership` (Knopf bzw. "Alles aus ESI laden") und lag
+        als `_bd_bp_owned_counts` am Hauptfenster - sie ueberlebte das
+        Schliessen eines Bauplans und wurde vom Bestands-Refresh, der den
+        Blaupausen-Cache laengst mitholt (Sitzung 8), nie erneuert. Neu
+        gekaufte Blaupausen blieben damit "fehlt komplett", und
+        "Buy Missing Blueprints" haette sie ein zweites Mal gekauft -
+        dieselbe Fehlerklasse wie emm479/516 (unvollstaendiger Besitz sieht
+        aus wie "du hast sie nicht"), nur mit einem ALTEN statt einem
+        luecken-haften Stand.
+
+        Deshalb wird die Zaehlung nicht mehr gespeichert, sondern aus dem
+        Cache ABGELEITET (Regel 9): eine Wahrheit, die nicht altern kann.
+        Blaupausen in laufenden Jobs stehen gar nicht in dieser Liste
+        (emm507, `_bd_bp_im_job`) - sie zaehlen hier zu Recht nicht als
+        frei."""
+        counts = {}
+        bpc_runs = {}
+        for b in (owned_bp or []):
+            tid = b.get("type_id")
+            if not tid:
+                continue
+            try:
+                qty = int(b.get("quantity", 1) or 1)
+            except (TypeError, ValueError):
+                qty = 1
+            if b.get("is_bpo"):
+                counts[tid] = counts.get(tid, 0) + qty
+            else:
+                try:
+                    runs = int(b.get("runs", 0) or 0)
+                except (TypeError, ValueError):
+                    runs = 0
+                bpc_runs[tid] = bpc_runs.get(tid, 0) + qty * runs
+        return counts, bpc_runs
+
+    @staticmethod
+    def _bp_copies_by_tid(owned_bp, build_runs, product_to_bp, nur_bpo=None,
+                          ignoriert=None):
         """{type_id: PHYSISCH besessene Blaupausen-Stueck} fuer die Items,
         die der Plan BAUT - die Obergrenze fuer gleichzeitige Jobs.
+        Wie gezaehlt wird, sagt `bp_parallel_slots` (EINE Regel); wer ein
+        Woerterbuch als `ignoriert` mitgibt, bekommt dort {tid: (Originale,
+        nicht verplante Kopien)} - nur fuer die Anzeige.
+
+        `nur_bpo`: Blaupausen-type_ids, bei denen NUR Originale zaehlen
+        (emm535, Nutzer: "er hat die Kopien mitgezaehlt, die ich gemacht
+        habe - dabei brauche ich die Kopien fuers T2-Forschen"). Eine
+        T1-Kopie, deren T2 derselbe Plan ERFINDET, ist Invention-Input und
+        keine freie Fertigungs-Blaupause; gemessen an seinem Hobgoblin-Plan:
+        1 Original + 3 Kopien a 1 Run -> der Runplaner stellte 4 parallele
+        Jobs mit 3/3/2/2 Runs ein, von denen drei im Spiel gar nicht
+        starten koennten. Leere/unbekannte Menge aendert nichts.
 
         NUTZER-VORFALL (Falcon, Sitzung 7): 1 eigene Blackbird-BPO, der
         Runplaner verteilte trotzdem 3+3 Blueprints auf zwei Charaktere.
@@ -39,12 +99,16 @@ class MainWindowHelpers:
         blockieren."""
         _runs = build_runs or {}
         _p2b = product_to_bp or {}
-        by_bp = {}
+        try:
+            _nur = {int(x) for x in (nur_bpo or ())}
+        except (TypeError, ValueError):
+            _nur = set()
+        je_bp = {}
         for b in (owned_bp or []):
             _bid = b.get("type_id")
             if _bid is None:
                 continue
-            by_bp[_bid] = by_bp.get(_bid, 0) + int(b.get("quantity", 1) or 1)
+            je_bp.setdefault(_bid, []).append(b)
         out = {}
         for t, r in _runs.items():
             try:
@@ -55,10 +119,54 @@ class MainWindowHelpers:
             _bp = _p2b.get(t)
             if not _bp:
                 continue
-            _n = by_bp.get(_bp[0])
+            _eintraege = je_bp.get(_bp[0])
+            if not _eintraege:
+                continue
+            try:
+                _nb = int(_bp[0]) in _nur
+            except (TypeError, ValueError):
+                _nb = False
+            _n, _aus = MainWindowHelpers.bp_parallel_slots(_eintraege, nur_bpo=_nb)
             if _n:
                 out[t] = int(_n)
+                if _aus and ignoriert is not None:
+                    ignoriert[t] = (int(_n), int(_aus))
         return out
+
+    @staticmethod
+    def bp_parallel_slots(eintraege, nur_bpo=False):
+        """(Jobs gleichzeitig, dabei NICHT verplante Kopien) fuer EINE
+        Blaupause - die EINE Regel dafuer (Regel 9: der Runplaner-Deckel und
+        die Stufen-Ladung fragen beide hier).
+
+        Liegt ein ORIGINAL dabei, zaehlen NUR die Originale (emm538, Nutzer:
+        "es ist gut moeglich dass dieser fall eintritt"): ein Original darf
+        beliebig viele Runs in EINEM Job fahren, eine angefangene Kopie nur
+        ihre eigenen. Wer Original UND kleine Kopien hat, bekaeme sonst
+        Jobs, die im Spiel nicht starten - und das kostet einen Abend
+        (Regel 3). Die Kopien bleiben liegen und werden GEMELDET, damit
+        niemand raten muss, warum weniger parallel laeuft.
+
+        Ohne Original zaehlen die Kopien wie bisher (jede ist ein Job);
+        `nur_bpo` ist der Invention-Fall (emm535): dort sind die Kopien
+        Material fuers Erfinden, also gar keine Bau-Blaupausen - sie fallen
+        nicht "unter den Tisch" und werden deshalb auch nicht gemeldet."""
+        bpo = 0
+        kopien = 0
+        for b in (eintraege or []):
+            try:
+                q = int(b.get("quantity", 1) or 1)
+            except (TypeError, ValueError):
+                q = 1
+            if b.get("is_bpo"):
+                bpo += q
+            else:
+                kopien += q
+        if nur_bpo:
+            return bpo, 0             # Kopie fuers Erfinden, nicht fuers Bauen
+        if bpo:
+            return bpo, kopien
+        return kopien, 0
 
     @staticmethod
     def _bpc_runs_by_tid(owned_bp, build_runs, product_to_bp):
@@ -650,6 +758,32 @@ class MainWindowHelpers:
                 out[end_tid] = min(out.get(end_tid, _m), _m)
         return out
 
+    def _inv_t1_bps(self):
+        """Die T1-Blaupausen, aus denen DIESER Plan Kopien fuers Erfinden
+        macht - EINE Quelle (Regel 9) fuer den Runplaner-Deckel und die
+        Stufen-Ladung.
+
+        emm535 (Nutzer: "er hat die Kopien mitgezaehlt, die ich gemacht
+        habe"): wer sein T1-Original kopiert, um daraus T2 zu erfinden, hat
+        die Kopien VERPLANT - sie duerfen nicht zusaetzlich als freie
+        Fertigungs-Blaupausen gelten. Gelesen wird `_bd_invention_needs`,
+        dieselbe Karte, aus der Invention-Reiter und Science-Block ihre
+        T1-Blaupause nehmen (Feld "t1", emm411).
+
+        REGEL 1: ist die Karte leer (Reiter noch nicht gerechnet, eigene
+        BPC, kein T2), wird NICHTS gefiltert - dann bleibt es exakt beim
+        bisherigen Verhalten, statt einen Besitz zu bestreiten, den wir
+        noch gar nicht kennen."""
+        out = set()
+        for _e in (getattr(self, "_bd_invention_needs", None) or {}).values():
+            try:
+                _t1 = int((_e or {}).get("t1") or 0)
+            except (TypeError, ValueError):
+                continue
+            if _t1 > 0:
+                out.add(_t1)
+        return out
+
     def _resolve_per_item_bp_cap(self):
         """{type_id: Kopien} für schedule_build's per_item_cap - für JEDES
         Item, das der aktuelle Plan baut und von dem eigene Blaupausen im
@@ -670,9 +804,16 @@ class MainWindowHelpers:
         if _cache:
             _plan = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
             _rec = getattr(self, "_bd_recipes", None)
+            # `_ign538` sammelt, welche Kopien hinter einem Original liegen
+            # bleiben - der Runplaner sagt das im Tooltip (emm538).
+            _ign538 = {}
             out.update(self._bp_copies_by_tid(
                 _cache, _plan.get("build_runs"),
-                getattr(_rec, "product_to_bp", None)))
+                getattr(_rec, "product_to_bp", None),
+                # getattr: aeltere Testdoubles/Stubs tragen den Helfer nicht
+                nur_bpo=(getattr(self, "_inv_t1_bps", None) or (lambda: set()))(),
+                ignoriert=_ign538))
+            self._bd_bp_kopien_aus = _ign538
         for stage_dict in (getattr(self, "_bd_stage_bp_esi", None) or {}).values():
             out.update(stage_dict)
         # MULTI-BAUPLAN, SCHRITT 4b: Kopien JE ENDPRODUKT. Die Stufen-Zahl
@@ -1491,23 +1632,77 @@ class MainWindowHelpers:
         for p in (settings or {}).get("bau_saved_plans", []) or []:
             if p.get("id") != plan_id or not p.get("reserve"):
                 continue
-            rm = p.get("reserve_map") or {}
-            if not rm:
-                return {}
-            _snap = ((p.get("frozen") or {}).get("plan_snapshot")) or None
-            if _snap:
-                try:
-                    rm = MainWindowHelpers._reserve_map_mitlaufend(
-                        MainWindowHelpers._plan_snapshot_unpack(_snap), rm,
-                        p.get("checked_runplan_ts") or {},
-                        p.get("assignments") or [],
-                        (p.get("frozen") or {}).get("stock_seen_ts"),
-                        belegt=MainWindowHelpers._belegt_fuer_plan(p),
-                        haken_runs=p.get("checked_runplan_runs"))
-                except Exception:
-                    rm = p.get("reserve_map") or {}
+            # EINE Stelle fuer den Anspruch (emm523).
+            rm = MainWindowHelpers.plan_anspruch_mitlaufend(p)
             return {int(t): int(q or 0) for t, q in (rm or {}).items()}
         return {}
+
+    @staticmethod
+    def plan_anspruch_mitlaufend(p):
+        """Was ein gespeicherter Plan WIRKLICH beansprucht - EINE Stelle
+        fuer beide Leser (`_reserved_by_other_plans`, `_reserved_by_this_plan`).
+
+        emm523, NUTZER 11.10.2026 ("Das muss abgeglichen werden,
+        ueberreservationen duerfen nicht passieren"). GEMESSEN an seiner
+        settings.json: `reserve_map` entsteht beim SPEICHERN, der
+        Schnappschuss beim EINFRIEREN - zwei Momente, nie abgeglichen. Das
+        ging in BEIDE Richtungen, und beide taten weh:
+          * ZU VIEL: "Multibuildplan Amarr 1" hielt 7 Posten, die in seinem
+            eingefrorenen Plan gar nicht vorkommen (groesster: 40'725'400
+            Stueck, zusammen 52,3 Mio) - Reste einer frueheren Erz-Wahl.
+            Freigeben konnte sie niemand: die mitlaufende Kuerzung kennt
+            nur Zutaten, die in einem Rezept stehen.
+          * ZU WENIG - die gefaehrliche Richtung: derselbe Plan beanspruchte
+            3'045'901 Tritanium, sein eingefrorener Plan braucht 33'386'579.
+            Die Differenz sah jeder andere Plan als freien Bestand.
+        REGEL (Regel 9): der eingefrorene Schnappschuss ist die Wahrheit des
+        Plans - der Anspruch wird daraus abgeleitet, nicht aus einer
+        aelteren Zweitkopie. DIESELBE Formel wie beim Speichern
+        (`_plan_reserve_map`), nur auf dem Schnappschuss. Ohne Schnappschuss
+        (gespeichert, nicht eingefroren) bleibt die gespeicherte Karte
+        stehen - sicherer Rueckfall, lieber zu viel als zu wenig (Regel 3).
+        """
+        rm = {int(t): int(q or 0)
+              for t, q in ((p or {}).get("reserve_map") or {}).items()}
+        _snap = (((p or {}).get("frozen") or {}).get("plan_snapshot")) or None
+        if not _snap:
+            return rm
+        try:
+            _plan = MainWindowHelpers._plan_snapshot_unpack(_snap)
+            # Der Anspruch AUS DEM SCHNAPPSCHUSS ersetzt die gespeicherte
+            # Karte vollstaendig - nicht min()/max(): ein min() haette den
+            # zu kleinen Anspruch festgeschrieben, ein max() die Leichen.
+            _basis = MainWindowHelpers._plan_reserve_map(_plan) or {}
+            # SICHERER RUECKFALL (Regel 3): ein Schnappschuss ohne
+            # buy/stock_used/build_made (alte oder unvollstaendige Plaene)
+            # ergaebe einen LEEREN Anspruch - der Plan stuende ohne
+            # Reservierung da, und ein anderer wuerde sein Material
+            # einplanen. Dann bleibt die gespeicherte Karte stehen.
+            if not _basis:
+                return rm
+            # emm524: ABGEHAKTE Erz-Schritte umbuchen. Der Schnappschuss
+            # fuehrt sie als "Erz im Kauf, Minerale gedeckt"; der Haken
+            # sagt, dass das Erz verarbeitet ist und die Minerale im
+            # Hangar liegen. Ohne diese Umbuchung beansprucht der Plan
+            # genau die Minerale nicht, die er selbst braucht (gemessen:
+            # 21'998'021 Tritanium bei Amarr 1). Gegenstueck zu
+            # `reprocess.rest_anpassen` auf der Bedarfsseite - EINE
+            # Familie, damit Anspruch und Bedarf dasselbe sagen (Regel 9).
+            try:
+                from .. import reprocess as _rp523
+                _basis = _rp523.anspruch_anpassen(
+                    _basis, (_plan.get("reprocess") or {}).get("schritte"),
+                    p.get("checked_runplan"))
+            except Exception:
+                pass
+            return MainWindowHelpers._reserve_map_mitlaufend(
+                _plan, _basis, p.get("checked_runplan_ts") or {},
+                p.get("assignments") or [],
+                (p.get("frozen") or {}).get("stock_seen_ts"),
+                belegt=MainWindowHelpers._belegt_fuer_plan(p),
+                haken_runs=p.get("checked_runplan_runs"))
+        except Exception:
+            return rm
 
     @staticmethod
     def _belegt_fuer_plan(p):
@@ -1539,6 +1734,25 @@ class MainWindowHelpers:
         """
         agg = {}
         labels = []
+        for _lab, rm in MainWindowHelpers._reservierende_plaene(
+                settings, exclude_plan_id):
+            labels.append(_lab)
+            for t, q in rm.items():
+                agg[int(t)] = agg.get(int(t), 0) + int(q or 0)
+        return agg, labels
+
+    @staticmethod
+    def _reservierende_plaene(settings, exclude_plan_id):
+        """[(Plan-Name, Anspruch)] der Plaene, die DIESEM Plan Material
+        wegnehmen - die EINE Stelle mit den Filterregeln (Schloss, eigener
+        Plan, Bau-Rang, Buendel-Mitglied, Anspruch).
+
+        emm525 herausgeloest: `reservierung_je_item` (wer haelt wie viel)
+        hatte die Schleife zuerst KOPIERT - zwei Stellen mit denselben
+        Regeln sind zwei Gelegenheiten, dass eine stehen bleibt (Regel 9),
+        und die Rotprobe sah ihre Anker prompt doppelt. Jetzt liest die
+        Anzeige exakt das, was auch abgezogen wird."""
+        out = []
         _mitgl = MainWindowHelpers.buendel_mitglieder(settings)
         # BAU-PRIORITAET (28.09.2026, Nutzer-Entscheid "Kartenreihenfolge"):
         # ein Plan sieht nur die Reservierungen der Plaene VOR ihm. Ein
@@ -1590,31 +1804,54 @@ class MainWindowHelpers:
             #
             # Der EIGENE Plan bleibt ausgenommen (oben) - er darf sich nicht
             # selbst aushungern.
-            rm = p.get("reserve_map") or {}
-            if not rm:
-                continue
             # Der eingefrorene Plan traegt den Rezeptbaum (build_mats) - ohne
             # ihn gibt es nichts abzubuchen, dann bleibt die starre Liste
             # stehen. Das ist der SICHERE Rueckfall: lieber zu viel
-            # reserviert als zu wenig.
-            _snap = ((p.get("frozen") or {}).get("plan_snapshot")) or None
-            if _snap:
-                try:
-                    rm = MainWindowHelpers._reserve_map_mitlaufend(
-                        MainWindowHelpers._plan_snapshot_unpack(_snap), rm,
-                        p.get("checked_runplan_ts") or {},
-                        p.get("assignments") or [],
-                        (p.get("frozen") or {}).get("stock_seen_ts"),
-                        belegt=MainWindowHelpers._belegt_fuer_plan(p),
-                        haken_runs=p.get("checked_runplan_runs"))
-                except Exception:
-                    rm = p.get("reserve_map") or {}
+            # reserviert als zu wenig. EINE Stelle fuer den Anspruch
+            # (emm523) - Schnappschuss schlaegt gespeicherte Zweitkopie.
+            rm = MainWindowHelpers.plan_anspruch_mitlaufend(p)
             if not rm:
                 continue
-            labels.append(str(p.get("label") or p.get("item_name") or "?"))
+            out.append((str(p.get("label") or p.get("item_name") or "?"), rm))
+        return out
+
+    @staticmethod
+    def reservierung_je_item(settings, exclude_plan_id):
+        """{type_id: [(Plan-Name, Menge), ...]} - WER haelt wie viel, je Item,
+        groesster Halter zuerst.
+
+        NUTZER 11.10.2026 ("da steht doch ich habe 270 Weapon Tech und ich
+        brauche 10 ... Keine anderen plaene erheben anspruch darauf per
+        reservation. und dennoch soll ich 10 kaufen? warum"). GEMESSEN an
+        seiner settings.json: doch - Riggs 1 (#3) beansprucht 826 Stueck,
+        MulitPlan Caldari 20; zusammen 846 bei 270 im Hangar, also bekommt
+        Hangar Cleaner (#5) nichts. Die Zeile sagte aber nur "reserved by
+        other plans", und der Tooltip nannte ALLE reservierenden Plaene ohne
+        Mengen - eine Behauptung, die der Nutzer nicht nachpruefen kann und
+        deshalb zu Recht nicht glaubt.
+
+        Gefiltert wird mit DERSELBEN Schleife wie `_reserved_by_other_plans`
+        (Rang, Buendel-Mitglieder, Schloss, Anspruch) - diese Funktion
+        wiederholt sie bewusst NICHT nach eigenen Regeln, sondern ruft je
+        Plan dieselbe Summe ab, die auch abgezogen wird (Regel 9). Reine
+        Anzeige: sie aendert keine Menge."""
+        out = {}
+        for _lab, rm in MainWindowHelpers._reservierende_plaene(
+                settings, exclude_plan_id):
             for t, q in rm.items():
-                agg[int(t)] = agg.get(int(t), 0) + int(q or 0)
-        return agg, labels
+                q = int(q or 0)
+                if q > 0:
+                    out.setdefault(int(t), []).append((_lab, q))
+        for t in out:
+            out[t].sort(key=lambda x: (-x[1], x[0]))
+        return out
+
+    @staticmethod
+    def reservierung_text(halter, trenner=", "):
+        """"Riggs 1: 826, Caldari: 20" - EINE Formatstelle fuer Zeile und
+        Tooltip, damit beide dasselbe sagen (Regel 9). Leere Liste -> ""."""
+        return trenner.join(
+            f"{_n}: {int(_q):,}".replace(",", "'") for _n, _q in (halter or []))
 
     @staticmethod
     def bestand_stand_text(info, jetzt=None):
@@ -2054,6 +2291,90 @@ def science_verteilen(auftraege, chars):
                 out.append((cid, welle, liste))
         welle += 1
     return out
+
+
+def t1_original_lage(t1_bp, cache, im_job=None, fehler=None):
+    """Hat der Nutzer das T1-ORIGINAL, aus dem die Kopieranleitung kopieren
+    laesst? (emm512, Nutzer-Befund vom Sitzungsanfang: "Bauplan hatte mir
+    angezeigt ich haette blueprint originale zum kopieren ... Aber im Hangar
+    hatte ich nur T1 Copys liegen keine T1 Originale"). Rein.
+
+    `cache` = die Blaupausen-Rohliste (`_bd_owned_bp_cache`), `im_job` die
+    Karte der belegten (`_bd_bp_im_job`, emm507), `fehler` die Charaktere mit
+    gescheitertem Abruf (`_bd_bp_fehler`, emm479).
+
+    Rueckgabe (lage, bpo, bpc_runs):
+      "unknown"   Besitz nicht (vollstaendig) geladen -> NICHTS behaupten
+                    (Regel 1; eine leere Liste heisst hier "noch nichts
+                    geholt", nicht "du besitzt nichts")
+      "ok"          mindestens ein freies Original (BPO)
+      "in_job"      kein freies, aber eines laeuft gerade in einem Job -
+                    es kommt zurueck, nur jetzt nicht greifbar
+      "copies_only"  kein Original, nur Kopien: AUS EINER KOPIE KANN MAN
+                    NICHT KOPIEREN - genau sein Fall
+      "none"       weder Original noch Kopie"""
+    try:
+        t1 = int(t1_bp or 0)
+    except (TypeError, ValueError):
+        t1 = 0
+    if not t1 or fehler or not cache:
+        return ("unknown", 0, 0)
+    bpo = 0
+    bpc_runs = 0
+    for b in cache:
+        try:
+            if int(b.get("type_id") or 0) != t1:
+                continue
+            menge = int(b.get("quantity", 1) or 1)
+        except (TypeError, ValueError):
+            continue
+        if b.get("is_bpo"):
+            bpo += menge
+        else:
+            try:
+                bpc_runs += menge * max(0, int(b.get("runs", 0) or 0))
+            except (TypeError, ValueError):
+                continue
+    if bpo:
+        return ("ok", bpo, bpc_runs)
+    _belegt = [b for b in ((im_job or {}).get(t1) or []) if b.get("is_bpo")]
+    if _belegt:
+        return ("in_job", 0, bpc_runs)
+    if bpc_runs:
+        return ("copies_only", 0, bpc_runs)
+    return ("none", 0, 0)
+
+
+def kopier_schritte(auftraege, t1_je_bp, originale):
+    """Kopierjobs in SCHRITTE teilen (emm510, Nutzer: "ich kann nicht aus
+    einer kopie mehr kopieren. ich habe 1 originale also kann ich nur 1mal
+    kopieren ... dass muesste ich in 2 schritten erledigen"). Aus einer
+    KOPIE kann man nicht kopieren - je T1-Blaupause laufen hoechstens so
+    viele Kopierjobs GLEICHZEITIG, wie ORIGINALE (BPOs) frei da sind.
+    Rein.
+
+    `auftraege` = [(schluessel, n)] wie fuer science_verteilen, `t1_je_bp`
+    = {schluessel: T1-Blaupausen-Id}, `originale` = {T1-Id: Anzahl BPOs}.
+    Unbekannter oder leerer Besitz zaehlt als 1 Original (Regel 3: nie
+    mehr Parallelitaet behaupten, als belegt ist - kopieren setzt ohnehin
+    EIN Original voraus; fehlt es wirklich, warnt der Blueprints-Reiter).
+    Rueckgabe: Liste von Auftrags-Gruppen; Gruppe s darf erst starten,
+    wenn Gruppe s-1 fertig ist (das Original ist vorher belegt)."""
+    gruppen = []
+    belegt = {}
+    for k, n in (auftraege or []):
+        t1 = (t1_je_bp or {}).get(k)
+        try:
+            kap = int((originale or {}).get(t1, 0) or 0)
+        except (TypeError, ValueError):
+            kap = 0
+        kap = max(1, kap)
+        s = (belegt.get(t1, 0) // kap) if t1 is not None else 0
+        belegt[t1] = belegt.get(t1, 0) + 1
+        while len(gruppen) <= s:
+            gruppen.append([])
+        gruppen[s].append((k, n))
+    return gruppen
 
 
 def lag_verbrauch(jobs_alle, seit_ts, mats_je_run):
@@ -3219,6 +3540,115 @@ def vorstufen_ins_budget(rest_budget, plan_runs, build_mats, erledigt, schon_fer
     return out
 
 
+def bestand_deckt_runs(build_runs, build_mats, build_made, geliefert,
+                       bestand, enden=()):
+    """ANTEILIGE Vorstufen-Regel (emm514, Nutzer 11.10.2026: "es ist zu
+    100% klar, dass der Bauplan diese Fuelblocks nicht mehr braucht" -
+    er hatte Helium Fuel Blocks ZUGEKAUFT und die Reaktionen gestartet,
+    der eingefrorene Plan verlangte trotzdem alle 202 Fuel-Runs, weil die
+    Run-Zahl aus dem Schnappschuss kommt und der Zukauf sie nie senkte).
+
+    {type_id: ZUSAETZLICH gedeckte Runs} fuer Bau-Items, deren noch offene
+    VERBRAUCHER weniger brauchen, als die offenen eigenen Runs plus der
+    heutige Bestand des Erzeugnisses hergeben:
+
+        bedarf  = Summe je Verbraucher v: ceil(offene_runs(v) x Menge je
+                  Run) - Brutto aus build_mats, AUFgerundet je Verbraucher
+                  (Regel 3)
+        noetig  = ceil(max(0, bedarf - bestand[t]) / Stueck je Run)
+        gedeckt = max(0, offene eigene Runs - noetig)
+
+    SICHERUNGEN (jede aus einer benannten Gefahr):
+      * Stueck je Run = build_made[t] / build_runs[t] - fehlt eines davon,
+        wird NICHTS behauptet (Regel 1).
+      * `bestand` liefert der AUFRUFER als den fuer DIESEN Plan zaehlenden
+        Hangar-Bestand OHNE Pipeline und OHNE den Verbrauch seit dem
+        ESI-Bestandsstand (lag_verbrauch) - sonst zaehlte der Output
+        laufender Jobs doppelt (die Runs gelten schon als erledigt) bzw.
+        schon gefressenes Material noch als da.
+      * ENDEN nie (auch Enden, die Zutat eines anderen Endes sind,
+        emm432): die Stueckzahl will der Nutzer wirklich bauen.
+      * Items ohne Verbraucher im Plan nie (Endprodukt-Schutz wie
+        `vorstufen_erledigt`).
+      * Die offenen Runs der Verbraucher kommen aus `geliefert` (ESI +
+        Haken + Vorstufen-Regel), NIE aus der eigenen Senkung - keine
+        Iteration, eine Kaskade rechnet sich hoechstens zu VORSICHTIG.
+      * Das Ergebnis kann einen Rest nur SENKEN, nie erhoehen
+        (gedeckt >= 0, geliefert + gedeckt <= Plan-Runs).
+
+    Rein und ohne Fenster pruefbar. Rueckgabe nur Eintraege > 0.
+    """
+    import math as _math
+    runs = {}
+    for _t, _r in (build_runs or {}).items():
+        try:
+            if int(_r or 0) > 0:
+                runs[int(_t)] = int(_r)
+        except (TypeError, ValueError):
+            continue
+    _erl = {}
+    for _t, _n in (geliefert or {}).items():
+        try:
+            _erl[int(_t)] = int(_n or 0)
+        except (TypeError, ValueError):
+            continue
+    _enden = set()
+    for _t in (enden or ()):
+        try:
+            _enden.add(int(_t))
+        except (TypeError, ValueError):
+            continue
+    # Brutto-Bedarf je Vorstufe aus den OFFENEN Runs ihrer Verbraucher.
+    bedarf = {}
+    hat_verbraucher = set()
+    for _c, _mats in (build_mats or {}).items():
+        try:
+            _c = int(_c)
+        except (TypeError, ValueError):
+            continue
+        _r_c = runs.get(_c, 0)
+        if _r_c <= 0:
+            continue
+        _offen_c = max(0, _r_c - min(_erl.get(_c, 0), _r_c))
+        for _m in (_mats or []):
+            try:
+                _mid, _q = int(_m[0]), int(_m[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if _mid not in runs or _mid == _c:
+                continue
+            hat_verbraucher.add(_mid)
+            if _offen_c > 0 and _q > 0:
+                # je Verbraucher AUFgerundet (krumme Je-Run-Mengen, Regel 3)
+                bedarf[_mid] = (bedarf.get(_mid, 0)
+                                + _math.ceil(_offen_c * _q / _r_c))
+    out = {}
+    for _t in hat_verbraucher:
+        if _t in _enden:
+            continue
+        _r_t = runs[_t]
+        try:
+            _made = int((build_made or {}).get(_t)
+                        or (build_made or {}).get(str(_t)) or 0)
+        except (TypeError, ValueError):
+            _made = 0
+        if _made <= 0:
+            continue                      # Stueck je Run unbekannt -> nichts
+        _out_je_run = _made / _r_t
+        _offen_t = max(0, _r_t - min(_erl.get(_t, 0), _r_t))
+        if _offen_t <= 0:
+            continue
+        try:
+            _best = max(0, int((bestand or {}).get(_t, 0) or 0))
+        except (TypeError, ValueError):
+            _best = 0
+        _noetig = _math.ceil(max(0, bedarf.get(_t, 0) - _best) / _out_je_run)
+        _gedeckt = _offen_t - _noetig
+        if _gedeckt > 0:
+            out[_t] = int(_gedeckt)
+    return out
+
+
 def signatur_zuteilen(jobs, plaene, vergeben, ist_reaktion):
     """RUN-ZAHL ENTSCHEIDET (emm430, Nutzer 05.10.2026: "muss es ueberhaupt
     gefragt werden ... gefragt werden muss nur, wenn ein Plan existiert, der
@@ -3904,7 +4334,28 @@ def haken_ohne_job(haken_ts, aktiv_tids, geliefert, abruf_ts,
     jeder laufende/fertige Job (`aktiv_tids`) und jeder gelieferte, der
     hoechstens `rueck` vor dem Haken endete. Nur Job-Stufen
     ("stufe|cid|tid"), keine Charakter- oder Reprocessing-Zeilen. Haken
-    ohne Zeitstempel bleiben unberuehrt. -> sortierte Schluessel. Rein."""
+    ohne Zeitstempel bleiben unberuehrt. -> sortierte Schluessel. Rein.
+
+    SCIENCE-ZEILEN SIND AUSGENOMMEN (emm526, NUTZER 11.10.2026: "die ganzen
+    invention jobs laufen ebenfalls, ich habe sie sogar mal abgehakt und
+    jetzt sind sie es einfach nicht mehr"). NACHGESTELLT, zwei Gruende -
+    der zweite trifft seine Arbeitsweise:
+
+    1. Ein Science-Haken gibt KEIN Material frei (emm425: die Stufen stehen
+       nicht in `_bd_runplan_runs_by_key`, Reservierung und `haken_runs`
+       kennen sie nicht). Das Entfernen hat hier also gar keinen
+       Schutzwert - anders als beim Bau-Haken, wo ein Fehlklick Material
+       freigibt. Es bleibt nur der Schaden: die Markierung ist weg.
+    2. Das Rueckblick-Fenster `rueck` (3 Tage) passt nicht zur Arbeitsweise.
+       Invention und Kopieren laufen EINMAL am Anfang eines Plans; abgehakt
+       wird die Zeile, wenn man den Runplaner spaeter durchgeht. GEMESSEN:
+       ein Job, der 5 Tage vor dem Haken abgeliefert wurde, zaehlt nicht
+       mehr - der Haken fliegt beim naechsten Job-Abruf. Bei Bau-Haken ist
+       das Fenster richtig (man hakt ab, waehrend man baut), bei Science
+       ist es systematisch falsch.
+
+    Regel 3: im Zweifel die sichere Seite - und sicher ist hier, den Haken
+    des Nutzers stehen zu lassen."""
     if abruf_ts is None:
         return []
     gel = {}
@@ -3926,7 +4377,9 @@ def haken_ohne_job(haken_ts, aktiv_tids, geliefert, abruf_ts,
     out = []
     for key, ts in (haken_ts or {}).items():
         teile = str(key).split("|")
-        if len(teile) < 3 or teile[0] in ("char", "repro") or not teile[2].isdigit():
+        # emm526: "copy|"/"inv|" (Science) mit - Begruendung im Docstring.
+        if (len(teile) < 3 or teile[0] in ("char", "repro", "copy", "inv")
+                or not teile[2].isdigit()):
             continue
         try:
             ts = float(ts)
@@ -4367,3 +4820,57 @@ def struktur_me_karten(ende, stufe_fn, rig_ec_fn, basis, me_vorgabe):
         "ec_me_map": FaulKarte(lambda t: (_re(t)[1] or None), "ec_me_map"),
     }
 
+
+
+def einkauf_posten(rows, feld, baut):
+    """Die Posten, die der Einkaufs-Dialog wirklich kopiert bzw. in den
+    Wagen legt - EINE Stelle (Regel 9).
+
+    Entstanden in emm546, weil die neue Volumen-Zeile unter der Liste
+    sonst ihre eigene Auswahl getroffen haette: zwei Listen, zwei
+    Volumen, und genau an so einem Auseinanderlaufen ist die
+    Fracht-Frage des Nutzers hochgekommen (emm545, `buy_map` gegen
+    `buy_surplus`).
+
+    Die drei Regeln stehen deshalb nur noch hier:
+      * Was der Plan SELBST BAUT, wird nicht gekauft (Sitzung 20, an
+        seiner Appraisal belegt: sonst zahlt man die Komponente UND ihr
+        Material).
+      * Menge <= 0 faellt weg.
+      * Ein unaufgeloester Name ("#16642") kann von EVE-Multibuy nicht
+        gelesen werden - lieber benennen als still mitschicken.
+
+    `feld` ist der Mengen-Schluessel der Zeile ("missing"/"cart_qty"),
+    die Menge ist die ROHMENGE ohne Puffer (den rechnet der Aufrufer mit
+    `_buy_surplus_qty`, auch das nur an einer Stelle).
+
+    Rueckgabe: (posten, ohne_namen, gebaut_raus) -
+    posten = [(tid, name, rohmenge)] in der Reihenfolge von `rows`.
+    """
+    _baut = set()
+    for _b in (baut or ()):
+        try:
+            _baut.add(int(_b))
+        except Exception:
+            continue
+    posten, ohne_namen, gebaut = [], [], []
+    for r in (rows or ()):
+        try:
+            tid = int(r.get("tid"))
+        except Exception:
+            continue
+        name = (r.get("name") or "").strip()
+        if tid in _baut:
+            gebaut.append(name or f"#{tid}")
+            continue
+        try:
+            q = int(r.get(feld) or 0)
+        except Exception:
+            q = 0
+        if q <= 0:
+            continue
+        if not name or name.startswith("#"):
+            ohne_namen.append(name or f"#{tid}")
+            continue
+        posten.append((tid, name, q))
+    return posten, ohne_namen, gebaut

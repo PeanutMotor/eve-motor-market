@@ -59,6 +59,34 @@ sinkt eine Zeilenzahl deutlich, sagt der Bericht es laut. Dazu steht je
 Material und Ort, WEM der Stapel gehoert - sonst sieht man nicht, dass ein
 Ort nur noch die Stapel EINES Charakters zeigt.
 
+FASSUNG 4 (09.10.2026): Corp-Jobs werden mitgeholt (REGEL CORP=CHARAKTER).
+
+FASSUNG 5 (11.10.2026, Nutzer: "R.A.M. wird immer noch nicht richtig
+getrackt, es liegt aber auf der Dockside Innovations" - Screenshot: R.A.M.-
+Robotics steht unter "Not at any tracked location" mit 0 Stueck und "missing
+5", waehrend alle anderen fuenf R.A.M.-Sorten an der Dockside mit Haken
+dastehen). Die Abschnitte oben beantworten die Frage NICHT: sie zeigen nur,
+was `zeilen_aus_assets` uebrig laesst - ein Eintrag, den diese Funktion
+verwirft, kommt dort gar nicht erst vor und sieht aus wie "gibt es nicht".
+
+Deshalb neu: ROHE ESI-EINTRAEGE je fehlendem Item. Fuer jedes rot gemeldete
+Material wird die UNGEFILTERTE Asset-Liste jedes Charakters/der Corp
+durchsucht und je Treffer gezeigt: Besitzer, Menge, `location_flag`,
+`location_id`, worin es steckt (Behaelter, Schiff, ...) und der Ort, an dem
+es haengt. Das URTEIL kommt nicht aus einer zweiten Rechnung (Regel 8a),
+sondern aus der Funktion selbst: steht die `item_id` in ihrem Ergebnis,
+zaehlt der Eintrag - sonst nicht, und daneben stehen die Rohfelder, aus
+denen man sieht WARUM. Findet die Suche gar nichts, liegt das Item
+wirklich nirgends in den abgerufenen Assets.
+
+FASSUNG 6/7 (11.10.2026, aus seinem Fassung-5-Bericht): ein neuer
+Abschnitt stellt je Material, das die Seite wegen Eigenbau VERSCHWEIGT,
+den Bedarf gegen die Deckung - was der Plan noch baut PLUS was als
+Erzeugnis an den eingeschalteten Orten liegt. Fassung 6 liess den Hangar
+weg und schrieb deshalb ueberall "DECKT NICHT"; das war meine Messluecke,
+nicht sein Fehler. Steht jetzt "FEHLEN n", verschweigt die Seite einen
+echten Fehlbetrag.
+
 AUFRUF: werkzeuge\\zeige_lagerorte.bat doppelklicken.
 Danach liegt `berichte\\lagerorte_bericht.txt` da - die hochladen.
 Es wird NUR GELESEN: settings.json wird direkt gelesen (NICHT ueber
@@ -74,7 +102,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from eve_trader import (config, corp, esi, industry, lagerorte,   # noqa: E402
                         store)
 
-FASSUNG = 3
+FASSUNG = 7
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BERICHT = os.path.join(WURZEL, "berichte", "lagerorte_bericht.txt")
 
@@ -390,6 +418,10 @@ def main():
     # Abruf unvollstaendig war - der Bericht vom 08.10.2026 verlor 1'385
     # Asset-Zeilen und 38 Mio Stueck an EINEM Ort, ohne ein Wort darueber.
     chars_stat = {}
+    # ROHDATEN BEHALTEN (Fassung 5): nur in der UNGEFILTERTEN Liste steht
+    # ein Eintrag, den `zeilen_aus_assets` verwirft - und genau der ist die
+    # Antwort auf "ich sehe es im Spiel, das Werkzeug nicht".
+    roh_je_bes = []           # [(Anzeigename, assets, gezaehlte item_ids)]
     for ch in chars:
         cid = int(ch["character_id"])
         nm = ch.get("character_name") or ch.get("name") or str(cid)
@@ -402,6 +434,8 @@ def main():
                               "fehler": f"{type(e).__name__}: {e}"}
             continue
         _z_neu = lagerorte.zeilen_aus_assets(assets, ctypes, cid, "char")
+        roh_je_bes.append((nm, assets or [],
+                           {z.get("item_id") for z in _z_neu}))
         chars_stat[nm] = {
             "zeilen": len(_z_neu),
             "stueck": sum(int(z.get("menge") or 0) for z in _z_neu),
@@ -439,6 +473,8 @@ def main():
                 continue
             _z_corp = lagerorte.zeilen_aus_assets(
                 ca, ctypes, int(corp_id), "corp", divisions=divs)
+            roh_je_bes.append((f"Corp: {cname}", ca or [],
+                               {z.get("item_id") for z in _z_corp}))
             chars_stat[f"Corp: {cname}"] = {
                 "zeilen": len(_z_corp),
                 "stueck": sum(int(z.get("menge") or 0) for z in _z_corp),
@@ -557,6 +593,159 @@ def main():
             p("          (liegt an keinem Ort deiner Charaktere/Corp)")
     if not bedarf:
         p("  (kein offener Bedarf - dann kann auch nichts fehlen)")
+    p("")
+
+    # ---- 3a. WAS DER PLAN SELBST BAUT - REICHT ES? (Fassung 6) ------------
+    # GEMESSEN 11.10.2026 an seinem Bericht von 16:40 und an der Funktion
+    # selbst: `bedarf_aus_plaenen` entfernt JEDES Material aus der Meldung,
+    # das der Plan auch nur teilweise selbst baut ("baut er 6 Runs, meldet
+    # er 0 Bedarf - auch wenn er 540 Stueck braucht"). Bei einem Plan, der
+    # seine Vorstufe wirklich komplett selbst baut, ist das richtig
+    # (emm527 b); deckt der Eigenbau den Bedarf NICHT, fehlt die Zeile zu
+    # Unrecht - die gefaehrliche Richtung. Dieser Abschnitt stellt beide
+    # Zahlen nebeneinander, damit man es SIEHT statt zu raten.
+    p("=" * 78)
+    p("WAS DER PLAN SELBST BAUT - REICHT ES?")
+    p("=" * 78)
+    p("  Diese Materialien meldet die Seite NICHT, weil der Plan sie selbst")
+    p("  baut. Gedeckt ist der Bedarf aus dem, was er NOCH baut, plus dem,")
+    p("  was als Erzeugnis schon im Hangar liegt. Steht am Ende 'FEHLEN n',")
+    p("  fehlt die Zeile auf der Seite zu Unrecht - dann bitte melden.")
+    p("")
+    # FASSUNG 7: der BESTAND des Erzeugnisses gehoert dazu. Fassung 6 stellte
+    # nur "offene Runs x Stueck" gegen den Bedarf und schrieb ueberall
+    # "DECKT NICHT" - falsch: was der Plan schon gebaut HAT, liegt als
+    # Erzeugnis im Hangar und deckt den Rest. Gezaehlt wird wie im Bestands-
+    # abschnitt: nur eingeschaltete Orte (emm461).
+    _best_je_tid = {}
+    for _zz in zeilen:
+        if int(_zz.get("ort") or 0) in _aus:
+            continue
+        _tt = int(_zz.get("tid") or 0)
+        _best_je_tid[_tt] = _best_je_tid.get(_tt, 0) + int(_zz.get("menge") or 0)
+    _sb_fund = 0
+    for p_ in plaene:
+        _snap = ((p_ or {}).get("frozen") or {}).get("plan_snapshot")
+        if not isinstance(_snap, dict):
+            continue
+        _pl = _unpack(_snap)
+        if not isinstance(_pl, dict):
+            continue
+        _lab = str(p_.get("label") or p_.get("item_name") or p_.get("id") or "?")
+        _r = {int(t): int(v or 0)
+              for t, v in (_pl.get("build_runs") or {}).items()}
+        _m = {int(t): v for t, v in (_pl.get("build_mats") or {}).items()}
+        _made = {int(t): int(v or 0)
+                 for t, v in (_pl.get("build_made") or {}).items()}
+        _geb = lagerorte.gebaute_runs(p_, zuordnung, None)
+        # DIESELBE Funktion wie die Seite (Regel 8a) - kein Nachbau.
+        _rem, _summe = _restbedarf(_r, _m, _geb)
+        _zeilen_sb = []
+        for _t in sorted(_summe):
+            if int(_r.get(int(_t), 0) or 0) <= 0:
+                continue        # baut der Plan nicht -> wird ohnehin gemeldet
+            _braucht = int(_summe.get(_t) or 0)
+            if _braucht <= 0:
+                continue
+            _offen = int(_rem.get(int(_t), 0) or 0)
+            _ges_runs = int(_r.get(int(_t), 0) or 0)
+            _je_run = ((_made.get(int(_t), 0) / _ges_runs)
+                       if _ges_runs else 0.0)
+            _liefert = int(_offen * _je_run)
+            _hat = int(_best_je_tid.get(int(_t), 0) or 0)
+            _zeilen_sb.append((_t, _braucht, _offen, _je_run, _liefert, _hat))
+        if not _zeilen_sb:
+            continue
+        _namen_sb = _namen({t for t, *_rest in _zeilen_sb})
+        p(f"  {_lab}")
+        for _t, _braucht, _offen, _je_run, _liefert, _hat in sorted(
+                _zeilen_sb, key=lambda x: -(x[1] - x[4] - x[5])):
+            _deckt = _liefert + _hat
+            _mark = (f"  <== FEHLEN {_z(_braucht - _deckt)}"
+                     if _deckt < _braucht else "")
+            if _deckt < _braucht:
+                _sb_fund += 1
+            p(f"      {str(_namen_sb.get(_t, _t))[:34]:<34}"
+              f" braucht {_z(_braucht):>11} ·"
+              f" baut noch {_z(_offen):>6} x {_je_run:g} = {_z(_liefert):>11}"
+              f" · im Hangar {_z(_hat):>11}{_mark}")
+    if not _sb_fund:
+        p("  (ueberall deckt der Eigenbau den Bedarf)")
+    p("")
+
+    # ---- 3b. ROHE ESI-EINTRAEGE JE FEHLENDEM ITEM (Fassung 5) -------------
+    # Nutzer 11.10.2026: "R.A.M. wird immer noch nicht richtig getrackt, es
+    # liegt aber auf der Dockside Innovations". Die Abschnitte oben koennen
+    # das nicht beantworten - sie zeigen nur, was `zeilen_aus_assets` uebrig
+    # laesst. Hier wird die UNGEFILTERTE Liste durchsucht. Das Urteil
+    # ("zaehlt") kommt aus der Funktion selbst (ihre item_ids), nicht aus
+    # einer zweiten Rechnung (Regel 8a); daneben stehen die Rohfelder.
+    p("=" * 78)
+    p("WARUM SIEHT DIE SEITE ES NICHT? - rohe ESI-Eintraege je fehlendem Item")
+    p("=" * 78)
+    p("  Gezaehlt wird ein Eintrag nur, wenn er DIREKT im Item-Hangar einer")
+    p("  Station/Struktur haengt (location_flag 'Hangar') oder in einem")
+    p("  BEHAELTER darin. Alles andere - Lieferungen (Deliveries), Schiffs-")
+    p("  laderaum, gefittete Module, Drohnenbucht - zaehlt bewusst nicht.")
+    p("")
+    if not fehl_items:
+        p("  (kein rot gemeldetes Material - nichts zu suchen)")
+    # Namen der Eltern-Objekte EINMAL aufloesen (ein Abruf je Lauf, nicht
+    # je Zeile - ein 403 kostet ESI-Fehlerbudget, emm480).
+    _eltern_tids = set()
+    for _nm, _assets, _gez in roh_je_bes:
+        _bi = {a.get("item_id"): a for a in _assets
+               if a.get("item_id") is not None}
+        for a in _assets:
+            if int(a.get("type_id") or 0) in fehl_items:
+                _pp = _bi.get(a.get("location_id"))
+                if _pp is not None:
+                    _eltern_tids.add(int(_pp.get("type_id") or 0))
+    _eltern_namen = _namen(_eltern_tids) if _eltern_tids else {}
+    for t in sorted(fehl_items, key=lambda x: str(namen.get(x, x)).lower()):
+        noetig, da_ein, fehlt = fehl_items[t]
+        p(f"  {str(namen.get(t, t))[:40]}  (noetig {_z(noetig)} ·"
+          f" gezaehlt {_z(da_ein)} · FEHLT {_z(fehlt)})")
+        _treffer = 0
+        for _nm, _assets, _gez in roh_je_bes:
+            _by_id = {a.get("item_id"): a for a in _assets
+                      if a.get("item_id") is not None}
+            for a in _assets:
+                if int(a.get("type_id") or 0) != int(t):
+                    continue
+                _treffer += 1
+                _menge = int(a.get("quantity", 1) or 1)
+                _flag = a.get("location_flag")
+                _loc = a.get("location_id")
+                _parent = _by_id.get(_loc)
+                # WORIN steckt es? Nicht geraten - der Elterneintrag steht
+                # in derselben Liste, sonst haengt es direkt am Ort.
+                if _parent is None:
+                    _drin = f"direkt an #{_loc}"
+                else:
+                    _pn = _eltern_namen.get(
+                        int(_parent.get("type_id") or 0),
+                        f"#{_parent.get('type_id')}")
+                    _drin = (f"in {_pn} (#{_loc},"
+                             f" Flag {_parent.get('location_flag')})")
+                # Wurzel-Ort ueber dieselbe Funktion wie die Seite.
+                try:
+                    _wo = int(corp.wurzel_ort(a, _by_id) or 0)
+                except Exception:
+                    _wo = 0
+                _ortnm = ort_namen.get(_wo) or f"#{_wo}"
+                _urteil = ("ZAEHLT" if a.get("item_id") in _gez
+                           else "zaehlt NICHT")
+                if _urteil == "ZAEHLT" and _wo in _aus:
+                    _urteil = "zaehlt NICHT (Ort abgeschaltet)"
+                p(f"      {_urteil:<28} {_nm[:18]:<18} {_z(_menge):>9}"
+                  f"   Flag {str(_flag)[:14]:<14} {_drin[:40]:<40}"
+                  f" Ort {_ortnm[:30]}")
+        if not _treffer:
+            p("      (in KEINER abgerufenen Asset-Liste gefunden - weder im")
+            p("       Hangar noch in einem Schiff, Container oder in den")
+            p("       Lieferungen. Dann hat ESI es noch nicht oder es liegt")
+            p("       bei einem nicht verlinkten Charakter.)")
     p("")
 
     # ---- 4. WOHIN IST ES WEG (Fassung 2) ----------------------------------

@@ -1276,9 +1276,6 @@ class BauplanTabs:
             "Eve MoMa."))
         kopf.addWidget(titel)
         kopf.addStretch()
-        self._lager_stand_lbl = QLabel("")
-        self._lager_stand_lbl.setObjectName("Muted")
-        kopf.addWidget(self._lager_stand_lbl)
         self._lager_plan_cb = QComboBox()
         self._lager_plan_cb.setMinimumWidth(220)
         self._lager_plan_cb.setToolTip(t(
@@ -1315,6 +1312,20 @@ class BauplanTabs:
         self._lager_refresh_btn.setMinimumWidth(40)
         kopf.addWidget(self._lager_refresh_btn)
         v.addLayout(kopf)
+        # DIE GRAUE STATUSZEILE STEHT IN IHRER EIGENEN ZEILE (emm540,
+        # Nutzer 12.10.2026: "Stocklocations wegen der unnoetigen anzeige
+        # in grau haben die buttons wie Copy shoppingslist usw in Gold,
+        # kaum Platz und werden zusammengedrueckt" - seine Knoepfe hiessen
+        # nur noch "sh<", "Expa", "Re<"). Sie ist seit emm476/478/528 lang
+        # geworden (Stand, Datenalter, Job-Warnungen, abgeschaltete Orte)
+        # und drueckte die drei Knoepfe daneben zusammen. KurzLabel statt
+        # QLabel (Muster emm362/334): bei Platzmangel "..." statt
+        # abgeschnitten, der volle Text im Tooltip und in voller_text() -
+        # ein nicht kuerzbares Label wuerde die Seitenbreite sprengen
+        # (b66-Ratsche: Seiten 5 und 6 bleiben unter 820 px).
+        self._lager_stand_lbl = KurzLabel("")
+        self._lager_stand_lbl.setObjectName("Muted")
+        v.addWidget(self._lager_stand_lbl)
         # UNVOLLSTAENDIGE DATEN SIND KEINE EINKAUFSLISTE (emm476, Nutzer:
         # "jetzt ist es noch schlimmer geworden"): scheitert ein Asset- oder
         # Job-Abruf, fehlt Bestand bzw. Fortschritt - die roten Fehlbetraege
@@ -1559,6 +1570,7 @@ class BauplanTabs:
             # faellt ein STILL zu kleiner Abruf auf - er macht den
             # Fehlbetrag zu hoch, und genau daraus wurde ein Nachkauf.
             asset_n = {}
+            _asset_alter = []        # Sekunden, je Charakter (emm528)
             besitzer_namen = {}
             beh_namen = {}
             char_fuer_ort = {}      # {ort: [cid, ...]} - ALLE, die dort Assets haben
@@ -1574,6 +1586,16 @@ class BauplanTabs:
                     continue
                 z = lagerorte.zeilen_aus_assets(assets, ctypes, cid, "char")
                 asset_n[name] = len(z)
+                # WIE ALT IST DIESER BESTAND? (emm528) CCP cacht /assets/
+                # rund eine Stunde - frisch Gekauftes oder gerade
+                # Abgeliefertes steht noch nicht drin. Das aelteste Alter
+                # ueber alle Charaktere kommt in die Kopfzeile.
+                try:
+                    _ag = esi.assets_age_seconds(cid)
+                    if _ag is not None:
+                        _asset_alter.append(float(_ag))
+                except Exception:
+                    pass
                 for r in z:
                     _l = char_fuer_ort.setdefault(r["ort"], [])
                     if cid not in _l:
@@ -1722,6 +1744,9 @@ class BauplanTabs:
                 _job_offen, _fest2 = self._lager_stufen_zuordnen(
                     _job_offen, _extra, _vergeben)
                 _fest += _fest2
+            # Nur noch fuer die ANZEIGE: Items, die ein Plan selbst baut,
+            # bleiben mit Menge und Ort sichtbar (emm527) - ihren Bedarf
+            # meldet dieser Plan nicht mehr.
             gebaut_tids = lagerorte.gebaute_tids(plaene)
             bedarf = lagerorte.bedarf_aus_plaenen(plaene, _zuord, _extra)
             bedarf_je_plan = {p.get("id"): lagerorte.bedarf_aus_plaenen(
@@ -1758,6 +1783,7 @@ class BauplanTabs:
                     "besitzer_namen": besitzer_namen, "beh_namen": beh_namen,
                     "bedarf": bedarf, "bedarf_je_plan": bedarf_je_plan,
                     "built": gebaut_tids,
+                    "asset_alter": (max(_asset_alter) if _asset_alter else None),
                     "job_extra": _extra, "job_offen": _job_offen,
                     "job_fehler": _job_fehler, "schrumpf": _schrumpf,
                     "job_fest": _fest,
@@ -1890,6 +1916,7 @@ class BauplanTabs:
         aufklappbare Zeile (Charakter -> Container). `fehlt` = die Karte der
         Items, die an keinem eingeschalteten Ort liegen."""
         from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+        _gebaut_l = (getattr(self, "_lager_daten", None) or {}).get("built") or set()
         card = QFrame(); card.setObjectName("Card")
         card.setMinimumWidth(420)
         v = QVBoxLayout(card)
@@ -1950,7 +1977,9 @@ class BauplanTabs:
                 _st = t("missing {n}").format(n=_z(it["short"]))
                 top.setText(2, _st)
                 top.setForeground(2, _rot)
-            elif it["bedarf"]:
+            elif it["bedarf"] or int(it["tid"]) in _gebaut_l:
+                # Ohne Bedarf, aber selbst gebaut (emm527): nichts zu tun -
+                # dasselbe Haekchen wie bei gedecktem Bedarf.
                 top.setText(2, "\u2713")
             if _bd:
                 top.setToolTip(2, t("Still needed by plans: {b}").format(b=_bd)
@@ -2018,12 +2047,16 @@ class BauplanTabs:
         bedarf = (res.get("bedarf_je_plan") or {}).get(pid) if pid is not None \
             else res.get("bedarf")
         bedarf = bedarf or {}
-        nur = None if begriffe else set(bedarf)
+        # SELBSTGEBAUTES BLEIBT SICHTBAR (emm527): sein Bedarf steht seit
+        # dem Umbau nicht mehr drin (wer ein Teil selbst baut, meldet es
+        # nicht), aber die Seite heisst "wo liegt mein Material" - die
+        # Zeile gehoert zum Nachsehen weiter her, nur eben ohne Fehlbetrag.
+        nur = None if begriffe else (set(bedarf)
+                                     | (res.get("built") or set()))
         karten, fehlt = lagerorte.karten(
             zeilen, namen, ort_namen, res.get("besitzer_namen") or {},
             res.get("beh_namen") or {}, bedarf=bedarf, nur_tids=nur,
-            begriffe=begriffe, nur_orte=aktiv,
-            selbst_gebaut=res.get("built") or set())
+            begriffe=begriffe, nur_orte=aktiv)
         # Der Einkaufslisten-Knopf nimmt GENAU das, was hier steht - je Item
         # einmal (ein Item liegt oft an mehreren Orten).
         _fehl_items = {}
@@ -2073,6 +2106,16 @@ class BauplanTabs:
         if self._lager_stand_ts:
             teile.append(t("as of {zeit}").format(
                 zeit=_dt.fromtimestamp(self._lager_stand_ts).strftime("%H:%M")))
+        # DAS ECHTE ALTER DER BESTANDSDATEN (emm528, Nutzer: "ich habs da"
+        # zu 5 R.A.M.- Robotics, die Stock locations als fehlend meldete -
+        # "hat ESI evtl. noch nicht getrackt? ich habe es seit ca. 10
+        # Minuten"). Die Uhrzeit oben ist der ABRUF; CCP cacht /assets/
+        # rund eine Stunde. Was in dieser Zeit dazukam, fehlt hier noch.
+        _alt_s = res.get("asset_alter")
+        if _alt_s is not None and float(_alt_s) >= 300:
+            _min = int(float(_alt_s) // 60)
+            teile.append(t("stock data {n} min old (ESI caches ~1 h)")
+                         .format(n=_min))
         # WARNUNGEN ZUERST (emm476): die Statuszeile wird rechts
         # abgeschnitten - was wichtig ist, steht vorn.
         # NIE STILL (emm475): ein Job, dessen Material im Spiel schon weg
@@ -2295,8 +2338,7 @@ class BauplanTabs:
             self._flash_tip(_grund)
             return
         posten = lagerorte.einkaufsliste(
-            getattr(self, "_lager_fehl_items", None) or [],
-            (self._lager_daten or {}).get("built") or set())
+            getattr(self, "_lager_fehl_items", None) or [])
         if not posten:
             self._flash_tip(t("Nothing is missing \u2013 nothing to buy."))
             return
@@ -4178,6 +4220,18 @@ class BauplanTabs:
             dec_warn_lbl.setStyleSheet(f"color:{theme.AMBER}; font-weight:700;")
             left.addWidget(dec_warn_lbl)
             dec_warn_lbl.hide()
+            # BESITZT ER DAS T1-ORIGINAL UEBERHAUPT? (emm512, Nutzer-Befund vom
+            # Sitzungsanfang: "Bauplan hatte mir angezeigt ich haette blueprint
+            # originale zum kopieren ... Aber im Hangar hatte ich nur T1 Copys
+            # liegen keine T1 Originale"). Die Kopieranleitung sagt "Copy your
+            # T1 original like this" - ohne je zu pruefen, ob es das Original
+            # gibt. Gefuellt in _recompute ueber `t1_original_lage`.
+            t1_warn_lbl = QLabel("")
+            t1_warn_lbl.setWordWrap(True)
+            left.addWidget(t1_warn_lbl)
+            t1_warn_lbl.hide()
+            self._bd_inv_t1_warn = getattr(self, "_bd_inv_t1_warn", None) or {}
+            self._bd_inv_t1_warn[int(bp_id)] = t1_warn_lbl     # b-Suite
             # "COPY DECRYPTOR" STATT "BEST DECRYPTOR" (emm329, Nutzer 02.10.2026:
             # "der Knopf soll Copy Decryptor heissen, dieselbe Groesse wie Copy
             # T1 und den oben gewaehlten Decryptor-Namen ins Clipboard legen; ist
@@ -4523,7 +4577,8 @@ class BauplanTabs:
                           base_prob=base_prob, datacores=datacores,
                           runs_needed=runs_needed, outcome_lbl=outcome_lbl,
                           need_lbl=need_lbl, dec_icon_lbl=dec_icon_lbl,
-                          dec_warn_lbl=dec_warn_lbl,
+                          dec_warn_lbl=dec_warn_lbl, t1_warn_lbl=t1_warn_lbl,
+                          t1_bp=t1_bp,
                           score_lbl=score_lbl, mc0_per_run=mc0_per_run,
                           build_seconds_0dec=build_seconds_0dec,
                           inv_time_per_attempt=_inv_time_per_attempt,
@@ -4595,6 +4650,39 @@ class BauplanTabs:
                 dec_warn_lbl.setVisible(_dec_offen)
                 self._bd_inv_dec_offen = getattr(self, "_bd_inv_dec_offen", None) or {}
                 self._bd_inv_dec_offen[int(bp_id)] = _dec_offen
+                # HAT ER DAS T1-ORIGINAL? (emm512) Nur melden, was BELEGT ist:
+                # ohne geladenen Besitz (oder mit gescheitertem Abruf) bleibt
+                # die Zeile leer - eine falsche Warnung ist schlimmer als
+                # keine (Regel 1). Nicht bei eigener T2-Kopie: dann wird gar
+                # nicht kopiert (Combo gesperrt = Own BPC).
+                from .mw_helpers import t1_original_lage as _t1lage512
+                _lage512, _bpo512, _bpcr512 = _t1lage512(
+                    t1_bp, getattr(self, "_bd_owned_bp_cache", None),
+                    getattr(self, "_bd_bp_im_job", None),
+                    getattr(self, "_bd_bp_fehler", None))
+                if not combo.isEnabled():
+                    _lage512 = "unknown"          # Own BPC: kein Kopierjob
+                _t1txt512 = _t1farbe512 = ""
+                if _lage512 == "copies_only":
+                    _t1farbe512 = theme.RED
+                    _t1txt512 = t(
+                        "⚠ You do not own the T1 ORIGINAL – only "
+                        "copies ({n} runs). You cannot copy from a copy: buy "
+                        "or research the original first.").format(n=_bpcr512)
+                elif _lage512 == "none":
+                    _t1farbe512 = theme.RED
+                    _t1txt512 = t(
+                        "⚠ You do not own this T1 blueprint – buy "
+                        "the original before copying.")
+                elif _lage512 == "in_job":
+                    _t1farbe512 = theme.AMBER
+                    _t1txt512 = t(
+                        "⚠ Your T1 original is in a job right now – "
+                        "free again when it finishes.")
+                t1_warn_lbl.setStyleSheet(
+                    f"color:{_t1farbe512 or theme.MUTED}; font-weight:700;")
+                t1_warn_lbl.setText(_t1txt512)
+                t1_warn_lbl.setVisible(bool(_t1txt512))
                 material_cost = mc0_per_run * (1 - outcome["me_pct"] / 100.0) * runs_needed
                 _bz_txt = _iz_txt = _iz_tip_extra = ""
                 time_txt = ""
@@ -6775,6 +6863,17 @@ class BauplanTabs:
                 _offen = _vd_erl.get(_c, 0) < int(plan_runs.get(_c) or 0)
                 _a(f"      <- {_nm(_c)[:28]:<28} {_z(plan_runs.get(_c))}/{_z(_vd_erl.get(_c))}"
                    f"{'  OFFEN' if _offen else ''}")
+        # BESTAND DECKT RUNS (emm514): welche Rest-Runs der heutige Hangar-
+        # Bestand des Erzeugnisses selbst deckt (z. B. zugekauft) - die Karte
+        # steckt oben schon in ERLEDIGT, hier steht sie einzeln zum Pruefen.
+        _bdr = getattr(self, "_bd_bestand_runs", None) or {}
+        if _bdr:
+            _a("")
+            _a(f"BESTAND DECKT RUNS (emm514): {len(_bdr)} Item(s) - Runs, die "
+               "der Bestand des Erzeugnisses deckt (im ERLEDIGT oben enthalten)")
+            for _t in sorted(_bdr, key=lambda t: -int(_bdr.get(t) or 0)):
+                _a(f"  {_nm(_t)[:30]:<30} {_z(_bdr.get(_t)):>7} von "
+                   f"{_z(plan_runs.get(int(_t)))} Runs gedeckt")
         _a("ENDE FORTSCHRITT")
         # de_scan2: an
         # de_scan4: an
@@ -6807,6 +6906,45 @@ class BauplanTabs:
                 for _c in range(tbl.columnCount()):
                     _z.setForeground(_c, QColor(theme.MUTED))
 
+    def _science_struktur(self):
+        """WO werden Kopieren und Invention gemacht? EINE Quelle (Regel 9).
+
+        emm529 (Nutzer: "im Runplanner bei Copying und Invention steht ja gar
+        nicht, an welcher Station / Struktur man das machen soll, stattdessen
+        steht da science slots - runs parallel to the build. Bitte aendere
+        das").
+
+        GEMESSEN, bevor etwas gebaut wurde (Regel 8a - gerufen wird die
+        Funktion, nicht nachgerechnet): die Struktur-Wahl fuer Science gibt es
+        laengst, sie wurde nur nirgends im Runplaner gezeigt.
+        `_struct_for_activity("invention")` liefert die im Struktur-Tab
+        ZUGEWIESENE Struktur (`bau_activity_struct["invention"]`) und sonst die
+        Auto-Wahl unter den Strukturen, die Invention laut EVE ueberhaupt
+        koennen (Refineries koennen es nicht, siehe `_STRUCT_TYPE_FIT`).
+        Dieselbe Funktion rufen schon die Invention-Karte fuer ihre Zeile
+        "Structure: X (Auto)" (mw_bauplan_tabs ~3801) und die Job-Zeit-Rechnung
+        fuer Rig, Sicherheit und Rolle (~4551, emm325) - der Runplaner zeigt ab
+        jetzt GENAU die Struktur, mit der auch gerechnet wird.
+
+        KOPIEREN hat bewusst keinen eigenen Eintrag in `_STRUCT_ACTIVITIES`:
+        die Zeitrechnung nimmt dafuer dieselbe Struktur und nur deren
+        copy-Rig (`_struct_extra_rig_pct(inv_struct, "copy")`). Hier wird
+        deshalb derselbe Name gezeigt - zwei Namen fuer eine Rechnung waeren
+        die Fehlerklasse aus Sitzung 9.
+
+        Rueckgabe: der Struktur-Name oder None (keine Struktur angelegt bzw.
+        keine, die Science kann). None heisst UNBEKANNT - dann behauptet die
+        Kopfzeile keinen Ort (Regel 1).
+        """
+        if not self.settings.get("bau_structures"):
+            return None
+        try:
+            _s = self._struct_for_activity("invention")
+        except Exception:
+            return None
+        _n = (_s or {}).get("name")
+        return _n or None
+
     def _science_block(self, tbl, names, klapp_vorher):
         """Kopieren + Invention als eigene Runplaner-Bloecke (emm411, v2 emm425).
 
@@ -6833,7 +6971,8 @@ class BauplanTabs:
             blauer Punkt, fertig (abholbereit) = gruener Punkt."""
         from ..sprache import t as _txt
         from PySide6.QtWidgets import QTreeWidgetItem
-        from .mw_helpers import science_verteilen
+        from .mw_helpers import (science_verteilen, kopier_schritte,
+                                 t1_original_lage as _t1lage512)
         self._bd_science_names = names          # fuer _science_block_auffrischen
         needs = {int(b): i for b, i in
                  (getattr(self, "_bd_invention_needs", None) or {}).items()
@@ -6878,18 +7017,47 @@ class BauplanTabs:
                     continue
             return out
 
-        def _punkt(tid, act, cname):
-            """'run' / 'done' / None je ESI-Job dieses Charakters."""
+        # JEDER LAUFENDE JOB ZAEHLT NUR EINMAL (emm519, Nutzer 11.10.2026:
+        # "ich kopiere gerade eine punisher original blueprint, die erste
+        # welle von peanut motor macht das genau nach job runs und
+        # runs/copys. und die 2te welle ist einfach auch mit blauem punkt
+        # hinten dran, obwohl es nicht die selben job runs sind ... das
+        # muesste ESI und Runplaner doch erkennen, dass die 2te welle nicht
+        # laufen kann"). Vorher fragte `_punkt` nur "gibt es irgendeinen Job
+        # dieses Items bei diesem Charakter" - mit EINEM laufenden Kopierjob
+        # bekamen damit ALLE Wellen denselben Punkt, obwohl physisch nur
+        # einer laufen kann (ein Original, emm510). Jetzt wird der Pool je
+        # (Item, Aktivitaet, Charakter) VERBRAUCHT: die erste Welle nimmt
+        # ihre Jobs, die naechste bekommt nur, was uebrig ist. Dieselbe
+        # Regel wie `budget_eigene_zuerst` bei den Bau-Stufen.
+        _job_pool = {}
+
+        def _punkt(tid, act, cname, brauch=1):
+            """'run' / 'done' / None je ESI-Job dieses Charakters - und
+            VERBRAUCHT bis zu `brauch` Jobs aus dem Pool dieser Zeile."""
+            _key = (int(tid), int(act), cname or "")
+            if _key not in _job_pool:
+                _lauf, _fertig = [], []
+                for j in (aktiv.get(int(tid)) or []):
+                    if int(j.get("activity_id") or 0) != act:
+                        continue
+                    if cname and j.get("char") and j.get("char") != cname:
+                        continue
+                    if j.get("status") == "ready":
+                        _fertig.append(j)
+                    elif j.get("status") in ("active", "paused"):
+                        _lauf.append(j)
+                _job_pool[_key] = [len(_lauf), len(_fertig)]
+            _n_lauf, _n_fertig = _job_pool[_key]
+            _nimm = max(1, int(brauch or 1))
             _st = None
-            for j in (aktiv.get(int(tid)) or []):
-                if int(j.get("activity_id") or 0) != act:
-                    continue
-                if cname and j.get("char") and j.get("char") != cname:
-                    continue
-                if j.get("status") == "ready":
-                    _st = _st or "done"
-                elif j.get("status") in ("active", "paused"):
-                    _st = "run"
+            if _n_lauf > 0:
+                _st = "run"
+                _n_lauf = max(0, _n_lauf - _nimm)
+            elif _n_fertig > 0:
+                _st = "done"
+                _n_fertig = max(0, _n_fertig - _nimm)
+            _job_pool[_key] = [_n_lauf, _n_fertig]
             return _st
 
         # GANZ OBEN (emm434, Nutzer: "Copy und Invention wuerde ich ganz nach
@@ -7000,9 +7168,14 @@ class BauplanTabs:
                     return True
             return False
 
-        def _zeilen_zustand(tid, act, cname, key):
-            """offen / laeuft / bereit / erledigt einer Science-Zeile."""
-            _p = _punkt(tid, act, cname)
+        def _zeilen_zustand(tid, act, cname, key, punkt=None):
+            """offen / laeuft / bereit / erledigt einer Science-Zeile.
+
+            `punkt` ist das BEREITS gezogene Ergebnis von `_punkt` derselben
+            Zeile (emm519): ein zweiter Aufruf wuerde den Job-Pool ein
+            zweites Mal verbrauchen und der naechsten Welle ihren Punkt
+            wegnehmen."""
+            _p = punkt if punkt is not None else _punkt(tid, act, cname)
             if _p == "run":
                 return "laeuft"
             if _p == "done":
@@ -7040,16 +7213,57 @@ class BauplanTabs:
                 prob=info.get("prob"))
 
         # ---- Kopieren: EIN Kopierjob je T1-Original -----------------------
-        _k = _kopf("⚗ " + _txt("Copying") + "  ·  "
-                   + _txt("science slots – runs parallel to the build"),
+        # WO? (emm529) Die Stufen-Koepfe tragen den Strukturnamen im selben
+        # Format wie die Bau-Stufen ("4. Components  ·  Dockside
+        # Innovations"); der alte Zusatz ueber die Science-Slots steht jetzt
+        # im Tooltip, wo er nicht den Ort verdeckt.
+        _sc_struct = self._science_struktur()
+        _sc_suffix = ("  ·  " + _sc_struct) if _sc_struct else (
+            "  ·  " + _txt("no structure for science yet – set one in the "
+                           "Structures tab"))
+        _sc_tip = ("\n" + _txt("Science slots – these runs go parallel to the "
+                               "build.")
+                   + ("\n" + _txt("Copying and invention use the structure "
+                                  "assigned to invention in the Structures "
+                                  "tab.") if _sc_struct else ""))
+        _k = _kopf("⚗ " + _txt("Copying") + _sc_suffix,
                    "copying",
                    _txt("Copy your T1 originals for invention. Same numbers "
                         "as the Invention tab – the slider there sets the "
-                        "parallel copies."))
+                        "parallel copies.") + _sc_tip)
         _copy_auftr = [(bp, 1) for bp, _i in _sortiert if _auf[bp].get("kopien")]
         _k_zust, _k_zeilen = [], []
         _copy_chars = _chars("bau_copy_chars") or [(0, max(1, slots))]
-        for cid, welle, liste in science_verteilen(_copy_auftr, _copy_chars):
+        # AUS EINER KOPIE KANN MAN NICHT KOPIEREN (emm510, Nutzer: "der
+        # Runplaner rechnet beim Kopieren meine blueprint copys als ob sie
+        # originale waeren ... ich habe 1 originale also kann ich nur 1mal
+        # kopieren ... das muesste ich in 2 schritten erledigen"): brauchen
+        # MEHRERE T2-Blaupausen dasselbe T1-Original, laufen je T1
+        # hoechstens so viele Kopierjobs GLEICHZEITIG, wie Originale (BPOs)
+        # frei da sind - der Rest startet als spaetere WELLE, wenn das
+        # Original wieder frei ist. Verteilung je Schritt, Wellen-Nummern
+        # fortlaufend (dieselbe Welle-n-Anzeige wie bei vollen Slots).
+        # AUS DEM CACHE, NICHT AUS DER GESPEICHERTEN ZAEHLUNG (emm536):
+        # die alterte (s. _fill_blueprint_tab) - mit einer zu alten Zahl
+        # teilt der Runplaner die Kopierjobs in zu viele oder zu wenige
+        # Schritte. Dieselbe Rohliste wie ueberall sonst (Regel 9).
+        _cache536 = getattr(self, "_bd_owned_bp_cache", None)
+        _orig510 = (self.bp_besitz_zaehlen(_cache536)[0]
+                    if _cache536 is not None
+                    else (getattr(self, "_bd_bp_owned_counts", None) or {}))
+        _t1je510 = {bp: int((needs.get(bp) or {}).get("t1") or 0)
+                    for bp, _i in _sortiert}
+        _vert510 = []
+        _wab510 = 0
+        for _s510, _grp510 in enumerate(kopier_schritte(
+                _copy_auftr, _t1je510, _orig510)):
+            _wmax510 = _wab510
+            for cid, welle, liste in science_verteilen(_grp510, _copy_chars):
+                welle += _wab510
+                _wmax510 = max(_wmax510, welle)
+                _vert510.append((cid, welle, liste, _s510))
+            _wab510 = _wmax510
+        for cid, welle, liste, _s510 in _vert510:
             _cap = dict(_copy_chars).get(cid, 0) or max(1, slots)
             ci, _wsuf, _cn = _char_zeile(_k, cid, welle,
                                          sum(n for _b, n in liste), _cap, "copy")
@@ -7066,16 +7280,44 @@ class BauplanTabs:
                                      ("≈" + self._fmt_dur(_dauer)) if _dauer else "",
                                      _txt("Copy job"), ""])
                 z.setTextAlignment(1, Qt.AlignCenter)
+                if _s510:
+                    # emm510: Spalte "Stage" sagt WARUM dieser Job wartet.
+                    _kap510 = max(1, int(_orig510.get(_t1, 0) or 0))
+                    z.setText(4, _txt("Copy job") + " · "
+                              + _txt("step {s} (only {n} original(s))")
+                              .format(s=_s510 + 1, n=_kap510))
+                    z.setForeground(4, QColor(theme.AMBER))
+                    z.setToolTip(4, _txt(
+                        "You cannot copy from a copy: the T1 original is "
+                        "busy in the copy job before – start this one when "
+                        "it is free again."))
+                # BESITZT ER DAS ORIGINAL? (emm512) Dieselbe EINE Quelle wie
+                # die Kopieranleitung der Karte (Regel 9) - ohne geladenen
+                # Besitz bleibt die Zeile stumm.
+                _lg512, _bo512, _bc512 = _t1lage512(
+                    _t1, getattr(self, "_bd_owned_bp_cache", None),
+                    getattr(self, "_bd_bp_im_job", None),
+                    getattr(self, "_bd_bp_fehler", None))
+                if _lg512 in ("copies_only", "none"):
+                    z.setText(4, z.text(4) + " · " + (
+                        _txt("you only own copies – not the original")
+                        if _lg512 == "copies_only" else
+                        _txt("you do not own this original")))
+                    z.setForeground(4, QColor(theme.RED))
+                    z.setToolTip(4, _txt(
+                        "You cannot copy from a copy: buy or research the "
+                        "T1 original first."))
                 # Rechtsklick/Strg+C: Basis OHNE " Blueprint" - _bp_name_for
                 # haengt das Suffix selbst an (sonst stuende es doppelt da).
                 z.setData(0, Qt.UserRole + 8, _basis1)
                 z.setData(0, Qt.UserRole + 7, 1)
                 _haken(z, f"copy|{cid}|{_t1}{_wsuf}")
                 ci.addChild(z)
-                _setze_punkt(z, _punkt(_t1, 5, _cnames.get(int(cid))))
+                _pk519 = _punkt(_t1, 5, _cnames.get(int(cid)))
+                _setze_punkt(z, _pk519)
                 # de_scan6: aus - interner Haken-Schluessel, nie sichtbar
                 _zz = _zeilen_zustand(_t1, 5, _cnames.get(int(cid)),
-                                      f"copy|{cid}|{_t1}{_wsuf}")
+                                      f"copy|{cid}|{_t1}{_wsuf}", _pk519)
                 # de_scan6: an
                 if _zz == "erledigt" and _geliefert(_t1, 5):
                     _setze_punkt(z, "geliefert")
@@ -7109,11 +7351,10 @@ class BauplanTabs:
                                              _k_st != "erledigt")))
 
         # ---- Invention: je Kopie ein Job, verteilt auf die Inv-Charaktere -
-        _i = _kopf("⚗ " + _txt("Invention") + "  ·  "
-                   + _txt("science slots – runs parallel to the build"),
+        _i = _kopf("⚗ " + _txt("Invention") + _sc_suffix,
                    "invention",
                    _txt("Invention attempts after copying. Datacores and "
-                        "decryptors are on the shopping list."))
+                        "decryptors are on the shopping list.") + _sc_tip)
         _inv_auftr = [(bp, int(_auf[bp].get("kopien") or 0))
                       for bp, _i2 in _sortiert if _auf[bp].get("kopien")]
         _inv_chars = _chars("bau_invention_chars") or [(0, max(1, slots))]
@@ -7139,10 +7380,11 @@ class BauplanTabs:
                 z.setData(0, Qt.UserRole + 7, 1)
                 _haken(z, f"inv|{cid}|{bp}{_wsuf}")
                 ci.addChild(z)
-                _setze_punkt(z, _punkt(bp, 8, _cnames.get(int(cid))))
+                _pk519i = _punkt(bp, 8, _cnames.get(int(cid)), n_jobs)
+                _setze_punkt(z, _pk519i)
                 # de_scan6: aus - interner Haken-Schluessel, nie sichtbar
                 _zz = _zeilen_zustand(bp, 8, _cnames.get(int(cid)),
-                                      f"inv|{cid}|{bp}{_wsuf}")
+                                      f"inv|{cid}|{bp}{_wsuf}", _pk519i)
                 # de_scan6: an
                 if _zz == "erledigt" and _geliefert(bp, 8):
                     _setze_punkt(z, "geliefert")
@@ -7949,8 +8191,28 @@ class BauplanTabs:
             _rest_budget = _mwh_vs_budget(_rest_budget, _plan_runs_tid,
                                           (plan or {}).get("build_mats"), _erl_v,
                                           _vs_schon)
+            # WER DAS BUDGET ANGEHOBEN HAT, MUSS SPAETER NACHFRAGBAR SEIN
+            # (emm521): die Zeile unten soll keinen gruenen ESI-Punkt auf
+            # eine Position setzen, zu der es gar keinen Job gibt. Genau
+            # diese Items sind es - gemessen, nicht geraten.
+            self._bd_vorstufen_budget = (set(_vs_neu)
+                                         | {int(_x) for _x in _vs_schon})
         except Exception as _ve:
+            self._bd_vorstufen_budget = set()
             self._log_exception("Runplaner: Vorstufen erledigt", str(_ve))
+        # BESTAND DECKT RUNS - ANTEILIG (emm514): die Karte hat
+        # `_rest_geliefert_jetzt()` im Block eben frisch gesetzt (nur beim
+        # gespeicherten, EINGEFRORENEN Plan; Hangar ohne Pipeline, ohne
+        # ESI-Verzug, ohne fremde Reservierungen). Sie erhoeht NUR das
+        # Erledigt-Budget der Anzeige - die Job-Zuordnung (Signatur,
+        # Prioritaet) rechnet weiter mit den Schnappschuss-Runs, sonst
+        # matchten Jobs ploetzlich anders.
+        for _t_b, _n_b in (getattr(self, "_bd_bestand_runs", None) or {}).items():
+            _t_b = int(_t_b)
+            if _t_b in _rest_budget:
+                _rest_budget[_t_b] = min(
+                    int(_plan_runs_tid.get(_t_b, 0) or 0),
+                    int(_rest_budget[_t_b] or 0) + int(_n_b or 0))
         # FORTSCHRITTS-DIAGNOSE (26.09.2026, Nutzer: "der Runplaner will
         # trotzdem nochmal 6'718 nachbauen ... genau das passiert die ganze
         # Zeit"): dieselben Zahlen, aus denen das Rest-Budget eben entstand,
@@ -7994,19 +8256,23 @@ class BauplanTabs:
             # Vorher stand es bei den Komponenten, also HINTER seinen eigenen
             # Verbrauchern.
             # SYMBOL-NAMEN statt Emoji (Sitzung 16) - gesetzt per setIcon.
-            "fuel": ("1. " + t("Fuel"), "package", "ms", theme.GREEN),
+            # FARBE NUR, WO SIE ETWAS BEDEUTET (Nutzer 10.10.2026: "es sieht
+            # mehr aus wie ein Regenbogen wirrwar"): ALLE Bau-Stufen 1-4 im
+            # selben Blau - unterschieden werden sie durch die Nummer, nicht
+            # durch die Farbe. Farbig bleiben nur Science (violett, laeuft
+            # parallel), Reprocessing (gruen, Material besorgen) und das
+            # Endprodukt (amber, das Ziel). ERSETZT den Entscheid aus
+            # Sitzung 12 ("eigene Farbe fuer die zweite Reaktions-Stufe").
+            "fuel": ("1. " + t("Fuel"), "package", "ms", theme.BLUE),
             # UNREFINED ZUERST (Nutzer 19.09.2026): eigene Stufe vor den
             # Intermediates, dahinter der Reprocessing-Block - erst dann
             # gibt es das Zwischenmaterial. Die Nummern ruecken um eins,
             # sobald die Stufe vorkommt (sonst alles wie bisher).
-            "unrefined": ("2. " + t("Unrefined reactions"), "flask", "rs", theme.VIOLET),
+            "unrefined": ("2. " + t("Unrefined reactions"), "flask", "rs", theme.BLUE),
             "reaction_1": ("2. " + t("Reactions \u2013 Intermediate"),
-                          "flask", "rs", theme.VIOLET),
-            # EIGENE FARBE fuer die zweite Reaktions-Stufe (Nutzer,
-            # Sitzung 12): beide Stufen sahen gleich aus, obwohl sie
-            # nacheinander laufen und getrennt geplant werden.
+                          "flask", "rs", theme.BLUE),
             "reaction_2": ("3. " + t("Reactions \u2013 Composite"),
-                          "flask", "rs", theme.VIOLET_2),
+                          "flask", "rs", theme.BLUE),
             "component": ("4. " + t("Components"), "wrench", "ms", theme.BLUE),
             "end": ("5. " + t("End product"), "target", "ms", theme.AMBER)}
         if by_stage_char.get("unrefined"):
@@ -8634,6 +8900,8 @@ class BauplanTabs:
                     #   None     - offen, normales Kaestchen
                     #   "fertig" - ESI hat die Runs geliefert -> gruener Punkt
                     #   "laeuft" - steckt in der Bauschleife -> CYAN_RUN-Punkt
+                    #   "bestand" - Bestand des Erzeugnisses deckt sie (emm518)
+                    #   "nicht_noetig" - kein Verbraucher mehr offen (emm521)
                     # Gedimmt werden beide erledigten Faelle.
                     _zustand = None
                     if R <= 0:
@@ -8683,10 +8951,52 @@ class BauplanTabs:
                         if _lauf_r > 0 and self._job_gehoert_anderem_plan(
                                 _tid_a, _fremd_res, eigene=_eigene_res):
                             _lauf_r = 0
+                        # AUS BESTAND GEDECKT IST NICHT GEBAUT (emm518,
+                        # Nutzer 11.10.2026: "oxygen und hydrogen fuel
+                        # blocks, habe ich nie gebaut aber dazu gekauft,
+                        # warum zeigt ESI gruener Punkt = wurde gebaut?").
+                        # emm514 hebt das Erledigt-Budget an, wenn der
+                        # Bestand des Erzeugnisses offene Runs deckt - ohne
+                        # diesen Zweig fiel die Zeile in "fertig" und trug
+                        # den gruenen ESI-Punkt. Es gibt dort aber KEINEN
+                        # Job: weder geliefert noch laufend. Eigener
+                        # Zustand, eigener (gedaempfter) Punkt, eigener
+                        # Tooltip - die Tooltips sagten die Wahrheit schon,
+                        # der Punkt log.
+                        _best_r = int((getattr(self, "_bd_bestand_runs", None)
+                                       or {}).get(_tid_a, 0) or 0)
+                        # FERTIG GEBAUT, NUR NICHT ABGEHOLT ("ready") ist
+                        # ebenfalls ein ESI-BELEG (Nutzer-Entscheid
+                        # Sitzung 14: "ready" gilt als FERTIG, der Output
+                        # existiert). Er zaehlt oben nicht als "laeuft" und
+                        # steht noch nicht in `_bd_runplan_delivered` -
+                        # ohne diese Zahl verloere eine abholbereite Zeile
+                        # mit emm521 ihren gruenen Punkt.
+                        _fert_r = sum(
+                            int(_j.get("runs") or 0) for _j in
+                            ((getattr(self, "_bd_active_jobs_map", None)
+                              or {}).get(_tid_a) or [])
+                            if _j.get("status") == "ready")
+                        # KEIN GRUENER PUNKT OHNE JOB (emm521, Nutzer
+                        # 11.10.2026: "in einem anderen Bauplan ist jetzt
+                        # Oxygen Fuelblock mit gruenem Punkt. ich glaube
+                        # aber nicht dass ich das gebaut habe, ansonsten
+                        # haette ich ein hacken dran gesetzt").
+                        # "fertig" war bis hierher der AUFFANGZWEIG: jede
+                        # Deckung ohne Job - vor allem die Vorstufen-Regel
+                        # (emm259/262, "alle Verbraucher sind erledigt") -
+                        # landete darin und bekam den gruenen ESI-Punkt.
+                        # Gruen heisst im ganzen Werkzeug "ESI hat die Runs
+                        # geliefert"; ohne gelieferten Job ist das eine
+                        # Falschaussage (Fehlerklasse Sitzung 9). Jetzt
+                        # fragt jeder Zweig seinen eigenen Beleg ab, und
+                        # was keinen hat, heisst "nicht_noetig".
                         # de_scan4: aus - interner Zustands-Schluessel, nie angezeigt
                         _zustand = ("laeuft"
                                     if (_lauf_r > 0 and _gel_r < R_plan)
-                                    else "fertig")
+                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)
+                                    else "bestand" if _best_r > 0
+                                    else "nicht_noetig")
                         # de_scan4: an
                         R = R_plan
                         # BEREIT ZUM ABLIEFERN (emm433): Jobs dieses Items,
@@ -8741,14 +9051,24 @@ class BauplanTabs:
                         # NICHTS VERSCHWINDET SPURLOS: die Zeile zeigt den
                         # REST, der Tooltip nennt Plan und bereits Gebautes.
                         iit.setForeground(1, QColor(theme.CYAN))
-                        iit.setToolTip(
-                            1, _txt("{rest} of {plan} runs still open \u2013 {done} "
+                        _tip_weg = _txt("{rest} of {plan} runs still open \u2013 {done} "
                                  "already delivered or currently building "
                                  "(seen via ESI). The frozen plan itself stays "
                                  "unchanged.").format(
                                      rest=f"{R:,}".replace(",", "'"),
                                      plan=f"{R_plan:,}".replace(",", "'"),
-                                     done=f"{_weg:,}".replace(",", "'")))
+                                     done=f"{_weg:,}".replace(",", "'"))
+                        # EHRLICH SAGEN, WAS DAVON BESTAND IST (emm514):
+                        # "seen via ESI" allein waere fuer zugekaufte Stuecke
+                        # eine Falschaussage.
+                        _best_n = int((getattr(self, "_bd_bestand_runs", None)
+                                       or {}).get(_tid_a, 0) or 0)
+                        if _best_n:
+                            _tip_weg += "\n" + _txt(
+                                "{n} run(s) of it are covered by stock of the "
+                                "product itself (e.g. bought in) \u2013 nothing "
+                                "needs to be built for them.").format(n=_best_n)
+                        iit.setToolTip(1, _tip_weg)
                     iit.setTextAlignment(3, Qt.AlignRight | Qt.AlignVCenter)  # Zeit rechts
                     iit.setTextAlignment(5, Qt.AlignCenter)
                     if _surp_here:
@@ -9161,6 +9481,13 @@ class BauplanTabs:
                         if _zustand == "fertig":
                             # de_scan4: an
                             iit.setIcon(0, icons.gruener_punkt())
+                        # de_scan4: aus - interner Zustands-Schluessel
+                        elif _zustand in ("bestand", "nicht_noetig"):
+                            # de_scan4: an
+                            # Kein Job - nur Bestand (emm518) bzw. kein
+                            # offener Verbraucher mehr (emm521): gedaempfter
+                            # Punkt, nie der gruene ESI-Punkt.
+                            iit.setIcon(0, icons.bestand_punkt())
                         else:
                             iit.setIcon(0, icons.lauf_punkt())
                             # UNSICHERE ZUORDNUNG BENENNEN (Nutzer, Sitzung
@@ -9210,15 +9537,46 @@ class BauplanTabs:
                             "the material this line still reserves for other "
                             "build plans.")
                         if not iit.toolTip(0):
-                            iit.setToolTip(0, (_txt(
-                                "Nothing left to do here \u2013 ESI has this "
-                                "covered. The line stays so you can look up "
-                                "later what was built and what it needed.")
-                                # de_scan4: aus - interner Zustands-Schluessel
-                                if _zustand == "fertig" else _txt(
+                            # BESTANDSGEDECKT heisst NICHT "ESI hat geliefert"
+                            # (emm514): fuer zugekaufte Stuecke die Wahrheit
+                            # sagen, nicht den ESI-Satz.
+                            _best_n0 = int((getattr(self, "_bd_bestand_runs",
+                                                    None) or {}).get(_tid_a, 0) or 0)
+                            # de_scan4: aus - interner Zustands-Schluessel
+                            if _zustand == "bestand" and _best_n0:
                                 # de_scan4: an
-                                "Currently in the build queue according to "
-                                "ESI \u2013 nothing to do here.")) + _frei_tip)
+                                _tip0 = _txt(
+                                    "{n} run(s) of it are covered by stock of the "
+                                    "product itself (e.g. bought in) \u2013 nothing "
+                                    "needs to be built for them.").format(n=_best_n0)
+                            # de_scan4: aus - interner Zustands-Schluessel
+                            elif _zustand == "fertig":
+                                # de_scan4: an
+                                _tip0 = _txt(
+                                    "Nothing left to do here \u2013 ESI has this "
+                                    "covered. The line stays so you can look up "
+                                    "later what was built and what it needed.")
+                            # de_scan4: aus - interner Zustands-Schluessel
+                            elif _zustand == "nicht_noetig":
+                                # de_scan4: an
+                                # Woher die Deckung kommt, steht fest - nicht
+                                # raten (emm521, Regel 1).
+                                _tip0 = (_txt(
+                                    "No job and no stock for this \u2013 the plan "
+                                    "does not need these runs any more: every "
+                                    "item that would use them is done.")
+                                    if _tid_a in (getattr(
+                                        self, "_bd_vorstufen_budget", None) or ())
+                                    else _txt(
+                                    "Nothing to do here \u2013 but there is no "
+                                    "delivered job and no stock for it either. "
+                                    "Nothing of this was built as far as the "
+                                    "tool can tell."))
+                            else:
+                                _tip0 = _txt(
+                                    "Currently in the build queue according to "
+                                    "ESI \u2013 nothing to do here.")
+                            iit.setToolTip(0, _tip0 + _frei_tip)
                         else:
                             iit.setToolTip(0, iit.toolTip(0) + _frei_tip)
                     citem.addChild(iit)
@@ -9272,9 +9630,22 @@ class BauplanTabs:
                                 _txt("{n} blueprints").format(n=njobs))
                             _kopf.setCursor(Qt.PointingHandCursor)
                             _kopf.setMinimumHeight(24)
+                            # DIE NICHT VERPLANTEN KOPIEN STEHEN NUR IM
+                            # TOOLTIP (emm538, Nutzer: "nur bei mouse over
+                            # nicht fix irgendwo hin hauen") - wer 1 Original
+                            # und 2 angefangene Kopien hat, sieht hier, warum
+                            # nur ein Job geplant ist.
+                            _aus538 = (getattr(self, "_bd_bp_kopien_aus", None)
+                                       or {}).get(a.get("tid"))
                             _kopf.setToolTip(
                                 _txt("Click copies the blueprint name:")
-                                + f"\n{_bp_nm}")
+                                + f"\n{_bp_nm}"
+                                + (("\n" + _txt(
+                                    "Only {b} original(s) planned - {k} started "
+                                    "copy(ies) are left out: a job on a small copy "
+                                    "would not start in game.").format(
+                                        b=_aus538[0], k=_aus538[1]))
+                                   if _aus538 else ""))
                             # GERAHMT WIE DIE RUN-ZAHLEN (Nutzer,
                             # 15.09.2026: "alle anderen blueprints die da
                             # vorkommen" sollen denselben kleinen Rahmen

@@ -339,6 +339,23 @@ def gruener_punkt(groesse: int = 14):
     return _punkt(_theme.GREEN, groesse)
 
 
+def bestand_punkt(groesse: int = 14):
+    """Ein gefuellter Kreis in MUTED: "aus Bestand gedeckt, kein Job".
+
+    NUTZER-BEFUND 11.10.2026 ("oxygen und hydrogen fuel blocks, habe ich nie
+    gebaut aber dazu gekauft, warum zeigt ESI gruener Punkt = wurde gebaut?
+    dazu sollte es nie einen Job gegeben haben oder?"): emm514 hebt das
+    Erledigt-Budget an, wenn der BESTAND des Erzeugnisses offene Runs deckt.
+    Die Zeile fiel damit in den Zweig "fertig" - und bekam den gruenen
+    Punkt, der im ganzen Werkzeug "ESI hat die Runs geliefert" heisst. Eine
+    Zahl (hier: ein Symbol) mit einem Namen, der etwas anderes meint -
+    dieselbe Fehlerklasse wie in Sitzung 9. Der Punkt ist deshalb GEDAEMPFT:
+    nichts zu tun, aber auch nichts gebaut.
+    """
+    from . import theme as _theme
+    return _punkt(_theme.MUTED, groesse)
+
+
 def lauf_punkt(groesse: int = 14):
     """Ein gefuellter Kreis in der Lauf-Farbe: "steckt in der Bauschleife".
 

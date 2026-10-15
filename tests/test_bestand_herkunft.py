@@ -1513,7 +1513,13 @@ check("aa38 automatisch hinzugefuegte Items werden benannt",
 #     ihn verwirrt hat: der Dialog rechnet gegen das PORTFOLIO (ueberall),
 #     der Bauplan gegen die verknuepften BAU-Strukturen.
 check("aa38 Spalte 'am Bau-Ort' vorhanden", 't("at build location")' in _src_txt)
-check("aa38 Tabelle hat sieben Spalten", "tree.setColumnCount(7)" in _src_txt)
+# emm545/emm546: NEUN Spalten - "Puffer" (emm545) und "m3" (emm546) kamen
+# zwischen "In den Wagen" und "Status" dazu (Nutzer: "wieviel mehr man
+# einkauft" bzw. "ausserdem steht in der shoppingliste das Volumen
+# nicht"). Die Status-Spalte ist damit Index 8; wer sie wieder auf 6
+# oder 7 schreibt, uebermalt Puffer oder Volumen.
+check("aa38 Tabelle hat neun Spalten", "tree.setColumnCount(9)" in _src_txt)
+check("aa38 Status steht in Spalte 8", 'it.setText(8, t("this plan builds it"))' in _src_txt)
 check("aa38 Aufrufer reicht den Bauplan-Bestand durch",
       'plan_stock=(getattr(self, "_bd_opts", None) or {}).get("stock")'
       in _src_txt)
@@ -2258,20 +2264,17 @@ check("aa59 Reihenfolge Bauen/kaufen -> Fertigungstiefe",  _i_bk < _i_ft)
 check("aa59 Fertigungstiefe -> Blacklist", _i_ft < _i_bl)
 check("aa59 Blacklist -> Blaupausen-Frage", _i_bl < _i_kt)
 # SITZUNG 17 (Nutzer: "lass im Bauplan Build or Buy und Production depth
-# bitte standard ausgeklappt"): die ersten ZWEI offen, die drei uebrigen zu.
-# SITZUNG 20: die Blacklist startet ebenfalls offen (Nutzer) - sie steht
-# jetzt zwischen Fertigungstiefe und Blaupausen-Frage, also DREI offene bis
-# zur Blaupausen-Karte.
+# bitte standard ausgeklappt"): die ersten ZWEI offen.
 # 27.09.2026 (Nutzer: "im Bauplan den Reprocessing ausklappen als
-# Standard"): Reprocessing zwischen Fertigungstiefe und Blacklist auch offen.
-check("aa59 Build or buy, Production depth, Reprocessing und Blacklist starten offen",
-      _src_txt[_i_bk:_i_kt].count("expanded=True") == 4)
-# SITZUNG 20 (Nutzer-Entscheid): die zwei Invention-Haken stecken jetzt IN
-# der Kategorien-Karte, es gibt also nur noch ZWEI eingeklappte Karten.
-# Die Reihenfolge-Zusagen oben gelten weiter - "Invention" steht als
-# Zwischenueberschrift innerhalb der Kategorien-Karte, vor der Blacklist.
-check("aa59 nur die Blaupausen-Frage bleibt eingeklappt",
-      _src_txt[_i_bl:_i_kt + 200].count("expanded=False") == 1)
+# Standard"): Reprocessing auch offen.
+# 10.10.2026 (Nutzer: "im Bauplan Blacklist und Do i have the blueprints
+# bitte standardmaessig ab jetzt eingeklappt lassen" - ERSETZT den
+# Sitzung-20-Entscheid "Blacklist startet offen"): Blacklist UND
+# Blaupausen-Frage starten zu.
+check("aa59 Build or buy, Production depth und Reprocessing starten offen",
+      _src_txt[_i_bk:_i_kt].count("expanded=True") == 3)
+check("aa59 Blacklist und Blaupausen-Frage starten eingeklappt",
+      _src_txt[_i_bl:_i_kt + 200].count("expanded=False") == 2)
 # SITZUNG 20, zweiter Anlauf (Nutzer-Entscheid): die Einkaufs-Haken stehen
 # im INVENTION-REITER, direkt unter der Rechnung, aus der ihre Mengen
 # stammen. Jede Karte beantwortet damit wieder genau eine Frage.
@@ -4130,11 +4133,28 @@ check("aa99 Frachtaufschlag im Materialpreis wird ausgewiesen",
 # MATERIALPREISE (damit er bei Kauf-oder-Bau mitentscheidet) - er war also
 # gerechnet, aber nirgends zu sehen.
 _rb100 = _fn_src("rebuild")
-check("aa100 Frachtanteil wird beziffert", "_fr_in_mat = _fr_rate * sum(" in _rb100)
+check("aa100 Frachtanteil wird beziffert",
+      "_fr_in_mat = (_fr_rate * _fr_vol) if _fr_rate > 0 else 0.0" in _rb100)
 # ENTSCHEIDEND: aus derselben Einkaufsliste und denselben Volumen wie die
 # Materialkosten - sonst stuenden zwei Zahlen fuer dieselbe Fracht da.
-check("aa100 aus derselben Einkaufsliste wie die Materialkosten",
-      "for _t, _q in buy_map.items())" in _rb100)
+# emm545: und zwar aus der Liste MIT Material-Puffer. Vorher stand hier
+# `buy_map` (ohne Puffer), gekauft und geflogen wird aber die gepufferte
+# Liste - gemessen an seinem Fuelblock-Plan 103'617.20 statt 104'743.48 m3,
+# also 501'195 ISK Fracht zu wenig (Regel 3: die gefaehrliche Richtung).
+# `tinfo["volume"]` IST die Summe ueber buy_surplus x vols; damit gibt es
+# nur noch EINE Rechnung (Regel 9) und die ausgewiesenen m3 koennen vom
+# Betrag nicht mehr abweichen.
+check("aa100 Frachtvolumen kommt aus transport_estimate",
+      '_fr_vol = float((tinfo or {}).get("volume", 0) or 0)' in _rb100)
+check("aa100 transport_estimate rechnet mit der gepufferten Liste",
+      "industry.transport_estimate(\n                buy_surplus, vols," in _rb100)
+check("aa100 keine zweite Frachtsumme ueber die ungepufferte Liste",
+      "for _t, _q in buy_map.items())" not in _rb100)
+# Die m3 stehen an der Zeile - er musste sie sonst aus dem ISK-Betrag
+# zurueckrechnen, um sie mit der Frachtseite zu vergleichen.
+check("aa100 Beschriftung nennt die Kubikmeter",
+      't("Freight service ({v} m\\u00b3)")' in _rb100
+      or 't("Freight service ({v} m³)")' in _rb100)
 check("aa100 Material-Zeile zeigt den Betrag OHNE Aufschlag",
       "isk(mc - _fr_in_mat" in _rb100)
 check("aa100 eigene Zeile im Detail-Panel",
@@ -4430,8 +4450,12 @@ _ccf108 = _fn_src("_cart_conflict_filter")
 check("aa108 Mengen kommen aus dem Plan, nicht aus dem Dialog",
       "copy_qty" in _ccf108
       and '_r["missing"] = int(_pq.get("missing", 0) or 0)' in _ccf108)
+# emm546: die Auswahl steckt jetzt in mw_helpers.einkauf_posten - EINE
+# Liste fuer Kopie UND Volumen-Zeile (Regel 9). Die Zusage ist dieselbe:
+# die Menge kommt aus der ZEILE, nicht aus einem zweiten Nachschlagewerk.
+_mh108 = open("eve_trader/ui/mw_helpers.py", encoding="utf-8").read()
 check("aa108 Anzeige und Kopie aus DERSELBEN Zeile",
-      '_q = int(_r.get(feld) or 0)' in _ccf108
+      'q = int(r.get(feld) or 0)' in _mh108
       and '(copy_qty or {}).get(_r["tid"], {}).get(feld)' not in _ccf108)
 check("aa108 Status wird mit den Plan-Zahlen neu bestimmt",
       # NACHGEFUEHRT (Sitzung 7): der Status kommt jetzt aus
@@ -4447,18 +4471,21 @@ check("aa108 der Bauplan uebergibt sie auch",
 # Mineralien standen wieder auf der Liste. Einfrieren schuetzt die
 # PLANUNG (Struktur, Mengen, Preise), nicht die Einkaufsliste.
 _cm108 = _fn_src("_copy_materials")
+# emm547: die Rest-Rechnung selbst liegt in `_einkauf_jetzt` - dieselbe
+# Stelle, aus der die Detail-Zeile "Einkauf jetzt" ihr Volumen nimmt.
+_ej108 = _fn_src("_einkauf_jetzt") or ""
 check("aa108 und zwar Gesamtbedarf UND Fehlmenge",
       '"need": int(r.get("total"' in _cm108
-      and "self._fehlbedarf_jetzt()" in _cm108
+      and "self._fehlbedarf_jetzt()" in _ej108
       # Seit aa274 laeuft die Fehlmenge im Rest-Modus durch _rest_kaufmenge
       # (Bestand + Eigenbau abgezogen) - der rohe _rest.get() waere zu hoch.
       and "_rest_kaufmenge(r)" in _cm108)
 # OHNE REST-RECHNUNG bleibt die Plan-Menge stehen: lieber zu viel
 # anbieten als eine Luecke verschweigen.
 check("aa108 ohne Rest-Rechnung faellt es auf die Plan-Menge zurueck",
-      'else int(r.get("missing", 0) or 0)' in _cm108)
+      'else int(r.get("missing", 0) or 0)' in _cm108 + _ej108)
 check("aa108 unaufgeloeste Namen wandern nicht in die Zwischenablage",
-      '_nm.startswith("#")' in _ccf108 and "_skipped" in _ccf108)
+      'name.startswith("#")' in _mh108 and "_skipped" in _ccf108)
 check("aa108 sie werden aber gemeldet, nicht verschwiegen",
       "without a resolved name" in _ccf108)   # Sitzung 17: englischer Schluessel
 check("aa108 keine Kategorie-Kommentarzeilen mehr im Multibuy",
@@ -4480,7 +4507,28 @@ check("aa109 Puffer wirkt auf die kopierte Menge",
       "self._buy_surplus_qty(_q)" in _ccf109)
 # EINE Einstellung fuer alle drei Wege (Bauplan-Fuss, Wagen, dieses Fenster).
 check("aa109 dieselbe Einstellung wie Bauplan und Wagen",
-      'self.settings["bau_buy_surplus"] = int(_v)' in _ccf109)
+      'self.settings["bau_buy_surplus"] = _v' in _ccf109)
+# emm545, Nutzer: "es darf erst gerechnet werden wenn man enter drueckt,
+# oder mit der maus wo anders hinklickt, nicht schon beim hoch und runter
+# schrauben der prozente". Vorher hing `valueChanged` dran - jeder
+# Pfeilklick schrieb die ganze settings.json (bei ihm 17 MB).
+check("aa109 Puffer erst bei Enter oder Fokuswechsel",
+      "_pf.editingFinished.connect(_puffer_uebernehmen)" in _ccf109
+      and "_pf.valueChanged.connect" not in _ccf109)
+check("aa109 Spinbox meldet nicht jede getippte Ziffer",
+      "_pf.setKeyboardTracking(False)" in _ccf109)
+check("aa109 Kopieren uebernimmt einen noch offenen Puffer",
+      "_puffer_uebernehmen()\n                # MENGEN AUS DEM PLAN" in _ccf109)
+# Der Puffer ist SICHTBAR: "In den Wagen" zeigt die wirklich gekaufte
+# Menge, daneben steht der Aufschlag. Gerechnet wird aus der gemerkten
+# Rohmenge - nie aus dem schon gepufferten Zellentext.
+check("aa109 Spalte zeigt die gepufferte Menge",
+      "_mit = self._buy_surplus_qty(_roh)" in _ccf109
+      and "_it.setText(5, _num(_mit))" in _ccf109)
+check("aa109 Aufschlag steht in der eigenen Spalte",
+      '_it.setText(6, ("+" + _num(_plus)) if _plus > 0 else "")' in _ccf109)
+check("aa109 Puffer-Spalte rechnet aus der Rohmenge",
+      "_puffer_zeilen.append((it, r.get(\"cart_qty\"), r[\"tid\"]))" in _ccf109)
 check("aa109 und dieselbe Rundung wie der Wagen",
       "self._buy_surplus_qty(qty)" in _fn_src("_plan_to_cart"))
 
@@ -5942,8 +5990,14 @@ check("aa146 stattdessen bekommt voll Gedecktes einen ZUSTAND (Sitzung 14)",
       '_zustand = ("laeuft"' in _fbs146)
 # 4 seit 27.09.2026: die KOPIE eines gespeicherten Plans (_multi_kopie_von)
 # startet ohne Haken - sie loescht sie dort, setzt nie welche.
-eq("aa146 'checked_runplan' hat genau vier Stellen (save/plan/loader/Kopie leeren)",
-   _src_txt.count('"checked_runplan"'), 4)
+# 5 seit emm524: plan_anspruch_mitlaufend LIEST die Haken, um abgehakte
+# Erz-Schritte im Anspruch umzubuchen (reprocess.anspruch_anpassen). Rein
+# lesend - es wird dort nichts gesetzt und nichts geleert. Die Zahl bleibt
+# ein Riegel: wer eine SECHSTE Stelle dazubaut, wird hier rot und muss
+# sagen, ob sie schreibt.
+eq("aa146 'checked_runplan' hat genau fuenf Stellen "
+   "(save/plan/loader/Kopie leeren + Anspruch liest)",
+   _src_txt.count('"checked_runplan"'), 5)
 
 # ---------------------------------------------------------------- (aa147)
 # NEU BERECHNEN SETZT DIE RUNPLANER-HAEKCHEN ZURUECK (Nutzer-Entscheidung,
@@ -7074,7 +7128,7 @@ check("aa164 der Loop ueberspringt ESI-gedeckte Items NICHT mehr",
 check("aa164 die Zaehl-Zeile ist weg - es wird nichts mehr ausgeblendet",
       "von ESI ausgeblendet" not in _rp164)
 check("aa164 stattdessen bekommt die Zeile einen ZUSTAND",
-      '_zustand = ("laeuft"' in _rp164 and 'else "fertig")' in _rp164)
+      '_zustand = ("laeuft"' in _rp164 and 'else "nicht_noetig")' in _rp164)
 # NUR EIN WEG ZUM ZUSTAND (Rotprobe-Fund, Sitzung 14): es gab einen zweiten
 # Block, der den Zustand nochmals aus `_bd_runplan_hidden` bestimmte. Er war
 # vollstaendig redundant - `_rest_budget` entsteht aus denselben Zahlen.
@@ -7090,7 +7144,7 @@ check("aa164 kein zweiter Zustands-Weg: _bd_runplan_hidden wird nicht gelesen",
       'getattr(self, "_bd_runplan_hidden"' not in _rp164
       and "self._bd_runplan_hidden" not in _rp164)
 check("aa164 erledigte Zeilen zeigen die PLAN-Runs, nicht die Rest-Null",
-      'else "fertig")\n                        # de_scan4: an\n                        R = R_plan' in _rp164)
+      'else "nicht_noetig")\n                        # de_scan4: an\n                        R = R_plan' in _rp164)
 # GEDECKT IST NICHT GEBAUT (Rotprobe-Fund, Sitzung 14): `fertig_menge`
 # zaehlt geliefert UND laufend zusammen. Ein pauschales "fertig" im
 # Rest-Budget-Zweig setzte deshalb einen GRUENEN Punkt auf Positionen, die
@@ -8643,8 +8697,10 @@ check("aa195 die Bauplan-Karten holen ihre Bilder nach",
 # GENAU zaehlen (>=13 waere beim Wegfall EINES Anschlusses blind geblieben
 # - selbst gefunden, bevor die Rotprobe es musste). Wer einen Anschluss
 # ergaenzt oder streicht, zieht die Zahl hier BEWUSST nach.
-eq("aa195 GENAU 13 Stellen sind am Icon-Nachtrag angeschlossen",
-   _src_txt.count("self._icon_prefetch_pending("), 13)
+# emm548: der Multiplan-Vorschlag ist der 14. Anschluss (seine Liste zeigte
+# ueberhaupt kein Item-Bild).
+eq("aa195 GENAU 14 Stellen sind am Icon-Nachtrag angeschlossen",
+   _src_txt.count("self._icon_prefetch_pending("), 14)
 
 
 # ---------------------------------------------------------------- (aa196)
@@ -9294,8 +9350,10 @@ check("aa210 der Reservierungs-Fall wird eigens erkannt",
       and "if _resv > 0:" in _src_txt)
 # emm318: "0 - reserved" las der Nutzer als "nichts reserviert" -> nennt
 # jetzt, wer das Material haelt.
+# emm525: der Satz ist der RUECKFALL, wenn kein Halter benannt werden kann -
+# sonst steht dort "Riggs 1: 826". Beide Formen stehen im Quelltext.
 check("aa210 und heisst dann 'von anderen Plaenen reserviert', nicht 'nicht vor Ort'",
-      '"0  \\u2013 " + t("reserved by other plans")' in _src_txt)
+      '+ t("reserved by other plans"))' in _src_txt)
 check("aa210 der Tooltip stellt klar, dass es DA ist",
       "It IS there on site, but" in _src_txt)   # Sitzung 13: t()
 check("aa210 er nennt die blockierenden Plaene",
@@ -9629,8 +9687,13 @@ check("aa216 Hub-Anzeige ist am Hub-Wechsel angemeldet",
 # stehen. Der ganze Weg laeuft hier durch die ECHTE Pool-Funktion, mit der
 # auch die App arbeitet.
 from eve_trader.ui.mw_helpers import MainWindowHelpers as _MWH218  # noqa: E402
+# Der Schnappschuss traegt seit emm523 auch den ANSPRUCH (buy/stock_used/
+# build_made) - daraus wird die Reservierung abgeleitet, nicht mehr aus der
+# gespeicherten Zweitkopie. Hier deckungsgleich mit `_res218`, damit die
+# Zusagen unten unveraendert gelten.
 _snap218 = _MWH218._plan_snapshot_pack(
-    {"build_mats": {100: [(200, 50)], 200: [(300, 10)]}})
+    {"build_mats": {100: [(200, 50)], 200: [(300, 10)]},
+     "stock_used": {200: 50, 300: 10, 100: 10}})
 _asg218 = [{"tid": 200, "runs": 3, "stage": "reaction_1", "char_id": 1},
            {"tid": 200, "runs": 2, "stage": "reaction_1", "char_id": 2},
            {"tid": 100, "runs": 10, "stage": "end", "char_id": 1}]
@@ -11375,23 +11438,28 @@ for _f247, _fn247 in (("ui/mw_bauplan_tabs.py", "_fill_bauplan_schedule"),
     check(f"aa247 {_fn247} holt `_txt`, bevor es ruft",
           "import t as _txt" in _kopf247)
 
-# DIE ZWEI REAKTIONS-STUFEN MUESSEN UNTERSCHEIDBAR SEIN (Nutzer, Sitzung
-# 12: "aktuell ist es dasselbe Violett wie 3. Reaktionen - Composite").
-# Sie laufen nacheinander und werden getrennt geplant - gleiche Farbe
-# heisst, man verwechselt sie beim Abarbeiten.
+# FARBE NUR, WO SIE ETWAS BEDEUTET (Nutzer 10.10.2026: "es sieht mehr aus
+# wie ein Regenbogen wirrwar" - ERSETZT den Sitzung-12-Entscheid "eigene
+# Farbe fuer die zweite Reaktions-Stufe"): ALLE fuenf Bau-Stufen-Eintraege
+# (fuel, unrefined, reaction_1, reaction_2, component) tragen dasselbe
+# Blau - unterschieden wird ueber die Nummer; farbig bleiben nur das
+# Endprodukt (amber), Reprocessing (gruen) und Science (violett).
 from eve_trader.ui import theme as _th247                     # noqa: E402
-check("aa247 die zwei Reaktions-Stufen sind unterscheidbar",
-      _th247.VIOLET != _th247.VIOLET_2)
-# UND DIE STUFEN-TABELLE BENUTZT BEIDE. Nur zwei Farben zu DEFINIEREN
-# genuegt nicht - eine Mutation, die in der Tabelle wieder dieselbe
-# einsetzte, blieb sonst unbemerkt.
 _st247 = _fn_src("_fill_bauplan_schedule")
-check("aa247 und die Stufen-Tabelle benutzt beide",
-      "theme.VIOLET)" in _st247 and "theme.VIOLET_2)" in _st247)
-# UND "wird gebaut" hat eine EIGENE Farbe: violett ist die Farbe der
-# STUFE, ein laufender Job ein ZUSTAND - zwei Aussagen, zwei Farben.
+check("aa247 alle fuenf Bau-Stufen im selben Blau",
+      _st247.count("theme.BLUE)") == 5)
+check("aa247 kein Violett mehr in der Stufen-Tabelle",
+      "theme.VIOLET" not in _st247)
+check("aa247 nur das Endprodukt traegt Amber in stage_meta",
+      '"ms", theme.AMBER)}' in _st247)
+check("aa247 Reprocessing bleibt gruen",
+      "_farbe0 = theme.GREEN" in _fn_src("_repro_block"))
+check("aa247 Science-Koepfe bleiben violett",
+      "theme.VIOLET" in _fn_src("_science_block"))
+# UND "wird gebaut" hat eine EIGENE Farbe: Blau ist die Farbe der STUFE,
+# ein laufender Job ein ZUSTAND - zwei Aussagen, zwei Farben.
 check("aa247 'wird gebaut' ist nicht die Stufen-Farbe",
-      _th247.CYAN_RUN not in (_th247.VIOLET, _th247.VIOLET_2))
+      _th247.CYAN_RUN != _th247.BLUE)
 
 
 # ---------------------------------------------------------------- (aa248)
@@ -13285,7 +13353,7 @@ check("aa301 beim Start laeuft es auch bei frischen Transaktionen",
 # reines Fertigungsmaterial. Erfindungsmaterial steht in inv_buy/
 # inv_stock_used (eigene Felder, damit die Kosten nicht doppelt zaehlen) und
 # bekam deshalb 0 - und alles mit 0 fliegt aus der Liste.
-_rk302 = _fn_src("_copy_materials") or ""
+_rk302 = _fn_src("_einkauf_jetzt") or ""   # emm547: EINE Stelle
 check("aa302 der Restbedarf rechnet weiter NUR mit Fertigungsmaterial",
       'build_mats = plan.get("build_mats")' in _fn_src("_fehlbedarf_jetzt"))
 check("aa302 Erfindungsmaterial wird als solches erkannt",
@@ -13624,7 +13692,10 @@ check("aa272 fehlbedarf_vorschau rechnet ueber restbedarf_map",
 _bf272 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
 check("aa272 die Einkaufsliste kennt den Restbedarf",
       "_restbedarf_jetzt()" in _bf272
-      and "if _rest_only_cb.isChecked():" in _bf272)
+      # emm547: `_einkauf_jetzt` liest den Haken ueber self, damit die
+      # Detail-Zeile denselben Modus sieht wie der Kopier-Knopf.
+      and "self._bd_rest_only_cb = QCheckBox(" in _bf272
+      and 'getattr(self, "_bd_rest_only_cb", None)' in _bf272)
 check("aa272 der Schalter ist sichtbar und vorbelegt",
       "mat_tab_toolbar.addWidget(_rest_only_cb)" in _bf272
       and "_rest_only_cb.setChecked(True)" in _bf272)
@@ -13754,23 +13825,23 @@ eq("aa275 selbst produziertes Material zaehlt gegen den Bedarf",
 
 # ---------------------------------------------------------------- (aa276)
 # KLEINGEDRUCKTES IN DEN TOOLTIP (Nutzer, Sitzung 16: "dieses Kleingedruckte
-# stoert mich, kann das weg").
+# stoert mich, kann das weg"; NACHGESCHAERFT 10.10.2026, Screenshot der
+# Build-or-buy-Karte: "nimm diese Anzeigen raus die sind verwirrend und zu
+# viel Text!" - gemeint Director-Rolle, ESI-Cache-Hinweis, "Reserved by").
 #
-# NICHT GELOESCHT, SONDERN VERLEGT. Die Zeilen erklaeren den Einfrier-Stand,
-# die Pipeline und - entscheidend - WELCHER Plan gerade Material reserviert.
-# Genau diese Zeile hat heute den Fall "Ametat II haelt 29,7 Mio Einheiten"
-# aufgeklaert; ohne sie haette er weiter Material gekauft, das er besitzt.
-#
-# SICHTBAR BLEIBT NUR, WAS EINE ENTSCHEIDUNG AUSLOEST: eine fremde
-# Reservierung (\U0001F512) oder eine Warnung (\u26a0). Der Rest wandert
-# unter die Maus.
+# SICHTBAR BLEIBT NUR NOCH "Not loadable" - die eine Warnung, bei der der
+# Plan OHNE Bestand rechnet (kostet ISK; steht zusaetzlich in Statuszeile
+# und Hinweis). Alles andere, auch die Reservierungs-Zeile, wandert
+# vollstaendig in den Tooltip; je Materialzeile bleibt "0 - von anderen
+# Plaenen reserviert" sichtbar. ERSETZT den Sitzung-16-Filter "jede
+# \u26a0-Zeile + Reservierung".
 _ag276 = _fn_src("_toggle_assets") or _src_txt
 # DIE VERWENDUNG PRUEFEN, nicht die Berechnung: eine Mutation, die _wichtig
 # berechnet und dann doch `parts` anzeigt, blieb sonst gruen. Sie tat es.
-check("aa276 nur Reservierung und Warnung bleiben sichtbar",
+check("aa276 sichtbar bleibt allein die Not-loadable-Zeile",
       'asset_age_lbl.setText("\\n".join(_wichtig))' in _src_txt
-      and '_p.lstrip().startswith("\\u26a0")' in _src_txt
-      and "_res_kopf.strip() in _p" in _src_txt)
+      and "_wichtig = [_fail_zeile] if _fail_zeile else []" in _src_txt
+      and "_fail_zeile = parts[-1]" in _src_txt)
 check("aa276 der volle Text bleibt als Tooltip erreichbar",
       'asset_age_lbl.setToolTip("\\n".join(parts))' in _src_txt)
 check("aa276 das Label ist ohne Befund unsichtbar",
@@ -15339,16 +15410,32 @@ check("aa329 ohne Bau-Ort wird nichts behauptet", "if _bau_orte:" in _own329)
 check("aa329 das Ergebnis wird weitergereicht",
       "self._bd_bp_elsewhere = anderswo" in _own329)
 _fbt329 = _fn_src("_fill_blueprint_tab")
-check("aa329 die Zelle bekommt den Zusatz",
-      "not at the build structure" in _fbt329)
+# emm509 (Nutzer: "ich dachte ich erkenne jetzt dass es nicht auf meiner
+# Bau-Strukturen liegt?" -> "ja vielleicht in einer anderen farbe"): der
+# Ort-Zusatz steht SICHTBAR in der Status-Pille, klassifiziert ueber die
+# Helferfunktion aus emm508 (dieselbe Quelle wie der Besitz-Tooltip - eine
+# Wahrheit), amber wo der fremde Ort BEWEISBAR ist, grau bei unbekanntem
+# Ort (Container, Sitzung-20-Grenze). ERSETZT den alten Zusatz aus
+# _bd_bp_elsewhere; die fenster-seitige Zaehlung (oben geprueft) bleibt.
+check("aa329 die Pille bekommt beide Zusaetze",
+      "not at the build structure" in _fbt329
+      and "location unknown)" in _fbt329)
+check("aa329 EINE Klassifizierung fuer Tooltip und Pille",
+      "_ort_art507(_b509)[0]" in _fbt329
+      and "_art, _wo = _ort_art507(_b)" in _fbt329)
 # NUR bei "genug": wo etwas fehlt, ist das die wichtigere Aussage.
-check("aa329 nur bei gruenen Zeilen", "status_col == theme.GREEN" in _fbt329)
-check("aa329 nicht rot gefaerbt und nicht gefiltert",
-      "_anderswo" in _fbt329 and "theme.RED" not in
-      _fbt329.split("_anderswo = ")[1][:400])
-check("aa329 der deutsche Eintrag steht dabei",
+check("aa329 nur bei gruenen Zeilen",
+      "if status_col == theme.GREEN:" in _fbt329)
+check("aa329 andere Farbe als die gruene Pille, nie rot",
+      'theme.AMBER};">' in _fbt329 and 'theme.MUTED};">' in _fbt329
+      and "theme.RED" not in _fbt329.split("if _weg509:")[1][:700])
+check("aa329 der Status-Text wird escaped (nie als HTML gelesen)",
+      "_html509.escape(status_txt)" in _fbt329)
+check("aa329 die deutschen Eintraege stehen dabei",
       __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
-      .get(" ({n} not at the build structure)") == " ({n} nicht an der Baustruktur)")
+      .get(" ({n} not at the build structure)") == " ({n} nicht an der Baustruktur)"
+      and __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+      .get(" ({n} location unknown)") == " ({n} Ort unbekannt)")
 
 # ---------------------------------------------------------------- (aa330)
 # PUNKT D: EIN GELIEHENER SYSTEMKOSTENINDEX HEISST NICHT "INDEX 0".
@@ -15821,10 +15908,14 @@ check("aa343 der deutsche Eintrag steht dabei",
 # hier mit "kaufen" gleichgesetzt. Die Materialien fuer diese Komponenten
 # stehen aber in DERSELBEN Liste - wer beides kauft, zahlt zweimal.
 _cr344 = _fn_src("_copy_rows")
+# emm546: der Filter steht in mw_helpers.einkauf_posten, damit die
+# Volumen-Zeile unter der Liste nicht ihre eigene Auswahl trifft.
+_mh344 = open("eve_trader/ui/mw_helpers.py", encoding="utf-8").read()
 check("aa344 die Kopie kennt die Bauliste des Plans",
-      '_baut_kopie = set(getattr(self, "_bd_plan_builds", None) or ())' in _cr344)
+      'getattr(self, "_bd_plan_builds", None))' in _cr344
+      and "einkauf_posten(" in _cr344)
 check("aa344 gebaute Posten werden uebersprungen",
-      'if int(_r["tid"]) in _baut_kopie:' in _cr344 and "continue" in _cr344)
+      "if tid in _baut:" in _mh344 and "gebaut.append(" in _mh344)
 check("aa344 und das wird gesagt, nicht verschwiegen",
       "left out, this plan builds them" in _cr344)
 check("aa344 auch wenn dadurch NICHTS uebrig bleibt",
@@ -20790,8 +20881,11 @@ eq("aa417 Beleg fuer ein Item, das der Plan nicht baut, aendert nichts",
    dict(_rm417))
 _src417 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_helpers.py"),
                encoding="utf-8").read()
+# Seit emm523 laufen BEIDE Leser durch EINE Stelle - der Beleg wird dort
+# gereicht, und beide rufen sie wirklich auf (sonst waere die Zusage leer).
 check("aa417 BEIDE Reservierungs-Leser reichen den Beleg weiter",
-      _src417.count("belegt=MainWindowHelpers._belegt_fuer_plan(p),") == 2)
+      _src417.count("belegt=MainWindowHelpers._belegt_fuer_plan(p),") == 1
+      and _src417.count("plan_anspruch_mitlaufend(p)") == 3)
 _tabs417 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_bauplan_tabs.py"),
                 encoding="utf-8").read()
 check("aa417 der Runplaner zeigt DIESELBE Karte, die die Einkaufsliste rechnet",
@@ -20913,12 +21007,21 @@ check("aa419 der Ueberblick holt die belegten MIT und zeigt sie in der Anzahl",
       "mit_belegten=True" in _rl419
       and 't("{n} (+{j} in job)").format(n=_anz, j=_n_job)' in _rl419
       and "self._bp_in_job_tooltip(b.get(\"_in_job_jobs\"))" in _rl419)
-check("aa419 Runplaner-Cache und Bestands-Refresh holen NUR freie (Vorgabe)",
-      "mit_belegten" not in _fn_src("_bd_fetch_all_owned_blueprints")
-      and "esi.fetch_blueprints(" in _fn_src("_bd_fetch_all_owned_blueprints")
+# SEIT emm507 holen Runplaner-Cache UND Bestands-Refresh mit_belegten=True
+# und trennen selbst auf: die FREIE Liste bleibt exakt die alte (eine
+# Blaupause im Job zaehlt nirgends als frei, Entscheid 26.09.2026), die
+# belegten wandern nach `_bd_bp_im_job` - nur so kann der Blueprints-Reiter
+# "im Job" sagen statt rot "completely missing" (Nutzer 10.10.2026:
+# "Prophecy und Magnate Originale sind im Kopiervorgang ingame").
+check("aa419 Runplaner-Cache trennt belegte ab, die freie Liste bleibt frei",
+      "mit_belegten=True" in _fn_src("_bd_fetch_all_owned_blueprints")
+      and 'if b.get("in_job"):' in _fn_src("_bd_fetch_all_owned_blueprints")
+      and "self._bd_bp_im_job = im_job"
+      in _fn_src("_bd_fetch_all_owned_blueprints")
       and 'jobs=jobs_by_char.get(ch["character_id"])' in _src_txt)
 check("aa419 Corp-Blaupausen werden gegen die Corp-Jobs gefiltert",
-      "out[\"blueprints\"], _belegt = esi.blaupausen_in_jobs(" in _fn_src("_corp_bau_daten"))
+      'out["blueprints"], out["blueprints_belegt"] = esi.blaupausen_in_jobs('
+      in _fn_src("_corp_bau_daten"))
 for _k419 in ("{n} (+{j} in job)", "Not available \u2013 in an industry job:",
               "{activity} until {end}", "TE research", "ME research", "Copying", "Job",
               "Blueprints that are in an industry job right now (research, copy, "
@@ -21284,10 +21387,16 @@ eq("aa436 ohne Zeitstempel zum Haken: nichts frei",
                               _alt436, 1000.0, haken_runs={"component|50": 5}),
    {34: 1000})
 check("aa436 beide Reservierungs-Leser geben die Haken-Runs mit",
-      _fn_src("_reserved_by_other_plans").count(
+      # emm523: ueber die EINE Stelle `plan_anspruch_mitlaufend`.
+      _fn_src("plan_anspruch_mitlaufend").count(
           'haken_runs=p.get("checked_runplan_runs")') == 1
+      # emm525: die Filterschleife ist als `_reservierende_plaene`
+      # herausgeloest - der Anspruch wird genau dort EINMAL geholt und von
+      # beiden Lesern (Abzug + Anzeige "wer haelt wie viel") benutzt.
+      and _fn_src("_reservierende_plaene").count(
+          "plan_anspruch_mitlaufend(p)") == 1
       and _fn_src("_reserved_by_this_plan").count(
-          'haken_runs=p.get("checked_runplan_runs")') == 1)
+          "plan_anspruch_mitlaufend(p)") == 1)
 
 # ---------------------------------------------------------------- (aa437)
 # LAUFENDE JOBS ZAEHLEN NUR BEI IHREM PLAN (Nutzer 28.09.2026; gemessen mit
@@ -22110,6 +22219,51 @@ eq("aa470 30 Min nach dem Haken: ohne Job weg (auch mit Wellen-Zusatz), laufend 
 eq("aa470 vor Ablauf der 30 Minuten: nichts", _hoj470(_h470, set(), [], _T0_470 + 1799), [])
 eq("aa470 ohne Abrufzeit: nichts", _hoj470(_h470, set(), [], None), [])
 eq("aa470 ... spaeter auch der juengere", "end|5|105" in _hoj470(_h470, set(), [], _T0_470 + 2400), True)
+
+# ---------------------------------------------------------------- (aa543)
+# emm526: SCIENCE-HAKEN WERDEN NIE AUTOMATISCH ENTFERNT. NUTZER 11.10.2026:
+# "die ganzen invention jobs laufen ebenfalls, ich habe sie sogar mal
+# abgehakt und jetzt sind sie es einfach nicht mehr, weder gruener Hacken
+# noch ein blauer Punkt". NACHGESTELLT (Regel 5): zwei Gruende, der zweite
+# trifft seine Arbeitsweise.
+try:
+    # (1) Ohne Job wuerde ein Bau-Haken fliegen - ein Science-Haken nicht.
+    _hs543 = {"inv|5|12302": _T0_470, "copy|5|12301": _T0_470,
+              "component|5|11399": _T0_470}
+    eq("aa543 Science-Haken bleiben, der Bau-Haken fliegt",
+       _hoj470(_hs543, set(), [], _T0_470 + 1800), ["component|5|11399"])
+    # (2) DAS RUECKBLICK-FENSTER war der eigentliche Taeter: Invention laeuft
+    # EINMAL am Planbeginn, abgehakt wird spaeter. Ein Bau-Haken auf einen
+    # Job, der 5 Tage vorher geliefert wurde, fliegt (3-Tage-Fenster) - das
+    # ist bei Fertigung richtig und bei Science systematisch falsch.
+    _alt543 = [{"product_type_id": 12302,
+                "completed_date": _iso470(_T0_470 - 5 * 86400)},
+               {"product_type_id": 11399,
+                "completed_date": _iso470(_T0_470 - 5 * 86400)}]
+    eq("aa543 alter Job (5 Tage vorher): Science bleibt, Bau fliegt",
+       _hoj470({"inv|5|12302": _T0_470, "component|5|11399": _T0_470},
+               set(), _alt543, _T0_470 + 1800),
+       ["component|5|11399"])
+    # (3) Mit Wellen-Zusatz ebenso (emm510 haengt "|w2" an).
+    eq("aa543 auch mit Wellen-Zusatz",
+       _hoj470({"copy|5|12301|w2": _T0_470}, set(), [], _T0_470 + 1800), [])
+    # (4) GEGENPROBE: die Bau-Zusage aus emm350 bleibt unveraendert gueltig -
+    # sonst haette ich den Fehlklick-Schutz dort mit abgeschaltet.
+    eq("aa543 der Fehlklick-Schutz der Bau-Haken bleibt",
+       _hoj470(_h470, {101}, _gel470, _T0_470 + 1800),
+       ["component|5|100", "component|5|103|w2", "component|5|104"])
+    # (5) WARUM es gefahrlos ist: ein Science-Haken gibt kein Material frei.
+    _mh543 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_helpers.py"),
+                  encoding="utf-8").read()
+    check("aa543 die Ausnahme steht in haken_ohne_job, nicht anderswo",
+          _mh543.count('("char", "repro", "copy", "inv")') == 1)
+    check("aa543 erledigt_ts_aus_haken bleibt unveraendert",
+          _mh543.count('teile[0] in ("char", "repro") or') == 1)
+    check("aa543 die Begruendung steht am Code",
+          "gibt KEIN Material frei" in _mh543
+          and "Rueckblick-Fenster" in _mh543)
+except Exception as _e543:                               # pragma: no cover
+    _fail.append(f"aa543 Science-Haken: {type(_e543).__name__}: {_e543}")
 
 # ---------------------------------------------------------------- (aa469)
 # ABSATZ (emm349, Nutzer: "die Marge ist erschreckend zu gut" / "das
@@ -23138,17 +23292,22 @@ _p510 = {"id": 7, "label": "P", "type_id": 99,
              "build_runs": {"99": 10, "50": 200},
              "build_mats": {"99": [[50, 20]], "50": [[34, 1000]]},
              "inv_buy": {"20": 40}}}}
+# emm527: Item 50 baut der Plan selbst (200 Runs decken die 20 Stueck, die
+# sein Endprodukt braucht) - es steht deshalb nicht mehr im Bedarf. Sein
+# Rohmaterial und das Invention-Material stehen voll drin.
 eq("aa510 ohne Belege: voller Bedarf",
    _L507.bedarf_aus_plaenen([_p510]),
-   {50: [("P", 20)], 34: [("P", 1000)], 20: [("P", 40)]})
+   {34: [("P", 1000)], 20: [("P", 40)]})
 _z510 = {1: {"plan_id": 7, "type_id": 50, "runs": 150},
          2: {"plan_id": 8, "type_id": 50, "runs": 50}}   # fremder Plan zaehlt nicht
 eq("aa510 150 von 200 Runs gebaut -> nur noch 250 Trit (Datacores sind dann "
    "schon verbraucht, s. aa512)",
-   _L507.bedarf_aus_plaenen([_p510], _z510), {50: [("P", 20)], 34: [("P", 250)]})
+   _L507.bedarf_aus_plaenen([_p510], _z510), {34: [("P", 250)]})
 _p510h = dict(_p510); _p510h["checked_runplan_runs"] = {"component|50": 200}
+# Alles abgehakt: die 50er-Runs sind durch, ihr Tritanium faellt weg; die
+# 50 selbst baut der Plan, meldet sie also nicht (emm527 - je Plan).
 eq("aa510 alles abgehakt -> die Zutat faellt ganz weg",
-   _L507.bedarf_aus_plaenen([_p510h], _z510), {50: [("P", 20)]})
+   _L507.bedarf_aus_plaenen([_p510h], _z510), {})
 eq("aa510 Haken und Job meinen DIESELBEN Runs (Maximum, nie Summe)",
    _L507.gebaute_runs(_p510h, _z510), {50: 200})
 _p510e = dict(_p510); _p510e["checked_runplan_runs"] = {"end|99": 10}
@@ -23174,8 +23333,8 @@ _it511 = [{"tid": 34, "name": "Tritanium", "short": 500},
           {"tid": 50, "name": "Komponente", "short": 9},
           {"tid": 99, "name": "#99", "short": 3},
           {"tid": 7, "name": "Fertig", "short": 0}]
-eq("aa511 nur echte Fehlbetraege, nichts Selbstgebautes, keine #id",
-   _L507.einkaufsliste(_it511, gebaut={50}), [("Tritanium", 500)])
+eq("aa511 nur echte Fehlbetraege, keine #id, nichts Gedecktes",
+   _L507.einkaufsliste(_it511), [("Tritanium", 500), ("Komponente", 9)])
 eq("aa511 groesster Fehlbetrag zuerst",
    _L507.einkaufsliste([{"tid": 1, "name": "B", "short": 5},
                         {"tid": 2, "name": "A", "short": 90}]),
@@ -23186,7 +23345,7 @@ eq("aa511 Multibuy-Format wie im Bauplan: Name<TAB>Menge je Zeile",
 _p511 = [{"id": 1, "frozen": {"ts": 1, "plan_snapshot": {
               "build_runs": {"50": 3, "77": 0}, "build_mats": {"50": [[34, 9]]}}}},
          {"id": 2, "label": "ohne Schnappschuss"}]
-eq("aa511 selbst gebaut = jedes Item mit Runs > 0, ueber ALLE Plaene",
+eq("aa511 gebaute_tids: jedes Item mit Runs > 0 (nur noch Diagnose, emm527)",
    _L507.gebaute_tids(_p511), {50})
 _tb511 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
 check("aa511 der Knopf nimmt dieselben Zeilen wie die Anzeige und schreibt "
@@ -23196,37 +23355,67 @@ check("aa511 der Knopf nimmt dieselben Zeilen wie die Anzeige und schreibt "
       and "add_shopping" not in _tb511)
 
 # ---------------------------------------------------------------- (aa512)
-# KEIN FEHLALARM FUER DAS, WAS DER PLAN SELBST BAUT (emm465, Nutzer: "ich
-# habe alle T2 Blueprints schon inventet und bin bei allen Bauplaenen schon
-# an den Endprodukten - Datacores koennen nicht fehlen" + "andere Sachen
-# sind aktuell in der Bauschleife und werden auch nicht fehlen").
-# (1) Ein Item, das der Plan selbst baut, bekommt NIE einen Fehlbetrag -
-#     sein Nachschub kommt aus der eigenen Produktion.
-# (2) Invention-Material zaehlt nur, solange der Plan noch GAR NICHTS
-#     gebaut hat (Invention laeuft vor dem Bau).
-# Komp liegt mit 5 Stueck da - damit laeuft es ueber den Bestands-Zweig
-# (mit leeren Zeilen kaeme es nur aus dem "liegt nirgends"-Zweig, und die
-# Mutation auf dem Bestands-Zweig blieb BLIND).
-_z512 = [{"tid": 50, "menge": 5, "ort": 10, "besitzer": "A", "art": "char",
-          "flag": "Hangar", "pfad": [], "item_id": 1}]
-_b512 = _L507.baum(_z512, {50: "Komp", 34: "Trit"}, {}, {}, {},
-                   bedarf={50: [("P", 20)], 34: [("P", 250)]},
-                   selbst_gebaut={50})
-eq("aa512 selbst gebautes Item: Bedarf ja, Fehlbetrag nein",
-   sorted((x["name"], x["short"]) for x in _b512), [("Komp", 0), ("Trit", 250)])
-_k512, _f512 = _L507.karten([], {50: "Komp", 34: "Trit"}, {}, {}, {},
-                            bedarf={50: [("P", 20)], 34: [("P", 250)]},
-                            selbst_gebaut={50})
-eq("aa512 ... und es landet nicht in 'liegt nirgends' (da gibt es nichts zu tun)",
-   [(x["name"], x["short"]) for x in _f512], [("Trit", 250)])
+# EIGENBAU WIRD ANTEILIG GUTGESCHRIEBEN - KEINE KEULE MEHR (emm527).
+#
+# NUTZER 11.10.2026, mit zwei Bildern (Einkaufslisten zweier Plaene gegen
+# die Stock-locations-Seite): "Das alles fehlt mir, wenn ich die
+# Einkaufslisten zusammenrechne. Stock locations will aber viel weniger
+# kaufen ... Stock locations muesste doch alle fehlenden Materialien aus
+# allen Bauplaenen anzeigen und einkaufen wollen."
+#
+# GEMESSEN an seiner settings.json, beide Seiten ueber die ECHTEN
+# Funktionen (`fehlbedarf_vorschau` gegen `bedarf_aus_plaenen`): 63 Posten
+# ueber 6 Plaene wichen ab, ALLE in dieselbe Richtung. Ursache war
+# emm465: "baut auch nur EIN Plan es, bleibt es draussen" - eine Keule
+# ueber ALLE Plaene. Sie traf auch Plaene, die dasselbe Teil ZUKAUFEN:
+# Hangar Cleaner 1 braucht 110 R.A.M.- Armor/Hull Tech und baut davon 0,
+# trotzdem war die Zeile nie rot, weil Riggs 1 sie baut.
+#
+# JETZT: der Bedarf je Plan ist der NETTO-Bedarf (Bedarf der offenen Runs
+# minus eigene Restproduktion) - dieselbe Bilanz wie die Einkaufsliste.
+# Nach dem Umbau: 0 von 63 Abweichungen beim Bau-Material.
 _p512 = {"id": 7, "label": "P", "type_id": 99, "frozen": {"ts": 1, "plan_snapshot": {
     "build_runs": {"99": 10, "50": 200},
     "build_mats": {"99": [[50, 20]], "50": [[34, 1000]]}, "inv_buy": {"20": 40}}}}
+# 10 Runs Endprodukt brauchen 200 Komponente; der Plan baut 200 Runs a
+# 1 Stueck -> voll gedeckt, kein Bedarf. Das Rohmaterial steht voll drin.
+eq("aa512 selbst voll gedeckte Vorstufe steht nicht mehr im Bedarf",
+   _L507.bedarf_aus_plaenen([_p512]).get(50), None)
+eq("aa512 ... ihr Rohmaterial dagegen schon",
+   _L507.bedarf_aus_plaenen([_p512]).get(34), [("P", 1000)])
+# TEILWEISE gebaut: 10 Runs brauchen 200, der Plan baut nur 150 ->
+# 50 muss er zukaufen. Vorher stand hier 0 (Keule) bzw. 200 (ohne).
+# WER ES BAUT, MELDET ES NICHT - auch wenn er nur einen Teil baut. Die
+# Seite kennt den Fortschritt zu schlecht, um anteilig zu rechnen (emm527
+# (b)): lieber eine Zeile zu wenig als ein Fehlkauf, den genauen Rest
+# zeigt der Bauplan selbst (Regel 3).
+_p512b = {"id": 8, "label": "T", "type_id": 99, "frozen": {"ts": 1, "plan_snapshot": {
+    "build_runs": {"99": 10, "50": 5},
+    "build_mats": {"99": [[50, 20]], "50": [[34, 1000]]}}}}
+eq("aa512 wer es selbst baut, meldet es nicht - auch teilweise nicht",
+   _L507.bedarf_aus_plaenen([_p512b]).get(50), None)
+# EIN PLAN BAUT, DER ANDERE KAUFT - sein R.A.M.-Fall in klein.
+_p512c = {"id": 9, "label": "Kaeufer", "type_id": 98, "frozen": {"ts": 1,
+    "plan_snapshot": {"build_runs": {"98": 1}, "build_mats": {"98": [[50, 110]]}}}}
+eq("aa512 der Plan, der es KAUFT, meldet seinen Bedarf (emm527)",
+   _L507.bedarf_aus_plaenen([_p512, _p512c]).get(50), [("Kaeufer", 110)])
+# Mehr Stueck je Run: 3 Runs a 50 decken 150 von 200.
+# INVENTION: Anteil an den offenen Endprodukt-Runs, 0 sobald gebaut wird.
+# Der Versuch, hier den vollen Bedarf zu zeigen, ist zurueckgenommen
+# (emm527 (b), Nutzer: "fehlende Datacores ist fast nicht moeglich, ich
+# habe alle T2 Blueprints schon inventet").
 eq("aa512 noch nichts gebaut: Datacores zaehlen",
    _L507.bedarf_aus_plaenen([_p512]).get(20), [("P", 40)])
 eq("aa512 schon am Bauen: Datacores sind verbraucht, zaehlen nicht mehr",
    _L507.bedarf_aus_plaenen([_p512], {1: {"plan_id": 7, "type_id": 50, "runs": 150}}
                             ).get(20), None)
+# `baum` kennt keine Sonderregel mehr - `short` ist Bedarf minus Bestand.
+_z512 = [{"tid": 50, "menge": 5, "ort": 10, "besitzer": "A", "art": "char",
+          "flag": "Hangar", "pfad": [], "item_id": 1}]
+_b512 = _L507.baum(_z512, {50: "Komp", 34: "Trit"}, {}, {}, {},
+                   bedarf={50: [("P", 20)], 34: [("P", 250)]})
+eq("aa512 baum: short = Bedarf minus Bestand, ohne Sonderregel",
+   sorted((x["name"], x["short"]) for x in _b512), [("Komp", 15), ("Trit", 250)])
 
 # ---------------------------------------------------------------- (aa513)
 # JEDER EINGESCHALTETE ORT BEKOMMT EINE KARTE (Nutzer: "R&R Yard und Space
@@ -23550,7 +23739,8 @@ check("aa517 die Statuszeile sagt, was festgeschrieben wurde (nie still)",
 # missing". Dieselbe Fehlerklasse wie der stille Asset-Abruf (emm476/477).
 _mw518 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
 _i518 = _mw518.find("def _bd_fetch_all_owned_blueprints")
-_blk518 = _mw518[_i518:_i518 + 3200]
+_blk518 = _mw518[_i518:_i518 + 7400]   # Fenster vergroessert emm507/emm517
+# (die Im-Job-Aufteilung steht jetzt zwischen Kopf und fehler-Zeile)
 check("aa518 ein gescheiterter Blaupausen-Abruf wird protokolliert, nicht "
       "verschluckt",
       "except Exception:\n                    continue" not in _blk518
@@ -23883,10 +24073,9 @@ def _aa520():
         namen = {t: f"M {t}" for t in mats + items}
         if mats and rnd.random() < .3:
             namen.pop(mats[0])      # unaufgeloester Name -> "#id"
-        gebaut = L.gebaute_tids(plaene)
         nur = {o for o in orte if rnd.random() < .7} or {orte[0]}
         kk, fehlt_ganz = L.karten(zeilen, namen, {}, {}, {}, bedarf=mit,
-                                  nur_orte=nur, selbst_gebaut=gebaut)
+                                  nur_orte=nur)
         if {k["ort"] for k in kk} != nur:
             probs["nicht jeder gewaehlte Ort hat eine Karte"].append(seed)
         _summe_karten = sum(k["menge"] for k in kk)
@@ -23895,15 +24084,13 @@ def _aa520():
             probs["Kartensumme != Zeilensumme der gewaehlten Orte"].append(seed)
         _items_alle = [it for k in kk for it in k["items"]] + fehlt_ganz
         for it in _items_alle:
-            if it["tid"] in gebaut and it["short"] > 0:
-                probs["Selbstgebautes ist short"].append(seed)
             if it["short"] < 0:
                 probs["negativer Fehlbetrag"].append(seed)
             _ges = sum(q for _l, q in it["bedarf"])
             _da = sum(z["menge"] for z in zeilen
                       if z["tid"] == it["tid"] and z["ort"] in nur)
-            if it["bedarf"] and it["tid"] not in gebaut and \
-                    it["short"] != max(0, _ges - _da):
+            # emm527: keine Sonderregel mehr - short ist Bedarf minus Bestand.
+            if it["bedarf"] and it["short"] != max(0, _ges - _da):
                 probs["short != Bedarf - Bestand (gewaehlte Orte)"].append(seed)
         for it in fehlt_ganz:
             if any(z["tid"] == it["tid"] and z["ort"] in nur for z in zeilen):
@@ -23911,7 +24098,7 @@ def _aa520():
         for k in kk:
             if k["short"] != sum(1 for it in k["items"] if it["short"] > 0):
                 probs["Karten-short zaehlt falsch"].append(seed)
-        posten = L.einkaufsliste(_items_alle, gebaut)
+        posten = L.einkaufsliste(_items_alle)
         _je_tid = {}
         for it in _items_alle:
             _je_tid.setdefault(it["tid"], it)
@@ -23921,9 +24108,13 @@ def _aa520():
         if [q for _n, q in posten] != sorted((q for _n, q in posten),
                                              reverse=True):
             probs["Einkaufsliste nicht absteigend"].append(seed)
-        if any(namen.get(t) == n for n, _q in posten
-               for t in gebaut if namen.get(t) == n):
-            probs["Selbstgebautes auf der Einkaufsliste"].append(seed)
+        # emm527: Selbstgebautes kann hier nicht mehr auftauchen, weil der
+        # Bedarf schon netto ist - geprueft wird jetzt, dass jede Zeile
+        # genau ihrem Fehlbetrag entspricht (keine erfundene Menge).
+        for n, q in posten:
+            _tr = [it for it in _items_alle if it["name"] == n]
+            if not _tr or q != _tr[0]["short"]:
+                probs["Einkaufsmenge != Fehlbetrag der Zeile"].append(seed)
         _txt = L.multibuy_text(posten)
         if posten and _txt.split("\n")[0] != f"{posten[0][0]}\t{posten[0][1]}":
             probs["Multibuy-Format kaputt"].append(seed)
@@ -25157,7 +25348,7 @@ _fb430 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
 check("aa430 _corp_bau_daten und _corp_blaupausen teilen _corp_rollen",
       _fb430.count("= self._corp_rollen(client_id, chars, out)") == 2)
 check("aa430 Bauplan-Cache haengt die Corp-Blaupausen an",
-      "self._corp_blaupausen(client_id, chars)" in
+      "self._corp_blaupausen(client_id, chars," in
       _fn_src("_bd_fetch_all_owned_blueprints"))
 check("aa430 My Blueprints: Corp-Blaupausen mit Jobs markiert, Filter ueber Besitzer",
       "self._corp_blaupausen(client_id, chars, mit_belegten=True)" in
@@ -25244,11 +25435,11 @@ check("aa427 ... der Optimierer holt die Enden-Namen aus _bd_names_ref",
 # Veroeffentlichung lassen wir immer einen Test laufen, um eine fehlerfreie
 # Veroeffentlichung zu gewaehrleisten"). Die Veroeffentlichung bricht bei
 # Rot ab, BEVOR committet wird; eigener Starter per Doppelklick. CRLF.
-_rel426b = open("release/veroeffentliche_1.1.2.bat", "rb").read()
+_rel426b = open("release/veroeffentliche_1.1.3.bat", "rb").read()
 _rel426 = _rel426b.replace(b"\r\n", b"\n")      # Logik unabhaengig vom Zeilenende
 _p426 = _rel426.find(b"python pruefe.py < nul\n")
 _f426 = _rel426.find(b"if errorlevel 1 (\n  echo ROT: pruefe.py", _p426)
-check("aa426 veroeffentliche_1.1.2.bat prueft ZUERST und bricht bei Rot ab",
+check("aa426 veroeffentliche_1.1.3.bat prueft ZUERST und bricht bei Rot ab",
       0 < _p426 < _f426 < _rel426.find(b"git commit")
       and 0 < _rel426.find(b"  goto ende\n)\necho gruen", _f426))
 check("aa426 ... und hat Windows-Zeilenenden (CRLF)",
@@ -25738,6 +25929,2236 @@ try:
        (None, None, None, None, None))
 except Exception as _e528:                               # pragma: no cover
     _fail.append(f"aa528 Preis-Trend-Helfer: {type(_e528).__name__}: {_e528}")
+
+# ---------------------------------------------------------------- (aa529)
+# AUS EINER KOPIE KANN MAN NICHT KOPIEREN (emm510, Nutzer: "ich habe 1
+# originale also kann ich nur 1mal kopieren ... dass muesste ich in 2
+# schritten erledigen"): kopier_schritte teilt die Kopierjobs des
+# Runplaners so in Schritte, dass je T1-Original hoechstens so viele Jobs
+# GLEICHZEITIG laufen, wie BPOs frei da sind.
+try:
+    from eve_trader.ui.mw_helpers import kopier_schritte as _ks529
+    # SEIN FALL: zwei T2-Blaupausen brauchen dasselbe Punisher-Original,
+    # er besitzt EINES -> zwei Schritte, Reihenfolge bleibt.
+    eq("aa529 zwei Jobs, ein Original -> zwei Schritte",
+       _ks529([(201, 1), (202, 1)], {201: 9, 202: 9}, {9: 1}),
+       [[(201, 1)], [(202, 1)]])
+    eq("aa529 zwei Originale -> ein Schritt",
+       _ks529([(201, 1), (202, 1)], {201: 9, 202: 9}, {9: 2}),
+       [[(201, 1), (202, 1)]])
+    eq("aa529 unbekannter Besitz zaehlt als 1 (Regel 3)",
+       _ks529([(201, 1), (202, 1)], {201: 9, 202: 9}, {}),
+       [[(201, 1)], [(202, 1)]])
+    eq("aa529 drei Jobs auf zwei Originale -> 2 + 1",
+       _ks529([(201, 1), (202, 1), (203, 1)],
+              {201: 9, 202: 9, 203: 9}, {9: 2}),
+       [[(201, 1), (202, 1)], [(203, 1)]])
+    eq("aa529 verschiedene T1 stoeren sich nicht",
+       _ks529([(201, 1), (202, 1)], {201: 9, 202: 8}, {9: 1, 8: 1}),
+       [[(201, 1), (202, 1)]])
+    eq("aa529 leere Auftraege -> leer", _ks529([], {}, {}), [])
+    # VERDRAHTUNG: der Copy-Block des Runplaners laeuft durch die Schritte,
+    # Wellen-Nummern fortlaufend, und die Stage-Spalte nennt den Grund.
+    _sb529 = _fn_src("_science_block")
+    check("aa529 verdrahtet im Copy-Block (Schritte + Wellen-Versatz)",
+          "kopier_schritte(" in _sb529 and "welle += _wab510" in _sb529
+          and "_bd_bp_owned_counts" in _sb529)
+    check("aa529 die Zeile sagt warum (Schritt + Original-Zahl, amber)",
+          "step {s} (only {n} original(s))" in _sb529
+          and "theme.AMBER" in _sb529.split("if _s510:")[1][:700])
+    check("aa529 der deutsche Eintrag steht dabei",
+          __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+          .get("step {s} (only {n} original(s))")
+          == "Schritt {s} (nur {n} Original(e))")
+except Exception as _e529:                               # pragma: no cover
+    _fail.append(f"aa529 Kopier-Schritte: {type(_e529).__name__}: {_e529}")
+
+# ---------------------------------------------------------------- (aa530)
+# BERICHTE SIND UTF-8 (emm511, Nutzer 10.10.2026: der Sicherungs-Bericht
+# liess sich nicht hochladen - "Die Zeichenkodierung ... konnte nicht
+# ermittelt werden", im Text stand "f?r Windows"). Windows-Werkzeuge
+# (robocopy, dir, git) und Python schreiben bei umgeleiteter Ausgabe in der
+# KONSOLEN-Codepage (cp850/cp1252), nicht in UTF-8. Deshalb beginnt jede
+# .bat, die eine Ausgabe in eine Datei schreibt, mit `chcp 65001 >nul`, und
+# jede, die Python startet, setzt zusaetzlich PYTHONIOENCODING=utf-8.
+# DIE .bat SELBST MUSS DAFUER REIN ASCII BLEIBEN - unter Codepage 65001
+# zerlegt cmd eine Batchdatei mit Umlauten (deshalb heisst es im Projekt
+# ohnehin "aufraeumen", nicht "aufräumen").
+try:
+    import glob as _gl530
+    _bats530 = sorted(_gl530.glob("werkzeuge/*.bat") + _gl530.glob("release/*.bat")
+                      + _gl530.glob("tests/*.bat"))
+    check("aa530 es gibt .bat-Werkzeuge zu pruefen", len(_bats530) >= 10)
+    _lf530, _na530, _ohne530, _py530 = [], [], [], []
+    for _p530 in _bats530:
+        _b530 = open(_p530, "rb").read()
+        if b"\n" in _b530.replace(b"\r\n", b""):
+            _lf530.append(_p530)                 # CRLF-Regel (18.09.2026)
+        if any(_x > 127 for _x in _b530):
+            _na530.append(_p530)
+        _txt530 = _b530.decode("ascii", "replace")
+        # Schreibt die .bat eine Ausgabe in eine DATEI? Das Ziel steht oft in
+        # einer Variablen (`> "%B%"`), nicht als .txt da - deshalb wird jedes
+        # Umleitungsziel gelesen und nur `nul` sowie `2>&1` ausgenommen.
+        _ziele530 = [_z.strip('"').lower() for _z in __import__("re").findall(
+            r'>>?\s*(?:"[^"]*"|[^\s>|&]+)', _txt530)]
+        _ziele530 = [_z.lstrip('> ').strip('"') for _z in _ziele530]
+        _schreibt = any(_z and _z != "nul" and not _z.startswith("&")
+                        for _z in _ziele530)
+        _hat_py = ("python" in _txt530.lower()) or ("%PY%" in _txt530)
+        if (_schreibt or _hat_py) and "chcp 65001" not in _txt530:
+            _ohne530.append(_p530)
+        if _hat_py and "PYTHONIOENCODING=utf-8" not in _txt530:
+            _py530.append(_p530)
+    eq("aa530 jede .bat hat CRLF (sonst ueberspringt cmd Zeilen)", _lf530, [])
+    eq("aa530 jede .bat ist rein ASCII (chcp 65001 vertraegt nichts anderes)",
+       _na530, [])
+    eq("aa530 jede berichtende .bat setzt chcp 65001", _ohne530, [])
+    eq("aa530 jede .bat mit Python setzt PYTHONIOENCODING=utf-8", _py530, [])
+    # Sein konkreter Fall: die Sicherung schreibt robocopy-Ausgabe in den
+    # Bericht - genau die Datei, die sich nicht hochladen liess.
+    _sic530 = open("werkzeuge/sichere_1.1.3.bat", encoding="ascii").read()
+    check("aa530 die Sicherung setzt chcp VOR dem ersten Bericht-Schreiben",
+          0 <= _sic530.find("chcp 65001") < _sic530.find("bericht"))
+except Exception as _e530:                               # pragma: no cover
+    _fail.append(f"aa530 Bericht-Kodierung: {type(_e530).__name__}: {_e530}")
+
+# ---------------------------------------------------------------- (aa531)
+# BESITZT ER DAS T1-ORIGINAL? (emm512, Nutzer-Befund vom Sitzungsanfang:
+# "Bauplan hatte mir angezeigt ich haette blueprint originale zum kopieren
+# und dann Invention machen ... Aber im Hangar hatte ich nur T1 Copys
+# liegen keine T1 Originale"). Die Kopieranleitung sagte "Copy your T1
+# original like this", ohne den Besitz je zu pruefen.
+try:
+    from eve_trader.ui.mw_helpers import t1_original_lage as _tl531_roh
+
+    def _tl531(*a, **kw):
+        """Ausnahmen als WERT - eine Mutation soll rot werden, nicht die
+        Suite abbrechen (Lehre aa393)."""
+        try:
+            return _tl531_roh(*a, **kw)
+        except Exception as _ex531:
+            return (f"EXCEPTION: {type(_ex531).__name__}", 0, 0)
+    _BPO531 = {"type_id": 900, "quantity": 1, "is_bpo": True, "runs": -1}
+    _BPC531 = {"type_id": 900, "quantity": 2, "is_bpo": False, "runs": 10}
+    eq("aa531 Original da -> ok", _tl531(900, [_BPO531]), ("ok", 1, 0))
+    # SEIN FALL: nur Kopien im Hangar (2 Stueck a 10 Runs).
+    eq("aa531 nur Kopien -> 'copies_only' mit Run-Summe",
+       _tl531(900, [_BPC531]), ("copies_only", 0, 20))
+    eq("aa531 Original UND Kopien -> ok (das Original zaehlt)",
+       _tl531(900, [_BPO531, _BPC531]), ("ok", 1, 20))
+    eq("aa531 nichts davon -> none",
+       _tl531(900, [{"type_id": 901, "quantity": 1, "is_bpo": True}]),
+       ("none", 0, 0))
+    # Original im Kopierjob (emm507): kommt zurueck, also nur Hinweis.
+    eq("aa531 Original im Job -> im_job",
+       _tl531(900, [{"type_id": 901, "quantity": 1, "is_bpo": True}],
+              {900: [{"type_id": 900, "is_bpo": True}]}),
+       ("in_job", 0, 0))
+    # REGEL 1: ohne geladenen Besitz wird NICHTS behauptet - eine falsche
+    # Warnung ist schlimmer als keine.
+    eq("aa531 Besitz nicht geladen -> unknown",
+       _tl531(900, None), ("unknown", 0, 0))
+    eq("aa531 leere Liste heisst 'noch nichts geholt', nicht 'du hast nichts'",
+       _tl531(900, []), ("unknown", 0, 0))
+    eq("aa531 gescheiterter Abruf (emm479) -> unknown",
+       _tl531(900, [_BPC531], None, ["Peanut"]), ("unknown", 0, 0))
+    # VERDRAHTUNG: Karte UND Runplaner-Copying lesen DIESELBE Funktion.
+    _tabs531 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+    check("aa531 EINE Quelle fuer Karte und Runplaner (Regel 9)",
+          _tabs531.count("t1_original_lage as _t1lage512") == 2
+          and _tabs531.count("_t1lage512(") == 2)
+    # _fn_src("_recompute") traefe die gleichnamige Funktion in
+    # main_window.py - deshalb gezielt der Kartenblock dieser Datei.
+    _rec531 = _tabs531[_tabs531.index("def _recompute"):]
+    check("aa531 die Kopieranleitung warnt (rot bei nur Kopien)",
+          "copies ({n} runs)" in _rec531
+          and "theme.RED" in _rec531.split('_lage512 == "copies_only"')[1][:300])
+    check("aa531 bei eigener T2-Kopie keine Warnung (es wird nicht kopiert)",
+          "if not combo.isEnabled():" in _rec531
+          and '_lage512 = "unknown"' in _rec531)
+    _sb531 = _fn_src("_science_block")
+    check("aa531 die Runplaner-Kopierzeile sagt es auch",
+          "you only own copies" in _sb531 and "theme.RED" in
+          _sb531.split('_lg512 in ("copies_only", "none")')[1][:400])
+    _kat531 = __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+    check("aa531 die deutschen Eintraege stehen dabei",
+          _kat531.get("you only own copies – not the original")
+          == "du besitzt nur Kopien – nicht das Original"
+          and "Aus einer Kopie" in _kat531.get(
+              "You cannot copy from a copy: buy or research the T1 original "
+              "first.", ""))
+except Exception as _e531:                               # pragma: no cover
+    _fail.append(f"aa531 T1-Original-Besitz: {type(_e531).__name__}: {_e531}")
+
+# ---------------------------------------------------------------- (aa532)
+# BESTAND DECKT RUNS - ANTEILIG (emm514, Nutzer 11.10.2026: er hatte Helium
+# Fuel Blocks ZUGEKAUFT und die Verbraucher-Reaktionen liefen, der
+# eingefrorene Plan verlangte trotzdem alle 202 Fuel-Runs). Handrechnungen
+# mit SEINEN Zahlen, dazu die Sicherungen gegen jede benannte Gefahr.
+try:
+    from eve_trader.ui.mw_helpers import bestand_deckt_runs as _bdr532_roh
+
+    def _bdr532(*a, **kw):
+        """Ausnahmen als WERT, nie als Suiten-Abbruch (Lehre aa393)."""
+        try:
+            return _bdr532_roh(*a, **kw)
+        except Exception as _ex532:
+            return {"EXCEPTION": type(_ex532).__name__}
+    # SEIN HELIUM-FALL (gemessen am 11.10.2026, Multibuildplan Amarr 1):
+    # Fuel 4247 mit 202 Plan-Runs / 8'080 Stueck (40 je Run); Verbraucher
+    # je 5 je Run: Promethium Mercurite 329 (246 erledigt -> 83 offen),
+    # Terahertz 672 offen, Sylramic 540 offen, Fermionic 13 offen,
+    # Carbon/Neo/Dysporite fertig. Offener Bedarf 1'308 x 5 = 6'540;
+    # anrechenbarer Bestand 3'513 -> noetig ceil(3'027/40) = 76 ->
+    # 126 der 202 Runs sind gedeckt.
+    _br532 = {4247: 202, 33337: 329, 33360: 672, 16678: 540, 17317: 13,
+              16659: 43, 16667: 54, 16668: 30}
+    _bm532 = {33337: [[4247, 1645]], 33360: [[4247, 3360]],
+              16678: [[4247, 2700]], 17317: [[4247, 65]],
+              16659: [[4247, 215]], 16667: [[4247, 270]],
+              16668: [[4247, 150]], 4247: [[34, 202000]]}
+    _made532 = {4247: 8080}
+    _gel532 = {33337: 246, 16659: 43, 16667: 54, 16668: 30}
+    eq("aa532 sein Helium-Fall: 126 von 202 Runs gedeckt (Rest 76)",
+       _bdr532(_br532, _bm532, _made532, _gel532, {4247: 3513}),
+       {4247: 126})
+    # NIE ERHOEHEN (sein Nitrogen-Fall sinngemaess): Bedarf groesser als
+    # offene Runs hergeben, Bestand winzig -> KEIN Eintrag, nie negativ.
+    eq("aa532 Bedarf uebersteigt die offenen Runs -> nichts gedeckt",
+       _bdr532({9001: 100, 9002: 481}, {9001: [[9002, 50000]],
+                                        9002: [[34, 100]]},
+               {9002: 19240}, {}, {9002: 173}), {})
+    # OHNE BESTAND senkt nur der erledigte Verbraucher-Anteil (die Fuel
+    # Blocks der 246 laufenden Runs sind im Spiel laengst verbraucht).
+    eq("aa532 Bestand 0: nur der erledigte Verbraucher-Anteil senkt",
+       _bdr532(_br532, _bm532, _made532, _gel532, {}),
+       {4247: 202 - 164})   # noetig = ceil(6540/40) = 164
+    # ENDEN NIE (emm432, Linsen: ein Ende ist Zutat eines anderen Endes).
+    eq("aa532 ein Ende wird nie gesenkt, auch als Zutat nicht",
+       _bdr532({9001: 10, 9002: 50}, {9001: [[9002, 40]], 9002: [[34, 10]]},
+               {9002: 200}, {}, {9002: 99999}, enden=(9002,)), {})
+    # REGEL 1: ohne build_made ist das Stueck-je-Run unbekannt -> nichts.
+    eq("aa532 ohne build_made wird nichts behauptet",
+       _bdr532({9001: 10, 9002: 50}, {9001: [[9002, 40]], 9002: [[34, 10]]},
+               {}, {}, {9002: 99999}), {})
+    # KRUMME JE-RUN-MENGEN: je Verbraucher AUFgerundet (Regel 3).
+    # 2 offene von 3 Runs x 7 Stueck gesamt = 4,67 -> Bedarf 5, nicht 4:
+    # Bestand 4 deckt NICHT alles -> 1 Run bleibt noetig (1 Stueck je Run).
+    eq("aa532 krumme Mengen werden je Verbraucher AUFgerundet",
+       _bdr532({9001: 3, 9002: 20}, {9001: [[9002, 7]], 9002: [[34, 5]]},
+               {9002: 20}, {9001: 1}, {9002: 4}), {9002: 19})
+    # ITEM OHNE VERBRAUCHER (Endprodukt-Schutz wie vorstufen_erledigt).
+    eq("aa532 ein Item ohne Verbraucher im Plan bleibt unberuehrt",
+       _bdr532({9001: 10}, {9001: [[34, 100]]}, {9001: 10}, {},
+               {9001: 99999}), {})
+    # MONOTONIE-ZUFALLSPROBE: mehr Bestand -> nie weniger gedeckt, und die
+    # MATERIALSICHERHEIT haelt: (offen - gedeckt) x Stueck/Run + Bestand
+    # deckt den offenen Verbraucher-Bedarf IMMER (Regel 3).
+    import random as _rnd532
+    import math as _m532
+    _r532 = _rnd532.Random(532)
+    for _w532 in range(400):
+        _n_v = _r532.randint(1, 4)
+        _br = {100: _r532.randint(1, 300)}
+        _bm = {100: [[34, _r532.randint(1, 9999)]]}
+        _md = {100: _br[100] * _r532.randint(1, 50)}
+        _gl = {}
+        for _i_v in range(_n_v):
+            _vid = 200 + _i_v
+            _br[_vid] = _r532.randint(1, 800)
+            _bm[_vid] = [[100, _r532.randint(1, 7000)], [34, 5]]
+            _gl[_vid] = _r532.randint(0, _br[_vid] + 20)
+        _gl[100] = _r532.randint(0, _br[100])
+        _b1 = _r532.randint(0, 6000)
+        _k1 = _bdr532(_br, _bm, _md, _gl, {100: _b1})
+        _k2 = _bdr532(_br, _bm, _md, _gl, {100: _b1 + _r532.randint(0, 3000)})
+        if _k2.get(100, 0) < _k1.get(100, 0):
+            _fail.append(f"aa532 Zufall {_w532}: mehr Bestand deckte WENIGER")
+            break
+        _offen_1 = max(0, _br[100] - min(_gl.get(100, 0), _br[100]))
+        _out_1 = _md[100] / _br[100]
+        _bed_1 = sum(_m532.ceil(max(0, _br[v] - min(_gl.get(v, 0), _br[v]))
+                                * _bm[v][0][1] / _br[v])
+                     for v in _br if v != 100)
+        # Die Deckungs-Zusage gilt, SOBALD die Regel etwas gesenkt hat
+        # (eine Welt, deren Plan den Bedarf nie deckte, senkt nichts -
+        # dort kann auch die Ungleichung nicht gelten).
+        if (_k1.get(100, 0) > 0
+                and ((_offen_1 - _k1[100]) * _out_1 + _b1) < _bed_1 - 1e-9):
+            _fail.append(f"aa532 Zufall {_w532}: Senkung unterdeckt den "
+                         f"offenen Verbraucher-Bedarf (Regel 3)")
+            break
+        if _k1.get(100, 0) > _offen_1:
+            _fail.append(f"aa532 Zufall {_w532}: mehr gedeckt als offen")
+            break
+    else:
+        check("aa532 Zufallsprobe (400 Welten): monoton, nie unterdeckt, "
+              "nie ueber die offenen Runs", True)
+    # VERDRAHTUNG (jede Zeile gegen eine benannte Gefahr):
+    _mw532 = _fn_src("_rest_geliefert_jetzt")
+    check("aa532 nur der GESPEICHERTE, EINGEFRORENE Plan senkt (sonst "
+          "zoege der Bestand doppelt ab - production_plan hat ihn schon)",
+          'getattr(self, "_bd_open_plan_id", None)' in _mw532
+          and '_bd_frozen' in _mw532
+          and "bestand_deckt_runs(" in _mw532)
+    _bf532 = _fn_src("_bestand_fuer_deckung")
+    check("aa532 der anrechenbare Bestand zieht Pipeline UND ESI-Verzug ab",
+          "_bd_pipeline_live" in _bf532 and "lag_verbrauch(" in _bf532
+          and '_opts' in _bf532)
+    _fb532 = _fn_src("_fehlbedarf_jetzt")
+    check("aa532 Fehlbedarf: gedeckte Runs zaehlen als 'Erzeugnis im "
+          "Bestand', nie als kommende Produktion (sonst doppelt gedeckt)",
+          "_bd_bestand_runs" in _fb532)
+    _tabs532 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+    check("aa532 Runplaner-Budget nimmt die Karte mit min-Deckel auf die "
+          "Plan-Runs auf",
+          "_bd_bestand_runs" in _tabs532
+          and "_rest_budget[_t_b] = min(" in _tabs532)
+    _kat532 = __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+    check("aa532 der deutsche Eintrag steht dabei",
+          "deckt der Bestand des Erzeugnisses selbst" in _kat532.get(
+              "{n} run(s) of it are covered by stock of the product itself "
+              "(e.g. bought in) – nothing needs to be built for them.", ""))
+except Exception as _e532:                               # pragma: no cover
+    _fail.append(f"aa532 Bestand deckt Runs: {type(_e532).__name__}: {_e532}")
+
+# ---------------------------------------------------------------- (aa533)
+# EIN ZELL-WIDGET BRAUCHT SEINE HOEHE (emm515, Nutzer 11.10.2026:
+# "teilweise auch unlesbar zerdrueckt"): die Status-Pillen des Blueprints-
+# Reiters wurden von 19 auf 14 px gestaucht, weil `QTableWidget::item` oben
+# und unten Polster nimmt und die Zeile auf 30 px stehen blieb.
+try:
+    import re as _re533
+    _th533 = open("eve_trader/ui/theme.py", encoding="utf-8").read()
+    _m533 = _re533.search(
+        r"QTableWidget::item \{\{ padding: (\d+)px \d+px; "
+        r"border-bottom: (\d+)px", _th533)
+    check("aa533 das QSS-Polster der Zelle ist lesbar", bool(_m533))
+    if _m533:
+        _poz533 = 2 * int(_m533.group(1)) + int(_m533.group(2))
+        from eve_trader.ui import theme as _thm533
+        # Die Konstante muss das QSS-Polster DECKEN - sonst staucht Qt das
+        # Widget wieder. Groesser darf sie sein (Qt legt beim Einpassen auf),
+        # kleiner nie.
+        check(f"aa533 ZELL_POLSTER_V ({_thm533.ZELL_POLSTER_V}) deckt das "
+              f"QSS-Polster ({_poz533})",
+              int(_thm533.ZELL_POLSTER_V) >= _poz533)
+    _bp533 = _fn_src("_fill_blueprint_tab")
+    check("aa533 die Pillen-Zeile wird auf die sizeHint der Pille angehoben",
+          "_pill.sizeHint().height() + theme.ZELL_POLSTER_V" in _bp533
+          and "tbl.setRowHeight(i, _noetig515)" in _bp533)
+    check("aa533 ... nur angehoben, nie gesenkt (fremde Hoehen bleiben)",
+          "if tbl.rowHeight(i) < _noetig515:" in _bp533)
+    check("aa533 die Pillen-Huelle nimmt senkrecht keinen Rand mehr weg",
+          "_pl.setContentsMargins(4, 0, 4, 0)" in _bp533)
+except Exception as _e533:                               # pragma: no cover
+    _fail.append(f"aa533 Zell-Polster: {type(_e533).__name__}: {_e533}")
+
+# ---------------------------------------------------------------- (aa534)
+# EIN LEISE GESCHEITERTER CORP-ABRUF IST KEIN "DU HAST SIE NICHT" (emm516,
+# Nutzer 11.10.2026: "mir fehlen keine blaupausen", waehrend der Reiter zehn
+# Reaktionsformeln rot als "completely missing" zeigte).
+# `_corp_blaupausen` WIRFT nicht, es MELDET: `failed` (403/Fehler je Corp),
+# `ohne_rolle` (kein Director), `relink` (Token ohne Corp-Scope),
+# `keine_division` (Schalter an, kein Hangar angekreuzt). Gelesen wurde nur
+# `blueprints` - eine Blaupause im Corp-Hangar stand dann ROT da und landete
+# in "Buy Missing Blueprints". Dieselbe Fehlerklasse wie emm479, nur an der
+# Corp-Seite; der Riegel von dort (amber "ownership not loaded", keine
+# Kaufliste) greift, sobald `_bd_bp_fehler` gefuellt ist.
+try:
+    _mw534 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    _i534 = _mw534.find("def _bd_fetch_all_owned_blueprints")
+    _blk534 = _mw534[_i534:_i534 + 7000]
+    check("aa534 die Corp-Fehlerlage wird gelesen, nicht nur `blueprints`",
+          '_cres516.get("failed")' in _blk534
+          and '_cres516.get("ohne_rolle")' in _blk534
+          and '_cres516.get("relink")' in _blk534
+          and '_cres516.get("keine_division")' in _blk534)
+    check("aa534 ECHTER Fehlschlag (403/Scope) macht den Besitz "
+          "unvollstaendig (Regel 9: EINE Liste)",
+          _blk534.count("fehler.append(") >= 3
+          and "self._bd_bp_fehler = fehler" in _blk534
+          and (_blk534.find('_cres516.get("failed")')
+               < _blk534.find("self._bd_bp_fehler = fehler")))
+    # emm517 (Nutzer: "ich habe weder eine Industry Corp noch irgendwelche
+    # blaupausen oder items in einem Corp hangar"): keine Director-Rolle und
+    # kein angekreuzter Hangar heissen "wird nicht gelesen", nicht "fehlt" -
+    # sonst steht bei jedem ohne Industrie-Corp dauerhaft eine rote Zeile.
+    check("aa534 STRUKTURELL (keine Rolle / kein Hangar) ist kein "
+          "Fehlschlag, sondern eine Lage",
+          "corp_info.append(" in _blk534
+          and "self._bd_bp_corp_info = corp_info" in _blk534
+          and (_blk534.find('_cres516.get("ohne_rolle")')
+               < _blk534.find("self._bd_bp_corp_info = corp_info")))
+    _fe534 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+    check("aa534 ... und der Reiter zeigt sie gedaempft, nie rot",
+          "_bd_bp_corp_info" in _fe534
+          and "Not read: {names}" in _fe534
+          and (_fe534.find("color:{theme.MUTED};")
+               if "_bd_bp_corp_info" in _fe534 else -1) > 0)
+    _k534 = __import__("eve_trader.sprache",
+                       fromlist=["KATALOG"]).KATALOG["de"]
+    check("aa534 die drei Corp-Gruende sind zweisprachig",
+          all(_s in _k534 for _s in (
+              "Corp hangar {name} (no Director role)",
+              "Corp hangar via {name} (re-link needed)",
+              "Corp hangar (no hangar division ticked)",
+              "Not read: {names} \u2013 only matters if you keep "
+              "blueprints there.")))
+    # Das Diagnose-Werkzeug (Messweg, Regel 5) darf NICHTS schreiben.
+    _tw534 = open("werkzeuge/zeige_blaupausen.py", encoding="utf-8").read()
+    check("aa534 das Blaupausen-Werkzeug liest settings.json roh, ohne "
+          "Migrationen zu schreiben",
+          "def _settings_rohe" in _tw534
+          and "config.save_settings" not in _tw534)
+    check("aa534 ... und stellt Besitz gegen das Urteil des Reiters",
+          "FEHLT" in _tw534 and "IM JOB" in _tw534
+          and "fetch_corporation_blueprints" in _tw534
+          and "budget_erschoepft" in _tw534)
+except Exception as _e534:                               # pragma: no cover
+    _fail.append(f"aa534 Corp-Besitz: {type(_e534).__name__}: {_e534}")
+
+# ---------------------------------------------------------------- (aa535)
+# AUS BESTAND GEDECKT IST NICHT GEBAUT (emm518, Nutzer 11.10.2026: "oxygen
+# und hydrogen fuel blocks, habe ich nie gebaut aber dazu gekauft, warum
+# zeigt ESI gruener Punkt = wurde gebaut? dazu sollte es nie einen Job
+# gegeben haben oder?"). emm514 hebt das Erledigt-Budget an, wenn der
+# Bestand des ERZEUGNISSES offene Runs deckt; die Zeile fiel damit in den
+# Zweig "fertig" und bekam den gruenen Punkt, der im ganzen Werkzeug "ESI
+# hat die Runs geliefert" heisst - ein Symbol mit einem Namen, der etwas
+# anderes meint (Fehlerklasse Sitzung 9). Jetzt eigener Zustand, eigener
+# gedaempfter Punkt.
+try:
+    _tb535 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+    check("aa535 der Runplaner kennt den Zustand 'bestand'",
+          '"bestand"' in _tb535 and "_bd_bestand_runs" in _tb535)
+    check("aa535 ... nur OHNE gelieferten und OHNE laufenden Job "
+          "(ein Job geht IMMER vor: emm521 hat die Reihenfolge umgestellt)",
+          'else "fertig" if (_gel_r > 0 or _fert_r > 0)' in _tb535
+          and 'else "bestand" if _best_r > 0' in _tb535
+          and (_tb535.find('else "fertig" if (_gel_r > 0')
+               < _tb535.find('else "bestand" if _best_r > 0')))
+    check("aa535 ... und 'laeuft' geht weiter vor (ein laufender Job "
+          "ueberschreibt die Deckung nicht)",
+          (_tb535.find('_zustand = ("laeuft"')
+           < _tb535.find('else "bestand"')))
+    check("aa535 der Punkt ist NICHT der gruene ESI-Punkt",
+          "iit.setIcon(0, icons.bestand_punkt())" in _tb535
+          and (_tb535.find('if _zustand == "fertig":')
+               < _tb535.find("icons.bestand_punkt()")))
+    _ic535 = open("eve_trader/ui/icons.py", encoding="utf-8").read()
+    _i535 = _ic535.find("def bestand_punkt")
+    check("aa535 bestand_punkt ist gedaempft, nicht gruen",
+          _i535 > 0
+          and "_theme.MUTED" in _ic535[_i535:_i535 + 1400]
+          and "_theme.GREEN" not in _ic535[_i535:_i535 + 1400])
+    check("aa535 der Tooltip haengt am neuen Zustand, nicht mehr an 'fertig'",
+          'if _zustand == "bestand" and _best_n0:' in _tb535
+          and "covered by stock of the " in _tb535)
+except Exception as _e535:                               # pragma: no cover
+    _fail.append(f"aa535 Bestands-Punkt: {type(_e535).__name__}: {_e535}")
+
+# ---------------------------------------------------------------- (aa536)
+# JEDER LAUFENDE JOB ZAEHLT NUR EINMAL (emm519, Nutzer 11.10.2026: "ich
+# kopiere gerade eine punisher original blueprint, die erste welle macht
+# das genau nach job runs ... und die 2te welle ist einfach auch mit blauem
+# punkt hinten dran, obwohl es nicht die selben job runs sind - das muesste
+# ESI und Runplaner doch erkennen, dass die 2te welle nicht laufen kann").
+# Mit EINEM Original kann nur EIN Kopierjob laufen (emm510); der Punkt
+# fragte aber nur "gibt es irgendeinen Job dieses Items bei diesem
+# Charakter" und faerbte damit jede Welle.
+try:
+    _tb536 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+    check("aa536 der Science-Punkt fuehrt einen Job-POOL je "
+          "(Item, Aktivitaet, Charakter)",
+          "_job_pool = {}" in _tb536
+          and "def _punkt(tid, act, cname, brauch=1):" in _tb536)
+    check("aa536 ... und verbraucht ihn (die naechste Welle bekommt nur "
+          "den Rest)",
+          "_n_lauf = max(0, _n_lauf - _nimm)" in _tb536
+          and "_job_pool[_key] = [_n_lauf, _n_fertig]" in _tb536)
+    check("aa536 die Invention-Zeile verbraucht ihre eigene Job-Zahl",
+          "_punkt(bp, 8, _cnames.get(int(cid)), n_jobs)" in _tb536)
+    check("aa536 der Zustand zieht NICHT ein zweites Mal aus dem Pool",
+          "def _zeilen_zustand(tid, act, cname, key, punkt=None):" in _tb536
+          and "_p = punkt if punkt is not None else _punkt(" in _tb536
+          and 'f"copy|{cid}|{_t1}{_wsuf}", _pk519)' in _tb536)
+except Exception as _e536:                               # pragma: no cover
+    _fail.append(f"aa536 Science-Punkt: {type(_e536).__name__}: {_e536}")
+
+# ---------------------------------------------------------------- (aa537)
+# KEIN GRUENER PUNKT OHNE JOB (emm521, Nutzer 11.10.2026: "in einem anderen
+# Bauplan ist jetzt Oxygen Fuelblock mit gruenem Punkt. ich glaube aber
+# nicht dass ich das gebaut habe, ansonsten haette ich ein hacken dran
+# gesetzt"). "fertig" war der AUFFANGZWEIG - auch die Vorstufen-Regel
+# (emm259/262: alle Verbraucher erledigt) landete darin und bekam den
+# gruenen ESI-Punkt, obwohl es dazu nie einen Job gab.
+try:
+    _tb537 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+    check("aa537 es gibt einen eigenen Zustand ohne Beleg",
+          '"nicht_noetig"' in _tb537)
+    check("aa537 'fertig' verlangt einen Job - geliefert ODER abholbereit",
+          'else "fertig" if (_gel_r > 0 or _fert_r > 0)' in _tb537
+          and 'if _j.get("status") == "ready")' in _tb537)
+    check("aa537 der Auffangzweig ist nicht mehr 'fertig'",
+          'else "nicht_noetig")' in _tb537
+          and 'else "fertig")' not in _tb537)
+    check("aa537 ... und bekommt den gedaempften Punkt, nie den gruenen",
+          'elif _zustand in ("bestand", "nicht_noetig"):' in _tb537
+          and (_tb537.find('if _zustand == "fertig":')
+               < _tb537.find('elif _zustand in ("bestand", "nicht_noetig"):')))
+    check("aa537 der Grund der Deckung wird GEMESSEN, nicht geraten",
+          "_bd_vorstufen_budget" in _tb537
+          and "self._bd_vorstufen_budget = (set(_vs_neu)" in _tb537)
+    check("aa537 eigener Tooltip fuer den Zustand",
+          'elif _zustand == "nicht_noetig":' in _tb537
+          and "does not need these runs any more" in _tb537)
+    _sp537 = open("eve_trader/sprache.py", encoding="utf-8").read()
+    check("aa537 beide neuen Texte haben einen deutschen Eintrag",
+          "der Plan braucht diese Runs nicht mehr" in _sp537
+          and "weder einen abgelieferten Job noch Bestand" in _sp537)
+except Exception as _e537:                               # pragma: no cover
+    _fail.append(f"aa537 Punkt ohne Job: {type(_e537).__name__}: {_e537}")
+
+# ---------------------------------------------------------------- (aa538)
+# MAUSRAD NICHT AM DROPDOWN (emm520, Nutzer 11.10.2026: "Job assignments
+# Fenster wenn ich mit der maus scrolle kann es passieren, dass ich in der
+# Belongs To -Liste auf einen Bauplan komme und dann scrollt dieser durchs
+# Dropdown! das darf nicht passieren bei einem Mouseover"). Eine beim
+# Scrollen still umgestellte Job-Zuordnung kostet Material.
+try:
+    _tf538 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+    _i538 = _tf538.find("def _job_zuordnungen_dialog")
+    _blk538 = _tf538[_i538:_i538 + 7000] if _i538 > 0 else ""
+    check("aa538 der Job-Zuordnungs-Dialog sperrt das Mausrad an "
+          "Bedienelementen",
+          "combos_ohne_mausrad(d)" in _blk538)
+    check("aa538 ... und zwar VOR dem Bau der Dropdowns",
+          0 < _blk538.find("combos_ohne_mausrad(d)") < _blk538.find("QComboBox()"))
+    _mb538 = open("eve_trader/ui/mw_basis.py", encoding="utf-8").read()
+    _j538 = _mb538.find("def combos_ohne_mausrad")
+    check("aa538 combos_ohne_mausrad gilt auch fuer spaeter gebaute Felder "
+          "(Fenster-Eigenschaft, kein Filter je Widget)",
+          _j538 > 0 and 'setProperty("combo_ohne_mausrad", True)'
+          in _mb538[_j538:_j538 + 900])
+except Exception as _e538:                               # pragma: no cover
+    _fail.append(f"aa538 Mausrad Job-Zuordnung: {type(_e538).__name__}: {_e538}")
+
+# ---------------------------------------------------------------- (aa539)
+# "100 %" NEBEN 690 VON 900 (emm522, Nutzer 11.10.2026: "Modules 1
+# Multiplan zeigt 100%, die endprodukte sind aber nicht alle gebaut").
+# Der emm497-Deckel griff erst ab 100,0 - die Anzeige rundet aber auf
+# ganze Prozent ("{pct:.0f}"), also stand bei 99,6 % wieder "100 %" da.
+# Gedeckelt wird jetzt auf 99,0, sobald auch nur ein Stueck fehlt.
+try:
+    _mw539 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    check("aa539 der Deckel haengt NICHT mehr an '>= 100.0'",
+          "if _prozent9 >= 100.0 and total_built < target_qty:" not in _mw539)
+    check("aa539 ... sondern greift, sobald ein Stueck fehlt",
+          "if total_built < target_qty:\n                    "
+          "_prozent9 = min(_prozent9, 99.0)" in _mw539)
+    check("aa539 die Anzeige rundet weiter auf ganze Prozent "
+          "(genau deshalb muss der Deckel unter 99,5 liegen)",
+          'pct=f"{_pc9:.0f}"' in _mw539)
+except Exception as _e539:                               # pragma: no cover
+    _fail.append(f"aa539 Fortschritts-Deckel: {type(_e539).__name__}: {_e539}")
+
+# ---------------------------------------------------------------- (aa540)
+# UEBERRESERVATION (emm523, Nutzer 11.10.2026: "Das muss abgeglichen
+# werden, ueberreservationen duerfen nicht passieren"). GEMESSEN an seiner
+# settings.json: `reserve_map` entsteht beim SPEICHERN, der Schnappschuss
+# beim EINFRIEREN - nie abgeglichen, und das in BEIDE Richtungen:
+# "Multibuildplan Amarr 1" hielt 7 Posten, die in seinem eingefrorenen Plan
+# gar nicht vorkommen (groesster 40'725'400 Stueck), und beanspruchte
+# gleichzeitig 3'045'901 Tritanium, wo der Plan 33'386'579 braucht.
+# JETZT: der Anspruch wird AUS DEM SCHNAPPSCHUSS abgeleitet (Regel 9).
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _MH540
+    _snap540 = {"buy": {"100": 500}, "stock_used": {"200": 40},
+                "build_made": {"300": 7}, "build_runs": {}, "build_mats": {}}
+    _p540 = {"id": "p540", "label": "aa540 Plan", "reserve": True,
+             "frozen": {"plan_snapshot": _snap540, "stock_seen_ts": 1},
+             # ALTE Zweitkopie: eine Leiche (999) und ein zu kleiner Posten
+             "reserve_map": {"999": 7777, "100": 50},
+             "assignments": [], "checked_runplan_ts": {}}
+    _s540 = {"bau_saved_plans": [_p540]}
+    _a540 = _MH540.plan_anspruch_mitlaufend(_p540)
+    check("aa540 der Anspruch kommt aus dem Schnappschuss, nicht aus der "
+          "gespeicherten Zweitkopie",
+          int(_a540.get(100, 0)) == 500)
+    check("aa540 ... die Leiche faellt weg (nicht im Plan = nie reserviert)",
+          int(_a540.get(999, 0)) == 0)
+    check("aa540 ... und Bestandsdeckung + Selbstgebautes zaehlen weiter mit",
+          int(_a540.get(200, 0)) == 40 and int(_a540.get(300, 0)) == 7)
+    check("aa540 es ist DIESELBE Formel wie beim Speichern",
+          _MH540._plan_reserve_map(
+              _MH540._plan_snapshot_unpack(_snap540)).get(100) == 500)
+    _agg540, _lab540 = _MH540._reserved_by_other_plans(_s540, None)
+    check("aa540 beide Leser benutzen ihn: _reserved_by_other_plans",
+          int(_agg540.get(100, 0)) == 500 and int(_agg540.get(999, 0)) == 0)
+    check("aa540 ... und _reserved_by_this_plan",
+          int(_MH540._reserved_by_this_plan(_s540, "p540").get(100, 0)) == 500)
+    # OHNE Schnappschuss bleibt die gespeicherte Karte stehen (Regel 3:
+    # lieber zu viel reserviert als zu wenig).
+    _p540b = dict(_p540); _p540b.pop("frozen")
+    check("aa540 ohne Schnappschuss bleibt die gespeicherte Karte stehen",
+          int(_MH540.plan_anspruch_mitlaufend(_p540b).get(999, 0)) == 7777)
+    # Und ein Schnappschuss OHNE Anspruch (alte Plaene: kein buy/stock_used/
+    # build_made) darf die Reservierung NICHT loeschen - sonst stuende der
+    # Plan ohne Schutz da und ein anderer plant sein Material ein (Regel 3).
+    _p540c = dict(_p540)
+    _p540c["frozen"] = {"plan_snapshot": {"build_mats": {}, "build_runs": {}},
+                        "stock_seen_ts": 1}
+    check("aa540 Schnappschuss ohne Anspruch loescht die Reservierung NICHT",
+          int(_MH540.plan_anspruch_mitlaufend(_p540c).get(999, 0)) == 7777)
+    _mh540 = open("eve_trader/ui/mw_helpers.py", encoding="utf-8").read()
+    check("aa540 es gibt nur EINE Stelle dafuer",
+          _mh540.count("def plan_anspruch_mitlaufend") == 1
+          and _mh540.count("plan_anspruch_mitlaufend(p)") == 3)
+except Exception as _e540:                               # pragma: no cover
+    _fail.append(f"aa540 Ueberreservation: {type(_e540).__name__}: {_e540}")
+
+# ---------------------------------------------------------------- (aa541)
+# emm524: ABGEHAKTE Erz-Schritte buchen den Anspruch vom Erz auf die
+# Minerale um. NUTZER 11.10.2026: "die beiden Bauplaene wollen immernoch
+# material kaufen. aber ich WEISS ich habe diese Materialien".
+# GEMESSEN an seiner settings.json (Multibuildplan Amarr 1): der Anspruch
+# stand auf 33'386'579 Tritanium, verlangt wurden 55'384'600 - die
+# Differenz 21'998'021 ist exakt das Tritanium seiner zwei abgehakten
+# Erz-Schritte. Zwei Zahlen fuer dieselbe Sache (Fehlerklasse Sitzung 9),
+# und in der gefaehrlichen Richtung: der Plan gab Minerale frei, die er
+# selbst braucht.
+try:
+    from eve_trader import reprocess as _rp541
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _MH541
+
+    # (1) HANDRECHNUNG. Anspruch: 100 Tritanium + 500 Erz (gekauft).
+    # Der Schritt ist abgehakt -> Erz verarbeitet, 300 Tritanium liegen
+    # im Hangar: Anspruch 400 Tritanium, kein Erz mehr.
+    _st541 = {"erz": 999, "menge": 500, "deckt": {34: 300}}
+    _a541 = _rp541.anspruch_anpassen({34: 100, 999: 500}, [_st541],
+                                     {"repro|999"})
+    check("aa541 abgehakter Schritt: die gedeckten Minerale kommen dazu",
+          int(_a541.get(34, 0)) == 400)
+    check("aa541 ... und die Blockmenge des Erzes faellt raus",
+          999 not in _a541)
+    # (2) GEGENPROBE: ohne Haken liegt wirklich Erz da - nichts aendern.
+    _b541 = _rp541.anspruch_anpassen({34: 100, 999: 500}, [_st541], set())
+    check("aa541 ohne Haken bleibt der Anspruch unveraendert",
+          int(_b541.get(34, 0)) == 100 and int(_b541.get(999, 0)) == 500)
+    # (3) Teilweise gekauftes Erz: nur die Blockmenge dieses Schritts geht
+    # ab, der Rest bleibt stehen (ein zweiter Schritt kann es brauchen).
+    _c541 = _rp541.anspruch_anpassen({999: 800}, [_st541], {"repro|999"})
+    check("aa541 vom Erz geht genau die Blockmenge ab",
+          int(_c541.get(999, 0)) == 300)
+    # (4) GRATIS-Erz (Blacklist) steht nie im Anspruch - es darf auch
+    # nichts abgezogen werden, die Minerale kommen trotzdem dazu.
+    _g541 = dict(_st541); _g541["gratis"] = True
+    _d541 = _rp541.anspruch_anpassen({34: 100}, [_g541], {"repro|999"})
+    check("aa541 Gratis-Erz: Minerale dazu, nichts abgezogen",
+          int(_d541.get(34, 0)) == 400 and 999 not in _d541)
+    # (5) Weg A (unrefined, built) wird nie gekauft - uebersprungen, genau
+    # wie in rest_anpassen.
+    _u541 = dict(_st541); _u541["built"] = True
+    check("aa541 gebaute Unrefined-Schritte bleiben aussen vor",
+          int(_rp541.anspruch_anpassen({34: 100}, [_u541],
+                                       {"repro|999"}).get(34, 0)) == 100)
+    # (6) SEINE ECHTEN ZAHLEN, auf die Einheit nachgerechnet.
+    _ech541 = [{"erz": 62530, "menge": 965400,
+                "deckt": {34: 1621872, 36: 646809}},
+               {"erz": 62522, "menge": 14249100,
+                "deckt": {34: 20376149, 35: 14676573}}]
+    _e541 = _rp541.anspruch_anpassen(
+        {34: 33386579, 36: 2989691, 35: 3732402,
+         62530: 965400, 62522: 14249100},
+        _ech541, {"repro|62530", "repro|62522"})
+    check("aa541 Nutzer-Zahlen: Tritanium 33'386'579 -> 55'384'600",
+          int(_e541.get(34, 0)) == 55384600)
+    check("aa541 Nutzer-Zahlen: Mexallon 2'989'691 -> 3'636'500",
+          int(_e541.get(36, 0)) == 3636500)
+    check("aa541 Nutzer-Zahlen: Pyerite waechst um das gedeckte Pyerite",
+          int(_e541.get(35, 0)) == 3732402 + 14676573)
+    check("aa541 Nutzer-Zahlen: die verarbeiteten Erze sind raus",
+          62530 not in _e541 and 62522 not in _e541)
+    # (7) VERDRAHTUNG: der Anspruch eines eingefrorenen Plans laeuft
+    # hindurch - sonst steht die richtige Rechnung ungenutzt herum.
+    _p541 = {"id": "p541", "reserve": True, "reserve_map": {"34": 1},
+             "checked_runplan": ["repro|999"],
+             "frozen": {"stock_seen_ts": 1, "plan_snapshot": {
+                 "build_mats": {}, "build_runs": {},
+                 "buy": {"999": 500}, "stock_used": {"34": 100},
+                 "build_made": {}, "reprocess": {"schritte": [_st541]}}}}
+    check("aa541 plan_anspruch_mitlaufend bucht den Haken um",
+          int(_MH541.plan_anspruch_mitlaufend(_p541).get(34, 0)) == 400)
+    check("aa541 ... und gibt das verarbeitete Erz frei",
+          int(_MH541.plan_anspruch_mitlaufend(_p541).get(999, 0)) == 0)
+    # (8) Ohne Haken bleibt es beim Schnappschuss-Stand.
+    _p541b = dict(_p541); _p541b["checked_runplan"] = []
+    check("aa541 ohne Haken bleibt der Schnappschuss-Stand stehen",
+          int(_MH541.plan_anspruch_mitlaufend(_p541b).get(34, 0)) == 100
+          and int(_MH541.plan_anspruch_mitlaufend(_p541b).get(999, 0)) == 500)
+    # (9) EINE Familie mit rest_anpassen (Regel 9) - Anspruch und Bedarf
+    # duerfen nicht aus zwei Quellen stammen.
+    _rsrc541 = open("eve_trader/reprocess.py", encoding="utf-8").read()
+    check("aa541 anspruch_anpassen steht neben rest_anpassen",
+          "def anspruch_anpassen(" in _rsrc541
+          and _rsrc541.count("def anspruch_anpassen(") == 1)
+    _mh541 = open("eve_trader/ui/mw_helpers.py", encoding="utf-8").read()
+    check("aa541 mw_helpers ruft sie genau einmal",
+          _mh541.count("anspruch_anpassen(") == 1)
+except Exception as _e5411:                              # pragma: no cover
+    _fail.append(f"aa541 Erz-Haken im Anspruch: "
+                 f"{type(_e5411).__name__}: {_e5411}")
+
+# ---------------------------------------------------------------- (aa542)
+# emm525: die Zeile sagt WER reserviert und WIE VIEL. NUTZER 11.10.2026:
+# "da steht doch ich habe 270 Weapon Tech und ich brauche 10 ... Keine
+# anderen plaene erheben anspruch darauf per reservation. und dennoch soll
+# ich 10 kaufen? warum". GEMESSEN: doch - Riggs 1 haelt 826, Caldari 20.
+# Die Zahl fehlte in der Anzeige, also war die Aussage nicht nachpruefbar.
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _MH542
+
+    def _p542(pid, label, rang_i, tid, menge):
+        return {"id": pid, "label": label, "reserve": True,
+                "reserve_map": {str(tid): menge},
+                "frozen": {"stock_seen_ts": 1, "plan_snapshot": {
+                    "build_mats": {}, "build_runs": {},
+                    "buy": {}, "stock_used": {str(tid): menge},
+                    "build_made": {}}}}
+
+    # SEINE LAGE: Riggs 1 (#3) 826, Caldari (#2) 20, Hangar Cleaner (#5) 10.
+    _s542 = {"bau_saved_plans": [
+        _p542("caldari", "MulitPlan Caldari", 2, 11486, 20),
+        _p542("riggs", "Riggs 1", 3, 11486, 826),
+        _p542("hc", "Hangar Cleaner 1", 5, 11486, 10)],
+        "bau_plan_reihenfolge": ["caldari", "riggs", "hc"]}
+    _je542 = _MH542.reservierung_je_item(_s542, "hc")
+    check("aa542 die Halter stehen je Item mit Menge da",
+          dict(_je542.get(11486) or []) == {"Riggs 1": 826,
+                                            "MulitPlan Caldari": 20})
+    check("aa542 der groesste Halter steht vorn",
+          (_je542.get(11486) or [("", 0)])[0] == ("Riggs 1", 826))
+    # Der eigene Plan taucht NIE in seiner eigenen Liste auf.
+    check("aa542 der eigene Plan haelt sich nichts weg",
+          all(_n != "Hangar Cleaner 1" for _n, _ in _je542.get(11486) or []))
+    # DIESELBE Auswahl wie der Abzug (Regel 9): Summe == _reserved_by_other_plans.
+    _agg542, _ = _MH542._reserved_by_other_plans(_s542, "hc")
+    check("aa542 Summe der Halter == abgezogene Menge",
+          sum(_q for _, _q in _je542.get(11486) or [])
+          == int(_agg542.get(11486, 0)))
+    # RANG: ein NACHRANGIGER Plan nimmt nichts weg (emm262).
+    _je542b = _MH542.reservierung_je_item(_s542, "caldari")
+    check("aa542 nachrangige Plaene tauchen nicht auf",
+          [_n for _n, _ in _je542b.get(11486) or []] == [])
+    # Ohne Schloss haelt niemand etwas.
+    _s542c = {"bau_saved_plans": [dict(_p542("r", "R", 1, 11486, 826),
+                                       reserve=False)]}
+    check("aa542 ohne Schloss kein Halter",
+          not _MH542.reservierung_je_item(_s542c, "hc").get(11486))
+    # Formatierung: EINE Stelle fuer Zeile und Tooltip.
+    check("aa542 der Text nennt Name und Menge mit Tausender-Trenner",
+          _MH542.reservierung_text([("Riggs 1", 826), ("Caldari", 20000)])
+          == "Riggs 1: 826, Caldari: 20'000")
+    check("aa542 leere Liste gibt leeren Text",
+          _MH542.reservierung_text([]) == "")
+    # VERDRAHTUNG: Karte gefuellt, Zeile und beide Tooltips lesen sie.
+    _src542 = _src_txt
+    _mh542 = open(os.path.join(_ROOT, "eve_trader", "ui", "mw_helpers.py"),
+                  encoding="utf-8").read()
+    check("aa542 die Karte wird beim Anwenden der Reservierungen gefuellt",
+          "self._bd_reserviert_je_item = self.reservierung_je_item(" in _src542)
+    check("aa542 die Zeile nennt den Halter SICHTBAR, nicht nur im Tooltip",
+          '_wer9 = MainWindowHelpers.reservierung_text(_h9[:1])' in _src542
+          # ohne das Sonderzeichen ankern - _src_txt normalisiert Escapes.
+          and 'it.setText(3, (' in _src542 and '+ _wer9' in _src542)
+    check("aa542 beide Tooltips nennen die Mengen",
+          _src542.count("MainWindowHelpers.reservierung_text(_h9)") == 1
+          and _src542.count("MainWindowHelpers.reservierung_text(_h_t)") == 1)
+    check("aa542 ohne Halter bleibt der alte Satz stehen (Rueckfall)",
+          't("reserved by other plans")' in _src542)
+    check("aa542 der Zusatz fuer weitere Halter ist uebersetzt",
+          '" + {n} more"' in _src542
+          and __import__("eve_trader.sprache", fromlist=["KATALOG"])
+          .KATALOG["de"].get(" + {n} more") == " + {n} weitere")
+    # GESCHAERFT (Rotprobe emm525): ein Plan, dessen Anspruch auf 0 gesunken
+    # ist (alles gebaut/abgehakt), darf NICHT als Halter dastehen - sonst
+    # behauptet die Zeile "Plan X haelt es", obwohl X nichts abzieht.
+    _s542d = {"bau_saved_plans": [
+        _p542("leer", "Leerer Plan", 1, 11486, 0),
+        _p542("riggs", "Riggs 1", 3, 11486, 826)],
+        "bau_plan_reihenfolge": ["leer", "riggs"]}
+    _je542d = _MH542.reservierung_je_item(_s542d, "hc")
+    check("aa542 ein Plan mit Anspruch 0 ist kein Halter",
+          [_n for _n, _ in _je542d.get(11486) or []] == ["Riggs 1"])
+    check("aa542 Anzeige und Abzug teilen EINE Filterschleife",
+          _mh542.count("def _reservierende_plaene") == 1
+          and _mh542.count("MainWindowHelpers._reservierende_plaene(") == 2)
+    # REINE ANZEIGE: die Funktion aendert keine Menge.
+    _vor542 = dict(_s542["bau_saved_plans"][1]["reserve_map"])
+    _MH542.reservierung_je_item(_s542, "hc")
+    check("aa542 reine Anzeige - die Plaene bleiben unveraendert",
+          _s542["bau_saved_plans"][1]["reserve_map"] == _vor542)
+except Exception as _e542:                               # pragma: no cover
+    _fail.append(f"aa542 Halter je Item: {type(_e542).__name__}: {_e542}")
+
+# ---------------------------------------------------------------- (aa544)
+# STOCK LOCATIONS VERLANGT NIE MEHR ALS DIE EINKAUFSLISTE (emm527).
+#
+# Zwei Nutzer-Beschwerden am selben Tag, in beide Richtungen:
+#   (a) "Stock locations will viel weniger kaufen" - die Keule
+#       `selbst_gebaut` galt global und traf auch Plaene, die dasselbe Teil
+#       ZUKAUFEN (Hangar Cleaner: 110 R.A.M.- Armor/Hull Tech, Eigenbau 0).
+#   (b) Nach dem ersten Versuch (anteilige Gutschrift wie die
+#       Einkaufsliste): "Das ist nicht moeglich, dass so viel fehlt, ich
+#       habe fast 60 Bauschleifen belegt" + "fehlende Datacores ist fast
+#       nicht moeglich". GEMESSEN: diese Seite kennt den Fortschritt viel
+#       schlechter als der Bauplan (`gebaute_runs` = Zuordnung + Haken
+#       gegen `_rest_geliefert_jetzt` = geliefert + laufend + Vorstufen +
+#       Bestandsdeckung). Bei Riggs 1 standen alle fuenf Endprodukte auf
+#       200/200 offen. Mit so duenner Karte wird aus der anteiligen
+#       Gutschrift eine Fantasiezahl.
+#
+# DIE ZUSAGE, die beides abfaengt: was ein Plan selbst baut, meldet er
+# nicht (sichere Richtung) - und die Seite verlangt NIE MEHR als die
+# Einkaufsliste. Lieber eine Zeile zu wenig als ein Fehlkauf (Regel 3).
+try:
+    _L544 = __import__("eve_trader.lagerorte", fromlist=["x"])
+    _MH544 = __import__("eve_trader.ui.mw_helpers", fromlist=["x"])
+    import random as _rnd544
+
+    def _p544(pid, runs, mats):
+        return {"id": pid, "label": str(pid), "type_id": 99,
+                "frozen": {"ts": 1, "plan_snapshot": {
+                    "build_runs": {str(t): r for t, r in runs.items()},
+                    "build_mats": {str(t): v for t, v in mats.items()}}}}
+
+    _zuviel544 = []
+    _r544 = _rnd544.Random(544)
+    for _s in range(400):
+        _ende, _mid, _roh = 99, 50, 34
+        _er = _r544.randint(1, 30)
+        _mr = _r544.randint(0, 40)
+        _oq = {_mid: _r544.choice([1, 1, 3, 10, 200])}
+        _mats544 = {_ende: [[_mid, _r544.randint(1, 400)]]}
+        if _mr > 0:
+            _mats544[_mid] = [[_roh, _r544.randint(1, 900)]]
+        _pl = _p544("P", {_ende: _er, _mid: _mr}, _mats544)
+        _z = {}
+        if _r544.random() < .4:
+            _z[1] = {"plan_id": "P", "type_id": _mid,
+                     "runs": _r544.randint(0, max(1, _mr))}
+        _geb = _L544.gebaute_runs(_pl, _z, None)
+        _snap = _MH544.MainWindowHelpers._plan_snapshot_unpack(
+            (_pl["frozen"] or {})["plan_snapshot"])
+        _ek = {int(m): int(f) for m, f, *_x in _MH544.fehlbedarf_vorschau(
+            {int(t): int(r) for t, r in (_snap.get("build_runs") or {}).items()},
+            {int(t): v for t, v in (_snap.get("build_mats") or {}).items()},
+            _oq, _geb, {})}
+        _sl = {int(t): sum(q for _n, q in hl)
+               for t, hl in _L544.bedarf_aus_plaenen([_pl], _z, None, _oq).items()}
+        for _t, _q in _sl.items():
+            if _q > _ek.get(_t, 0):
+                _zuviel544.append((_s, _t, _q, _ek.get(_t, 0)))
+    eq("aa544 Zufallsprobe 400 Plaene: die Seite verlangt NIE mehr als die "
+       "Einkaufsliste", _zuviel544[:2], [])
+
+    # SEIN FALL IN KLEIN: Plan A baut das Teil, Plan B kauft es. Vorher war
+    # es bei BEIDEN unsichtbar, weil A es baut (Hangar Cleaner: 110 R.A.M.-
+    # Armor/Hull Tech, Eigenbau 0). Das ist der Kern von emm527 (a).
+    _a544 = _p544("baut", {99: 1, 50: 900}, {99: [[50, 100]], 50: [[34, 5]]})
+    _b544 = _p544("kauft", {98: 1}, {98: [[50, 110]]})
+    _res544 = _L544.bedarf_aus_plaenen([_a544, _b544], None, None, {50: 1})
+    eq("aa544 der bauende Plan meldet nichts, der kaufende seine 110",
+       _res544.get(50), [("kauft", 110)])
+
+    _lg544 = open("eve_trader/lagerorte.py", encoding="utf-8").read()
+    check("aa544 die globale Keule ist weg - die Regel gilt je Plan",
+          "selbst_gebaut=" not in _lg544
+          and "if int(_runs.get(int(_sb), 0) or 0) > 0:" in _lg544)
+    check("aa544 der Rueckbau ist am Code begruendet",
+          "Fantasiezahl" in _lg544 and "_rest_geliefert_jetzt" in _lg544)
+except Exception as _e544:                               # pragma: no cover
+    _fail.append(f"aa544 nie mehr als die Einkaufsliste: {type(_e544).__name__}: {_e544}")
+
+# ---------------------------------------------------------------- (aa545)
+# WIE ALT IST DER BESTAND? (emm528, Nutzer: "ich habs da" - Screenshot aus
+# dem Spiel mit 5 R.A.M.- Robotics in genau der getrackten Struktur,
+# waehrend Stock locations "fehlt 5" meldete - "hat ESI evtl. noch nicht
+# getrackt? ich habe es seit ca. 10 Minuten").
+#
+# GEMESSEN im Code: CCP cacht /assets/ rund eine Stunde; esi.py schreibt
+# den Last-Modified-Header deshalb seit langem mit (`_record_assets_meta`,
+# `assets_age_seconds`) - aber ausgerechnet `_fetch_all_assets`, den Stock
+# locations benutzt, liess ihn weg. Die Seite zeigte nur den ABRUF-
+# Zeitpunkt ("as of 15:42"), der ueber das Alter der Daten nichts sagt.
+try:
+    _esi545 = open("eve_trader/esi.py", encoding="utf-8").read()
+    _i545 = _esi545.index("def _fetch_all_assets(")
+    check("aa545 _fetch_all_assets schreibt den ESI-Datenstand mit",
+          "_record_assets_meta(character_id, first)"
+          in _esi545[_i545:_i545 + 1400])
+    _tb545 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+    check("aa545 Stock locations sammelt das Alter je Charakter und reicht "
+          "das groesste durch",
+          "esi.assets_age_seconds(cid)" in _tb545
+          and '"asset_alter": (max(_asset_alter) if _asset_alter else None)'
+          in _tb545)
+    check("aa545 ... und zeigt es in der Kopfzeile, erst ab 5 Minuten",
+          'stock data {n} min old (ESI caches ~1 h)' in _tb545
+          and "float(_alt_s) >= 300" in _tb545)
+    _kat545 = __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+    check("aa545 deutscher Eintrag mit demselben Platzhalter",
+          "{n}" in (_kat545.get("stock data {n} min old (ESI caches ~1 h)") or ""))
+except Exception as _e545:                               # pragma: no cover
+    _fail.append(f"aa545 Bestandsalter: {type(_e545).__name__}: {_e545}")
+
+# ---------------------------------------------------------------- (aa546)
+# WO MACHT MAN KOPIEREN UND INVENTION? (emm529, Nutzer: "im Runplanner bei
+# Copying und Invention steht ja gar nicht, an welcher Station / Struktur man
+# das machen soll, stattdessen steht da science slots - runs parallel to the
+# build. Bitte aendere das")
+#
+# GEMESSEN vor dem Bauen (Regel 8a): die Struktur-Wahl gab es laengst -
+# `_struct_for_activity("invention")` liefert die zugewiesene bzw. die
+# Auto-Wahl, und die Invention-Karte UND die Job-Zeit-Rechnung (emm325)
+# rufen sie schon. Nur der Runplaner zeigte sie nicht. Deshalb pruefen wir
+# hier zwei Dinge: der Kopf nennt die Struktur, und er nennt GENAU die, mit
+# der gerechnet wird (Regel 9 - keine zweite Wahl).
+try:
+    _M546 = __import__("eve_trader.ui.mw_bauplan_tabs", fromlist=["BauplanTabs"])
+    _fn546 = _M546.BauplanTabs._science_struktur
+
+    class _NS546:                       # nackter Namespace, kein Qt
+        def __init__(self, structs, name="Dockside Innovations"):
+            self.settings = {"bau_structures": structs}
+            self._name546 = name
+            self.gefragt = []
+
+        def _struct_for_activity(self, akey):
+            self.gefragt.append(akey)
+            return {"name": self._name546} if self._name546 else None
+
+    _ns546 = _NS546([{"id": 1, "type": "raitaru"}])
+    check("aa546 _science_struktur liefert den Namen der Science-Struktur",
+          _fn546(_ns546) == "Dockside Innovations")
+    check("aa546 ... und fragt GENAU die Invention-Wahl (EINE Quelle)",
+          _ns546.gefragt == ["invention"])
+    check("aa546 ohne angelegte Struktur bleibt es UNBEKANNT (None)",
+          _fn546(_NS546([])) is None)
+    check("aa546 keine Science-faehige Struktur -> ebenfalls None",
+          _fn546(_NS546([{"id": 1, "type": "athanor"}], name=None)) is None)
+
+    _tb546 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+    _i546 = _tb546.index("def _science_block(")
+    _blk546 = _tb546[_i546:_tb546.index("def _science_block_auffrischen(")]
+    check("aa546 beide Science-Koepfe tragen den Ort",
+          _blk546.count("_sc_suffix") >= 3
+          and '_kopf("⚗ " + _txt("Copying") + _sc_suffix' in _blk546
+          and '_kopf("⚗ " + _txt("Invention") + _sc_suffix' in _blk546)
+    check("aa546 der Ort kommt aus _science_struktur, nicht aus einer "
+          "zweiten Wahl",
+          "_sc_struct = self._science_struktur()" in _blk546
+          and "_struct_for_activity" not in _blk546)
+    # Anker ohne Sonderzeichen-Umbruch: die Saetze stehen im Quelltext
+    # ueber zwei Zeilen verteilt, deshalb nur ihr Anfang.
+    check("aa546 ohne Struktur behauptet der Kopf keinen Ort (Regel 1)",
+          "no structure for science yet" in _blk546)
+    check("aa546 der alte Zusatz steht nur noch im Tooltip",
+          "science slots – runs parallel to the build" not in _tb546
+          and "_sc_tip = (" in _blk546
+          and "Science slots – these runs go parallel to the " in _blk546)
+    _kat546 = __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+    for _s546 in ("no structure for science yet – set one in the "
+                  "Structures tab",
+                  "Science slots – these runs go parallel to the build.",
+                  "Copying and invention use the structure assigned to "
+                  "invention in the Structures tab."):
+        check("aa546 deutscher Eintrag: " + _s546[:34],
+              bool(_kat546.get(_s546)))
+    check("aa546 der alte Katalogeintrag ist weg (aa235)",
+          "science slots – runs parallel to the build" not in _kat546)
+except Exception as _e546:                               # pragma: no cover
+    _fail.append(f"aa546 Science-Struktur: {type(_e546).__name__}: {_e546}")
+
+# ---------------------------------------------------------------- (aa547)
+# WAS ZAEHLT ALS BESTAND? (emm530, Nutzer: "R.A.M. wird immer noch nicht
+# richtig getrackt, es liegt aber auf der Dockside Innovations" - R.A.M.-
+# Robotics stand unter "Not at any tracked location" mit 0 Stueck und
+# "missing 5", waehrend alle fuenf anderen R.A.M.-Sorten an der Dockside
+# mit Haken dastanden.)
+#
+# GEMESSEN (Regel 8a - beide Funktionen GERUFEN, nichts nachgerechnet):
+# gezaehlt wird ausschliesslich `location_flag == "Hangar"`. Die
+# LIEFERUNGEN (Deliveries) und der SCHIFFSLADERAUM (Cargo) zaehlen nicht -
+# und zwar in BEIDEN Zaehlungen gleich: `lagerorte.zeilen_aus_assets`
+# (Stock locations) und `esi.hangar_und_container` (Bestand des Bauplans)
+# kommen auf dieselbe Zahl. Genau das haelt diese Pruefung fest: laufen die
+# beiden je auseinander, zeigt die eine Seite Material, das die andere
+# nicht hat - die Fehlerklasse aus Sitzung 9.
+try:
+    _lo547 = __import__("eve_trader.lagerorte", fromlist=["x"])
+    _esi547 = __import__("eve_trader.esi", fromlist=["x"])
+    _as547 = [
+        {"item_id": 1, "type_id": 11476, "quantity": 7,
+         "location_id": 60000, "location_flag": "Hangar"},
+        {"item_id": 2, "type_id": 11476, "quantity": 5,
+         "location_id": 60000, "location_flag": "Deliveries"},
+        {"item_id": 4, "type_id": 11476, "quantity": 9,
+         "location_id": 3, "location_flag": "Cargo"},
+    ]
+    _z547 = _lo547.zeilen_aus_assets(_as547, set(), 1, "char")
+    _m547 = sum(z["menge"] for z in _z547 if z["tid"] == 11476)
+    check("aa547 Stock locations zaehlt nur den Item-Hangar (7 von 21)",
+          _m547 == 7)
+    check("aa547 ... die Lieferungen zaehlen nicht",
+          2 not in {z.get("item_id") for z in _z547})
+    check("aa547 ... der Schiffsladeraum zaehlt nicht",
+          4 not in {z.get("item_id") for z in _z547})
+    _h547, _c547 = _esi547.hangar_und_container(_as547, set())
+    check("aa547 der Bauplan-Bestand zaehlt GENAUSO (EINE Regel)",
+          int(_h547.get(11476) or 0) == _m547)
+    # Das Messwerkzeug muss die verworfenen Eintraege zeigen koennen -
+    # sonst sieht "verworfen" aus wie "gibt es nicht" (genau sein Fall).
+    _w547 = open("werkzeuge/zeige_lagerorte.py", encoding="utf-8").read()
+    check("aa547 das Werkzeug behaelt die ROHEN Assets",
+          "roh_je_bes" in _w547 and "roh_je_bes.append(" in _w547)
+    check("aa547 ... und sucht je fehlendem Item darin",
+          "WARUM SIEHT DIE SEITE ES NICHT?" in _w547)
+    check("aa547 ... das Urteil kommt aus der Funktion, nicht aus einem "
+          "Nachbau (Regel 8a)",
+          'a.get("item_id") in _gez' in _w547
+          and 'location_flag" == "Hangar"' not in _w547)
+    # emm531: deckt der Eigenbau den Bedarf, den der Plan verschweigt?
+    check("aa547 das Werkzeug stellt Eigenbau gegen Bedarf",
+          "WAS DER PLAN SELBST BAUT - REICHT ES?" in _w547
+          and "DECKT NICHT" in _w547)
+    check("aa547 ... und rechnet den Bedarf mit DERSELBEN Funktion "
+          "(Regel 8a)",
+          "_rem, _summe = _restbedarf(_r, _m, _geb)" in _w547)
+except Exception as _e547:                               # pragma: no cover
+    _fail.append(f"aa547 was zaehlt als Bestand: {type(_e547).__name__}: {_e547}")
+
+# ---------------------------------------------------------------- (aa548)
+# T1-KOPIEN FUERS ERFINDEN SIND KEINE BAU-BLAUPAUSEN (emm535, Nutzer:
+# "er hat die Kopien mitgezaehlt, die ich gemacht habe, dabei brauche ich
+# die Kopien fuers T2-Forschen"). Gemessen an seinem Hobgoblin-Plan:
+# 1 Original (2455) + 3 Kopien a 1 Run -> der Runplaner bekam Deckel 4 und
+# stellte 4 parallele Jobs mit 3/3/2/2 Runs ein; drei davon koennten im
+# Spiel gar nicht starten (eine 1-Run-Kopie traegt keinen 3-Run-Job).
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _MH548
+
+    # SEINE echten Daten: Hobgoblin I Blueprint 2455 -> Produkt 2454.
+    _cache548 = [
+        {"type_id": 2455, "quantity": 1, "runs": -1, "is_bpo": True},
+        {"type_id": 2455, "quantity": 1, "runs": 1, "is_bpo": False},
+        {"type_id": 2455, "quantity": 1, "runs": 1, "is_bpo": False},
+        {"type_id": 2455, "quantity": 1, "runs": 1, "is_bpo": False},
+        # Gegenfall ANDERER Art (Regel 8b): eine Blaupause, die der Plan
+        # NICHT erfindet - dort zaehlen Kopien weiter voll mit.
+        {"type_id": 9999, "quantity": 2, "runs": 5, "is_bpo": False},
+    ]
+    _p2b548 = {2454: (2455, 1, 1), 8888: (9999, 1, 1)}
+    _runs548 = {2454: 10, 8888: 3}
+
+    _ohne = _MH548._bp_copies_by_tid(_cache548, _runs548, _p2b548)
+    # SEIT emm538 zaehlen neben einem Original NUR die Originale - auch
+    # ohne Invention-Filter (eine 1-Run-Kopie traegt keinen 3-Run-Job).
+    check("aa548 ohne Filter zaehlt neben dem Original nur das Original (1)",
+          _ohne.get(2454) == 1)
+    _mit = _MH548._bp_copies_by_tid(_cache548, _runs548, _p2b548,
+                                    nur_bpo={2455})
+    check("aa548 mit Invention-Filter bleibt nur das Original (Deckel 1)",
+          _mit.get(2454) == 1)
+    check("aa548 ... und eine fremde Blaupause behaelt ihre Kopien "
+          "(Gegenfall, Regel 8b)",
+          _ohne.get(8888) == 2 and _mit.get(8888) == 2)
+    check("aa548 leere Filtermenge aendert nichts (Regel 1)",
+          _MH548._bp_copies_by_tid(_cache548, _runs548, _p2b548,
+                                   nur_bpo=set()) == _ohne
+          and _MH548._bp_copies_by_tid(_cache548, _runs548, _p2b548,
+                                       nur_bpo=None) == _ohne)
+    # Hat der Plan NUR Kopien dieser T1 (kein Original), bleibt gar kein
+    # Eintrag - der Runplaner faellt auf die pauschale Stufen-Zahl zurueck,
+    # genau wie bei einem Item ohne eigene Blaupause.
+    check("aa548 nur Kopien und kein Original -> kein Deckel-Eintrag",
+          2454 not in _MH548._bp_copies_by_tid(
+              [b for b in _cache548 if not b.get("is_bpo")],
+              _runs548, _p2b548, nur_bpo={2455}))
+
+    # DER HELFER: EINE Quelle fuer beide Stellen (Regel 9).
+    class _NS548:
+        _bd_invention_needs = {2457: {"t1": 2455}, 1234: {"t1": 0}}
+    _t1s = _MH548._inv_t1_bps(_NS548())
+    check("aa548 _inv_t1_bps nennt die T1-Blaupause des Invention-Plans",
+          _t1s == {2455})
+
+    class _Leer548:
+        _bd_invention_needs = {}
+    check("aa548 ... und schweigt ohne gerechneten Invention-Reiter (Regel 1)",
+          _MH548._inv_t1_bps(_Leer548()) == set())
+
+    import inspect as _ins548
+    _src548 = _ins548.getsource(_MH548._resolve_per_item_bp_cap)
+    check("aa548 der Runplaner-Deckel reicht den Filter durch",
+          "_inv_t1_bps" in _src548 and "nur_bpo=" in _src548)
+    _mw548 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+                  encoding="utf-8").read()
+    _i548 = _mw548.find("def _load_stage_bp_from_esi")
+    _blk548 = _mw548[_i548:_i548 + 5200] if _i548 > 0 else ""
+    check("aa548 die Stufen-Ladung filtert mit DEMSELBEN Helfer (Regel 9)",
+          "self._inv_t1_bps()" in _blk548
+          and "self.bp_parallel_slots(" in _blk548)
+except Exception as _e548:                               # pragma: no cover
+    _fail.append(f"aa548 Invention-Kopien: {type(_e548).__name__}: {_e548}")
+
+# ---------------------------------------------------------------- (aa549)
+# DIE BESITZ-ZAEHLUNG DARF NICHT ALTERN (emm536, Nutzer 11.10.2026: "jetzt
+# wird behauptet ich habe nicht alle blueprints, aber ich habe sie" -> nach
+# "Alles aus ESI laden": "ja ploetzlich waren sie alle vorhanden").
+# GEMESSEN an seinem Blaupausen-Bericht (18:09) gegen seinen Screenshot
+# (18:24): Hobgoblin I BPO x1, Particle Accelerator Unit BPO x2, R.A.M.-
+# Robotics BPO x1 - der Reiter schrieb fuer genau diese drei rot
+# "completely missing", die anderen 15 Zeilen stimmten auf das Stueck.
+# Ursache: `_bd_bp_owned_counts` entstand NUR in `_apply_bp_ownership`
+# (Lade-Knopf), lag am Hauptfenster und ueberlebte sogar das Schliessen
+# eines Bauplans; der Bestands-Refresh holt die Blaupausen seit Sitzung 8
+# mit, erneuerte die Zaehlung aber nie. Neu gekaufte Blaupausen blieben so
+# "fehlt komplett" - und "Buy Missing Blueprints" haette sie ein zweites
+# Mal gekauft.
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _MH549
+
+    # Seine drei Faelle plus eine reine Kopien-Blaupause als Gegenfall
+    # ANDERER Art (Regel 8b): dort darf nie eine BPO behauptet werden.
+    _cache549 = [
+        {"type_id": 2455, "quantity": 1, "runs": -1, "is_bpo": True},
+        {"type_id": 11530, "quantity": 2, "runs": -1, "is_bpo": True},
+        {"type_id": 11481, "quantity": 1, "runs": -1, "is_bpo": True},
+        {"type_id": 9999, "quantity": 3, "runs": 10, "is_bpo": False},
+        {"type_id": 9999, "quantity": 1, "runs": 5, "is_bpo": False},
+    ]
+    _c549, _r549 = _MH549.bp_besitz_zaehlen(_cache549)
+    check("aa549 Originale zaehlen als Stueck (seine 1 / 2 / 1)",
+          _c549.get(2455) == 1 and _c549.get(11530) == 2
+          and _c549.get(11481) == 1)
+    check("aa549 Kopien zaehlen als Runs x Stueck (3x10 + 1x5 = 35)",
+          _r549.get(9999) == 35)
+    check("aa549 eine reine Kopien-Blaupause ist NIE ein Original",
+          9999 not in _c549)
+    check("aa549 ein Original taucht nie in den Kopien-Runs auf",
+          2455 not in _r549)
+    check("aa549 leere Liste behauptet nichts",
+          _MH549.bp_besitz_zaehlen([]) == ({}, {})
+          and _MH549.bp_besitz_zaehlen(None) == ({}, {}))
+    _kaputt549 = [{"type_id": 2455, "quantity": None, "runs": None,
+                   "is_bpo": True},
+                  {"type_id": None, "quantity": 5, "is_bpo": True},
+                  {"quantity": 5, "is_bpo": True}]
+    _ck549, _rk549 = _MH549.bp_besitz_zaehlen(_kaputt549)
+    check("aa549 kaputte Felder werfen nicht und erfinden nichts",
+          _ck549 == {2455: 1} and _rk549 == {})
+
+    # DER REITER LEITET AB, ER SPEICHERT NICHT (Regel 9).
+    _mwq549 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+                   encoding="utf-8").read()
+    _i549 = _mwq549.find("def _fill_blueprint_tab")
+    _blk549 = _mwq549[_i549:_i549 + 3000] if _i549 > 0 else ""
+    check("aa549 der Blueprints-Reiter zaehlt aus dem Blaupausen-Cache",
+          "_bd_owned_bp_cache" in _blk549
+          and "self.bp_besitz_zaehlen(" in _blk549)
+    check("aa549 ... und nimmt die gespeicherte Zaehlung nur als Rueckfall",
+          _blk549.find("self.bp_besitz_zaehlen(")
+          < _blk549.find('getattr(self, "_bd_bp_owned_counts"'))
+    _fen549 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                "mw_bauplan_fenster.py"), encoding="utf-8").read()
+    _j549 = _fen549.find("def _apply_bp_ownership")
+    _ablk549 = _fen549[_j549:_j549 + 3000] if _j549 > 0 else ""
+    check("aa549 der Lade-Knopf nutzt DENSELBEN Helfer (eine Zaehlung)",
+          "self.bp_besitz_zaehlen(owned_bp)" in _ablk549)
+    check("aa549 ... und zaehlt nicht mehr selbst mit einer zweiten Schleife",
+          "counts[tid] = counts.get(tid, 0)" not in _ablk549)
+    _tabs549 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                 "mw_bauplan_tabs.py"), encoding="utf-8").read()
+    check("aa549 die Kopier-Schritte lesen den Cache statt der alten Zahl",
+          "self.bp_besitz_zaehlen(_cache536)[0]" in _tabs549)
+except Exception as _e549:                               # pragma: no cover
+    _fail.append(f"aa549 Besitz-Zaehlung: {type(_e549).__name__}: {_e549}")
+
+# ---------------------------------------------------------------- (aa550)
+# DER LADEBALKEN GEHOERT EINEM JOB (emm537, Nutzer 12.10.2026: "Market scan
+# sieht verbuggt aus, die Ladeleiste springt sehr schnell von 0 auf 100 und
+# hin und her"; er hatte Portfolio laden UND Market scan gedrueckt). Es gibt
+# EINEN Zustand `_overlay_progress`, aber `_run` hing JEDEN Worker daran -
+# auch Hintergrund-Jobs ohne eigenes Overlay -, und jeder Job meldet in
+# seiner eigenen Skala (Scan: Seiten, Portfolio: Items).
+try:
+    class _Fake550:
+        _overlay_gehoert = MW._overlay_gehoert
+        _overlay_fortschritt = MW._overlay_fortschritt
+        _overlay_status = MW._overlay_status
+
+        def __init__(self):
+            self._overlay_job = None
+            self.balken = []
+            self.kopf = []
+
+        def _set_loading_progress(self, done, total):
+            self.balken.append((done, total))
+
+        def _set_loading(self, text):
+            self.kopf.append(text)
+
+    _scan550 = object()        # Overlay-Job, Skala SEITEN
+    _pf550 = object()          # Hintergrund-Job, Skala ITEMS
+    _f550 = _Fake550()
+    _f550._overlay_job = _scan550
+    _f550._overlay_fortschritt(_scan550, 2, 6)
+    _f550._overlay_fortschritt(_pf550, 1500, 13000)
+    _f550._overlay_fortschritt(_pf550, 13000, 13000)
+    check("aa550 nur der Besitzer schreibt in den Balken (2/6, keine Items)",
+          _f550.balken == [(2, 6)])
+    _f550._overlay_status(_pf550, "Portfolio")
+    _f550._overlay_status(_scan550, "Scanning Jita")
+    check("aa550 auch der Phasen-Text gehoert nur dem Besitzer",
+          _f550.kopf == ["Scanning Jita"])
+    _f550b = _Fake550()        # ohne Besitzer schreibt niemand
+    _f550b._overlay_fortschritt(_scan550, 2, 6)
+    _f550b._overlay_status(_scan550, "x")
+    check("aa550 ohne Besitzer schreibt kein Job",
+          _f550b.balken == [] and _f550b.kopf == [])
+    check("aa550 der Besitz entscheidet sich an der Identitaet des Jobs",
+          _f550._overlay_gehoert(_scan550) is True
+          and _f550._overlay_gehoert(_pf550) is False)
+
+    _mw550 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+                  encoding="utf-8").read()
+    _i550 = _mw550.find("    def _run(self, worker, done_cb")
+    _blk550 = _mw550[_i550:_i550 + 4000] if _i550 > 0 else ""
+    check("aa550 _run haengt den Fortschritt nicht mehr direkt an den Balken",
+          "worker.progress.connect(self._set_loading_progress)" not in _blk550
+          and "self._overlay_fortschritt(_w, d, g)" in _blk550)
+    check("aa550 ... und den Phasen-Text auch nicht",
+          "worker.status.connect(self._set_loading)" not in _blk550
+          and "self._overlay_status(_w, s)" in _blk550)
+    _io550 = _blk550.find("if overlay:")
+    _ij550 = _blk550.find("self._overlay_job = worker")
+    _ip550 = _blk550.find("worker.progress.connect(")
+    check("aa550 den Balken bekommt nur ein Job MIT Overlay",
+          0 < _io550 < _ij550 < _ip550
+          and 'getattr(self, "_overlay_job", None) is None' in _blk550)
+    check("aa550 der Besitzer gibt den Balken am Ende frei und leert ihn",
+          "self._overlay_job = None" in _blk550
+          and "self._overlay_balken_leeren()" in _blk550)
+    _ih550 = _mw550.find("    def _hide_overlay(self):")
+    check("aa550 Abbrechen/Verstecken gibt den Balken frei",
+          "self._overlay_job = None" in _mw550[_ih550:_ih550 + 600])
+except Exception as _e550:                               # pragma: no cover
+    _fail.append(f"aa550 Ladebalken: {type(_e550).__name__}: {_e550}")
+
+# ---------------------------------------------------------------- (aa551)
+# NEBEN EINEM ORIGINAL ZAEHLEN NUR DIE ORIGINALE (emm538, Nutzer: "es ist
+# gut moeglich das dieser fall eintritt oder bei einem anderen nutzer von
+# MoMa"). Ein Original darf beliebig viele Runs in EINEM Job fahren, eine
+# angefangene Kopie nur ihre eigenen - wer 1 Original und 2 kleine Kopien
+# hat, bekam drei Jobs, von denen zwei im Spiel nicht starten (Regel 3:
+# ein Job, der nicht startet, kostet einen Abend).
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _MH551
+
+    _bpo551 = {"type_id": 7, "quantity": 1, "runs": -1, "is_bpo": True}
+    _kop551 = {"type_id": 7, "quantity": 1, "runs": 3, "is_bpo": False}
+    check("aa551 1 Original + 2 kleine Kopien -> 1 Job, 2 bleiben liegen",
+          _MH551.bp_parallel_slots([_bpo551, _kop551, dict(_kop551)])
+          == (1, 2))
+    check("aa551 ohne Original zaehlen die Kopien wie bisher (3 Jobs)",
+          _MH551.bp_parallel_slots([_kop551, dict(_kop551), dict(_kop551)])
+          == (3, 0))
+    check("aa551 mehrere Originale: jedes ist ein Job, Kopien gemeldet",
+          _MH551.bp_parallel_slots(
+              [dict(_bpo551, quantity=2), dict(_kop551, quantity=5)])
+          == (2, 5))
+    check("aa551 ohne Kopien wird nichts gemeldet",
+          _MH551.bp_parallel_slots([dict(_bpo551, quantity=3)]) == (3, 0))
+    check("aa551 Invention-Kopien fallen nicht 'unter den Tisch' (emm535)",
+          _MH551.bp_parallel_slots([_bpo551, _kop551], nur_bpo=True) == (1, 0))
+    check("aa551 leer und kaputte Felder werfen nicht",
+          _MH551.bp_parallel_slots([]) == (0, 0)
+          and _MH551.bp_parallel_slots(None) == (0, 0)
+          and _MH551.bp_parallel_slots(
+              [{"quantity": None, "is_bpo": True}]) == (1, 0))
+
+    # Der Deckel meldet die liegen gebliebenen Kopien nach oben.
+    _p2b551 = {70: (7, 1, 1)}
+    _ign551 = {}
+    _cap551 = _MH551._bp_copies_by_tid(
+        [_bpo551, _kop551, dict(_kop551)], {70: 20}, _p2b551,
+        ignoriert=_ign551)
+    check("aa551 der Deckel steht auf 1 und nennt (Originale, Kopien)",
+          _cap551.get(70) == 1 and _ign551.get(70) == (1, 2))
+    check("aa551 ohne Original wird nichts gemeldet",
+          _MH551._bp_copies_by_tid([_kop551], {70: 20}, _p2b551,
+                                   ignoriert=_ign551) == {70: 1}
+          and 70 not in {k: v for k, v in _ign551.items() if v[1] and False})
+
+    import inspect as _ins551
+    _src551 = _ins551.getsource(_MH551._resolve_per_item_bp_cap)
+    check("aa551 der Resolver sammelt die Meldung und haengt sie ans Fenster",
+          "ignoriert=_ign538" in _src551
+          and "self._bd_bp_kopien_aus = _ign538" in _src551)
+    # NUR BEI MOUSEOVER (Nutzer: "nur bei mouse over nicht fix irgendwo hin
+    # hauen") - die Meldung steht im setToolTip des Blaupausen-Knopfs.
+    _tabs551 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                 "mw_bauplan_tabs.py"), encoding="utf-8").read()
+    _i551 = _tabs551.find('_bd_bp_kopien_aus')
+    _blk551 = _tabs551[_i551:_i551 + 900] if _i551 > 0 else ""
+    check("aa551 die Meldung steht im Tooltip des Blaupausen-Knopfs",
+          "_kopf.setToolTip(" in _blk551
+          and "Only {b} original(s) planned" in _blk551)
+    check("aa551 ... und nirgends als sichtbarer Text",
+          _tabs551.count("_bd_bp_kopien_aus") == 1
+          and "setText" not in _blk551)
+except Exception as _e551:                               # pragma: no cover
+    _fail.append(f"aa551 Original-Deckel: {type(_e551).__name__}: {_e551}")
+
+# ---------------------------------------------------------------- (aa552)
+# DIE GRAUE STATUSZEILE DRUECKT DIE AMBERNEN KNOEPFE NICHT MEHR ZUSAMMEN
+# (emm540, Nutzer 12.10.2026: "Stocklocations wegen der unnoetigen anzeige
+# in grau haben die buttons wie Copy shoppingslist usw in Gold, kaum Platz
+# und werden zusammengedrueckt" - auf seinem Bild hiessen sie nur noch
+# "sh<", "Expa", "Re<"). Die Zeile ist seit emm476/478/528 lang geworden
+# (Stand, Datenalter, Job-Warnungen, abgeschaltete Orte) und stand in
+# DERSELBEN Zeile wie die drei Knoepfe. Muster emm362 (Legende in eigener
+# Zeile) + KurzLabel (emm334): kuerzen statt die Seite breit machen.
+try:
+    _tabs552 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                 "mw_bauplan_tabs.py"), encoding="utf-8").read()
+    _i552 = _tabs552.find("    def _lager_seite_bauen(self):")
+    _blk552 = _tabs552[_i552:_i552 + 6000] if _i552 > 0 else ""
+    check("aa552 die Statuszeile ist ein KurzLabel (kuerzt mit '...')",
+          "self._lager_stand_lbl = KurzLabel(" in _blk552)
+    check("aa552 ... und steht NICHT in der Knopf-Zeile",
+          "kopf.addWidget(self._lager_stand_lbl)" not in _blk552
+          and "v.addWidget(self._lager_stand_lbl)" in _blk552)
+    # Reihenfolge: erst die Knopf-Zeile ins Layout, dann die Statuszeile
+    # darunter - sonst stuende sie ueber dem Titel.
+    _ik552 = _blk552.find("v.addLayout(kopf)")
+    _is552 = _blk552.find("v.addWidget(self._lager_stand_lbl)")
+    check("aa552 sie steht UNTER der Knopf-Zeile",
+          0 < _ik552 < _is552)
+    # Die drei Knoepfe duerfen weiter schrumpfen (emm501, b66 auf seinem
+    # Windows): volle Breite, solange Platz ist.
+    check("aa552 die drei Kopf-Knoepfe behalten ihre Untergrenze von 40 px",
+          _blk552.count("setMinimumWidth(40)") >= 3)
+except Exception as _e552:                               # pragma: no cover
+    _fail.append(f"aa552 Lager-Kopfzeile: {type(_e552).__name__}: {_e552}")
+
+# ---------------------------------------------------------------- (aa553)
+# BLAUPAUSEN-/SCIENCE-ZUFALLSPROBE (emm542) - die Kette, die entscheidet, ob
+# ein Job im Spiel ueberhaupt STARTET: wie viele Blaupausen gleichzeitig
+# laufen koennen (bp_besitz_zaehlen, bp_parallel_slots, _bp_copies_by_tid),
+# wie viele Runs auf eine Kopie passen (_bpc_runs_by_tid, _bp_teile), wie
+# Kopierjobs in Schritte fallen (kopier_schritte) und wie Science-Jobs auf
+# Charaktere und Wellen verteilt werden (science_verteilen,
+# industry.kopien_aufteilung). Ein Fehler hier kostet einen Abend (Regel 3):
+# der Nutzer stellt sich im Spiel vor einen Job, der nicht anlaeuft.
+# Muster aa505/506/520/521/525/527: feste Seeds, ECHTE Funktionen,
+# EIGENSCHAFTEN statt Zeilen-Spiegel - ein Spiegel bewiese nur, dass die
+# Funktion sich selbst gleicht. Zuerst Handrechnungen mit festen Zahlen
+# (darunter sein Hobgoblin-Fall aus emm534/535), dann die Probe.
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _H553
+    from eve_trader.ui import mw_helpers as _MH553
+    from eve_trader import industry as _I553
+
+    def _wert553(fn, *a, **k):
+        """Ausnahme als WERT zurueck (Lehre aa393, zuletzt emm512: eine
+        Mutation muss die Pruefung ROT machen, nicht die Suite abbrechen -
+        sonst bleibt alles dahinter ungeprueft)."""
+        try:
+            return fn(*a, **k)
+        except Exception as _e553x:
+            return "EXCEPTION: " + type(_e553x).__name__
+
+    _BP553, _T553 = 2455, 2456          # Hobgoblin I Blueprint / Hobgoblin I
+    # SEIN FALL (emm534/535, Blaupausen-Bericht Fassung 3): 1 Original +
+    # 3 Kopien a 1 Run bei Banana Motor. Der Runplaner stellte daraus vier
+    # parallele Jobs mit 3/3/2/2 Runs - drei davon koennten im Spiel nicht
+    # starten.
+    _hob553 = [{"type_id": _BP553, "is_bpo": True, "quantity": 1, "runs": -1},
+               {"type_id": _BP553, "quantity": 1, "runs": 1},
+               {"type_id": _BP553, "quantity": 1, "runs": 1},
+               {"type_id": _BP553, "quantity": 1, "runs": 1}]
+    eq("aa553 sein Hobgoblin-Fall: 1 Original verplant, 3 Kopien gemeldet",
+       _H553.bp_parallel_slots(_hob553), (1, 3))
+    eq("aa553 ... ohne Original waeren es 3 Jobs (unveraendert)",
+       _H553.bp_parallel_slots(_hob553[1:]), (3, 0))
+    eq("aa553 ... als Invention-Vorlage zaehlt nur das Original, stumm",
+       _H553.bp_parallel_slots(_hob553, nur_bpo=True), (1, 0))
+    eq("aa553 bp_besitz_zaehlen trennt Stueck (BPO) von Runs (BPC)",
+       _H553.bp_besitz_zaehlen(_hob553), ({_BP553: 1}, {_BP553: 3}))
+    # Runs-Deckel: mit einer BPO dabei gibt es KEINEN Eintrag (unbegrenzt),
+    # nur Kopien -> die KLEINSTE zaehlt (Regel 3: lieber ein Job zu viel
+    # als einer, der nicht startet).
+    _p2b553 = {_T553: (_BP553, _I553.MANUFACTURING, 1)}
+    eq("aa553 Runs-Deckel: mit Original kein Deckel",
+       _H553._bpc_runs_by_tid(_hob553, {_T553: 10}, _p2b553), {})
+    eq("aa553 Runs-Deckel: nur Kopien -> die kleinste entscheidet",
+       _H553._bpc_runs_by_tid(
+           [{"type_id": _BP553, "quantity": 1, "runs": 4},
+            {"type_id": _BP553, "quantity": 1, "runs": 1}],
+           {_T553: 10}, _p2b553), {_T553: 1})
+    # _bp_teile mit Deckel: GANZE Kopien, der Rest als letzter Job
+    # (Nutzer 19.09.2026: "nicht dass Blueprints mit angefangenen Runs
+    # stehen bleiben").
+    eq("aa553 _bp_teile 23 Runs auf 10er-Kopien: 10 + 10 + 3",
+       _H553._bp_teile(23, 3, max_runs=10), (3, [10, 10, 3]))
+    # kopier_schritte: aus einer KOPIE kann man nicht kopieren (emm510) -
+    # drei Kopierjobs bei zwei Originalen laufen in zwei Schritten.
+    eq("aa553 kopier_schritte: 3 Jobs / 2 Originale -> 2 + 1",
+       [len(_g553) for _g553 in _MH553.kopier_schritte(
+           [("a", 1), ("b", 1), ("c", 1)],
+           {"a": _BP553, "b": _BP553, "c": _BP553}, {_BP553: 2})],
+       [2, 1])
+    # kopien_aufteilung: 249 Versuche auf 10 freie Slots, Kopier-Obergrenze
+    # 50 -> 10 Kopien a 25 Runs = 250 Versuche, 1 bleibt als Reserve.
+    _ka553 = _I553.kopien_aufteilung(249, 2, slots=10, max_runs_je_kopie=50)
+    eq("aa553 kopien_aufteilung 249/10 Slots: 10 x 25, 1 Reserve",
+       (_ka553["kopien"], _ka553["runs_je_kopie"],
+        _ka553["versuche_gesamt"], _ka553["rest_reserve"]),
+       (10, 25, 250, 1))
+    # science_verteilen: zwei Charaktere mit 2 bzw. 1 Slot, 5 Jobs ->
+    # 2 + 1 in Welle 1, Rest in Welle 2 (emm425).
+    eq("aa553 science_verteilen: Slots zuerst, Rest als naechste Welle",
+       [(c, w, list(l)) for c, w, l in
+        _MH553.science_verteilen([("k", 5)], [(11, 2), (22, 1)])],
+       [(11, 1, [("k", 2)]), (22, 1, [("k", 1)]), (11, 2, [("k", 2)])])
+
+    def _aa553():
+        import random
+        H, MH, I = _H553, _MH553, _I553
+        probs = {}
+
+        def bad(name, *werte):
+            probs.setdefault(name, werte)
+
+        # 700 Welten: haelt die aa-Suite unter der Tempo-Grenze.
+        for seed in range(700):
+            rnd = random.Random(553_000 + seed)
+            # --- Welt bauen: Produkte mit Blaupause, Besitz, Plan-Runs ---
+            n_items = rnd.randint(1, 5)
+            tids = [990001 + i for i in range(n_items)]
+            p2b, owned, build_runs = {}, [], {}
+            je_bp_gueltig = {}          # {bp: [Eintraege mit heilen Feldern]}
+            kaputt = (seed % 5 == 0)    # jede fuenfte Welt bekommt Muell
+            for i, t in enumerate(tids):
+                bp = t + 5000
+                act = rnd.choice([I.MANUFACTURING, I.MANUFACTURING,
+                                  I.REACTION])
+                p2b[t] = (bp, act, rnd.choice([1, 1, 2, 10]))
+                # Plan-Runs: auch 0 und negativ (duerfen keinen Eintrag
+                # erzeugen) und einmal Muell.
+                build_runs[t] = rnd.choice(
+                    [0, -3, 1, 1, 5, 23, 200, 1000,
+                     ("x" if kaputt and i == 0 else 7)])
+                n_bpo = rnd.choice([0, 0, 0, 1, 1, 2, 3])
+                n_bpc = rnd.choice([0, 0, 1, 1, 2, 3, 5])
+                eintraege = []
+                for _ in range(n_bpo):
+                    eintraege.append({"type_id": bp, "is_bpo": True,
+                                      "quantity": rnd.randint(1, 3),
+                                      "runs": -1})
+                for _ in range(n_bpc):
+                    eintraege.append({"type_id": bp, "is_bpo": False,
+                                      "quantity": rnd.randint(1, 4),
+                                      "runs": rnd.choice([1, 2, 4, 10, 10,
+                                                          20, 50])})
+                je_bp_gueltig[bp] = list(eintraege)
+                owned.extend(eintraege)
+            if kaputt:
+                # Muell, der die Zaehlung NICHT werfen lassen darf
+                # (Lehre emm536: kaputte Felder kommen aus dem ESI-Cache).
+                owned.extend([{"type_id": None, "is_bpo": True},
+                              {"is_bpo": False, "runs": 3},
+                              {"type_id": tids[0] + 5000, "quantity": "x",
+                               "runs": "y", "is_bpo": False},
+                              {"type_id": tids[0] + 5000, "quantity": None,
+                               "runs": None, "is_bpo": True}])
+            rnd.shuffle(owned)
+            # Items, deren T1-Kopien Invention-Material sind (emm535)
+            nur_bpo = {p2b[t][0] for t in tids if rnd.random() < 0.25}
+
+            # ---------- bp_besitz_zaehlen: Stueck vs. Runs ----------
+            got = _wert553(H.bp_besitz_zaehlen, owned)
+            if not isinstance(got, tuple):
+                bad("aa553 bp_besitz_zaehlen wirft bei kaputten Feldern",
+                    seed, got)
+                continue
+            counts, bpc_runs = got
+            for bp, zahl in counts.items():
+                if zahl <= 0:
+                    bad("aa553 bp_besitz_zaehlen: BPO-Eintrag ohne Stueck",
+                        seed, bp, zahl)
+                if not any(e.get("is_bpo") for e in je_bp_gueltig.get(bp, [])) \
+                        and not kaputt:
+                    bad("aa553 bp_besitz_zaehlen: BPO ohne Original",
+                        seed, bp)
+            for bp, runs in bpc_runs.items():
+                # Nur in heilen Welten: ein Eintrag mit unlesbarer Run-Zahl
+                # landet zu Recht mit 0 in der Karte (0 Runs heisst nichts,
+                # also wird dort auch nichts behauptet).
+                if runs <= 0 and not kaputt:
+                    bad("aa553 bp_besitz_zaehlen: BPC-Eintrag ohne Runs",
+                        seed, bp, runs)
+
+            for bp, eintraege in je_bp_gueltig.items():
+                if kaputt:
+                    continue
+                menge = sum(int(e.get("quantity", 1) or 1) for e in eintraege)
+                bpo_stk = sum(int(e.get("quantity", 1) or 1)
+                              for e in eintraege if e.get("is_bpo"))
+                runs_sum = sum(int(e.get("quantity", 1) or 1)
+                               * int(e.get("runs", 0) or 0)
+                               for e in eintraege if not e.get("is_bpo"))
+                if counts.get(bp, 0) != bpo_stk:
+                    bad("aa553 bp_besitz_zaehlen: BPO-Stueck falsch",
+                        seed, bp, counts.get(bp, 0), bpo_stk)
+                if bpc_runs.get(bp, 0) != runs_sum:
+                    bad("aa553 bp_besitz_zaehlen: BPC-Runs falsch",
+                        seed, bp, bpc_runs.get(bp, 0), runs_sum)
+
+                # ---------- bp_parallel_slots: die EINE Regel ----------
+                slots, aus = _wert553(H.bp_parallel_slots, eintraege)
+                if slots > menge:
+                    bad("aa553 bp_parallel_slots: mehr Jobs als Blaupausen",
+                        seed, bp, slots, menge)
+                if eintraege and slots + aus != menge:
+                    bad("aa553 bp_parallel_slots: Jobs + liegen bleibend "
+                        "!= Besitz", seed, bp, slots, aus, menge)
+                if bpo_stk and slots != bpo_stk:
+                    bad("aa553 bp_parallel_slots: neben einem Original "
+                        "zaehlen nur Originale", seed, bp, slots, bpo_stk)
+                if not bpo_stk and aus:
+                    bad("aa553 bp_parallel_slots: ohne Original bleibt "
+                        "nichts liegen", seed, bp, aus)
+                nb = _wert553(H.bp_parallel_slots, eintraege, True)
+                if nb != (bpo_stk, 0):
+                    bad("aa553 bp_parallel_slots(nur_bpo): nur Originale, "
+                        "stumm", seed, bp, nb, bpo_stk)
+
+            # ---------- _bp_copies_by_tid == bp_parallel_slots (Regel 9) ----
+            ign = {}
+            deckel = _wert553(H._bp_copies_by_tid, owned, build_runs, p2b,
+                              nur_bpo, ign)
+            if not isinstance(deckel, dict):
+                bad("aa553 _bp_copies_by_tid wirft", seed, deckel)
+                continue
+            for t in tids:
+                try:
+                    r_ok = int(build_runs[t]) >= 1
+                except (TypeError, ValueError):
+                    r_ok = False
+                bp = p2b[t][0]
+                eintraege = [e for e in owned if e.get("type_id") == bp]
+                if not r_ok or not eintraege:
+                    if t in deckel:
+                        bad("aa553 _bp_copies_by_tid: Eintrag ohne Runs "
+                            "oder ohne Besitz", seed, t, deckel.get(t))
+                    continue
+                soll, soll_aus = H.bp_parallel_slots(eintraege,
+                                                     nur_bpo=bp in nur_bpo)
+                if soll:
+                    if deckel.get(t) != soll:
+                        bad("aa553 _bp_copies_by_tid weicht von "
+                            "bp_parallel_slots ab", seed, t,
+                            deckel.get(t), soll)
+                    if soll_aus and ign.get(t) != (soll, soll_aus):
+                        bad("aa553 _bp_copies_by_tid meldet die liegen "
+                            "bleibenden Kopien nicht", seed, t, ign.get(t))
+                elif t in deckel:
+                    bad("aa553 _bp_copies_by_tid: Eintrag ohne Jobs",
+                        seed, t, deckel.get(t))
+
+            # ---------- _bpc_runs_by_tid + _bp_teile: jeder Job passt ----
+            caps = _wert553(H._bpc_runs_by_tid, owned, build_runs, p2b)
+            if not isinstance(caps, dict):
+                bad("aa553 _bpc_runs_by_tid wirft", seed, caps)
+                continue
+            for t, m in caps.items():
+                bp = p2b[t][0]
+                eintraege = [e for e in owned if e.get("type_id") == bp]
+                if any(e.get("is_bpo") for e in eintraege):
+                    bad("aa553 _bpc_runs_by_tid: Deckel trotz Original",
+                        seed, t, m)
+                klein = [int(e.get("runs", 0) or 0) for e in eintraege
+                         if not e.get("is_bpo")
+                         and str(e.get("runs", 0)).lstrip("-").isdigit()
+                         and int(e.get("runs", 0) or 0) >= 1]
+                if klein and m != min(klein):
+                    bad("aa553 _bpc_runs_by_tid: nicht die kleinste Kopie",
+                        seed, t, m, min(klein))
+                if m < 1:
+                    bad("aa553 _bpc_runs_by_tid: Deckel unter 1", seed, t, m)
+                # Jeder gedeckelte Job muss auf die kleinste Kopie passen.
+                R = int(build_runs[t])
+                njobs, teile = H._bp_teile(R, deckel.get(t, 1), max_runs=m)
+                if sum(teile) != R or len(teile) != njobs:
+                    bad("aa553 _bp_teile: Summe oder Jobzahl falsch",
+                        seed, t, R, teile, njobs)
+                if any(p > m or p < 1 for p in teile):
+                    bad("aa553 _bp_teile: ein Job passt nicht auf die Kopie",
+                        seed, t, m, teile)
+
+            # ---------- kopier_schritte: aus einer Kopie kopiert man nicht --
+            auftraege = [("k%d" % i, rnd.randint(1, 4))
+                         for i in range(rnd.randint(1, 6))]
+            t1_je = {k: rnd.choice([p2b[t][0] for t in tids])
+                     for k, _n in auftraege}
+            orig = {p2b[t][0]: rnd.choice([0, 1, 1, 2, 3]) for t in tids}
+            gruppen = _wert553(MH.kopier_schritte, auftraege, t1_je, orig)
+            if not isinstance(gruppen, list):
+                bad("aa553 kopier_schritte wirft", seed, gruppen)
+                continue
+            flach = [k for g in gruppen for k, _n in g]
+            if sorted(flach) != sorted(k for k, _n in auftraege):
+                bad("aa553 kopier_schritte: Auftraege verloren oder doppelt",
+                    seed, flach)
+            if any(not g for g in gruppen):
+                bad("aa553 kopier_schritte: leerer Schritt", seed,
+                    [len(g) for g in gruppen])
+            for g in gruppen:
+                je_t1 = {}
+                for k, _n in g:
+                    _t1 = t1_je.get(k)
+                    je_t1[_t1] = je_t1.get(_t1, 0) + 1
+                for _t1, n in je_t1.items():
+                    kap = max(1, int(orig.get(_t1, 0) or 0))
+                    if n > kap:
+                        bad("aa553 kopier_schritte: mehr Kopierjobs als "
+                            "Originale", seed, _t1, n, kap)
+
+            # ---------- science_verteilen: Summe bleibt, Slots halten ----
+            chars = [(100 + i, rnd.choice([0, 0, 1, 2, 5, 10]))
+                     for i in range(rnd.randint(1, 4))]
+            verteilt = _wert553(MH.science_verteilen, auftraege, chars)
+            if not isinstance(verteilt, list):
+                bad("aa553 science_verteilen wirft", seed, verteilt)
+                continue
+            soll_summe = sum(n for _k, n in auftraege)
+            if any(s for _c, s in chars):
+                if sum(n for _c, _w, l in verteilt for _k, n in l) \
+                        != soll_summe:
+                    bad("aa553 science_verteilen: Summe veraendert", seed,
+                        soll_summe)
+            elif verteilt:
+                bad("aa553 science_verteilen: verteilt ohne Slots", seed,
+                    verteilt)
+            cap = dict(chars)
+            for cid, welle, liste in verteilt:
+                if cap.get(cid, 0) <= 0:
+                    bad("aa553 science_verteilen: Charakter ohne Slots "
+                        "bekommt Jobs", seed, cid)
+                if sum(n for _k, n in liste) > cap.get(cid, 0):
+                    bad("aa553 science_verteilen: mehr Jobs als Slots",
+                        seed, cid, welle, liste, cap.get(cid))
+                if welle < 1 or any(n < 1 for _k, n in liste):
+                    bad("aa553 science_verteilen: leere Zeile oder Welle 0",
+                        seed, cid, welle, liste)
+
+            # ---------- kopien_aufteilung: nie zu wenige Versuche ----------
+            att = rnd.choice([0, 1, 4, 44, 249, 587])
+            slots = rnd.choice([None, 1, 4, 10])
+            kop = rnd.choice([None, None, 1, 3, 12])
+            mx = rnd.choice([None, None, 1, 10, 50])
+            ka = _wert553(I.kopien_aufteilung, att, 2, slots, kop, mx)
+            if not isinstance(ka, dict):
+                bad("aa553 kopien_aufteilung wirft", seed, ka)
+                continue
+            if att <= 0:
+                if any(ka.get(k) for k in ("kopien", "runs_je_kopie",
+                                           "versuche_gesamt", "parallel",
+                                           "wellen", "rest_reserve")):
+                    bad("aa553 kopien_aufteilung: ohne Versuche nicht leer",
+                        seed, ka)
+            else:
+                if ka["kopien"] * ka["runs_je_kopie"] != ka["versuche_gesamt"]:
+                    bad("aa553 kopien_aufteilung: Kopien x Runs != Gesamt",
+                        seed, ka)
+                if ka["versuche_gesamt"] < att:
+                    bad("aa553 kopien_aufteilung: zu wenige Versuche "
+                        "geplant", seed, att, ka)
+                if ka["rest_reserve"] != ka["versuche_gesamt"] - att \
+                        or ka["rest_reserve"] < 0:
+                    bad("aa553 kopien_aufteilung: Reserve falsch oder "
+                        "negativ", seed, att, ka)
+                if mx and ka["runs_je_kopie"] > mx:
+                    bad("aa553 kopien_aufteilung: Runs je Kopie ueber der "
+                        "Kopier-Obergrenze", seed, mx, ka)
+                if ka["parallel"] != min(ka["kopien"], max(1, slots or 1)):
+                    bad("aa553 kopien_aufteilung: Parallelitaet falsch",
+                        seed, slots, ka)
+                if ka["wellen"] < 1:
+                    bad("aa553 kopien_aufteilung: keine Welle", seed, ka)
+        return probs
+
+    _probs553 = _aa553()
+    check("aa553 Zufallsprobe 700 Welten: keine Abweichung ("
+          + (", ".join(sorted(_probs553)) if _probs553 else "0") + ")",
+          not _probs553)
+except Exception as _e553:                               # pragma: no cover
+    _fail.append(f"aa553 Blaupausen-Kette: {type(_e553).__name__}: {_e553}")
+
+# ---------------------------------------------------------------- (aa554)
+# RESERVIERUNGS-ZUFALLSPROBE (emm543) - der ANSPRUCH eines Plans auf den
+# geteilten Materialpool. Das ist die Rechenklasse, aus der seine
+# wiederkehrende Beschwerde "ploetzlich fehlt mir Material" entsteht: ein
+# Plan, der ZU WENIG beansprucht, laesst jeden anderen sein Material als
+# frei sehen (emm523/524, die gefaehrliche Richtung - Regel 3), ein Plan,
+# der ZU VIEL beansprucht, schickt ihn mit vollem Hangar einkaufen
+# (emm525). Bisher gab es dafuer nur Handrechnungen an SEINEN Daten -
+# also genau EINE Herkunftsklasse (Regel 8b). Muster
+# aa505/506/520/521/525/527/553: fester Seed, ECHTE Funktionen,
+# EIGENSCHAFTEN statt Zeilen-Spiegel.
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _H554
+    from eve_trader import reprocess as _RP554
+    from eve_trader import store as _ST554
+
+    def _wert554(fn, *a, **k):
+        """Ausnahme als WERT (Lehre aa393/emm512: eine Mutation muss die
+        Pruefung ROT machen, nicht die Suite abbrechen)."""
+        try:
+            return fn(*a, **k)
+        except Exception as _e554x:
+            return "EXCEPTION: " + type(_e554x).__name__
+
+    # ---------- Handrechnungen ----------
+    # Der Anspruch ist die Summe der FUENF Posten - Einkauf, gedeckter
+    # Bestand, Invention-Material (beides) und SELBSTGEBAUTES (Sitzung 10:
+    # "wenn wir ein Produkt bauen, darf das nicht fuer einen anderen
+    # Bauplan als Bestand gewertet werden").
+    _snap554 = {"buy": {100: 10, 200: 5}, "stock_used": {100: 3},
+                "inv_buy": {300: 7}, "inv_stock_used": {300: 1},
+                "build_made": {400: 2}, "surplus": {999: 77}}
+    eq("aa554 Anspruch = Kauf + Bestand + Invention + Selbstgebautes",
+       _H554._plan_reserve_map(_snap554),
+       {100: 13, 200: 5, 300: 8, 400: 2})
+
+    # ESI-VERZUGS-SPERRE: ein Beleg zaehlt erst, wenn der Bestand von NACH
+    # der Zuordnung stammt - sonst gibt der Plan Material frei, das ESI
+    # noch als vorhanden meldet, und niemand beansprucht es mehr.
+    _zu554 = {1: {"type_id": 500, "runs": 4, "ts": 100.0},
+              2: {"type_id": 500, "runs": 6, "ts": 900.0}}
+    eq("aa554 belegte Runs: nur was ESI im Bestand schon gesehen hat",
+       _H554.belegte_runs_seit(_zu554, 500.0), {500: 4})
+    eq("aa554 ... ohne Bestandszeit zaehlt NICHTS (Regel 3)",
+       _H554.belegte_runs_seit(_zu554, None), {})
+
+    # HAKEN UND BELEG SIND DERSELBE RUN: Maximum, nie Summe.
+    _plan554 = {"build_runs": {500: 10},
+                "build_mats": {500: [(100, 1000), (200, 500)]}}
+    _rm554 = {100: 1000, 200: 500, 500: 10}
+    _ts554 = {"component|7|500": 50.0}
+    _h554 = {"component|500": 5}
+    _nur_haken = _H554._reserve_map_mitlaufend(
+        _plan554, _rm554, _ts554, [], 100.0, haken_runs=_h554)
+    _nur_beleg = _H554._reserve_map_mitlaufend(
+        _plan554, _rm554, _ts554, [], 100.0, belegt={500: 5})
+    _beides = _H554._reserve_map_mitlaufend(
+        _plan554, _rm554, _ts554, [], 100.0, belegt={500: 5},
+        haken_runs=_h554)
+    eq("aa554 5 von 10 Runs erledigt: halbe Zutaten frei",
+       _nur_haken, {100: 500, 200: 250, 500: 10})
+    check("aa554 Haken UND Beleg auf denselben Runs zaehlen EINMAL",
+          _nur_haken == _nur_beleg == _beides)
+    eq("aa554 ... und ein Haken NACH dem Bestandsstand wirkt nicht",
+       _H554._reserve_map_mitlaufend(_plan554, _rm554,
+                                     {"component|7|500": 900.0}, [], 100.0,
+                                     haken_runs=_h554),
+       dict(_rm554))
+
+    # emm524: ein ABGEHAKTER Erz-Schritt buch't den Anspruch um - das Erz
+    # ist verarbeitet, die Minerale liegen im Hangar.
+    _st554 = [{"erz": 62522, "menge": 300, "deckt": {100: 1005, 200: 70}}]
+    eq("aa554 abgehakter Erz-Schritt: Minerale dazu, Erz raus",
+       _RP554.anspruch_anpassen({62522: 300, 100: 50}, _st554,
+                                {"repro|62522"}),
+       {100: 1055, 200: 70})
+    eq("aa554 ... nicht abgehakt bleibt alles, wie es ist",
+       _RP554.anspruch_anpassen({62522: 300, 100: 50}, _st554, set()),
+       {62522: 300, 100: 50})
+
+    def _aa554():
+        import random
+        H, RP = _H554, _RP554
+        probs = {}
+
+        def bad(name, *werte):
+            probs.setdefault(name, werte)
+
+        _ZU = {}                      # {plan_id: zuordnung} fuer den Stub
+        _echt = _ST554.job_zuordnung_fuer_plan
+        _ST554.job_zuordnung_fuer_plan = lambda pid: _ZU.get(pid) or {}
+        try:
+            # 600 Welten: haelt die aa-Suite unter der Tempo-Grenze.
+            for seed in range(600):
+                rnd = random.Random(554_000 + seed)
+                mats = [700001 + i for i in range(rnd.randint(1, 4))]
+                items = [710001 + i for i in range(rnd.randint(1, 3))]
+                erz = 720001
+                kaputt = (seed % 6 == 0)
+
+                # ---------- Schnappschuss ----------
+                def _karte(n_max):
+                    return {m: rnd.randint(1, n_max)
+                            for m in mats if rnd.random() < 0.7}
+                snap = {"buy": _karte(5000), "stock_used": _karte(900),
+                        "inv_buy": _karte(60), "inv_stock_used": _karte(20),
+                        "build_made": {t: rnd.randint(1, 400) for t in items
+                                       if rnd.random() < 0.6},
+                        "build_runs": {t: rnd.choice([1, 5, 10, 40, 200])
+                                       for t in items},
+                        "build_mats": {t: [(m, rnd.randint(1, 120))
+                                           for m in mats] for t in items}}
+                if kaputt:
+                    snap["buy"][str(mats[0])] = rnd.randint(1, 50)
+                    snap["stock_used"][mats[0]] = 0        # 0 zaehlt nie
+                    snap["surplus"] = {mats[0]: 999}       # kein Anspruch
+                    # EIN NEGATIVER POSTEN DARF DEN ANSPRUCH NIE SENKEN
+                    # (Regel 3): sonst sieht ein anderer Plan Material als
+                    # frei, das dieser Plan braucht. Ein Minus steht in
+                    # keinem gesunden Schnappschuss - es kommt aus einem
+                    # Rundungsfehler oder einem alten Stand.
+                    snap["inv_buy"][mats[-1]] = -rnd.randint(1, 5000)
+
+                # ---------- Anspruch aus dem Schnappschuss ----------
+                basis = _wert554(H._plan_reserve_map, snap)
+                if not isinstance(basis, dict):
+                    bad("aa554 _plan_reserve_map wirft", seed, basis)
+                    continue
+                for _t, _q in basis.items():
+                    if _q <= 0:
+                        bad("aa554 _plan_reserve_map: Eintrag <= 0",
+                            seed, _t, _q)
+                _soll = {}
+                for _k in ("buy", "stock_used", "inv_buy", "inv_stock_used",
+                           "build_made"):
+                    for _t, _q in (snap.get(_k) or {}).items():
+                        if _q and int(_q) > 0:
+                            _soll[int(_t)] = _soll.get(int(_t), 0) + int(_q)
+                if basis != _soll:
+                    bad("aa554 _plan_reserve_map: Summe falsch",
+                        seed, basis, _soll)
+                if any(_t in basis for _t in (snap.get("surplus") or {})
+                       if _t not in _soll):
+                    bad("aa554 _plan_reserve_map: Ueberschuss zaehlt mit",
+                        seed)
+
+                # ---------- mitlaufende Kuerzung ----------
+                stock_ts = rnd.choice([None, 1000.0, 1000.0, 1000.0])
+                _t0 = items[0]
+                _ges = int(snap["build_runs"][_t0])
+                fertig = rnd.randint(0, _ges)
+                ts_h = rnd.choice([500.0, 500.0, 5000.0])     # 5000 = zu neu
+                cts = {f"component|9|{_t0}": ts_h}
+                hak = {f"component|{_t0}": fertig}
+                out = _wert554(H._reserve_map_mitlaufend, snap, basis, cts,
+                               [], stock_ts, None, hak)
+                if not isinstance(out, dict):
+                    bad("aa554 _reserve_map_mitlaufend wirft", seed, out)
+                    continue
+                for _t, _q in out.items():
+                    if _q <= 0:
+                        bad("aa554 Kuerzung laesst Null oder Minus stehen",
+                            seed, _t, _q)
+                    if _q > basis.get(_t, 0):
+                        bad("aa554 Kuerzung ERHOEHT den Anspruch",
+                            seed, _t, _q, basis.get(_t))
+                if stock_ts is None or ts_h > (stock_ts or 0):
+                    # ESI hat den Verbrauch nicht gesehen -> nichts frei
+                    if out != basis:
+                        bad("aa554 ESI-Verzugs-Sperre greift nicht",
+                            seed, stock_ts, ts_h)
+                else:
+                    # Beleg mit denselben Runs = MAXIMUM, nicht Summe
+                    _mit_beleg = H._reserve_map_mitlaufend(
+                        snap, basis, cts, [], stock_ts, {_t0: fertig}, hak)
+                    if _mit_beleg != out:
+                        bad("aa554 Haken + Beleg zaehlen doppelt",
+                            seed, fertig)
+                    # Monotonie: mehr erledigte Runs -> nie mehr Anspruch
+                    _mehr = H._reserve_map_mitlaufend(
+                        snap, basis, cts, [], stock_ts, None,
+                        {f"component|{_t0}": min(_ges, fertig + 1)})
+                    for _t, _q in _mehr.items():
+                        if _q > out.get(_t, 0):
+                            bad("aa554 mehr gebaute Runs -> MEHR Anspruch",
+                                seed, _t, _q, out.get(_t, 0))
+                    # Deckel: mehr als die geplanten Runs aendert nichts
+                    _ueber = H._reserve_map_mitlaufend(
+                        snap, basis, cts, [], stock_ts, None,
+                        {f"component|{_t0}": _ges + 500})
+                    _voll = H._reserve_map_mitlaufend(
+                        snap, basis, cts, [], stock_ts, None,
+                        {f"component|{_t0}": _ges})
+                    if _ueber != _voll:
+                        bad("aa554 erledigte Runs nicht auf den Plan "
+                            "gedeckelt", seed, _ges)
+
+                # ---------- Erz-Schritte umbuchen (emm524) ----------
+                gratis = rnd.random() < 0.3
+                built = rnd.random() < 0.2
+                menge = rnd.choice([100, 300, 1000])
+                deckt = {m: rnd.randint(1, 5000) for m in mats[:2]}
+                schritt = {"erz": erz, "menge": menge, "deckt": deckt}
+                if gratis:
+                    schritt["gratis"] = True
+                if built:
+                    schritt["built"] = True
+                _vor = dict(basis)
+                if not gratis:
+                    _vor[erz] = _vor.get(erz, 0) + menge
+                _nach = _wert554(RP.anspruch_anpassen, _vor, [schritt],
+                                 {"repro|%d" % erz})
+                if not isinstance(_nach, dict):
+                    bad("aa554 anspruch_anpassen wirft", seed, _nach)
+                    continue
+                if built:
+                    if _nach != _vor:
+                        bad("aa554 Weg-A-Schritt (built) wird angefasst",
+                            seed)
+                else:
+                    for _m, _q in deckt.items():
+                        if _nach.get(_m, 0) != _vor.get(_m, 0) + _q:
+                            bad("aa554 gedeckte Minerale fehlen im Anspruch",
+                                seed, _m, _nach.get(_m), _vor.get(_m), _q)
+                    if gratis:
+                        if _nach.get(erz, 0) != _vor.get(erz, 0):
+                            bad("aa554 Gratis-Erz wird abgezogen", seed)
+                    elif _nach.get(erz, 0) != 0:
+                        bad("aa554 verarbeitetes Erz bleibt im Anspruch",
+                            seed, _nach.get(erz))
+                if any(_q < 0 for _q in _nach.values()):
+                    bad("aa554 anspruch_anpassen: negativer Anspruch", seed)
+                # Nicht abgehakt -> unveraendert
+                if RP.anspruch_anpassen(_vor, [schritt], set()) != _vor:
+                    bad("aa554 nicht abgehakter Schritt veraendert etwas",
+                        seed)
+
+                # ---------- die EINE Stelle: plan_anspruch_mitlaufend ------
+                pid = 900000 + seed
+                _ZU.clear()
+                _ZU[pid] = {11: {"type_id": _t0, "runs": fertig,
+                                 "ts": 500.0}} if rnd.random() < 0.5 else {}
+                p_ohne = {"id": pid, "reserve_map": dict(basis)}
+                _a = _wert554(H.plan_anspruch_mitlaufend, p_ohne)
+                if _a != {int(k): int(v) for k, v in basis.items()}:
+                    bad("aa554 ohne Schnappschuss gilt die gespeicherte "
+                        "Karte (Regel 3)", seed, _a)
+                p_leer = {"id": pid, "reserve_map": dict(basis),
+                          "frozen": {"plan_snapshot": {"build_runs": {}},
+                                     "stock_seen_ts": 1000.0}}
+                _a = _wert554(H.plan_anspruch_mitlaufend, p_leer)
+                if _a != {int(k): int(v) for k, v in basis.items()}:
+                    bad("aa554 Schnappschuss ohne Anspruch -> Rueckfall",
+                        seed, _a)
+                # 777777 ist eine KARTEILEICHE: sie steht in der
+                # gespeicherten Karte, aber in keinem Schnappschuss-Posten
+                # (emm523: so hielt "Amarr 1" 40'725'400 Stueck eines Erzes,
+                # das es in seinem Plan nicht mehr gab - und niemand konnte
+                # sie freigeben).
+                p = {"id": pid, "reserve_map": {777777: 12345},
+                     "frozen": {"plan_snapshot": snap,
+                                "stock_seen_ts": 1000.0},
+                     "checked_runplan_ts": cts,
+                     "checked_runplan_runs": hak,
+                     "checked_runplan": [],
+                     "assignments": []}
+                _a = _wert554(H.plan_anspruch_mitlaufend, p)
+                if not isinstance(_a, dict):
+                    bad("aa554 plan_anspruch_mitlaufend wirft", seed, _a)
+                    continue
+                if any(_q < 0 for _q in _a.values()):
+                    bad("aa554 negativer Anspruch", seed, _a)
+                if basis:
+                    # Der Schnappschuss ERSETZT die gespeicherte Karte
+                    # vollstaendig - die Karteileiche darf nicht
+                    # durchschlagen (emm523).
+                    if 777777 in _a:
+                        bad("aa554 Karteileiche der gespeicherten Karte "
+                            "bleibt im Anspruch", seed, _a.get(777777))
+                    # Nie mehr als die Basis (die Kette zieht nur ab)
+                    for _t, _q in _a.items():
+                        if _q > basis.get(_t, 0):
+                            bad("aa554 Kette erhoeht den Anspruch ueber die "
+                                "Basis", seed, _t, _q, basis.get(_t, 0))
+
+                # ---------- Anzeige == Abzug (Regel 9) ----------
+                pl = []
+                for i in range(rnd.randint(1, 3)):
+                    _sn = dict(snap)
+                    _sn["buy"] = {m: rnd.randint(1, 900) for m in mats}
+                    pl.append({"id": 950000 + seed * 10 + i,
+                               "label": "P%d" % i,
+                               "reserve": rnd.random() < 0.7,
+                               "done_manual": rnd.random() < 0.2,
+                               "reserve_map": {},
+                               "frozen": {"plan_snapshot": _sn,
+                                          "stock_seen_ts": 1000.0}})
+                st = {"bau_saved_plans": pl,
+                      "bau_plan_reihenfolge": [str(x["id"]) for x in pl]}
+                _ex = pl[-1]["id"] if rnd.random() < 0.5 else None
+                _agg, _lab = _wert554(H._reserved_by_other_plans, st, _ex)
+                _je = _wert554(H.reservierung_je_item, st, _ex)
+                if not isinstance(_agg, dict) or not isinstance(_je, dict):
+                    bad("aa554 Reservierungs-Anzeige wirft", seed)
+                    continue
+                for _t, _halter in _je.items():
+                    if sum(_q for _n, _q in _halter) != _agg.get(_t, 0):
+                        bad("aa554 Anzeige und Abzug sagen Verschiedenes",
+                            seed, _t, _halter, _agg.get(_t))
+                    if _halter != sorted(_halter, key=lambda x: (-x[1], x[0])):
+                        bad("aa554 Halter nicht groesster zuerst",
+                            seed, _halter)
+                if _ex is not None:
+                    _selbst = "P%d" % (len(pl) - 1)
+                    if any(_n == _selbst for _halter in _je.values()
+                           for _n, _q in _halter):
+                        bad("aa554 der eigene Plan haelt gegen sich selbst",
+                            seed, _selbst)
+        finally:
+            _ST554.job_zuordnung_fuer_plan = _echt
+        return probs
+
+    _probs554 = _aa554()
+    check("aa554 Zufallsprobe 600 Welten: keine Abweichung ("
+          + (", ".join(sorted(_probs554)) if _probs554 else "0") + ")",
+          not _probs554)
+except Exception as _e554:                               # pragma: no cover
+    _fail.append(f"aa554 Reservierungs-Anspruch: {type(_e554).__name__}: {_e554}")
+
+# ---------------------------------------------------------------- (aa555)
+# VOLUMEN IN DER EINKAUFSLISTE (emm546, Nutzer: "ausserdem steht in der
+# shoppingliste das Volumen nicht"). Er musste die Liste erst in eine
+# Frachtseite kopieren, um auf m3 zu kommen - und verglich dabei eine ALTE
+# Appraisal mit einem NEUEN Plan-Stand, woraus die ganze Fracht-Frage
+# entstand (emm545). Die Spalte und die Zeile darunter rechnen deshalb
+# AUS DERSELBEN LISTE wie der Kopier-Knopf und mit DERSELBEN Volumen-
+# Quelle wie die Frachtrechnung des Bauplans.
+try:
+    from eve_trader.ui.mw_helpers import einkauf_posten as _ep555
+
+    _rows555 = [
+        {"tid": 1, "name": "Alpha", "missing": 10, "cart_qty": 10},
+        {"tid": 2, "name": "Beta", "missing": 0, "cart_qty": 5},
+        {"tid": 3, "name": "#16642", "missing": 7, "cart_qty": 7},
+        {"tid": 4, "name": "Gamma", "missing": 4, "cart_qty": 4},
+    ]
+    _p555, _ohne555, _gebaut555 = _ep555(_rows555, "missing", [4])
+    check("aa555 einkauf_posten nimmt nur kaufbare Posten",
+          _p555 == [(1, "Alpha", 10)])
+    check("aa555 Menge 0 faellt weg",
+          all(t != 2 for t, _n, _q in _p555))
+    check("aa555 unaufgeloester Name wird benannt, nicht mitgeschickt",
+          _ohne555 == ["#16642"])
+    check("aa555 was der Plan selbst baut, wird nicht gekauft",
+          _gebaut555 == ["Gamma"])
+    # Reihenfolge = Reihenfolge der Zeilen (sonst waere die kopierte Liste
+    # bei jedem Aufruf anders sortiert).
+    _p555b, _, _ = _ep555(_rows555, "cart_qty", [])
+    check("aa555 Reihenfolge folgt den Zeilen",
+          [t for t, _n, _q in _p555b] == [1, 2, 4])
+    check("aa555 kaputte Zeilen werfen nicht",
+          _ep555([{"tid": "x"}, {}, None] and [{"tid": "x"}, {}],
+                 "missing", None)[0] == [])
+    check("aa555 ohne Zeilen leer", _ep555(None, "missing", None)
+          == ([], [], []))
+
+    # EINE Liste fuer Kopie und Volumen-Zeile (Regel 9).
+    _ccf555 = _fn_src("_cart_conflict_filter")
+    check("aa555 Kopier-Knopf nimmt die Liste aus dem Helfer",
+          "_posten, _skipped, _gebaut_raus = einkauf_posten(" in _ccf555)
+    check("aa555 Volumen-Zeile nimmt dieselbe Liste",
+          "_p, _, _ = einkauf_posten(" in _ccf555
+          and 'rows, "missing", getattr(self, "_bd_plan_builds", None))'
+          in _ccf555)
+    # Volumen-Quelle: derselbe Helfer, den die Fracht des Bauplans nutzt.
+    check("aa555 Volumen aus derselben Quelle wie die Fracht",
+          "self._item_volumes_with_esi_fix(" in _ccf555
+          and "_volmap" in _ccf555)
+    check("aa555 Frachtrechnung des Bauplans nutzt denselben Helfer",
+          "self._item_volumes_with_esi_fix(buy_surplus.keys())"
+          in open("eve_trader/ui/mw_bauplan_fenster.py",
+                  encoding="utf-8").read())
+    # m3 der WIRKLICH gekauften Menge - also mit Puffer.
+    check("aa555 Spalte rechnet mit der gepufferten Menge",
+          '_it.setText(7, _m3(float(_v) * _mit) if _v else "?")' in _ccf555)
+    check("aa555 Volumen-Summe rechnet mit der gepufferten Menge",
+          "_ges += float(_v) * self._buy_surplus_qty(_q)" in _ccf555)
+    # Unbekanntes Volumen zaehlt wie in transport_estimate als 0 m3 - aber
+    # SICHTBAR, nie still (sonst ist die Summe stumm zu klein).
+    check("aa555 unbekanntes Volumen wird gemeldet",
+          "position(s) without a known volume" in _ccf555
+          and "_ohne += 1" in _ccf555)
+    check("aa555 Volumen-Zeile steht unter der Tabelle",
+          _pos_von(_ccf555, "v.addWidget(tree, 1)")
+          < _pos_von(_ccf555, "v.addWidget(_vol_lbl)"))
+    # Der Satz, mit dem der Bauplan rechnet - damit die Zahl vergleichbar
+    # ist, ohne dass er sie aus dem ISK-Betrag zurueckrechnen muss.
+    check("aa555 Zeile nennt den Frachtsatz des Bauplans",
+          'self.settings.get("bau_transport_rate", 0)' in _ccf555
+          and "ISK freight" in _ccf555)
+    # Haken aendern die Wagen-Liste; im Kopier-Modus entscheiden sie nichts
+    # (dort kopiert der Knopf die Fehlmengen), also auch kein Signal.
+    check("aa555 Haken frischen nur im Wagen-Modus auf",
+          "if not copy_mode:\n            tree.itemChanged.connect("
+          in _ccf555)
+    _kat555 = __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+    check("aa555 deutscher Eintrag fuer die Volumen-Zeile",
+          _kat555.get("Volume of this list: {v} m\u00b3")
+          == "Volumen dieser Liste: {v} m\u00b3")
+    check("aa555 deutscher Eintrag fuer den Spalten-Tooltip",
+          "Fracht rechnet" in (_kat555.get(
+              "Packaged volume of the quantity in \u201eTo cart\u201c \u2013 "
+              "the same value the build plan charges freight on.") or ""))
+except Exception as _e555:                               # pragma: no cover
+    _fail.append(f"aa555 Volumen im Einkaufsfenster: "
+                 f"{type(_e555).__name__}: {_e555}")
+
+# ---------------------------------------------------------------- (aa556)
+# DAS VOLUMEN DES EINKAUFS STEHT IM BAUPLAN (emm547, Nutzer 13.10.2026:
+# "ja aber ich brauche das Volumen des einkaufs !").
+#
+# BEFUND DAVOR, im Code gemessen: Frachtzeile und Details-Einkaufsliste
+# rechnen ueber plan["buy"] (Schnappschuss des eingefrorenen Plans), der
+# Kopier-Knopf und der Einkaufswagen ueber den HEUTIGEN Restbedarf. Zwei
+# Listen, derselbe Name - bei ihm 329'380 m3 gegen 335'499 m3, also
+# 2'722'781 ISK Fracht Unterschied bei 445 ISK/m3.
+#
+# Die Fehlerklasse ist die von emm545 (`buy_map` gegen `buy_surplus`):
+# zwei Rechnungen fuer dieselbe Frage. Deshalb liegt die Mengenfrage ab
+# jetzt an EINER Stelle - `_einkauf_jetzt` -, und BEIDE Seiten lesen sie.
+try:
+    _ej556 = _fn_src("_einkauf_jetzt") or ""
+    _cm556 = _fn_src("_copy_materials") or ""
+    _bf556 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+    check("aa556 es gibt die eine Stelle", bool(_ej556))
+    # EINE WAHRHEIT: der Kopier-Knopf rechnet nicht mehr selbst.
+    check("aa556 der Kopier-Knopf liest sie",
+          "_ej = self._einkauf_jetzt()" in _cm556
+          and '_rest_kaufmenge = _ej["rest_kaufmenge"]' in _cm556
+          and '_rest_da = bool(_ej["rest_da"])' in _cm556)
+    check("aa556 und rechnet den Restbedarf nicht mehr selbst",
+          "self._fehlbedarf_jetzt()" not in _cm556
+          and "_inv_tids = set()" not in _cm556)
+    # Die Mengen kommen aus derselben Quelle wie im Kopier-Fenster.
+    check("aa556 die Posten kommen aus mw_helpers.einkauf_posten",
+          "einkauf_posten(" in _ej556
+          and 'getattr(self, "_bd_plan_builds", None))' in _ej556)
+    check("aa556 der Haken des Materialien-Reiters entscheidet mit",
+          "self._bd_rest_only_cb = QCheckBox(" in _bf556
+          and 'getattr(self, "_bd_rest_only_cb", None)' in _ej556)
+    # Ohne Kaestchen gilt die Vorgabe AN - sonst nennte die Zeile die
+    # Vollmenge, waehrend der Knopf den Rest kopiert.
+    check("aa556 ohne Kaestchen gilt der Rest-Modus",
+          "_an = True if _cb is None else bool(_cb.isChecked())" in _ej556)
+    # DIE ZEILE: Volumen in der Beschriftung, Fracht als Betrag.
+    check("aa556 die Detail-Zeile ist angelegt",
+          '("Einkauf jetzt", "Purchase now")' in _bf556)
+    check("aa556 die Beschriftung nennt die m3",
+          '_txt("Purchase now ({v} m\u00b3)").format(' in _bf556)
+    check("aa556 der Betrag ist Fracht zum Satz des Bauplans",
+          '_ej_rate = float(self.settings.get("bau_transport_rate", 0) or 0)'
+          in _bf556 and "isk(_ej_rate * _ej_vol, suffix=False)" in _bf556)
+    # Volumen aus DERSELBEN Quelle wie die Fracht des Plans, Menge MIT
+    # Puffer - sonst waere es wieder eine dritte Zahl (emm545).
+    check("aa556 Volumen aus derselben Quelle wie die Fracht",
+          "_ej_vols = self._item_volumes_with_esi_fix(" in _bf556)
+    check("aa556 gerechnet wird die gepufferte Menge",
+          "_ej_vol += float(_v_j) * self._buy_surplus_qty(_q_j)" in _bf556)
+    # Unbekanntes Volumen zaehlt als 0 m3 - aber SICHTBAR (Sitzung 14).
+    check("aa556 unbekanntes Volumen wird gemeldet",
+          "position(s) without a known volume - they " in _bf556
+          and "_ej_ohne += 1" in _bf556)
+    # REINE ANZEIGE: die ISK dieser Zeile stecken in keiner Summe.
+    check("aa556 die Zeile aendert keine Summe",
+          "_ej_vol" not in _bf556.split("_detail_val_lbls[\"Material\"]")[0]
+          and "mat_ladder += _ej" not in _bf556
+          and "total += _ej" not in _bf556)
+    # Nur sichtbar, wenn wirklich etwas zu kaufen ist.
+    check("aa556 ohne Posten bleibt die Zeile aus",
+          "_ej_lbl.setVisible(bool(_ej_n))" in _bf556
+          and "_ej_cap.setVisible(bool(_ej_n))" in _bf556)
+    # Ein Fehler darf den Bauplan-Kopf nicht mitnehmen (Lehre Sitzung 14).
+    check("aa556 ein Fehler landet im Protokoll, nicht im Fenster",
+          'self._log_exception("Bauplan: Einkauf jetzt"' in _bf556)
+    _kat556 = __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
+    check("aa556 deutscher Eintrag fuer die Beschriftung",
+          _kat556.get("Purchase now") == "Einkauf jetzt"
+          and _kat556.get("Purchase now ({v} m\u00b3)")
+          == "Einkauf jetzt ({v} m\u00b3)")
+    check("aa556 deutscher Eintrag fuer die Warnung",
+          "ohne bekanntes Volumen" in (_kat556.get(
+              "\u26a0 {n} position(s) without a known volume - they count as "
+              "0 m\u00b3 here.") or ""))
+except Exception as _e556:                               # pragma: no cover
+    _fail.append(f"aa556 Volumen des Einkaufs im Bauplan: "
+                 f"{type(_e556).__name__}: {_e556}")
+
+# ---------------------------------------------------------------- (aa557)
+# TEMPO DER b-SUITE (emm550, Nutzer 13.10.2026: "gut noch schneller
+# machen" / "geschwindigkeit ist mir sehr wichtig").
+#
+# GEMESSEN, nicht behauptet: die b-Suite brauchte 46-58 s, davon rund 19 s
+# WARTEN statt Rechnen (Wandzeit gegen `thread_time` des Hauptthreads).
+# Drei Posten, alle hier festgenagelt, damit sie nicht zurueckkehren:
+#   1. zwei Warnboxen des ESI-Nachlaufs (ohne Netz der Normalfall) standen
+#      je 3 s modal offen, bis die Wache sie schloss - und ihr Vermerk kam
+#      NACH b59 und wurde nie geprueft;
+#   2. die Ruhe-Regel der Ladezeit-Messung zwang b124 zu 3,6 s echter
+#      Wartezeit - ihre zwei Zahlen stehen jetzt in `ladezeit`;
+#   3. zwei `ast.parse` ueber den gesamten ui-Quelltext (2,5 s) fuer je
+#      EINE Funktion.
+try:
+    _b557 = open("tests/test_bauplan_aufbau.py", encoding="utf-8").read()
+    _lz557 = open("eve_trader/ladezeit.py", encoding="utf-8").read()
+    _mw557 = _fn_src("_ladezeit_warten") or ""
+    # 1. Warnboxen: aufschreiben statt zeigen, und am ENDE pruefen.
+    check("aa557 die b-Suite faengt Warnboxen ab",
+          "QMessageBox.warning = staticmethod(" in _b557
+          and "_WARNBOXEN.append(" in _b557)
+    check("aa557 und prueft sie am Ende des Laufs (b59b)",
+          "b59b Warnboxen nur aus dem ESI-Nachlauf" in _b557
+          and "b59b kein modales Fenster blieb im ganzen Lauf offen" in _b557)
+    # Die Wache bleibt - nur ihre Geduld ist kuerzer.
+    check("aa557 die Modal-Wache schliesst nach 1 s, nicht nach 3 s",
+          "if _time_netz.time() - _t0 >= 1.0:" in _b557
+          and "_modal_timer.setInterval(250)" in _b557)
+    # 2. Ruhe-Regel: EINE Stelle, und die Suite setzt sie klein.
+    check("aa557 die Ruhe-Regel steht in ladezeit",
+          "RUHE_INTERVALL_MS = 500" in _lz557
+          and "RUHE_VORLAUF_S = 2.0" in _lz557)
+    check("aa557 _ladezeit_warten liest sie und hat keine eigenen Zahlen",
+          "ladezeit.RUHE_INTERVALL_MS" in _mw557
+          and "ladezeit.RUHE_VORLAUF_S" in _mw557
+          and "tm.setInterval(500)" not in _mw557
+          and "- t0 > 2 " not in _mw557)
+    check("aa557 b124 setzt sie klein und stellt sie zurueck",
+          "_lz124.RUHE_INTERVALL_MS, _lz124.RUHE_VORLAUF_S = 20, 0.05" in _b557
+          and "_lz124.RUHE_INTERVALL_MS, _lz124.RUHE_VORLAUF_S = _ruhe124" in _b557
+          and "_QT124.qWait(3600)" not in _b557)
+    # 3. Kein ast.parse mehr ueber den ganzen ui-Quelltext.
+    check("aa557 die b-Suite holt Funktions-Quelltext ohne ast.parse",
+          "def _fn_quelle(src, name):" in _b557
+          and "_a23.parse(" not in _b557 and "_a17.parse(" not in _b557
+          and ".walk(" not in _b557)
+    # Die Zeitmessung selbst: aus (sonst kostet sie bei jedem Lauf).
+    check("aa557 die Zeitmessung der b-Suite ist opt-in (EMM_B_ZEIT)",
+          'os.environ.get("EMM_B_ZEIT") == "1"' in _b557)
+except Exception as _e557:                               # pragma: no cover
+    _fail.append(f"aa557 Tempo der b-Suite: {type(_e557).__name__}: {_e557}")
 
 print(f"(aa) Bestand-Herkunft: {_ok}/{_ok + len(_fail)} gruen")
 for f in _fail:

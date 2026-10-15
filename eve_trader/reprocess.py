@@ -508,6 +508,55 @@ def rest_anpassen(need: dict, schritte, abgehakt) -> dict:
     return out
 
 
+def anspruch_anpassen(anspruch: dict, schritte, abgehakt) -> dict:
+    """Material-ANSPRUCH {tid: Menge} eines eingefrorenen Plans um die
+    ABGEHAKTEN Erz-Schritte anpassen - das Gegenstueck zu `rest_anpassen`.
+
+    NUTZER 11.10.2026 ("die beiden Bauplaene wollen immernoch material
+    kaufen. aber ich WEISS ich habe diese Materialien"). GEMESSEN an seiner
+    settings.json, Multibuildplan Amarr 1:
+
+      Anspruch Tritanium 33'386'579, verlangt werden 55'384'600.
+      Differenz 21'998'021 = exakt das Tritanium seiner zwei abgehakten
+      Erz-Schritte (62530: 1'621'872 + 62522: 20'376'149).
+      Mexallon  2'989'691 +   646'809 =  3'636'500  (verlangt)
+      Pyerite   3'732'402 + 15'116'748 = 18'849'150 (verlangt)
+
+    URSACHE: der Schnappschuss-Anspruch (buy + stock_used) entsteht NACH
+    `_reprocess_anwenden` - das Erz steht in `buy`, die daraus gedeckten
+    Minerale sind herausgerechnet. Das ist der Zustand "noch nicht
+    reprocesst". Ein ABGEHAKTER Schritt sagt genau das Gegenteil: das Erz
+    ist verarbeitet, die Minerale liegen im Hangar. Dann beansprucht der
+    Plan Minerale, die er selbst braucht, gar nicht - jeder andere Plan
+    sieht sie als frei, nimmt sie weg, und der Plan meldet sie danach als
+    fehlend. Die gefaehrliche Richtung (Regel 3): der Nutzer kauft nach,
+    was er laengst hat. Es ist auch die Herkunft der "Karteileichen" aus
+    emm523: 40'725'400 Stueck eines Erzes, das es so nicht mehr gibt.
+
+    Deshalb wandert der Anspruch dorthin, wo das Material WIRKLICH liegt:
+    gedeckte Minerale dazu, die Blockmenge des Erzes raus. NICHT abgehakte
+    Schritte bleiben unberuehrt - dort liegt wirklich noch Erz.
+    `built`-Schritte (Weg A, Unrefined) werden nie gekauft - wie in
+    `rest_anpassen` uebersprungen."""
+    out = {int(k): int(v or 0) for k, v in (anspruch or {}).items()}
+    abgehakt = set(abgehakt or ())
+    for st in (schritte or []):
+        if schritt_key(st) not in abgehakt or st.get("built"):
+            continue
+        for m, q in (st.get("deckt") or {}).items():
+            m = int(m)
+            out[m] = out.get(m, 0) + int(q or 0)
+        erz = int(st.get("erz") or 0)
+        # Gratis-Erz (Blacklist) steht gar nicht erst im Anspruch.
+        if erz and int(st.get("menge") or 0) > 0 and not st.get("gratis"):
+            rest = out.get(erz, 0) - int(st["menge"])
+            if rest > 0:
+                out[erz] = rest
+            else:
+                out.pop(erz, None)
+    return out
+
+
 def fehl_anpassen(fehl, schritte, abgehakt, live_stock=None) -> list:
     """Fehlbedarfs-Liste [(tid, fehlt, bedarf, da, prod), ...] um NICHT
     abgehakte Schritte anpassen: gedeckte Minerale fehlen entsprechend

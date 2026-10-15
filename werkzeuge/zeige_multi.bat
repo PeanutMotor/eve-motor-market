@@ -1,4 +1,10 @@
 @echo off
+rem UTF-8 fuer Berichte (emm511, Nutzer 10.10.2026: der Bericht
+rem liess sich nicht hochladen - 'Fehlende Kodierung'). Windows-
+rem Werkzeuge (robocopy, dir, git) schreiben sonst in der Konsolen-
+rem Codepage. Die .bat selbst MUSS dafuer rein ASCII bleiben.
+chcp 65001 >nul
+set "PYTHONIOENCODING=utf-8"
 rem Zeigt, wie deine MULTI-BAUPLAENE rechnen (Fassung 1, 20.09.2026).
 rem Schreibt berichte\multi_bericht.txt. Vorher einmal "Load recipes"
 rem im Tool druecken und mindestens einen Multi-Bauplan gespeichert haben.

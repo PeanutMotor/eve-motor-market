@@ -1090,13 +1090,22 @@ MUTATIONEN = [
      'auch der Null-Fall nennt den GRUND im Dialog'),
     ('Runplaner ignoriert die echte Blaupausen-Zahl wieder',
      'eve_trader/ui/mw_helpers.py',
-     '            out.update(self._bp_copies_by_tid(\n                _cache, _plan.get("build_runs"),\n                getattr(_rec, "product_to_bp", None)))',
-     '            pass   # MUTATION',
+     '            out.update(self._bp_copies_by_tid(\n'
+     '                _cache, _plan.get("build_runs"),\n'
+     '                getattr(_rec, "product_to_bp", None),\n'
+     '                # getattr: aeltere Testdoubles/Stubs tragen den Helfer nicht\n'
+     '                nur_bpo=(getattr(self, "_inv_t1_bps", None) or (lambda: set()))(),\n'
+     '                ignoriert=_ign538))\n',
+     # GANZER AUFRUF (emm536): der alte Anker endete mitten in der
+     # Argumentliste - die Restzeilen blieben stehen und erzeugten einen
+     # IndentationError, die b-Suite BRACH AB statt rot zu werden
+     # (Lehre aa393: eine Mutation muss rot machen, nicht krachen).
+     '            pass   # MUTATION\n',
      'Resolver liefert die echten Blaupausen-Zahlen'),
     ('BPO zaehlt wieder als unbegrenzt viele Kopien',
      'eve_trader/ui/mw_helpers.py',
-     '            by_bp[_bid] = by_bp.get(_bid, 0) + int(b.get("quantity", 1) or 1)',
-     '            by_bp[_bid] = 99 if b.get("is_bpo") else (   # MUTATION\n                by_bp.get(_bid, 0) + int(b.get("quantity", 1) or 1))',
+     '            if b.get("is_bpo"):\n                bpo += q\n',
+     '            if b.get("is_bpo"):\n                bpo += 99   # MUTATION\n',
      'eine einzelne BPO deckelt auf 1'),
     ('Items fallen bei Slot-Mangel wieder still aus dem Plan',
      'eve_trader/industry.py',
@@ -1720,9 +1729,9 @@ MUTATIONEN = [
 
     ('Pool nimmt wieder die starre Liste vom Speichern',
      'eve_trader/ui/mw_helpers.py',
-     """            labels.append(str(p.get("label") or p.get("item_name") or "?"))""",
+     """            out.append((str(p.get("label") or p.get("item_name") or "?"), rm))""",
      """            rm = {}   # MUTATION
-            labels.append(str(p.get("label") or p.get("item_name") or "?"))""",
+            out.append((str(p.get("label") or p.get("item_name") or "?"), rm))""",
      'erledigte Runs buchen ihre Zutaten anteilig ab'),
 
     ('Haken bekommt keinen Zeitstempel mehr',
@@ -2440,11 +2449,14 @@ MUTATIONEN = [
      '        from PySide6.QtWidgets import QTableWidgetItem',
      '_fill_bauplan_schedule holt `_txt`, bevor es ruft'),
 
-    ('beide Reaktions-Stufen wieder in derselben Farbe',
+    # ANKER NACHGEZOGEN 10.10.2026: der Sitzung-12-Entscheid (zwei
+    # Reaktions-Violetts) ist ERSETZT - alle Bau-Stufen laufen in BLUE,
+    # nur das Endprodukt traegt Amber. Die Mutation nimmt ihm das.
+    ('das Endprodukt verliert seine Signalfarbe (amber -> blau)',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '                          "flask", "rs", theme.VIOLET_2),',
-     '                          "flask", "rs", theme.VIOLET),',
-     'und die Stufen-Tabelle benutzt beide'),
+     '            "end": ("5. " + t("End product"), "target", "ms", theme.AMBER)}',
+     '            "end": ("5. " + t("End product"), "target", "ms", theme.BLUE)}',
+     'nur das Endprodukt traegt Amber in stage_meta'),
 
 
     ('Punkt-Farbe wieder hart im Symbol-Modul',
@@ -3088,8 +3100,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'in Bau: es ist der LAUF-Punkt, nicht der gruene'),
     ('Erledigte Zeile zeigt wieder die Rest-Null statt der Plan-Runs',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '                                    else "fertig")\n                        # de_scan4: an\n                        R = R_plan',
-     '                                    else "fertig")   # MUTATION\n                        # de_scan4: an',
+     '                                    else "nicht_noetig")\n                        # de_scan4: an\n                        R = R_plan',
+     '                                    else "nicht_noetig")   # MUTATION\n                        # de_scan4: an',
      'in Bau: die Zeile zeigt die PLAN-Runs, nicht 0'),
     ('Laufender Job gilt pauschal als gebaut (gedeckt = fertig)',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -3099,7 +3111,9 @@ Source: "settings.json"; DestDir: "{app}"''',
      # Position, die noch in der Bauschleife steckt.
      '''                        _zustand = ("laeuft"
                                     if (_lauf_r > 0 and _gel_r < R_plan)
-                                    else "fertig")''',
+                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)
+                                    else "bestand" if _best_r > 0
+                                    else "nicht_noetig")''',
      '''                        _zustand = "fertig"   # MUTATION''',
      'in Bau: es ist der LAUF-Punkt, nicht der gruene'),
     ('Fertige, nicht abgeholte Jobs gelten wieder als laufend',
@@ -3281,8 +3295,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     ('Einkaufsliste verschwindet wieder aus der Aufschluesselung',
      'eve_trader/ui/mw_bauplan_fenster.py',
      '''                        ("Einkaufsliste (Jita Sell)", "Shopping list (Jita sell)"),
-                        ("Einkaufsliste / St\\u00fcck", "Shopping list / unit")]''',
-     '''                        ]''',
+                        ("Einkaufsliste / St\\u00fcck", "Shopping list / unit"),''',
+     '''''',
      'die Aufschluesselung nennt die Einkaufsliste'),
     ('Einkaufsliste rechnet mit eigener Mengenliste statt plan[buy]',
      'eve_trader/ui/mw_bauplan_fenster.py',
@@ -3787,17 +3801,18 @@ Source: "settings.json"; DestDir: "{app}"''',
     # vergeben, unabhaengig vom Alter des Plans.
     ('Juengere Plaene blockieren wieder nicht (Vorrang-Regel zurueck)',
      'eve_trader/ui/mw_helpers.py',
-     '''            # selbst aushungern.
-            rm = p.get("reserve_map") or {}
+     '''            rm = MainWindowHelpers.plan_anspruch_mitlaufend(p)
             if not rm:
                 continue''',
-     '''            # selbst aushungern.
-            if exclude_plan_id is not None and int(p.get("id") or 0) > int(exclude_plan_id):
+     '''            if exclude_plan_id is not None and int(p.get("id") or 0) > int(exclude_plan_id):
                 continue   # MUTATION
-            rm = p.get("reserve_map") or {}
+            rm = MainWindowHelpers.plan_anspruch_mitlaufend(p)
             if not rm:
                 continue''',
-     'auch der aeltere Plan sieht die Reservierung des juengeren'),
+     # Erwartung nachgezogen (emm523): die aa-Zusage bleibt gruen, weil
+     # die Mutation den Rang-Zweig davor nicht beruehrt - rot wird der
+     # echte Fenster-Lauf. BLIND-Fund der Rotprobe, 11.10.2026.
+     'b54 Karten umgestellt: jetzt geht der Viator vor'),
     # DER BANNER KUERZT WIEDER AUF DREI - der entscheidende Name verschwindet
     # hinter drei Punkten, genau wie beim Verlust.
     ('Fehlbedarf-Banner mit Namensliste ist wieder da',
@@ -3852,8 +3867,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     # erledigt waren - "ich will ja nicht mehr einkaufen als noetig".
     ('Einkaufsliste nimmt wieder die volle Planmenge',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '            if _rest_only_cb.isChecked():',
-     '            if False and _rest_only_cb.isChecked():   # MUTATION',
+     '        if _an:\n            try:\n                _p_rm =',
+     '        if False and _an:\n            try:\n                _p_rm =   # MUTATION',
      'die Einkaufsliste kennt den Restbedarf'),
     # Der Schalter verschwindet aus der Leiste - er existiert, aber niemand
     # kann ihn bedienen.
@@ -3888,16 +3903,16 @@ Source: "settings.json"; DestDir: "{app}"''',
     # fehlenden Materialien zusammenbauen").
     ('Kaufmenge rechnet wieder gegen den eingefrorenen Bestand',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '''                    _rest_fehlt = {int(_m): int(_f)
-                                   for _m, _f, *_r in (self._fehlbedarf_jetzt() or [])}''',
-     '''                    _rest_fehlt = {int(_r["tid"]): max(0, int(_r.get("total", 0) or 0)
-                                                       - int(_r.get("owned", 0) or 0))
-                                   for _r in _rows}   # MUTATION''',
+     '''                _rest_fehlt = {int(_m): int(_f)
+                               for _m, _f, *_r in (self._fehlbedarf_jetzt() or [])}''',
+     '''                _rest_fehlt = {int(_r["tid"]): max(0, int(_r.get("total", 0) or 0)
+                                                   - int(_r.get("owned", 0) or 0))
+                               for _r in _rows}   # MUTATION''',
      'die Kaufmenge kommt aus der Fehlbedarfs-Rechnung'),
     ('Fehlmenge wird still auf Null gesetzt',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '                return int(_rest_fehlt.get(_t, 0) or 0)',
-     '                return 0   # MUTATION',
+     '            return int(_rest_fehlt.get(_t, 0) or 0)',
+     '            return 0   # MUTATION',
      'die Fehlmenge wird zurueckgegeben, nicht verschluckt'),
     # --- aa276: Kleingedrucktes im Tooltip ---
     # Wird das Label wieder immer sichtbar, ist der Kasten zugestellt.
@@ -4362,7 +4377,7 @@ Source: "settings.json"; DestDir: "{app}"''',
     # --- aa294: Versionsnummer lesbar und vor der Freigabe sichtbar ---
     ('Die Versionsnummer ist fuer die Update-Pruefung unlesbar',
      'eve_trader/__init__.py',
-     '__version__ = "1.1.2"',
+     '__version__ = "1.1.3"',
      '__version__ = "unbekannt"',
      'aa294 die Versionsnummer ist lesbar und hat drei Teile'),
     ('pruefe.py zeigt die Programmversion nicht mehr',
@@ -4688,13 +4703,13 @@ Source: "settings.json"; DestDir: "{app}"''',
     # --- aa302: Erfindungsmaterial in der Einkaufsliste (Sitzung 17) ---
     ('Datacores/Decryptoren fallen wieder aus der Einkaufsliste',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '                if _t in _inv_tids:\n                    # Bestand zaehlt mit',
-     '                if False:   # MUTATION\n                    # Bestand zaehlt mit',
+     '            if _t in _inv_tids:\n                # Bestand zaehlt mit',
+     '            if False:   # MUTATION\n                # Bestand zaehlt mit',
      'aa302 fuer diese Zeilen zaehlt die EIGENE Fehlmenge'),
     ('Erfindungsmaterial wird nicht mehr erkannt',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '                             (set(_p_inv.get("inv_buy") or {})\n                              | set(_p_inv.get("inv_stock_used") or {}))}',
-     '                             set()}   # MUTATION',
+     '                         (set(_p_inv.get("inv_buy") or {})\n                          | set(_p_inv.get("inv_stock_used") or {}))}',
+     '                         set()}   # MUTATION',
      'aa302 Erfindungsmaterial wird als solches erkannt'),
     # --- aa303/aa304: eigene Reservierung schuetzt, Vollmenge ohne Eigenbau ---
     ('Die eigene Reservierung schuetzt den Bestand nicht mehr',
@@ -5246,10 +5261,14 @@ Source: "settings.json"; DestDir: "{app}"''',
      '                          if int(_r["tid"]) not in _baut_kopf',
      '                          if True',
      'aa343 der Kopf zaehlt Gebautes nicht als fehlend'),
+    # NEU VERANKERT (emm546): der Filter steht jetzt in
+    # mw_helpers.einkauf_posten - EINE Liste fuer Kopie und Volumen-Zeile.
     ('Multibuy kopiert wieder, was der Plan selbst baut',
-     'eve_trader/ui/main_window.py',
-     '                    if int(_r["tid"]) in _baut_kopie:',
-     '                    if False:',
+     'eve_trader/ui/mw_helpers.py',
+     '        if tid in _baut:\n            gebaut.append(name or f"#{tid}")\n'
+     '            continue\n',
+     '        if False and tid in _baut:   # MUTATION\n'
+     '            gebaut.append(name or f"#{tid}")\n            continue\n',
      'aa344 gebaute Posten werden uebersprungen'),
     ('Das Weglassen wird verschwiegen',
      'eve_trader/ui/main_window.py',
@@ -5333,11 +5352,13 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        if activity == industry.REACTION:\n            return f"{base} Reaction Formula"',
      '        if False:\n            return f"{base} Reaction Formula"',
      'aa352 Reaktionen heissen Reaction Formula'),
-    ('Die Blacklist startet wieder eingeklappt',
+    # ANKER UMGEDREHT 10.10.2026 (Nutzer: "Blacklist ... standardmaessig ab
+    # jetzt eingeklappt lassen" - ERSETZT den Sitzung-20-Entscheid "offen").
+    ('Die Blacklist startet wieder aufgeklappt',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '            self._build_blacklist_compact(), expanded=True, accent=theme.AMBER))',
      '            self._build_blacklist_compact(), expanded=False, accent=theme.AMBER))',
-     'aa59 Build or buy, Production depth, Reprocessing und Blacklist starten offen'),
+     '            self._build_blacklist_compact(), expanded=True, accent=theme.AMBER))',
+     'aa59 Blacklist und Blaupausen-Frage starten eingeklappt'),
     ('Blacklisten per Rechtsklick wirkt wieder nicht',
      'eve_trader/ui/mw_bauplan_fenster.py',
      '                self._bau_refresh_exclusions_and_rebuild()\n\n            a_chart',
@@ -8238,17 +8259,11 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa417 10 von 20 Runs belegt, kein Haken"),
     ('Die Fremd-Reservierung liest den Beleg nicht mehr',
      'eve_trader/ui/mw_helpers.py',
-     '                        (p.get("frozen") or {}).get("stock_seen_ts"),\n'
-     '                        belegt=MainWindowHelpers._belegt_fuer_plan(p),\n'
-     '                        haken_runs=p.get("checked_runplan_runs"))\n'
-     '                except Exception:\n'
-     '                    rm = p.get("reserve_map") or {}\n'
-     '            if not rm:\n',
-     '                        (p.get("frozen") or {}).get("stock_seen_ts"),\n'
-     '                        haken_runs=p.get("checked_runplan_runs"))   # MUTATION\n'
-     '                except Exception:\n'
-     '                    rm = p.get("reserve_map") or {}\n'
-     '            if not rm:\n',
+     '                (p.get("frozen") or {}).get("stock_seen_ts"),\n'
+     '                belegt=MainWindowHelpers._belegt_fuer_plan(p),\n'
+     '                haken_runs=p.get("checked_runplan_runs"))\n',
+     '                (p.get("frozen") or {}).get("stock_seen_ts"),\n'
+     '                haken_runs=p.get("checked_runplan_runs"))   # MUTATION\n',
      "aa417 BEIDE Reservierungs-Leser reichen den Beleg weiter"),
     ('Der Runplaner zeigt wieder die geratene Karte',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -8469,8 +8484,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa419 Ueberblick: 5 frei (+3 im Job)"),
     ('Corp: Blaupausen in Corp-Jobs gelten wieder als frei',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '            out["blueprints"], _belegt = esi.blaupausen_in_jobs(\n',
-     '            _unbenutzt, _belegt = esi.blaupausen_in_jobs(   # MUTATION\n',
+     '            out["blueprints"], out["blueprints_belegt"] = esi.blaupausen_in_jobs(\n',
+     '            _unbenutzt, out["blueprints_belegt"] = esi.blaupausen_in_jobs(   # MUTATION\n',
      "aa419 Corp-Blaupausen werden gegen die Corp-Jobs gefiltert"),
     # 26.09.2026 - Enden-Karten unter dem Buendel, Gewinn-Uebersicht je Ende,
     # Invention-Tab im Buendel, Warnung bei unklarer Lage (emm223).
@@ -9257,15 +9272,15 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        tw.setToolTip(_txt("Blue = will be built',
      'Farb-Hinweis nur an der Kopfzeile'),
     ('Veroeffentlichung prueft nicht mehr',
-     'release/veroeffentliche_1.1.2.bat',
+     'release/veroeffentliche_1.1.3.bat',
      'python pruefe.py < nul\n',
      'rem python pruefe.py - MUTATION\n',
-     'aa426 veroeffentliche_1.1.2.bat prueft ZUERST'),
+     'aa426 veroeffentliche_1.1.3.bat prueft ZUERST'),
     ('Veroeffentlichung macht bei Rot weiter',
-     'release/veroeffentliche_1.1.2.bat',
+     'release/veroeffentliche_1.1.3.bat',
      '  goto ende\n)\necho gruen >> "%B%"\n',
      ')\necho gruen >> "%B%"\n',
-     'aa426 veroeffentliche_1.1.2.bat prueft ZUERST'),
+     'aa426 veroeffentliche_1.1.3.bat prueft ZUERST'),
     ('Endprodukte-Karte: Name dehnt sich nicht mehr',
      'eve_trader/ui/mw_multi_bauplan.py',
      '        hh.setSectionResizeMode(0, _HV.Stretch)\n',
@@ -9299,8 +9314,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'b129 Corp-Schalter aus'),
     ('Bauplan-Cache ohne Corp-Blaupausen (nur mit Subtract assets)',
      'eve_trader/ui/main_window.py',
-     '                all_bp.extend(self._corp_blaupausen(client_id, chars)\n',
-     '                all_bp.extend({}   # MUTATION\n',
+     '                for b in (_cres516.get("blueprints") or []):\n',
+     '                for b in []:   # MUTATION\n',
      'b129 Bauplan: Corp-Blaupause ohne'),
     ('Corp-Blaupause im Research-Job zaehlt im Bauplan mit',
      'eve_trader/ui/mw_bauplan_fenster.py',
@@ -9507,8 +9522,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     # "0 - RESERVED" SAGT, WER ES HAELT (emm318, 01.10.)
     ('Reservierungs-Zeile sagt wieder nur reserved',
      'eve_trader/ui/main_window.py',
-     '                        it.setText(3, "0  \\u2013 " + _txt("reserved by other plans"))\n',
-     '                        it.setText(3, "0  \\u2013 " + _txt("reserved"))\n',
+     '                                   + _txt("reserved by other plans"))\n',
+     '                                   + _txt("reserved"))\n',
      "aa210 und heisst dann 'von anderen Plaenen reserviert'"),
     # NEUES ENDE MIT NEUER KETTE: FENSTER NEU AUFBAUEN (emm317, 01.10.)
     ('Neues Ende mit neuer Kette bleibt im alten Fenster',
@@ -11238,9 +11253,9 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa486 4 Jobs auf A(2)+B(3)'),
     ('ESI-Punkt der Science-Zeile kennt den Charakter nicht',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '                if cname and j.get("char") and j.get("char") != cname:\n'
-     '                    continue\n',
-     '                pass   # MUTATION\n',
+     '                    if cname and j.get("char") and j.get("char") != cname:\n'
+     '                        continue\n',
+     '                    pass   # MUTATION\n',
      'b171 laufender Invention-Job: Punkt nur beim richtigen'),
     ('Invention-Zeile ohne Decryptor-Knopf',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -11839,12 +11854,12 @@ Source: "settings.json"; DestDir: "{app}"''',
      '            if True:\n                continue\n',
      'aa510 alter Schnappschuss ohne build_runs'),
     # emm465: kein Fehlalarm fuer Selbstgebautes
+    # emm527: die Regel "wer es baut, meldet es nicht" gilt JE PLAN
     ('Lagerorte: Selbstgebautes bekommt wieder einen Fehlbetrag',
      'eve_trader/lagerorte.py',
-     '                    "short": (max(0, ges - it_menge)\n'
-     '                              if bd and tid not in _gebaut else 0),\n',
-     '                    "short": max(0, ges - it_menge) if bd else 0,\n',
-     'aa512 selbst gebautes Item: Bedarf ja, Fehlbetrag nein'),
+     '                summe.pop(_sb, None)\n',
+     '                summe.setdefault(_sb, 0)\n',
+     'aa512 wer es selbst baut, meldet es nicht'),
     ('Lagerorte: Selbstgebautes landet in "liegt nirgends"',
      'eve_trader/lagerorte.py',
      '            if it["bedarf"] and it["short"] > 0:\n',
@@ -11855,15 +11870,108 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        if _gebaut:\n            _anteil = 0.0\n',
      '        if False:\n            _anteil = 0.0\n',
      'aa512 schon am Bauen: Datacores sind verbraucht'),
-    ('Stock locations: Seite reicht Selbstgebautes nicht durch',
-     'eve_trader/ui/mw_bauplan_tabs.py',
-     '            selbst_gebaut=res.get("built") or set())\n',
-     '            selbst_gebaut=set())\n',
-     'b194 selbst gebautes Item: kein Fehlbetrag'),
-    # emm464: Giant Shopping List
-    ('Einkaufsliste: kauft auch, was die Plaene selbst bauen',
+    ('Lagerorte: der bauende Plan meldet seinen Bedarf wieder mit',
      'eve_trader/lagerorte.py',
-     '        if n <= 0 or tid in _geb or not name or name.startswith("#"):\n',
+     '            if int(_runs.get(int(_sb), 0) or 0) > 0:\n'
+     '                summe.pop(_sb, None)\n',
+     '            if False:\n'
+     '                summe.pop(_sb, None)\n',
+     'aa544 Zufallsprobe 400 Plaene'),
+    # emm464: Giant Shopping List
+    # emm527: eine Bilanz fuer Stock locations und Einkaufsliste
+    ('Lagerorte: die Regel gilt wieder global statt je Plan',
+     'eve_trader/lagerorte.py',
+     '        for _sb in list(summe):\n',
+     '        for _sb in []:\n',
+     'aa544 der bauende Plan meldet nichts, der kaufende seine 110'),
+    ('Einkaufsliste: die Menge weicht vom Fehlbetrag der Zeile ab',
+     'eve_trader/lagerorte.py',
+     '        out.append((name, n))\n',
+     '        out.append((name, n + 1))\n',
+     'aa520 Stock-locations-Zufallsprobe ohne Befund'),
+    # emm528: Stock locations sagt, wie alt sein Bestand ist
+    ('Stock locations: der ESI-Datenstand wird wieder weggeworfen',
+     'eve_trader/esi.py',
+     '    _record_assets_meta(character_id, first)\n    pages = int(first.headers.get("X-Pages", "1"))\n    assets = list(first.json())\n    for p in range(2, pages + 1):\n        r = _get_with_retry(base, params={"page": p}, headers=headers, timeout=30)\n        r.raise_for_status()\n        assets.extend(r.json())\n    return assets\n',
+     '    pages = int(first.headers.get("X-Pages", "1"))\n    assets = list(first.json())\n    for p in range(2, pages + 1):\n        r = _get_with_retry(base, params={"page": p}, headers=headers, timeout=30)\n        r.raise_for_status()\n        assets.extend(r.json())\n    return assets\n',
+     'aa545 _fetch_all_assets schreibt den ESI-Datenstand mit'),
+    ('Stock locations: das Bestandsalter wird nicht angezeigt',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        if _alt_s is not None and float(_alt_s) >= 300:\n',
+     '        if False:\n',
+     'aa545 ... und zeigt es in der Kopfzeile'),
+    # emm529: der Runplaner sagt, WO Kopieren und Invention laufen
+    ('Runplaner: die Science-Koepfe verlieren den Ort wieder',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        _sc_struct = self._science_struktur()\n',
+     '        _sc_struct = None\n',
+     'b171 Copying-Kopf nennt die Struktur'),
+    ('Runplaner: der Invention-Kopf nennt einen anderen Ort als Copying',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        _i = _kopf("⚗ " + _txt("Invention") + _sc_suffix,\n',
+     '        _i = _kopf("⚗ " + _txt("Invention"),\n',
+     'aa546 beide Science-Koepfe tragen den Ort'),
+    # emm535: T1-Kopien fuers Erfinden sind keine Bau-Blaupausen
+    ('Runplaner: Invention-Kopien zaehlen wieder als Bau-Blaupausen',
+     'eve_trader/ui/mw_helpers.py',
+     '        if nur_bpo:\n'
+     '            return bpo, 0             # Kopie fuers Erfinden, nicht fuers Bauen\n',
+     '        if False:\n'
+     '            return bpo, 0\n',
+     'aa548 nur Kopien und kein Original -> kein Deckel-Eintrag'),
+    ('Runplaner: der Deckel fragt den Invention-Filter gar nicht',
+     'eve_trader/ui/mw_helpers.py',
+     '                nur_bpo=(getattr(self, "_inv_t1_bps", None) or (lambda: set()))(),\n',
+     '                nur_bpo=None,\n',
+     'aa548 der Runplaner-Deckel reicht den Filter durch'),
+    ('Stufen-Ladung: sie ueberschreibt den Deckel wieder mit den Kopien',
+     'eve_trader/ui/main_window.py',
+     '                matches, nur_bpo=int(bp_id) in (self._inv_t1_bps() or set()))[0]\n',
+     '                matches, nur_bpo=False)[0]\n',
+     'aa548 die Stufen-Ladung filtert mit DEMSELBEN Helfer (Regel 9)'),
+    # emm536: die Besitz-Zaehlung des Blueprints-Reiters darf nicht altern
+    ('Blueprints-Reiter liest wieder die gespeicherte (alternde) Zaehlung',
+     'eve_trader/ui/main_window.py',
+     '        if _cache536 is not None:\n'
+     '            owned, owned_bpc = self.bp_besitz_zaehlen(_cache536)\n',
+     '        if False:\n'
+     '            owned, owned_bpc = self.bp_besitz_zaehlen(_cache536)\n',
+     "b203 frisch geholte BPO: NICHT 'completely missing'"),
+    ('Die Besitz-Zaehlung macht aus Kopien Originale',
+     'eve_trader/ui/mw_helpers.py',
+     '            if b.get("is_bpo"):\n'
+     '                counts[tid] = counts.get(tid, 0) + qty\n',
+     '            if True:\n'
+     '                counts[tid] = counts.get(tid, 0) + qty\n',
+     'aa549 eine reine Kopien-Blaupause ist NIE ein Original'),
+    ('Die Kopier-Schritte lesen wieder die alte Besitz-Zahl',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        _orig510 = (self.bp_besitz_zaehlen(_cache536)[0]\n'
+     '                    if _cache536 is not None\n'
+     '                    else (getattr(self, "_bd_bp_owned_counts", None) or {}))\n',
+     '        _orig510 = (getattr(self, "_bd_bp_owned_counts", None) or {})\n',
+     'b171 zwei Originale -> beide Kopierjobs parallel (keine Welle 2)'),
+    # emm530: was zaehlt als Bestand - beide Zaehlungen muessen gleich sein
+    ('Stock locations: Lieferungen und Schiffsladeraum zaehlen mit',
+     'eve_trader/lagerorte.py',
+     '        return (a.get("location_flag") == "Hangar"\n'
+     '                and a.get("location_id") not in by_id)\n',
+     '        return a.get("location_id") not in by_id\n',
+     'aa547 Stock locations zaehlt nur den Item-Hangar'),
+    ('Bauplan-Bestand: Lieferungen zaehlen mit (zweite Wahrheit)',
+     'eve_trader/esi.py',
+     '        if a.get("location_flag") != "Hangar":\n            continue\n        if not _ist_behaelter(a):\n',
+     '        if False:\n            continue\n        if not _ist_behaelter(a):\n',
+     'aa547 der Bauplan-Bestand zaehlt GENAUSO'),
+    ('Runplaner: die Science-Struktur wird behauptet, ohne dass eine '
+     'angelegt ist',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        if not self.settings.get("bau_structures"):\n            return None\n        try:\n            _s = self._struct_for_activity("invention")\n',
+     '        try:\n            _s = self._struct_for_activity("invention")\n',
+     'aa546 ohne angelegte Struktur bleibt es UNBEKANNT'),
+    ('Einkaufsliste: Items ohne aufgeloesten Namen kommen mit',
+     'eve_trader/lagerorte.py',
+     '        if n <= 0 or not name or name.startswith("#"):\n',
      '        if n <= 0 or not name:\n',
      'aa511 nur echte Fehlbetraege'),
     ('Einkaufsliste: Items ohne Fehlbetrag kommen mit',
@@ -12333,8 +12441,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     ('Plan-Fortschritt: der Balken behauptet wieder 100 %, obwohl Stueck '
      'der Endprodukte fehlen',
      'eve_trader/ui/main_window.py',
-     '                if _prozent9 >= 100.0 and total_built < target_qty:\n'
-     '                    _prozent9 = 99.0\n',
+     '                if total_built < target_qty:\n'
+     '                    _prozent9 = min(_prozent9, 99.0)\n',
      '                if False:\n'
      '                    _prozent9 = 99.0\n',
      'b199 ... und behauptet keine 100 %'),
@@ -12369,6 +12477,536 @@ Source: "settings.json"; DestDir: "{app}"''',
      '            _tr499 = (res.get("trend") or {}).get(int(z["produkt"]))\n',
      '            _tr499 = None\n',
      "b200 Sell 200 gegen 90-Tage-Schnitt 100 -> '+100 %'"),
+    # emm507: Blaupausen in laufenden Jobs (Nutzer: "Prophecy und Magnate
+    # Originale sind im Kopiervorgang ingame" - standen rot als fehlend).
+    ('Blaupause im Job landet wieder als FREI im Cache (zaehlt, obwohl '
+     'im Spiel nicht greifbar)',
+     'eve_trader/ui/main_window.py',
+     '            if b.get("in_job"):\n'
+     '                im_job.setdefault(int(b.get("type_id") or 0), []).append(b)\n',
+     '            if False:\n'
+     '                im_job.setdefault(int(b.get("type_id") or 0), []).append(b)\n',
+     'b196 in_job-Blaupause: nicht frei, aber in _bd_bp_im_job'),
+    ('Blaupause im Kopierjob steht wieder rot als "completely missing"',
+     'eve_trader/ui/main_window.py',
+     '            elif im_job.get(r["bp_id"]):\n',
+     '            elif False:\n',
+     "b196 im Kopierjob: NICHT 'completely missing'"),
+    ('Kaufliste nimmt Blaupausen im Job wieder auf (er kauft, was er '
+     'besitzt)',
+     'eve_trader/ui/main_window.py',
+     '            and not im_job.get(r.get("bp_id"))])\n',
+     '            ])\n',
+     'b196 ... und die Kaufliste ist LEER'),
+    # emm510: aus einer Kopie kann man nicht kopieren - je T1-Original
+    # laufen hoechstens so viele Kopierjobs gleichzeitig wie BPOs da sind.
+    ('Der Original-Deckel beim Kopieren ist tot (aus Kopien wird wieder '
+     'parallel kopiert)',
+     'eve_trader/ui/mw_helpers.py',
+     '        kap = max(1, kap)\n',
+     '        kap = 999999\n',
+     'aa529 zwei Jobs, ein Original -> zwei Schritte'),
+    ('Der zweite Kopier-Schritt startet wieder parallel in Welle 1',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                welle += _wab510\n',
+     '',
+     'aa529 verdrahtet im Copy-Block'),
+    # emm511: Berichte muessen UTF-8 sein, sonst laesst sich der Bericht
+    # nicht hochladen (Konsolen-Codepage von robocopy/dir/git/Python).
+    ('Die Sicherung schreibt ihren Bericht wieder in der Konsolen-Codepage',
+     'werkzeuge/sichere_1.1.2.bat',
+     'chcp 65001 >nul\n',
+     '',
+     'aa530 jede berichtende .bat setzt chcp 65001'),
+    ('Python schreibt in berichtenden .bat wieder in der Konsolen-Codepage',
+     'werkzeuge/zeige_lagerorte.bat',
+     'set "PYTHONIOENCODING=utf-8"\n',
+     '',
+     'aa530 jede .bat mit Python setzt PYTHONIOENCODING=utf-8'),
+    # emm512: die Kopieranleitung prueft den T1-ORIGINAL-Besitz.
+    ('Eigene T1-Kopien gelten wieder als Original (aus einer Kopie wird '
+     'wieder kopiert)',
+     'eve_trader/ui/mw_helpers.py',
+     '    if bpo:\n        return ("ok", bpo, bpc_runs)\n',
+     '    if bpo or bpc_runs:\n        return ("ok", bpo, bpc_runs)\n',
+     'aa531 nur Kopien ->'),
+    ('Die Kopieranleitung behauptet den Besitz auch ohne geladene Blaupausen',
+     'eve_trader/ui/mw_helpers.py',
+     '    if not t1 or fehler or not cache:\n',
+     '    if not t1:\n',
+     'aa531 Besitz nicht geladen -> unknown'),
+    ('Die Runplaner-Kopierzeile verschweigt den fehlenden Original-Besitz',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                if _lg512 in ("copies_only", "none"):\n',
+     '                if False:\n',
+     'b171 nur T1-Kopien im Hangar'),
+    # emm514: der Bestand des Erzeugnisses deckt offene Runs anteilig.
+    ('Bestand-deckt-Runs rundet die noetigen Runs AB statt AUF '
+     '(zu wenige Runs, der Verbraucher-Job startet nicht)',
+     'eve_trader/ui/mw_helpers.py',
+     '        _noetig = _math.ceil(max(0, bedarf.get(_t, 0) - _best) / _out_je_run)\n',
+     '        _noetig = int(max(0, bedarf.get(_t, 0) - _best) / _out_je_run)\n',
+     'aa532 sein Helium-Fall'),
+    ('Der Verbraucher-Bedarf wird ABgerundet statt AUF (Regel 3)',
+     'eve_trader/ui/mw_helpers.py',
+     '                bedarf[_mid] = (bedarf.get(_mid, 0)\n'
+     '                                + _math.ceil(_offen_c * _q / _r_c))\n',
+     '                bedarf[_mid] = (bedarf.get(_mid, 0)\n'
+     '                                + int(_offen_c * _q / _r_c))\n',
+     'aa532 krumme Mengen'),
+    ('Auch ENDEN gelten als bestandsgedeckt (die Stueckzahl, die der '
+     'Nutzer wirklich bauen will, wuerde gestrichen)',
+     'eve_trader/ui/mw_helpers.py',
+     '    for _t in hat_verbraucher:\n        if _t in _enden:\n'
+     '            continue\n',
+     '    for _t in hat_verbraucher:\n        if False:\n'
+     '            continue\n',
+     'aa532 ein Ende wird nie gesenkt'),
+    ('Der Output laufender Jobs zaehlt doppelt: als erledigte Runs UND '
+     'als anrechenbarer Bestand',
+     'eve_trader/ui/main_window.py',
+     '                _q = (int(_q or 0) - int(_pipe.get(_t, 0) or 0)\n'
+     '                      - int(_lag.get(_t, 0) or 0))\n',
+     '                _q = (int(_q or 0)\n'
+     '                      - int(_lag.get(_t, 0) or 0))\n',
+     'b201 Pipeline zaehlt nie als Bestand'),
+    ('Auch der NICHT eingefrorene Plan senkt - der Bestand zoege doppelt '
+     'ab (production_plan hat ihn schon verrechnet)',
+     'eve_trader/ui/main_window.py',
+     '            if (getattr(self, "_bd_open_plan_id", None)\n'
+     '                    and getattr(self, "_bd_frozen", None)):\n',
+     '            if getattr(self, "_bd_open_plan_id", None):\n',
+     'b201 nicht eingefroren'),
+    # emm515: die Status-Pille bekommt ihre Hoehe.
+    ('Die Pillen-Zeile wird nicht mehr angehoben - Qt staucht die Pille '
+     'stumm (der Text liegt halb ausserhalb)',
+     'eve_trader/ui/main_window.py',
+     '            if tbl.rowHeight(i) < _noetig515:\n'
+     '                tbl.setRowHeight(i, _noetig515)\n',
+     '            if False:\n'
+     '                tbl.setRowHeight(i, _noetig515)\n',
+     'b202 jede Pille bekommt ihre volle Hoehe'),
+    ('Das Zell-Polster wird zu klein angesetzt (Zeile zu niedrig)',
+     'eve_trader/ui/theme.py',
+     'ZELL_POLSTER_V = 12\n',
+     'ZELL_POLSTER_V = 4\n',
+     'aa533 ZELL_POLSTER_V'),
+    ('Die Pillen-Huelle nimmt senkrecht wieder Rand weg',
+     'eve_trader/ui/main_window.py',
+     '            _pl.setContentsMargins(4, 0, 4, 0); _pl.addWidget(_pill)\n',
+     '            _pl.setContentsMargins(4, 2, 4, 2); _pl.addWidget(_pill)\n',
+     'aa533 die Pillen-Huelle'),
+    # emm516: ein leise gescheiterter CORP-Abruf ist kein "du hast sie nicht".
+    ('Ein gescheiterter Corp-Blaupausen-Abruf wird wieder verschluckt '
+     '(die Zeile behauptet "completely missing")',
+     'eve_trader/ui/main_window.py',
+     '                for _ft516 in (_cres516.get("failed") or []):\n',
+     '                for _ft516 in []:   # MUTATION\n',
+     'b196 Corp: der gescheiterte Abruf steht in _bd_bp_fehler'),
+    ('Eine Corp ohne Director-Rolle wird nicht mehr gemeldet',
+     'eve_trader/ui/main_window.py',
+     '                for _or516 in (_cres516.get("ohne_rolle") or []):\n',
+     '                for _or516 in []:   # MUTATION\n',
+     'b196 Corp: fehlende Director-Rolle'),
+    ('Ein nicht angekreuzter Corp-Hangar wird nicht mehr gemeldet',
+     'eve_trader/ui/main_window.py',
+     '                if _cres516.get("keine_division"):\n',
+     '                if False:   # MUTATION\n',
+     'b196 Corp: kein angekreuzter Hangar'),
+    # emm518: aus Bestand gedeckt ist nicht gebaut.
+    ('Bestandsgedeckte Runs bekommen wieder den gruenen ESI-Punkt '
+     '("wurde gebaut", obwohl es nie einen Job gab)',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                                    else "bestand" if _best_r > 0\n',
+     '                                    else "fertig" if _best_r > 0   # MUTATION\n',
+     # Erwartung nachgezogen: nach der emm521-Umstellung bleibt
+     # "kennt den Zustand" gruen (das Wort steht weiter im Code) - rot
+     # wird der Zweig-Check. BLIND-Fund der Rotprobe, 11.10.2026.
+     'aa535 ... nur OHNE gelieferten und OHNE laufenden Job'),
+    ('Die Bestands-Deckung draengt sich vor den gelieferten Job',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)\n'
+     '                                    else "bestand" if _best_r > 0\n',
+     '                                    else "bestand" if _best_r > 0\n'
+     '                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)\n',
+     'aa535 ... nur OHNE gelieferten und OHNE laufenden Job'),
+    ('Der Bestands-Punkt wird wieder gruen gemalt',
+     'eve_trader/ui/icons.py',
+     '    return _punkt(_theme.MUTED, groesse)\n',
+     '    return _punkt(_theme.GREEN, groesse)   # MUTATION\n',
+     'aa535 bestand_punkt ist gedaempft'),
+    # emm519: ein laufender Job faerbt nur EINE Welle.
+    ('Der laufende Science-Job wird nicht mehr verbraucht '
+     '(jede Welle bekommt denselben Punkt)',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                _n_lauf = max(0, _n_lauf - _nimm)\n',
+     '                _n_lauf = _n_lauf   # MUTATION\n',
+     'aa536 ... und verbraucht ihn'),
+    ('Die Invention-Zeile verbraucht nur einen Job statt ihrer Job-Zahl',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                _pk519i = _punkt(bp, 8, _cnames.get(int(cid)), n_jobs)\n',
+     '                _pk519i = _punkt(bp, 8, _cnames.get(int(cid)))   # MUTATION\n',
+     'aa536 die Invention-Zeile verbraucht ihre eigene Job-Zahl'),
+    ('Der Zeilen-Zustand zieht ein zweites Mal aus dem Job-Pool',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '            _p = punkt if punkt is not None else _punkt(tid, act, cname)\n',
+     '            _p = _punkt(tid, act, cname)   # MUTATION\n',
+     'aa536 der Zustand zieht NICHT ein zweites Mal'),
+    # emm520: Mausrad nicht am Dropdown der Job-Zuordnung.
+    ('Das Mausrad stellt die Job-Zuordnung im Dropdown wieder um',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '        combos_ohne_mausrad(d)\n',
+     '        pass   # MUTATION\n',
+     'aa538 der Job-Zuordnungs-Dialog sperrt das Mausrad'),
+    # emm521: kein gruener Punkt ohne Job.
+    ('Der Auffangzweig heisst wieder "fertig" - gruener ESI-Punkt auf '
+     'eine Position, zu der es nie einen Job gab',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                                    else "nicht_noetig")\n',
+     '                                    else "fertig")   # MUTATION\n',
+     'aa537 der Auffangzweig ist nicht mehr'),
+    ('Die Zeile ohne Job bekommt wieder einen anderen Punkt',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                        elif _zustand in ("bestand", "nicht_noetig"):\n',
+     '                        elif _zustand == "bestand":   # MUTATION\n',
+     'b41 ohne Job: sondern den gedaempften Punkt'),
+    ('Abholbereite Jobs ("ready") zaehlen nicht mehr als Beleg',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)\n',
+     '                                    else "fertig" if _gel_r > 0   # MUTATION\n',
+     'b41 ready: fertig Gebautes zeigt den GRUENEN Punkt'),
+    ('Der Grund der Deckung wird nicht mehr gemerkt (der Tooltip raet)',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '            self._bd_vorstufen_budget = (set(_vs_neu)\n'
+     '                                         | {int(_x) for _x in _vs_schon})\n',
+     '            self._bd_vorstufen_budget = set()   # MUTATION\n',
+     'b41 ohne Job: und der Tooltip sagt, dass nichts gebaut wurde'),
+    # emm522: "100 %" neben 690 von 900 Stueck.
+    ('Der Fortschritts-Deckel greift erst ab 100,0 - die gerundete '
+     'Anzeige sagt dann wieder "100 %", obwohl Stueck fehlen',
+     'eve_trader/ui/main_window.py',
+     '                if total_built < target_qty:\n'
+     '                    _prozent9 = min(_prozent9, 99.0)\n',
+     '                if _prozent9 >= 100.0 and total_built < target_qty:\n'
+     '                    _prozent9 = 99.0   # MUTATION\n',
+     'aa539 ... sondern greift, sobald ein Stueck fehlt'),
+    # emm523: Ueberreservation - Anspruch aus dem Schnappschuss.
+    ('Die Reservierung kommt wieder aus der gespeicherten Zweitkopie '
+     '(Leichen bleiben, zu kleine Ansprueche auch)',
+     'eve_trader/ui/mw_helpers.py',
+     '            _basis = MainWindowHelpers._plan_reserve_map(_plan) or {}\n',
+     '            _basis = dict(rm)   # MUTATION\n',
+     'aa540 der Anspruch kommt aus dem Schnappschuss'),
+    ('Ein Schnappschuss ohne Anspruch loescht die Reservierung ganz',
+     'eve_trader/ui/mw_helpers.py',
+     '            if not _basis:\n'
+     '                return rm\n',
+     '            if False:\n'
+     '                return rm\n',
+     'aa540 Schnappschuss ohne Anspruch loescht die Reservierung NICHT'),
+    ('Nur noch EIN Leser laeuft ueber den Anspruch',
+     'eve_trader/ui/mw_helpers.py',
+     '            rm = MainWindowHelpers.plan_anspruch_mitlaufend(p)\n'
+     '            return {int(t): int(q or 0) for t, q in (rm or {}).items()}\n',
+     '            rm = p.get("reserve_map") or {}   # MUTATION\n'
+     '            return {int(t): int(q or 0) for t, q in (rm or {}).items()}\n',
+     'aa540 ... und _reserved_by_this_plan'),
+    # emm524: abgehakte Erz-Schritte buchen den Anspruch um.
+    ('Abgehakte Erz-Schritte buchen den Anspruch NICHT um (der Plan gibt '
+     'die Minerale frei, die er selbst braucht)',
+     'eve_trader/reprocess.py',
+     '        if schritt_key(st) not in abgehakt or st.get("built"):\n'
+     '            continue\n'
+     '        for m, q in (st.get("deckt") or {}).items():\n'
+     '            m = int(m)\n'
+     '            out[m] = out.get(m, 0) + int(q or 0)\n',
+     '        if schritt_key(st) not in abgehakt or st.get("built"):\n'
+     '            continue\n'
+     '        for m, q in (st.get("deckt") or {}).items():   # MUTATION\n'
+     '            m = int(m)\n',
+     "aa541 Nutzer-Zahlen: Tritanium 33'386'579 -> 55'384'600"),
+    ('Das verarbeitete Erz bleibt im Anspruch stehen (reserviert Erz, '
+     'das es nicht mehr gibt)',
+     'eve_trader/reprocess.py',
+     '            rest = out.get(erz, 0) - int(st["menge"])\n'
+     '            if rest > 0:\n'
+     '                out[erz] = rest\n'
+     '            else:\n'
+     '                out.pop(erz, None)\n',
+     '            rest = out.get(erz, 0)   # MUTATION\n'
+     '            if rest > 0:\n'
+     '                out[erz] = rest\n'
+     '            else:\n'
+     '                out.pop(erz, None)\n',
+     'aa541 ... und die Blockmenge des Erzes faellt raus'),
+    # emm525: die Zeile nennt WER reserviert und WIE VIEL.
+    ('Die Zeile nennt den Halter nicht mehr beim Namen',
+     'eve_trader/ui/main_window.py',
+     '                        _wer9 = MainWindowHelpers.reservierung_text(_h9[:1])\n',
+     '                        _wer9 = ""   # MUTATION\n',
+     'aa542 die Zeile nennt den Halter SICHTBAR'),
+    ('Die Halter-Karte wird nie gefuellt',
+     'eve_trader/ui/main_window.py',
+     '        self._bd_reserviert_je_item = self.reservierung_je_item(\n',
+     '        self._bd_reserviert_je_item = {} or self.reservierung_je_item(\n',
+     'aa542 die Karte wird beim Anwenden der Reservierungen gefuellt'),
+    ('Der groesste Halter steht nicht mehr vorn',
+     'eve_trader/ui/mw_helpers.py',
+     '            out[t].sort(key=lambda x: (-x[1], x[0]))\n',
+     '            out[t].sort(key=lambda x: (x[1], x[0]))   # MUTATION\n',
+     'aa542 der groesste Halter steht vorn'),
+    ('Die Anzeige zeigt Halter, die gar nichts wegnehmen',
+     'eve_trader/ui/mw_helpers.py',
+     '                if q > 0:\n'
+     '                    out.setdefault(int(t), []).append((_lab, q))\n',
+     '                if True:   # MUTATION\n'
+     '                    out.setdefault(int(t), []).append((_lab, q))\n',
+     'aa542 ein Plan mit Anspruch 0 ist kein Halter'),
+    # emm526: Science-Haken werden nie automatisch entfernt.
+    ('Science-Haken fliegen wieder als Fehlklick raus',
+     'eve_trader/ui/mw_helpers.py',
+     '        if (len(teile) < 3 or teile[0] in ("char", "repro", "copy", "inv")\n',
+     '        if (len(teile) < 3 or teile[0] in ("char", "repro")\n',
+     'aa543 Science-Haken bleiben, der Bau-Haken fliegt'),
+    ('Der Fehlklick-Schutz der Bau-Haken ist mit abgeschaltet',
+     'eve_trader/ui/mw_helpers.py',
+     '        if (len(teile) < 3 or teile[0] in ("char", "repro", "copy", "inv")\n'
+     '                or not teile[2].isdigit()):\n',
+     '        if True:   # MUTATION\n',
+     'aa543 der Fehlklick-Schutz der Bau-Haken bleibt'),
+    ('Auch NICHT abgehakte Erz-Schritte werden umgebucht (Erz liegt da, '
+     'wird aber als Mineral beansprucht)',
+     'eve_trader/reprocess.py',
+     '        if schritt_key(st) not in abgehakt or st.get("built"):\n',
+     '        if False:   # MUTATION\n',
+     'aa541 ohne Haken bleibt der Anspruch unveraendert'),
+    ('Der Anspruch eines eingefrorenen Plans kennt die Erz-Haken nicht',
+     'eve_trader/ui/mw_helpers.py',
+     '                _basis = _rp523.anspruch_anpassen(\n',
+     '                _basis = dict(_basis) or _rp523.anspruch_anpassen(\n',
+     'aa541 plan_anspruch_mitlaufend bucht den Haken um'),
+    # emm537: der Ladebalken gehoert genau EINEM Job
+    ('Jeder Worker schreibt wieder in den EINEN Ladebalken',
+     'eve_trader/ui/main_window.py',
+     '            worker.progress.connect(\n'
+     '                lambda d, g, _w=worker: self._overlay_fortschritt(_w, d, g))\n',
+     '            worker.progress.connect(self._set_loading_progress)\n',
+     'b204 der Hintergrund-Job schreibt NICHT hinein'),
+    ('Jeder Worker schreibt wieder den Phasen-Text des Ladeschirms',
+     'eve_trader/ui/main_window.py',
+     '            worker.status.connect(\n'
+     '                lambda s, _w=worker: self._overlay_status(_w, s))\n',
+     '            worker.status.connect(self._set_loading)\n',
+     'b204 ... und auch nicht in den Phasen-Text'),
+    ('Auch ein Job ohne eigenes Overlay bekommt den Balken',
+     'eve_trader/ui/main_window.py',
+     '            if getattr(self, "_overlay_job", None) is None:\n'
+     '                self._overlay_job = worker\n',
+     '            pass\n'
+     '        if getattr(self, "_overlay_job", None) is None:\n'
+     '            self._overlay_job = worker\n',
+     'b204 ein Job ohne Overlay bekommt den Balken nie'),
+    ('Der Besitzer gibt den Balken am Ende nicht frei',
+     'eve_trader/ui/main_window.py',
+     '            if getattr(self, "_overlay_job", None) is worker:\n'
+     '                self._overlay_job = None\n'
+     '                self._overlay_balken_leeren()\n',
+     '            if False:\n'
+     '                self._overlay_job = None\n'
+     '                self._overlay_balken_leeren()\n',
+     'b204 am Ende des Besitzers wird der Balken frei und geleert'),
+    ('Fremde Jobs duerfen doch in den Balken schreiben',
+     'eve_trader/ui/main_window.py',
+     '    def _overlay_gehoert(self, worker):\n'
+     '        return getattr(self, "_overlay_job", None) is worker\n',
+     '    def _overlay_gehoert(self, worker):\n'
+     '        return True\n',
+     'aa550 nur der Besitzer schreibt in den Balken'),
+    # emm538: neben einem Original zaehlen nur die Originale
+    ('Neben einem Original zaehlen die kleinen Kopien wieder mit',
+     'eve_trader/ui/mw_helpers.py',
+     '        if bpo:\n'
+     '            return bpo, kopien\n',
+     '        if bpo:\n'
+     '            return bpo + kopien, 0   # MUTATION\n',
+     'aa551 1 Original + 2 kleine Kopien -> 1 Job, 2 bleiben liegen'),
+    ('Die liegen gebliebenen Kopien werden nicht gemeldet',
+     'eve_trader/ui/mw_helpers.py',
+     '                if _aus and ignoriert is not None:\n'
+     '                    ignoriert[t] = (int(_n), int(_aus))\n',
+     '                pass   # MUTATION\n',
+     'aa551 der Deckel steht auf 1 und nennt (Originale, Kopien)'),
+    ('Der Resolver haengt die Meldung nicht ans Fenster',
+     'eve_trader/ui/mw_helpers.py',
+     '            self._bd_bp_kopien_aus = _ign538\n',
+     '            pass   # MUTATION\n',
+     'aa551 der Resolver sammelt die Meldung und haengt sie ans Fenster'),
+    # emm540: die graue Statuszeile von Stock locations steht in ihrer
+    # eigenen Zeile und kuerzt mit "..." - sonst drueckt sie die drei
+    # ambernen Knoepfe zusammen ("sh<", "Expa", "Re<").
+    ('Die Statuszeile steht wieder in der Knopf-Zeile',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        v.addWidget(self._lager_stand_lbl)\n',
+     '        kopf.addWidget(self._lager_stand_lbl)   # MUTATION\n',
+     'b194 Statuszeile und Knopf-Zeile sind NICHT dieselbe Zeile'),
+    ('Die Statuszeile kuerzt nicht mehr mit "..."',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        self._lager_stand_lbl = KurzLabel("")\n',
+     '        self._lager_stand_lbl = QLabel("")   # MUTATION\n',
+     'aa552 die Statuszeile ist ein KurzLabel'),
+    ('KurzLabel kuerzt den Text nicht mehr mit "..."',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        self._voll = str(text)\n'
+     '        self.setToolTip(self._voll)\n'
+     '        QLabel.setText(self, self.fontMetrics().elidedText(\n'
+     '            self._voll, Qt.ElideRight, max(10, self.width())))\n'
+     '\n'
+     '    def resizeEvent(self, ev):\n'
+     '        super().resizeEvent(ev)\n'
+     '        QLabel.setText(self, self.fontMetrics().elidedText(\n'
+     '            self._voll, Qt.ElideRight, max(10, self.width())))\n',
+     '        self._voll = str(text)\n'
+     '        self.setToolTip(self._voll)\n'
+     '        QLabel.setText(self, self._voll)   # MUTATION\n'
+     '\n'
+     '    def resizeEvent(self, ev):\n'
+     '        super().resizeEvent(ev)\n'
+     '        QLabel.setText(self, self._voll)   # MUTATION\n',
+     "b194 Statuszeile kuerzt mit '...'"),
+    # emm542: Zufallsprobe ueber die Blaupausen-/Science-Kette. Die beiden
+    # Mutationen sitzen auf Zeilen, die noch keine hatten - die uebrigen
+    # Glieder der Kette sind seit emm510/535/536/538 verankert.
+    ('Der Kopier-Deckel erhoeht die Kopienzahl nicht mehr',
+     'eve_trader/industry.py',
+     '        n = max(n, -(-attempts // runs_je))\n',
+     '        n = n   # MUTATION\n',
+     'aa553 Zufallsprobe 700 Welten'),
+    ('Ein Stapel gleicher Kopien zaehlt nur einmal',
+     'eve_trader/ui/mw_helpers.py',
+     '                bpc_runs[tid] = bpc_runs.get(tid, 0) + qty * runs\n',
+     '                bpc_runs[tid] = bpc_runs.get(tid, 0) + runs   # MUTATION\n',
+     'aa553 Zufallsprobe 700 Welten'),
+    # emm543: Zufallsprobe ueber den Reservierungs-Anspruch. Die uebrigen
+    # Glieder sind seit emm523/524/525 verankert; neu ist nur der Filter
+    # gegen negative Posten im Schnappschuss.
+    ('Ein negativer Posten senkt den Anspruch des Plans',
+     'eve_trader/ui/mw_helpers.py',
+     '                if q and q > 0:\n',
+     '                if q:   # MUTATION\n',
+     'aa554 Zufallsprobe 600 Welten'),
+    # emm545: Fracht ueber die GEPUFFERTE Einkaufsliste, m3 an der Zeile,
+    # Puffer-Spalte und Rechnen erst bei Enter. Die Erwartungen liegen in
+    # der b-Suite - alle vier sind LAUFZEIT-Tatsachen am echten Fenster
+    # (Lehre emm537: eine Mutation am Laufzeit-Weg braucht eine b-Erwartung).
+    ('Fracht rechnet wieder ohne den Material-Puffer',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '            _fr_in_mat = (_fr_rate * _fr_vol) if _fr_rate > 0 else 0.0\n',
+     '            _fr_in_mat = (_fr_rate * sum(\n'
+     '                float(vols.get(_t, 0) or 0) * float(_q)\n'
+     '                for _t, _q in buy_map.items())) if _fr_rate > 0 else 0.0   # MUTATION\n',
+     'b7v Puffer 10 %: Fracht ueber die GEPUFFERTE Liste'),
+    ('Die Frachtzeile nennt die Kubikmeter nicht mehr',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                        _txt("Freight service ({v} m\\u00b3)").format(\n',
+     '                        _txt("Freight service") + ("" if 1 else "").format(   # MUTATION\n',
+     'b7v ... und die Beschriftung nennt die m'),
+    ('Der Puffer rechnet wieder bei jedem Pfeilklick',
+     'eve_trader/ui/main_window.py',
+     '            _pf.editingFinished.connect(_puffer_uebernehmen)\n',
+     '            _pf.valueChanged.connect(lambda _v: _puffer_uebernehmen())   # MUTATION\n',
+     'b205 blosses Hochschrauben rechnet und speichert NICHT'),
+    ('Die Einkaufsliste zeigt die Menge OHNE Puffer',
+     'eve_trader/ui/main_window.py',
+     '                _it.setText(5, _num(_mit))\n',
+     '                _it.setText(5, _num(_roh))   # MUTATION\n',
+     'b205 ... In den Wagen zeigt die gekaufte Menge'),
+    # emm546: das Volumen steht in der Einkaufsliste - je Zeile und als
+    # Summe darunter. Drei der vier Erwartungen sind LAUFZEIT-Tatsachen am
+    # echten Dialog (Lehre emm537), die vierte prueft den reinen Helfer.
+    ('Die m3-Spalte rechnet ohne den Material-Puffer',
+     'eve_trader/ui/main_window.py',
+     '                _it.setText(7, _m3(float(_v) * _mit) if _v else "?")\n',
+     '                _it.setText(7, _m3(float(_v) * int(_roh))   # MUTATION\n'
+     '                               if _v else "?")\n',
+     'b205 ... m3 der Zeile waechst mit'),
+    ('Die Volumen-Summe rechnet ohne den Material-Puffer',
+     'eve_trader/ui/main_window.py',
+     '                _ges += float(_v) * self._buy_surplus_qty(_q)\n',
+     '                _ges += float(_v) * int(_q)   # MUTATION\n',
+     'b205 ... Volumen-Summe folgt dem Puffer'),
+    ('Unbekanntes Volumen zaehlt still als 0 m3',
+     'eve_trader/ui/main_window.py',
+     '                if not _v:\n                    _ohne += 1\n',
+     '                if not _v:\n                    pass   # MUTATION\n',
+     'b205 ... unbekanntes Volumen wird gemeldet'),
+    ('Die Volumen-Zeile trifft ihre eigene Auswahl',
+     'eve_trader/ui/main_window.py',
+     '                _p, _, _ = einkauf_posten(\n'
+     '                    rows, "missing", getattr(self, "_bd_plan_builds", None))\n'
+     '                return [(_t, _q) for _t, _n, _q in _p]\n',
+     '                return [(int(_r["tid"]), int(_r.get("missing") or 0))   # MUTATION\n'
+     '                        for _r in rows]\n',
+     'aa555 Volumen-Zeile nimmt dieselbe Liste'),
+    # emm547: das Volumen des TATSAECHLICHEN Einkaufs steht jetzt auch im
+    # Bauplan ("Einkauf jetzt"). Vier Erwartungen am ECHTEN Fenster (Lehre
+    # emm537), eine an der EINEN Stelle.
+    ('Die Detail-Zeile "Einkauf jetzt" faellt weg',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                        ("Einkauf jetzt", "Purchase now")]',
+     '                        ]   # MUTATION',
+     'aa556 die Detail-Zeile ist angelegt'),
+    ('Der Kopier-Knopf rechnet die Menge wieder selbst',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '            _rest_kaufmenge = _ej["rest_kaufmenge"]',
+     '            _rest_kaufmenge = (lambda r:   # MUTATION\n'
+     '                               int(r.get("missing", 0) or 0))',
+     'aa556 der Kopier-Knopf liest sie'),
+    ('"Einkauf jetzt" rechnet das Volumen ohne den Material-Puffer',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                        _ej_vol += float(_v_j) * self._buy_surplus_qty(_q_j)',
+     '                        _ej_vol += float(_v_j) * int(_q_j)   # MUTATION',
+     'b206 mit Puffer 10 % waechst das Volumen'),
+    ('"Einkauf jetzt" verschweigt ein unbekanntes Volumen',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                        if not _v_j:\n                            _ej_ohne += 1',
+     '                        if not _v_j:\n                            pass   # MUTATION',
+     'b206 ohne Volumen wird es gemeldet'),
+    ('"Einkauf jetzt" steht da, auch wenn nichts zu kaufen ist',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                    _ej_cap.setVisible(bool(_ej_n))',
+     '                    _ej_cap.setVisible(True)   # MUTATION',
+     'b206 ohne Posten bleibt die Zeile aus'),
+    # emm548: die Vorschlags-Liste zeigt das Item-Bild (sie hatte nie eines).
+    ('Die Vorschlags-Liste zeigt wieder kein Item-Bild',
+     'eve_trader/ui/mw_multi_bauplan.py',
+     '            _ic0 = self._table_icon(k["tid"])\n'
+     '            if _ic0 is not None:\n'
+     '                it.setIcon(_ic0)\n',
+     '            pass   # MUTATION\n',
+     'b142 die Zeile traegt das Item-Bild'),
+    ('Fehlende Bilder werden nicht mehr nachgeholt',
+     'eve_trader/ui/mw_multi_bauplan.py',
+     '        self._icon_prefetch_pending(_icons_nach)\n',
+     '        pass   # MUTATION\n',
+     'b142 ... und der Nachtrag wird angestossen'),
+    # emm550: Tempo der b-Suite. Die drei Posten, die die Wartezeit
+    # ausmachten - Ruhe-Regel, Warnboxen, Syntaxbaum-Parsen.
+    ('Die Ruhe-Regel der Ladezeit-Messung hat wieder eigene Zahlen',
+     'eve_trader/ui/main_window.py',
+     '        tm.setInterval(int(ladezeit.RUHE_INTERVALL_MS))',
+     '        tm.setInterval(500)   # MUTATION',
+     'aa557 _ladezeit_warten liest sie und hat keine eigenen Zahlen'),
+    ('Der Vorlauf der Ruhe-Regel steht wieder fest im Quelltext',
+     'eve_trader/ui/main_window.py',
+     '            elif (time.time() - t0 > ladezeit.RUHE_VORLAUF_S',
+     '            elif (time.time() - t0 > 2.0   # MUTATION',
+     'aa557 _ladezeit_warten liest sie und hat keine eigenen Zahlen'),
+    ('Die b-Suite zeigt Warnboxen wieder modal',
+     'tests/test_bauplan_aufbau.py',
+     '_warn_echt550 = QMessageBox.warning\nQMessageBox.warning = staticmethod(',
+     '_warn_echt550 = QMessageBox.warning   # MUTATION\n'
+     '_warn_unbenutzt550 = staticmethod(',
+     'b59b kein modales Fenster blieb im ganzen Lauf offen'),
 ]
 
 

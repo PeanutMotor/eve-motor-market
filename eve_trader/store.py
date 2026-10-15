@@ -387,6 +387,64 @@ def save_names(mapping: dict) -> None:
                       list(mapping.items()))
 
 
+# ---- structure resolution cache (emm553) -----------------------------------
+# WOZU (Nutzer 15.10.2026, Fund in seiner eigenen fehler.log beim Start):
+# esi.resolve_structure() hatte KEIN Caching, und wird von 10 Stellen in der
+# Oberflaeche aufgerufen - bei JEDEM Start fragte das Werkzeug ALLE in
+# gespeicherten Plaenen referenzierten Strukturen frisch ab, viele davon ohne
+# Andockrecht (403). Jeder 403 zaehlt gegen das GEMEINSAME ESI-Fehlerbudget
+# (CCP, ~100 je Fenster) und blockierte dadurch nachfolgende, wichtigere
+# Abrufe (Orders/Assets/Blueprints/Industry-Jobs mehrerer Charaktere) fuer
+# die Dauer der Sperre. Name/System einer Struktur aendern sich praktisch
+# nie - Erfolge duerfen daher lange gecached werden. Ein verweigerter
+# Zugriff dagegen KANN sich aendern (Standings, Rollen, neue Struktur) -
+# deshalb fuer Fehlschlaege eine deutlich kuerzere Frist.
+STRUCT_CACHE_OK_TAGE = 30
+STRUCT_CACHE_FAIL_TAGE = 1
+
+
+def init_structure_cache():
+    # SELBSTSTAENDIG WIE init_volumes() (nicht Teil von init_db()'s
+    # executescript): resolve_structure() in esi.py soll funktionieren,
+    # auch wenn irgendein Aufrufpfad init_db() je ausliess - idempotent
+    # und billig genug fuer "vor jedem Zugriff".
+    with _conn() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS structure_cache (
+                         structure_id    INTEGER PRIMARY KEY,
+                         name            TEXT,
+                         solar_system_id INTEGER,
+                         type_id         INTEGER,
+                         ok              INTEGER DEFAULT 1,
+                         updated_at      REAL)""")
+
+
+def cached_structure(structure_id: int):
+    """Gecachtes resolve_structure()-Ergebnis, oder None (nie gecacht).
+    {"name","solar_system_id","type_id","ok","updated_at"} - "ok"=0 heisst:
+    ein frueherer Versuch ist gescheitert (kein Andockrecht o.ae.) und wird
+    erinnert, damit ESI nicht bei jedem Start erneut gefragt wird. Die
+    Frischepruefung (TTL) macht der Aufrufer (esi.py) - hier nur Lesen."""
+    init_structure_cache()
+    with _conn() as c:
+        row = c.execute(
+            "SELECT name, solar_system_id, type_id, ok, updated_at "
+            "FROM structure_cache WHERE structure_id=?",
+            (int(structure_id),)).fetchone()
+    return dict(row) if row else None
+
+
+def save_structure(structure_id: int, name=None, solar_system_id=None,
+                    type_id=None, ok: bool = True) -> None:
+    init_structure_cache()
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO structure_cache"
+            "(structure_id,name,solar_system_id,type_id,ok,updated_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (int(structure_id), name, solar_system_id, type_id,
+             1 if ok else 0, time.time()))
+
+
 # ---- market snapshot (all Jita items) --------------------------------------
 def hub_source(region: int = 10000002) -> str:
     """Quellen-Schluessel eines NPC-Hub-Scans."""

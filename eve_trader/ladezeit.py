@@ -24,6 +24,18 @@ from contextlib import contextmanager
 
 AN = os.environ.get("EMM_LADEZEIT") == "1"
 
+# DIE RUHE-REGEL DER OBERFLAECHEN-MESSUNG - EINE STELLE (emm550).
+# `MainWindow._ladezeit_warten` beendet die Messung, sobald kein
+# Hintergrund-Job mehr laeuft und die Oberflaeche zweimal in Folge ruhig
+# war. Die beiden Zahlen standen dort fest im Quelltext; die b-Suite musste
+# deshalb 3,6 s echte Zeit abwarten (b124), um EINE Pruefung zu machen -
+# bei 46 s Gesamtlaufzeit der zweitteuerste Posten (Nutzer 13.10.2026:
+# "gut noch schneller machen"). Hier stehen sie als Konstanten, damit die
+# Pruefung sie klein setzen kann. Am Programm aendert sich nichts: die
+# Messung laeuft ohnehin nur mit EMM_LADEZEIT=1.
+RUHE_INTERVALL_MS = 500
+RUHE_VORLAUF_S = 2.0
+
 _ORDNER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "berichte")
 DATEI = os.path.join(_ORDNER, "ladezeiten.txt")

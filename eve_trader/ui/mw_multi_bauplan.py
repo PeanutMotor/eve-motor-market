@@ -1442,6 +1442,14 @@ class MultiBauplan:
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSelectionBehavior(QTableWidget.SelectRows)
         tbl.setSelectionMode(QTableWidget.ExtendedSelection)
+        # ITEM-BILDER (emm548, Nutzer 13.10.2026: "suggested products fuer
+        # diesen build plan hat keine Bilder mehr der products"). GEMESSEN im
+        # Quelltext: die Spalte hatte nie eines - sie entstand als nackter
+        # QTableWidgetItem. Geholt wird wie in jeder anderen Tabelle ueber
+        # `_table_icon` (NUR aus dem Cache, kein HTTP im Dialog-Aufbau - das
+        # kostete beim Bauplan einmal 62 % der Oeffnungszeit) plus EIN
+        # Hintergrund-Nachtrag.
+        tbl.setIconSize(QSize(20, 20))
         hh = tbl.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.Stretch)
         for c in range(1, 7):
@@ -1497,6 +1505,9 @@ class MultiBauplan:
         tbl.setRowCount(len(kand))
         for r, k in enumerate(kand):
             it = QTableWidgetItem(str(names.get(k["tid"]) or f"#{k['tid']}"))
+            _ic0 = self._table_icon(k["tid"])
+            if _ic0 is not None:
+                it.setIcon(_ic0)
             it.setData(Qt.UserRole, k["tid"])
             it.setData(Qt.UserRole + 1, int(k.get("opt_qty") or 1))
             tbl.setItem(r, 0, it)
@@ -1511,6 +1522,26 @@ class MultiBauplan:
             tbl.setItem(r, 5, NumericItem("\u2026", -1.0))
             tbl.setItem(r, 6, NumericItem("\u2026", -1.0))
         tbl.setSortingEnabled(True)
+
+        def _icons_nach():
+            """Nach dem Hintergrund-Lauf die neu geholten Bilder eintragen.
+
+            Nur fuer GENAU dieses Fenster - ein zweites Vorschlags-Fenster
+            haette sonst die Zeilen des alten umgeschrieben (dieselbe
+            Sperre wie in `done`)."""
+            if getattr(self, "_bd_vorschlag_tbl", None) is not tbl:
+                return
+            for _r in range(tbl.rowCount()):
+                _it = tbl.item(_r, 0)
+                if _it is None:
+                    continue
+                try:
+                    _ic = self._table_icon(int(_it.data(Qt.UserRole)))
+                except Exception:
+                    _ic = None
+                if _ic is not None:
+                    _it.setIcon(_ic)
+        self._icon_prefetch_pending(_icons_nach)
 
         def _zeilen_items(row):
             rows = sorted({ix.row() for ix in tbl.selectionModel().selectedRows()})

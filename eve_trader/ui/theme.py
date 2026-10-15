@@ -153,11 +153,13 @@ PLAN_FARBEN_ALT = {
     "minmatar": "f6",
 }
 GREEN = "#4FD17A"
-VIOLET = "#9D7FE8"    # Reaktionen-Phase 1 (Intermediate) im Runplaner
-VIOLET_2 = "#C79BE8"  # Reaktionen-Phase 2 (Composite) - HELLER, damit sich
-                      # die beiden Reaktions-Stufen unterscheiden
-                      # (Nutzer, Sitzung 12: "aktuell ist es dasselbe wie
-                      # 3. Reaktionen - Composite")
+VIOLET = "#9D7FE8"    # Science im Runplaner (Copying/Invention) und
+                      # erfindbare T2-Namen. Seit 10.10.2026 NICHT mehr die
+                      # Reaktions-Stufen - die laufen in BLUE (Nutzer: "es
+                      # sieht mehr aus wie ein Regenbogen wirrwar").
+VIOLET_2 = "#C79BE8"  # HISTORISCH: war die zweite Reaktions-Stufe
+                      # (Sitzung 12); seit 10.10.2026 im Runplaner unbenutzt.
+                      # Konstante bleibt - Anker/Icons-Kommentare lesen sie.
 CYAN_RUN = "#4FC3E8"  # "wird gerade gebaut" (ESI-Job laeuft). BEWUSST NICHT
                       # violett: violett ist die Farbe der Reaktions-STUFE,
                       # ein laufender Job ist ein ZUSTAND - zwei
@@ -223,7 +225,10 @@ TIER_PALETTE = [AMBER, CYAN, "#8FB8F0", "#C4A5E8", "#E0A0C8",
                 "#9AA0B0", MUTED]                      # Fertigungs-Tiefen
 CHART_PALETTE = [CYAN, AMBER, GREEN, "#7AA2F2", "#E56AB3",
                  "#C8D14F", "#8A7AF2", "#4FD1C5", "#F27A7A", "#9AD14F"]
-BLUE = "#5B9DE8"      # Komponenten-Phase (Runplaner)
+BLUE = "#5B9DE8"      # ALLE Bau-Stufen 1-4 im Runplaner (Fuel, Unrefined,
+                      # Reaktionen, Komponenten; Nutzer 10.10.2026) - farbig
+                      # bleiben nur Science (VIOLET), Reprocessing (GREEN)
+                      # und das Endprodukt (AMBER)
 
 _CHECK_ICON = asset_pfad("check.svg")
 # NUTZER-FUND (Sitzung 8): "ich kann bei allen Eingabefenstern die Pfeile
@@ -233,6 +238,19 @@ _CHECK_ICON = asset_pfad("check.svg")
 # Symbol-Stahlton (dieselbe Formsprache wie icons.py).
 _SPIN_UP = asset_pfad("spin_up.svg")
 _SPIN_DOWN = asset_pfad("spin_down.svg")
+
+# SENKRECHTES POLSTER EINER TABELLENZELLE (emm515, Nutzer 11.10.2026:
+# "teilweise auch unlesbar zerdrueckt" - die Status-Pillen des Blueprints-
+# Reiters waren oben und unten abgeschnitten).
+# `QTableWidget::item` unten im QSS nimmt oben und unten je 5 px Polster plus
+# 1 px border-bottom; ein Zell-Widget bekommt also 11 px weniger als die
+# Zeilenhoehe, und Qt legt beim Einpassen 1 px drauf. GEMESSEN (offscreen mit
+# diesem QSS): Zeile 30 px -> Widget 18 px, die Pille brauchte 19 und wurde
+# auf 14 gestaucht.
+# WER EIN WIDGET IN EINE ZELLE SETZT, hebt die Zeilenhoehe um diesen Betrag
+# ueber die sizeHint seines Widgets - sonst staucht Qt es stumm. Waechter
+# aa533 haelt die Zahl am QSS-Polster fest.
+ZELL_POLSTER_V = 12
 
 # de_scan2: aus  (das Stylesheet ist CSS mit deutschen BEGRUENDUNGS-Kommentaren - nichts davon ist Anzeigetext)
 QSS = f"""

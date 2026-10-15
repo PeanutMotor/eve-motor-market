@@ -1,4 +1,10 @@
 @echo off
+rem UTF-8 fuer Berichte (emm511, Nutzer 10.10.2026: der Bericht
+rem liess sich nicht hochladen - 'Fehlende Kodierung'). Windows-
+rem Werkzeuge (robocopy, dir, git) schreiben sonst in der Konsolen-
+rem Codepage. Die .bat selbst MUSS dafuer rein ASCII bleiben.
+chcp 65001 >nul
+set "PYTHONIOENCODING=utf-8"
 rem Szenario Bau-Prioritaet (Fassung 1, 28.09.2026): spielt Umsortieren mitten
 rem im Bauen durch - mit den echten Funktionen, eigene Temp-Datenbank.
 rem Liest und aendert nichts an deinen Daten. Bericht: berichte\szenario_bericht.txt

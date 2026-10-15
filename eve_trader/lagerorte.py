@@ -270,7 +270,7 @@ def zuteilbare_jobs(jobs, plaene, vergeben, fremde_bauer=None):
     return treffer, offen
 
 
-def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None):
+def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None, out_qty=None):
     """{type_id: [(plan_label, menge)]} - was die NOCH OFFENEN Runs der
     uebergebenen Plaene an Material brauchen (Zutaten aller Bau-Schritte +
     Datacores/Decryptoren), aus dem eingefrorenen Schnappschuss.
@@ -280,11 +280,46 @@ def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None):
     Endprodukt, ich braeuchte nichts mehr - da steht aber viel auf Rot"):
     vorher stand hier die VOLLE Planmenge. Wer seine Vorstufen laengst
     gebaut hat, sah damit fuer jedes verbaute Material einen Fehlbetrag.
-    Jetzt dieselbe Rechnung wie die Einkaufsliste
-    (`mw_helpers.restbedarf_map`): Plan-Runs minus die schon gebauten
-    (`gebaute_runs`), Material anteilig AUFgerundet (Regel 3).
-    Invention-Material (Datacores/Decryptoren) zaehlt anteilig zum
-    groessten offenen Rest der ENDPRODUKTE - es haengt an deren Kopien.
+
+    emm527, NUTZER 11.10.2026, zwei Beschwerden und ZWEI Messungen:
+
+      (a) "Das alles fehlt mir, wenn ich die Einkaufslisten zusammenrechne.
+          Stock locations will aber viel weniger kaufen." GEMESSEN: die
+          Keule `selbst_gebaut` (emm465: "baut auch nur EIN Plan es, bleibt
+          es draussen") galt ueber ALLE Plaene - sie traf auch Plaene, die
+          dasselbe Teil ZUKAUFEN. Hangar Cleaner braucht 110 R.A.M.-
+          Armor/Hull Tech und baut davon 0; die Zeile war trotzdem nie rot,
+          weil Riggs 1 sie baut. BEHOBEN: die Regel gilt JE PLAN. Wer ein
+          Teil selbst baut, meldet dafuer keinen Bedarf (sein Nachschub
+          kommt aus der eigenen Produktion) - wer es kauft, meldet ihn.
+
+      (b) Der erste Versuch ging weiter und rechnete hier dieselbe Bilanz
+          wie die Einkaufsliste (`fehlbedarf_vorschau`, Eigenbau anteilig
+          gutgeschrieben). DAS WAR FALSCH und ist zurueckgenommen - sein
+          Bildschirm meldete danach 30 fehlende Posten, darunter 133'254
+          Rolled Tungsten Alloy und 721 Datacores ("das ist nicht moeglich,
+          ich habe fast 60 Bauschleifen belegt" / "ich habe alle T2
+          Blueprints schon inventet"). GEMESSEN, warum: diese Seite kennt
+          den Baufortschritt viel schlechter als der Bauplan. Ihre Quelle
+          ist nur `gebaute_runs` (Job-Zuordnung + Haken); bei Riggs 1 standen
+          damit alle fuenf Endprodukte auf 200/200 offen und ganze 2 Items
+          galten als gebaut. Die Einkaufsliste nutzt dagegen
+          `_rest_geliefert_jetzt`: sicher gelieferte UND laufende Jobs,
+          Vorstufen-Regel, Bestandsdeckung. Mit der duennen Karte wird aus
+          der anteiligen Gutschrift eine Fantasiezahl: ein fertig gebautes
+          Zwischenprodukt hat 0 offene Runs (= keine Gutschrift), waehrend
+          seine Verbraucher als voll offen gelten.
+          -> Solange diese Seite den Fortschritt nicht so gut kennt wie der
+          Bauplan, nimmt sie die SICHERE Annahme: was ein Plan selbst baut,
+          deckt er selbst. Lieber eine Zeile zu wenig als ein Fehlkauf -
+          den genauen Rest zeigt der Bauplan selbst (Regel 3).
+
+    OFFEN (eigene Messung): die Erledigt-Karte dieser Seite auf denselben
+    Stand bringen wie `_rest_geliefert_jetzt`. Erst dann darf hier anteilig
+    gerechnet werden.
+
+    `out_qty` wird nicht mehr gebraucht und bleibt nur, damit die Aufrufer
+    unveraendert bleiben koennen.
     """
     from .ui.mw_helpers import MainWindowHelpers as _MH, restbedarf_map
     out = {}
@@ -303,6 +338,12 @@ def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None):
                                (extra_runs or {}).get(str(p.get("id"))))
         _mats = {int(t): v for t, v in (plan.get("build_mats") or {}).items()}
         rem, summe = restbedarf_map(_runs, _mats, _gebaut)
+        # WAS DIESER PLAN SELBST BAUT, MELDET ER NICHT (emm527 (a)+(b)):
+        # je Plan, nicht mehr global ueber alle. Ein Plan, der dasselbe Teil
+        # ZUKAUFT, meldet seinen Bedarf weiter - genau sein R.A.M.-Fall.
+        for _sb in list(summe):
+            if int(_runs.get(int(_sb), 0) or 0) > 0:
+                summe.pop(_sb, None)
         # OHNE Run-Zahl kein Anteil: ein alter Schnappschuss ohne
         # `build_runs` wuerde sonst GAR KEINEN Bedarf melden. Dann zaehlt
         # das Material dieses Schrittes voll (Regel 3 - lieber zu viel).
@@ -314,8 +355,13 @@ def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None):
                     summe[int(m)] = summe.get(int(m), 0) + int(q or 0)
                 except (TypeError, ValueError):
                     continue
-        # Invention haengt an den Endprodukt-Kopien: Anteil = groesster
-        # offener Rest der Enden (sichere Richtung), ohne Enden voll.
+        # DATACORES/DECRYPTOREN: Anteil = groesster offener Rest der
+        # ENDPRODUKTE, und 0 sobald der Plan baut. Invention laeuft VOR dem
+        # Bau - wer schon baut, hat seine Kopien (emm465). Der Versuch,
+        # hier den vollen Bedarf zu zeigen, ist zurueckgenommen: sein
+        # Bildschirm meldete 721 fehlende Datacores, obwohl er alle T2
+        # laengst inventet hat ("fast nicht moeglich"). Den genauen Rest
+        # rechnet der Invention-Reiter des Plans ueber die ESI-Jobs (emm431).
         _enden = [int(t) for t, _q in (p.get("enden") or [])] or \
             ([int(p["type_id"])] if p.get("type_id") else [])
         _anteil = 0.0
@@ -325,12 +371,6 @@ def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None):
                 _anteil = max(_anteil, rem.get(_e, 0) / _r)
         if not _enden or not any(int(_runs.get(_e, 0) or 0) > 0 for _e in _enden):
             _anteil = 1.0
-        # DATACORES/DECRYPTOREN (emm465, Nutzer: "ich habe alle T2 Blueprints
-        # schon inventet und bin bei allen Plaenen am Endprodukt, deswegen
-        # koennen sie nicht fehlen"): Invention laeuft VOR dem Bau. Sobald
-        # der Plan auch nur einen Run gebaut hat, sind die Kopien da und das
-        # Invention-Material ist verbraucht - der Invention-Reiter des Plans
-        # rechnet den Rest genau (emm431, ueber die ESI-Jobs).
         import math as _math
         if _gebaut:
             _anteil = 0.0
@@ -393,7 +433,7 @@ def passt(name, begriffe):
 
 
 def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
-         bedarf=None, nur_tids=None, begriffe=None, selbst_gebaut=None):
+         bedarf=None, nur_tids=None, begriffe=None):
     """Zeilen -> Baum fuer die Anzeige, Item zuerst (Nutzer: "Item zuerst").
 
     -> [{"tid", "name", "menge", "bedarf": [(plan, menge)], "short": n,
@@ -406,15 +446,16 @@ def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
     (siehe suchbegriffe) - mit Begriffen gilt `nur_tids` nicht, die Suche
     findet jedes Item.
 
-    `selbst_gebaut` (emm465, Nutzer: "andere Sachen sind aktuell in der
-    Bauschleife von Charakteren und werden auch nicht fehlen in Zukunft"):
-    diese Items bekommen NIE einen Fehlbetrag. Ihr Nachschub kommt aus der
-    eigenen Produktion des Plans - sie stehen weiter mit Menge und Ort da
-    (zum Nachsehen), aber rot bedeutet auf dieser Seite "musst du kaufen",
-    und kaufen will man ein Zwischenprodukt gerade nicht.
+    KEINE SONDERREGEL FUER SELBSTGEBAUTES mehr (emm527): bis dahin stand
+    hier `selbst_gebaut` - eine Liste von Items, die NIE einen Fehlbetrag
+    bekamen, weil irgendein Plan sie selbst baut (emm465). Gemessen hat das
+    63 Posten verschluckt, auch bei Plaenen, die dasselbe Teil zukaufen.
+    Die Gutschrift steht jetzt dort, wo sie hingehoert: im Bedarf je Plan
+    (`bedarf_aus_plaenen`), anteilig statt alles-oder-nichts. Was hier
+    ankommt, ist bereits der NETTO-Bedarf - `short` ist wieder einfach
+    "Bedarf minus Bestand".
     """
     bedarf = bedarf or {}
-    _gebaut = {int(x) for x in (selbst_gebaut or ())}
     agg = {}
     for z in zeilen or []:
         tid = int(z["tid"])
@@ -457,8 +498,7 @@ def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
         ges = sum(q for _, q in bd)
         out.append({"tid": tid, "name": namen.get(tid, f"#{tid}"),
                     "menge": it_menge, "bedarf": bd,
-                    "short": (max(0, ges - it_menge)
-                              if bd and tid not in _gebaut else 0),
+                    "short": max(0, ges - it_menge) if bd else 0,
                     "orte": orte_l})
     # Items mit Bedarf, aber OHNE Bestand sollen trotzdem erscheinen
     # (sonst sieht man nicht, dass etwas ganz fehlt).
@@ -470,8 +510,7 @@ def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
             if ges > 0:
                 out.append({"tid": tid, "name": namen.get(tid, f"#{tid}"),
                             "menge": 0, "bedarf": list(bd),
-                            "short": 0 if tid in _gebaut else ges,
-                            "orte": []})
+                            "short": ges, "orte": []})
     out.sort(key=lambda x: (0 if x["bedarf"] else 1, -x["short"], x["name"]))
     return out
 
@@ -492,8 +531,7 @@ def orte_mit_bestand(zeilen, ort_namen=None):
 
 
 def karten(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
-           bedarf=None, nur_tids=None, begriffe=None, nur_orte=None,
-           selbst_gebaut=None):
+           bedarf=None, nur_tids=None, begriffe=None, nur_orte=None):
     """Dieselben Daten wie `baum`, aber JE ORT gebuendelt - eine Karte je
     Station/Struktur (emm461, Nutzer: "ich haette lieber die Locations als
     Karten ... meistens hat man nur 4-5 Baustrukturen").
@@ -516,14 +554,13 @@ def karten(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
         _nur = {int(o) for o in nur_orte}
         zeilen = [z for z in (zeilen or []) if int(z.get("ort") or 0) in _nur]
     b = baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
-             bedarf=bedarf, nur_tids=nur_tids, begriffe=begriffe,
-             selbst_gebaut=selbst_gebaut)
+             bedarf=bedarf, nur_tids=nur_tids, begriffe=begriffe)
     karten_map = {}
     fehlt_ganz = []
     for it in b:
         if not it["orte"]:
-            # Ohne Bestand UND ohne Fehlbetrag (= der Plan baut es selbst)
-            # gibt es nichts zu zeigen und nichts zu tun.
+            # Ohne Bestand UND ohne Fehlbetrag gibt es nichts zu zeigen und
+            # nichts zu tun.
             if it["bedarf"] and it["short"] > 0:
                 fehlt_ganz.append(it)
             continue
@@ -564,11 +601,13 @@ def karten(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
 def gebaute_tids(plaene):
     """Alle Items, die IRGENDEIN Plan selbst baut (build_runs > 0).
 
-    Sie gehoeren nie auf eine Einkaufsliste (Nutzer 07.10.2026: "immer
-    nachkaufen, keine kompletten neuen Bauschleifen entstehen lassen" -
-    und schon gar nichts kaufen, was man gerade produziert). Baut es auch
-    nur EIN Plan, bleibt es draussen: ein Fehlkauf aergert mehr als eine
-    fehlende Zeile, die der Bauplan selbst zeigt."""
+    STEUERT SEIT emm527 NICHTS MEHR - nur noch Diagnose (zeige_lagerorte).
+    Bis dahin bekam jedes Item dieser Menge NIE einen Fehlbetrag (emm465:
+    "Baut es auch nur EIN Plan, bleibt es draussen"). Gemessen hat diese
+    Keule 63 Posten verschluckt, darunter Teile, die der betroffene Plan
+    gar nicht baut, sondern KAUFT (Hangar Cleaner: 110 R.A.M.- Armor/Hull
+    Tech, Eigenbau 0 - unsichtbar, weil Riggs 1 sie baut). Die Gutschrift
+    sitzt jetzt anteilig im Bedarf je Plan (`bedarf_aus_plaenen`)."""
     from .ui.mw_helpers import MainWindowHelpers as _MH
     out = set()
     for p in plaene or []:
@@ -588,29 +627,33 @@ def gebaute_tids(plaene):
     return out
 
 
-def einkaufsliste(items, gebaut=None):
+def einkaufsliste(items):
     """[(Name, Menge)] fuer EVEs Multibuy aus dem Baum von `baum`/`karten`
     (emm464, Nutzer: "eine Giant Shopping List ueber alle Baupläne").
 
-    Genommen wird NUR, was wirklich fehlt (`short` > 0) und was kein Plan
-    selbst baut (`gebaut`, siehe `gebaute_tids`). Items ohne aufgeloesten
-    Namen ("#123") bleiben draussen - im Spiel waere die Zeile unbrauchbar.
-    Groesster Fehlbetrag zuerst.
+    Genommen wird NUR, was wirklich fehlt (`short` > 0). Items ohne
+    aufgeloesten Namen ("#123") bleiben draussen - im Spiel waere die Zeile
+    unbrauchbar. Groesster Fehlbetrag zuerst.
+
+    Der frueher noetige `gebaut`-Filter ist weg (emm527): `short` ist seit
+    dem Umbau der NETTO-Fehlbetrag - was ein Plan selbst herstellt, ist im
+    Bedarf schon gutgeschrieben und kann hier gar nicht mehr auftauchen.
+    Ein Teil, das er zur Haelfte baut und zur Haelfte zukauft, steht jetzt
+    mit seiner echten Restmenge drin, statt ganz zu fehlen.
 
     KEIN Abzug fuer Material an ABGESCHALTETEN Orten (emm467, Nutzer: "nein
     da wird nix verschoben, sonst wuerde ich ja zbsp Jita einschalten wenn
     ich von da material nehmen wollte"). Ein abgeschalteter Ort existiert
     fuer Eve MoMa nicht - er senkt den Einkauf also auch nicht."""
-    _geb = {int(x) for x in (gebaut or ())}
     out = []
     for it in items or []:
         try:
-            tid = int(it.get("tid"))
+            int(it.get("tid"))      # kaputte Zeile faellt hier heraus
             n = int(it.get("short") or 0)
         except (TypeError, ValueError):
             continue
         name = str(it.get("name") or "")
-        if n <= 0 or tid in _geb or not name or name.startswith("#"):
+        if n <= 0 or not name or name.startswith("#"):
             continue
         out.append((name, n))
     out.sort(key=lambda x: (-x[1], x[0]))

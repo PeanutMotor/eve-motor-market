@@ -26,7 +26,7 @@ from .mw_bauplan_fenster import BauplanFenster
 from .mw_bauplan_tabs import BauplanTabs
 from .mw_helpers import (MainWindowHelpers, plan_fortschritt_runs,
                          sell_preis_ziel_modus, bp_besitzer_passt,
-                         corp_bp_ort, corp_bp_hinweis)
+                         corp_bp_ort, corp_bp_hinweis, einkauf_posten)
 from .mw_multi_bauplan import MultiBauplan
 from .mw_optimizer import Optimizer
 from .setup_wizard import SetupWizard
@@ -968,6 +968,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self._overlay.hide()
         self._tip_idx = 0
         self._overlay_want = 0
+        self._overlay_job = None        # wem der Ladebalken gerade gehoert (emm537)
         self._overlay_delay = QTimer(self)
         self._overlay_delay.setSingleShot(True)
         self._overlay_delay.setInterval(600)   # only show for slow operations
@@ -7282,11 +7283,32 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # (emm476/477): lieber laut sagen, dass die Daten unvollstaendig
         # sind, als etwas Falsches behaupten.
         fehler = []
+        corp_info = []
+        # BLAUPAUSEN IN LAUFENDEN JOBS GETRENNT MERKEN (emm507, Nutzer:
+        # "Was ich allerdings habe ist Prophecy und Magnate Blueprint
+        # Originale, diese sind jetzt aber im Kopiervorgang ingame" - der
+        # Reiter schrieb rot "completely missing"). Der Abruf laeuft mit
+        # mit_belegten=True und wird HIER aufgeteilt: die freie Liste
+        # (all_bp) bleibt exakt wie bisher - eine Blaupause im Job ist im
+        # Spiel nicht greifbar und darf nirgends als frei zaehlen (Entscheid
+        # 26.09.2026) -, aber `_bd_bp_im_job` {bp_type_id: [Eintraege]} sagt
+        # dem Blueprints-Reiter, dass sie EXISTIERT. Jeder Eintrag traegt
+        # `char` (Besitzer) fuer den Besitz-Tooltip.
+        im_job = {}
+
+        def _einsortieren(b, wer):
+            b["char"] = wer
+            if b.get("in_job"):
+                im_job.setdefault(int(b.get("type_id") or 0), []).append(b)
+            else:
+                all_bp.append(b)
         if client_id and chars:
             for c in chars:
                 try:
-                    for b in esi.fetch_blueprints(client_id, c["character_id"]):
-                        all_bp.append(b)
+                    for b in esi.fetch_blueprints(client_id, c["character_id"],
+                                                  mit_belegten=True):
+                        _einsortieren(b, str(c.get("character_name")
+                                             or c.get("character_id")))
                 except Exception as _bpe:
                     fehler.append(str(c.get("character_name")
                                       or c.get("character_id")))
@@ -7298,14 +7320,49 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Bestands-Worker, der mit diesem Schalter laeuft. Schalter
             # use_corp, Divisions und Rollen prueft _corp_blaupausen selbst.
             try:
-                all_bp.extend(self._corp_blaupausen(client_id, chars)
-                              .get("blueprints") or [])
+                _cres516 = self._corp_blaupausen(client_id, chars,
+                                                 mit_belegten=True)
+                for b in (_cres516.get("blueprints") or []):
+                    _einsortieren(b, str(b.get("_corp_name") or t("Corp")))
+                # EIN LEISE GESCHEITERTER CORP-ABRUF IST KEIN "DU HAST SIE
+                # NICHT" (emm516). `_corp_blaupausen` WIRFT nicht, es MELDET:
+                # `failed` (403/Fehler je Corp), `ohne_rolle` (kein Director
+                # unter den Charakteren), `relink` (Token ohne Corp-Scope),
+                # `keine_division` (Schalter an, kein Hangar angekreuzt).
+                # Bisher wurde nur `blueprints` gelesen - eine Blaupause im
+                # Corp-Hangar stand dann ROT als "completely missing" und
+                # landete in "Buy Missing Blueprints". Genau die Fehlerklasse
+                # aus emm479, nur an der Corp-Seite: lieber laut sagen, dass
+                # der Besitz unvollstaendig ist, als etwas Falsches behaupten.
+                # "KONNTE NICHT" GEGEN "WIRD NICHT" (emm517, Nutzer
+                # 11.10.2026: "ich habe weder eine Industry Corp noch
+                # irgendwelche blaupausen oder items in einem Corp hangar" -
+                # emm516 schrieb ihm eine ROTE Zeile, obwohl nichts fehlt).
+                # ECHTER FEHLSCHLAG (403/420, Token ohne Corp-Scope): der
+                # Besitz ist unvollstaendig -> `fehler`, Zeilen amber, keine
+                # Kaufliste. STRUKTURELL (kein Director in der Corp, kein
+                # Hangar angekreuzt): Eve MoMa schaut dort gar nicht nach -
+                # das ist keine Luecke im Besitz, sondern eine Lage. Sie
+                # steht dezent da (`_bd_bp_corp_info`), nie rot.
+                for _ft516 in (_cres516.get("failed") or []):
+                    fehler.append(str(_ft516))
+                for _rl516 in (_cres516.get("relink") or []):
+                    fehler.append(t("Corp hangar via {name} (re-link needed)")
+                                  .format(name=_rl516))
+                for _or516 in (_cres516.get("ohne_rolle") or []):
+                    corp_info.append(t("Corp hangar {name} (no Director role)")
+                                     .format(name=_or516))
+                if _cres516.get("keine_division"):
+                    corp_info.append(t("Corp hangar (no hangar division ticked)"))
             except Exception as _cbe:
                 fehler.append(t("Corp"))
                 self._log_exception("Corp: Blaupausen (Bauplan)", str(_cbe))
+        self._bd_bp_im_job = im_job
         # EINE Stelle sagt, ob der Besitz vollstaendig ist (Regel 9) - gelesen
         # vom Blueprints-Reiter, nie aus einer zweiten Ableitung.
         self._bd_bp_fehler = fehler
+        # Lage, kein Fehlschlag (emm517) - der Reiter zeigt sie dezent.
+        self._bd_bp_corp_info = corp_info
         # merken=False (Build from stock, emm436): frischer Abruf OHNE den
         # Cache eines offenen Bauplans anzufassen (der Abruf laeuft dort in
         # einem Hintergrund-Faden).
@@ -7521,14 +7578,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if not matches:
                 continue
             is_bpo = any(m.get("is_bpo") for m in matches)
+            # ZAEHLUNG AUS DER EINEN REGEL (emm538): liegt ein Original
+            # dabei, planen nur die Originale - sonst ueberschreibt die
+            # Stufen-Ladung den Deckel wieder mit kleinen Kopien, auf denen
+            # kein grosser Job startet (Regel 9, derselbe Helfer).
             # WICHTIG: "BPO = unbegrenzt Runs PRO Kopie" heißt NICHT "unbegrenzt
             # viele Kopien" - jede physische BPO belegt trotzdem genau einen
-            # Job-Slot gleichzeitig, exakt wie eine BPC. Für "wie viele Slots
-            # gleichzeitig" zählt IMMER die tatsächlich besessene Stückzahl,
-            # BPO wie BPC gleich - sonst nimmt der Runplaner fälschlich an, ein
-            # Item könnte auf beliebig vielen Charakteren gleichzeitig laufen,
-            # nur weil man zufällig mindestens eine BPO davon besitzt.
-            copies = sum(int(m.get("quantity", 1) or 1) for m in matches)
+            # Job-Slot gleichzeitig. Ohne Original zaehlen die Kopien, jede
+            # ist ein Job; T1-Kopien fuers Erfinden zaehlen nie (emm535).
+            copies = self.bp_parallel_slots(
+                matches, nur_bpo=int(bp_id) in (self._inv_t1_bps() or set()))[0]
+            if not copies:
+                continue
             if is_bpo:
                 n_bpo += 1
             for t in bp_to_tid[bp_id]:
@@ -10071,13 +10132,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
     def _ladezeit_warten(self):
         """Die Oberflaechen-Messung endet, sobald kein Hintergrund-Job mehr
-        laeuft und die Oberflaeche zweimal in Folge ruhig war (alle 500 ms
-        geprueft), spaetestens nach 20 Minuten."""
+        laeuft und die Oberflaeche zweimal in Folge ruhig war (Takt und
+        Vorlauf aus `ladezeit.RUHE_*` - EINE Stelle, emm550), spaetestens
+        nach 20 Minuten."""
         import time
         t0 = time.time()
         ruhig = [0]
         tm = QTimer(self)
-        tm.setInterval(500)
+        tm.setInterval(int(ladezeit.RUHE_INTERVALL_MS))
 
         def _pruefen():
             if not ladezeit.ui_laeuft():
@@ -10085,7 +10147,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 return
             if time.time() - t0 > 1200:
                 ruhig[0] = 99
-            elif time.time() - t0 > 2 and not getattr(self, "_workers", None):
+            elif (time.time() - t0 > ladezeit.RUHE_VORLAUF_S
+                  and not getattr(self, "_workers", None)):
                 ruhig[0] += 1
             else:
                 ruhig[0] = 0
@@ -14103,8 +14166,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # Vorstufen durch, meldete er 100, obwohl kein Ende gebaut
                 # war. Dieselbe Regel wie die ⚠-Warnung der Karte (emm266:
                 # fertig nur bei gebaut >= Menge).
-                if _prozent9 >= 100.0 and total_built < target_qty:
-                    _prozent9 = 99.0
+                #
+                # emm522 (Nutzer 11.10.2026, Screenshot "Modules 1
+                # Multiplan 100 % - 690/900 built"): der Deckel griff erst
+                # ab 100,0 - die ANZEIGE rundet aber auf ganze Prozent
+                # ("{pct:.0f}"), also stand bei 99,6 % wieder "100 %"
+                # neben 690 von 900 Stueck. Gedeckelt wird deshalb auf
+                # 99,0, sobald auch nur ein Stueck fehlt: "100 %" darf nur
+                # dastehen, wenn wirklich alles gebaut ist.
+                if total_built < target_qty:
+                    _prozent9 = min(_prozent9, 99.0)
                 # FORTSCHRITT IMMER melden (Nutzer, Sitzung 9: "hier waere
                 # ein Fortschrittsbalken gut, 60/100 gebaut"). Vorher wurde
                 # der Zwischenstand WEGGEWORFEN und nur die exakte
@@ -18291,8 +18362,88 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 slots_by_activity[industry.MANUFACTURING] += int(c.get("mfg_slots", 0) or 0)
             if c.get("can_react"):
                 slots_by_activity[industry.REACTION] += int(c.get("reaction_slots", 0) or 0)
-        owned = getattr(self, "_bd_bp_owned_counts", None)
-        owned_bpc = getattr(self, "_bd_bp_owned_bpc_runs", None) or {}
+        # BESITZ IMMER SO FRISCH WIE DER CACHE (emm536, Nutzer: "jetzt wird
+        # behauptet ich habe nicht alle blueprints, aber ich habe sie" -
+        # drei eigene BPO standen rot als "completely missing", nach "Alles
+        # aus ESI laden" waren sie da). Die gespeicherte Zaehlung entstand
+        # nur beim Lade-Knopf und ueberlebte sogar das Schliessen eines
+        # Bauplans; der Bestands-Refresh holt die Blaupausen laengst mit,
+        # erneuerte sie aber nie. Jetzt wird sie aus derselben Rohliste
+        # ABGELEITET, die auch Runplaner und Besitz-Tooltip lesen (Regel 9).
+        # Der gespeicherte Wert bleibt nur Rueckfall, solange in dieser
+        # Sitzung noch gar keine Blaupausen geholt wurden.
+        _cache536 = getattr(self, "_bd_owned_bp_cache", None)
+        if _cache536 is not None:
+            owned, owned_bpc = self.bp_besitz_zaehlen(_cache536)
+        else:
+            owned = getattr(self, "_bd_bp_owned_counts", None)
+            owned_bpc = getattr(self, "_bd_bp_owned_bpc_runs", None) or {}
+        # BLAUPAUSEN IN LAUFENDEN JOBS (emm507): sie existieren, sind nur
+        # gerade nicht greifbar - "completely missing" waere gelogen und
+        # schickte den Nutzer einkaufen, was er besitzt.
+        im_job = getattr(self, "_bd_bp_im_job", None) or {}
+        # BESITZ-TOOLTIP (emm507, Nutzer: "Da wird angezeigt ich haette Die
+        # Blueprint! ich habe sie aber nicht"): die Spalte "Besitze" sagt
+        # jetzt WER die Blaupause hat (Charakter/Corp, BPO oder Kopie) -
+        # sonst ist eine 1 aus einem anderen Hangar nicht nachpruefbar.
+        _bes507 = {}
+        for _b507 in (getattr(self, "_bd_owned_bp_cache", None) or []):
+            _bes507.setdefault(_b507.get("type_id"), []).append(_b507)
+        # ORT NUR, WENN NICHT VOR ORT (emm508, Nutzer: "ja mach das aber nur
+        # fuer Sachen die nicht vor Ort sind" - sein Inquisitor-BPO lag in
+        # einem Container an einer NICHT eingetragenen Station, der Reiter
+        # sagte nur "enough"). Liegt die Blaupause an einer Bau-Struktur
+        # dieses Plans: keine Angabe. Sonst der aufgeloeste Name (verknuepfte
+        # Strukturen + gemerkte Stock-locations-Namen) oder ehrlich
+        # "Ort unbekannt" - die location_id eines Containers laesst sich
+        # nicht aufloesen (Sitzung-20-Grenze).
+        try:
+            _bau_orte507 = {int(x) for x in (self._bau_plan_struct_ids() or ())}
+        except Exception:
+            _bau_orte507 = set()
+        _orte507 = {}
+        for _bs507 in (self.settings.get("bau_structures") or []):
+            _lid507 = _bs507.get("link_structure_id")
+            if _lid507:
+                _orte507[int(_lid507)] = str(_bs507.get("name") or _lid507)
+        for _k507, _v507 in (self.settings.get("lager_ort_namen") or {}).items():
+            try:
+                _orte507.setdefault(int(_k507), str(_v507))
+            except (TypeError, ValueError):
+                continue
+
+        def _ort_art507(_b):
+            """Klassifiziert den Ort EINES Besitz-Eintrags (emm509) - EINE
+            Wahrheit fuer Tooltip (_ort507) UND Pillen-Zusatz. Die Schluessel
+            sind ENGLISCH (interne Werte, nie Anzeige - de_scan4):
+            ("onsite", None)   liegt an einer Bau-Struktur dieses Plans
+                               (oder traegt gar keinen Ort),
+            ("away", Name)     BEWEISBAR nicht vor Ort (Ort aufloesbar und
+                               keine Bau-Struktur dieses Plans),
+            ("unknown", id)    Container oder fremde Station - die
+                               location_id eines Containers laesst sich
+                               nicht aufloesen (Sitzung-20-Grenze)."""
+            _loc = _b.get("location_id")
+            try:
+                _loc = int(_loc) if _loc else None
+            except (TypeError, ValueError):
+                _loc = None
+            if _loc is None or _loc in _bau_orte507:
+                return ("onsite", None)
+            if _loc in _orte507:
+                return ("away", _orte507[_loc])
+            return ("unknown", _loc)
+
+        def _ort507(_b):
+            _art, _wo = _ort_art507(_b)
+            if _art == "away":
+                return " · " + t("at: {ort} – NOT a build structure "
+                                      "of this plan").format(ort=_wo)
+            if _art == "unknown":
+                return " · " + t("location unknown (#{id} – container or "
+                                  "foreign station; in game: Personal Assets "
+                                  "→ Search)").format(id=_wo)
+            return ""                            # vor Ort -> keine Angabe
         # Reaktionsstufen einmalig ermitteln (Stufe 1 -> geht in eine weitere
         # Reaktion, Stufe 2 -> geht in den Bau). Wird unten fuer Sortierung
         # und Beschriftung gebraucht.
@@ -18443,7 +18594,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self._bd_bp_kaufliste = (None if (owned is None or _bp_fehler) else [
             (r["name"], 1) for r in rows
             if not r.get("inventable")
-            and not (r.get("have") or 0) and not (r.get("bpc_runs") or 0)])
+            and not (r.get("have") or 0) and not (r.get("bpc_runs") or 0)
+            # IM JOB = BESESSEN (emm507): eine Blaupause im Kopier-/
+            # Forschungsjob gehoert ihm - sie zu kaufen waere doppelt.
+            and not im_job.get(r.get("bp_id"))])
         tbl.setRowCount(len(rows))
         n_missing = 0
         n_low = 0
@@ -18485,6 +18639,24 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     status_col = theme.AMBER
                     n_low += 1
                     n_low_by_stage[r["stage"]] = n_low_by_stage.get(r["stage"], 0) + 1
+            elif im_job.get(r["bp_id"]):
+                # IM LAUFENDEN JOB (emm507, Nutzer: "Was ich allerdings habe
+                # ist Prophecy und Magnate Blueprint Originale, diese sind
+                # jetzt aber im Kopiervorgang ingame" - die Zeile stand rot
+                # "completely missing"). Sie gehoert ihm, ist nur gerade
+                # nicht greifbar: AMBER, nicht rot, zaehlt nicht als fehlend.
+                _jb507 = im_job[r["bp_id"]]
+                _akt507 = {1: t("Manufacturing"), 3: t("Research"),
+                           4: t("Research"), 5: t("Copying"),
+                           8: t("Invention"), 9: t("Reaction"),
+                           11: t("Reaction")}
+                _a507 = (_jb507[0].get("in_job") or {}).get("activity_id")
+                have_txt = t("{n} in job").format(n=len(_jb507))
+                status_txt = t(
+                    "in a job right now ({act}) \u2013 yours, free again "
+                    "when it finishes").format(
+                    act=_akt507.get(_a507, t("Research")))
+                status_col = theme.AMBER
             elif _bp_fehler:
                 # NICHT ROT, wenn die Zaehlung unvollstaendig ist (emm479):
                 # die Blaupause kann sehr wohl im Hangar liegen - nur ihr
@@ -18500,12 +18672,30 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 status_col = theme.RED
                 n_missing += 1
                 n_missing_by_stage[r["stage"]] = n_missing_by_stage.get(r["stage"], 0) + 1
-            # PUNKT C (Sitzung 20): dazuschreiben, wieviele der eigenen Kopien
-            # NICHT an einer Bau-Struktur dieses Plans liegen. Nur bei "genug" -
-            # wo ohnehin etwas fehlt, sagt die Zeile schon das Wichtigere.
-            _anderswo = (getattr(self, "_bd_bp_elsewhere", None) or {}).get(r["bp_id"], 0)
-            if _anderswo and status_col == theme.GREEN:
-                status_txt += t(" ({n} not at the build structure)").format(n=_anderswo)
+            # ORT-ZUSATZ SICHTBAR IN DER PILLE (emm509, Nutzer: "ich dachte
+            # ich erkenne jetzt dass es nicht auf meiner Bau-Strukturen
+            # liegt?" -> "ja vielleicht in einer anderen farbe"). ERSETZT den
+            # alten Zusatz aus _bd_bp_elsewhere (Punkt C, Sitzung 20): die
+            # Klassifizierung kommt jetzt aus _ort_art507 - DERSELBEN Quelle
+            # wie der Besitz-Tooltip (eine Wahrheit, Regel 9). AMBER, wo der
+            # fremde Ort BEWEISBAR ist; GRAU "Ort unbekannt" bei Containern/
+            # fremden Stationen (die location_id eines Containers laesst sich
+            # nicht aufloesen, Sitzung-20-Grenze - sie kann auch an der
+            # richtigen Struktur stehen). Nur bei "genug" - wo ohnehin etwas
+            # fehlt, sagt die Zeile schon das Wichtigere. Nicht rot: der
+            # Besitz stimmt ja (Entscheid Sitzung 20 gilt weiter).
+            _weg509 = _unb509 = 0
+            if status_col == theme.GREEN:
+                for _b509 in (_bes507.get(r["bp_id"]) or []):
+                    _art509 = _ort_art507(_b509)[0]
+                    try:
+                        _q509 = int(_b509.get("quantity", 1) or 1)
+                    except (TypeError, ValueError):
+                        _q509 = 1
+                    if _art509 == "away":
+                        _weg509 += _q509
+                    elif _art509 == "unknown":
+                        _unb509 += _q509
             cells = [
                 r["name"], self._kategorie_anzeige(r["stage"]), f"{r['runs']:,}".replace(",", "'"),
                 (f"{r['max_runs']:,}".replace(",", "'") if r["max_runs"] else "\u2013"),
@@ -18531,11 +18721,49 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     it.setToolTip(t(
                         "T1 original for the invention of the T2 copy - it also "
                         "builds the T1 item that goes into the T2 product."))
+                if col == 5:
+                    # WER HAT SIE? (emm507) - je Fundstelle eine Zeile:
+                    # Besitzer, BPO oder Kopie (mit Runs), im Job markiert.
+                    # SEIT emm508 MIT ORT, aber NUR wenn nicht vor Ort
+                    # (Nutzer: "ja mach das aber nur fuer Sachen die nicht
+                    # vor Ort sind") - siehe _ort507 oben.
+                    _tt507 = []
+                    for _b507 in (_bes507.get(r["bp_id"]) or []):
+                        _wer = _b507.get("char") or _b507.get("_corp_name") or "?"
+                        _was = ("BPO" if _b507.get("is_bpo") else
+                                f'BPC · {int(_b507.get("runs", 0) or 0)} Runs')
+                        _tt507.append(f"{_wer}: {_b507.get('quantity', 1)}× {_was}"
+                                      + _ort507(_b507))
+                    for _b507 in (im_job.get(r["bp_id"]) or []):
+                        _wer = _b507.get("char") or _b507.get("_corp_name") or "?"
+                        _tt507.append(f"{_wer}: " + t("in a job right now")
+                                      + _ort507(_b507))
+                    if _tt507:
+                        it.setToolTip("\n".join(_tt507))
                 tbl.setItem(i, col, it)
             # STATUS ALS FARBIGE PILLE (Nutzer-Wunsch): liest sich schneller
             # als eine Textspalte und macht die Tabelle weniger nach
             # Datenblatt aussehen. Das Item darunter bleibt fuers Sortieren.
-            _pill = QLabel(status_txt)
+            # Die Pille als Rich-Text: das Stylesheet faerbt color:status_col,
+            # die Zusatz-Spans ueberschreiben das je Teil (emm509, "in einer
+            # anderen farbe"). Der Status-Text wird escaped - er kommt aus
+            # dem Katalog und darf nie als HTML gelesen werden.
+            import html as _html509
+            _pill_txt509 = _html509.escape(status_txt)
+            if _weg509:
+                _pill_txt509 += (
+                    f'<span style="color:{theme.AMBER};">'
+                    + _html509.escape(
+                        t(" ({n} not at the build structure)")
+                        .format(n=_weg509))
+                    + "</span>")
+            if _unb509:
+                _pill_txt509 += (f'<span style="color:{theme.MUTED};">'
+                                 + _html509.escape(t(" ({n} location unknown)")
+                                                   .format(n=_unb509))
+                                 + "</span>")
+            _pill = QLabel(_pill_txt509)
+            _pill.setTextFormat(Qt.RichText)
             _pill.setAlignment(Qt.AlignCenter)
             _pill.setStyleSheet(
                 f"QLabel{{color:{status_col}; "
@@ -18543,7 +18771,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 f"border:1px solid {status_col}; border-radius:9px; "
                 f"padding:2px 10px; font-size:11px; font-weight:700;}}")
             _pw = QWidget(); _pl = QHBoxLayout(_pw)
-            _pl.setContentsMargins(4, 2, 4, 2); _pl.addWidget(_pill)
+            # SENKRECHT KEIN RAND (emm515): die Zelle gibt nur
+            # Zeilenhoehe - theme.ZELL_POLSTER_V her; jedes Pixel Rand hier
+            # fehlt der Pille, und Qt staucht sie stumm, statt sie
+            # abzuschneiden (gemessen: 14 statt 19 px, der Text lag halb
+            # ausserhalb - Nutzer: "teilweise auch unlesbar zerdrueckt").
+            _pl.setContentsMargins(4, 0, 4, 0); _pl.addWidget(_pill)
             _pl.addStretch()
             # Das Item darunter bleibt FUERS SORTIEREN erhalten, sein TEXT
             # muss aber weg: die Pille hat einen halbtransparenten
@@ -18554,6 +18787,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if _bi is not None:
                 _bi.setText("")
             tbl.setCellWidget(i, 6, _pw)
+            # DIE ZEILE MUSS DIE PILLE TRAGEN (emm515): gemessen statt
+            # geraten - die noetige Hoehe ist die sizeHint der Pille selbst
+            # plus das Zell-Polster aus dem Thema. Nur ANHEBEN, nie senken:
+            # eine Zeile, die aus einem anderen Grund hoeher ist, bleibt es.
+            _noetig515 = _pill.sizeHint().height() + theme.ZELL_POLSTER_V
+            if tbl.rowHeight(i) < _noetig515:
+                tbl.setRowHeight(i, _noetig515)
         tbl.setSortingEnabled(True)
         # KONTEXTMENUE ZUM KOPIEREN (Nutzer, Sitzung 9: "diese Option
         # gefaellt mir - fuege das auch beim Tab Blueprints ein"). Gleiche
@@ -20677,6 +20917,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _applied = self.bestand_nach_reservierungen(stock, _res_map, _eigen)
         self._bd_reserved_applied = _applied
         self._bd_reserved_plans = _res_plans
+        # emm525: WER haelt wie viel, je Item - dieselbe Auswahl wie oben
+        # (Rang, Schloss, Buendel, Anspruch), nur nicht summiert. Nur fuer
+        # die Anzeige; abgezogen wird weiter mit `_res_map`.
+        self._bd_reserviert_je_item = self.reservierung_je_item(
+            self.settings, getattr(self, "_bd_open_plan_id", None))
         # NOCH NICHT ANGELIEFERTER ANSPRUCH (Nutzer-Frage: "was, wenn das
         # Frachtunternehmen den Bestand noch liefert?"): der Abzug ist auf
         # das Vorhandene gedeckelt - der Rest des Anspruchs "wartet" und
@@ -21747,11 +21992,28 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
         tree = QTreeWidget()
         kopier_menue(tree)                    # Rechtsklick -> Copy
-        tree.setColumnCount(7)
+        # SPALTE "PUFFER" (emm545, Nutzer: "da moechte ich, dass das
+        # ersichtlich wird in der Einkaufsliste, wieviel mehr man
+        # einkauft"). Der Puffer-Satz stand unten als Feld, was er an
+        # Stueck bewirkt, nirgends - gekauft wurde aber die gepufferte
+        # Menge. Jetzt zeigt "To cart" die Menge, die wirklich kopiert
+        # bzw. in den Wagen gelegt wird, und daneben steht der Aufschlag.
+        # SPALTE "m3" (emm546, Nutzer: "ausserdem steht in der Shoppingliste
+        # das Volumen nicht"). Ohne sie musste er die Liste erst in eine
+        # Frachtseite kopieren, um das Volumen zu sehen - und verglich dabei
+        # zweimal eine ALTE Appraisal mit einem NEUEN Plan-Stand.
+        tree.setColumnCount(9)
         tree.setIconSize(QSize(22, 22))   # gleiche Groesse wie Material-/BP-Tab
         tree.setHeaderLabels([_txt("Item / character"), _txt("Required"), _txt("Owned"),
                               _txt("at build location"), _txt("Missing"),
-                              _txt("To cart"), _txt("Status")])
+                              _txt("To cart"), _txt("Buffer"), _txt("m³"),
+                              _txt("Status")])
+        tree.headerItem().setToolTip(6,
+            _txt("What the buffer adds on top – „To cart“ already "
+                 "contains it. 0 % means no extra."))
+        tree.headerItem().setToolTip(7,
+            _txt("Packaged volume of the quantity in „To cart“ – the same "
+                 "value the build plan charges freight on."))
         tree.headerItem().setToolTip(2,
             _txt("What you own IN TOTAL \u2013 per portfolio, at ANY location."))
         tree.headerItem().setToolTip(3,
@@ -21773,12 +22035,35 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
         def _num(x):
             return "\u2013" if x is None else f"{int(x):,}".replace(",", "'")
+
+        def _m3(x):
+            # Grosse Volumen ganzzahlig, kleine mit zwei Stellen - 0.03 m3
+            # je Isotop waere sonst "0" und sah nach "kein Volumen" aus.
+            if x is None:
+                return "?"
+            return (f"{x:,.0f}" if abs(x) >= 10
+                    else f"{x:,.2f}").replace(",", "'")
+        # VOLUMEN JE STUECK (emm546, Nutzer: "ausserdem steht in der
+        # shoppingliste das Volumen nicht"). DIESELBE Quelle wie die
+        # Frachtrechnung des Bauplans (`_item_volumes_with_esi_fix` ->
+        # industry.item_volume_map plus ESI-Korrektur fuer Schiffe ohne
+        # gepacktes Volumen) - eine zweite Volumen-Quelle waere genau das
+        # Auseinanderlaufen, das ihn die Fracht zweimal pruefen liess.
+        try:
+            _volmap = self._item_volumes_with_esi_fix(
+                [r["tid"] for r in rows])[0]
+        except Exception as _vol_err:
+            # Nicht still: ohne Volumen zeigt die Spalte "?", und die
+            # Zeile unten sagt, dass die Summe unvollstaendig ist.
+            self._log_exception("Einkaufs-Dialog: Volumen", str(_vol_err))
+            _volmap = {}
         # Nach Charakter gruppieren; Items ohne bekannten Ort (z.B. nur eine
         # offene Order) kommen in eine eigene, klar benannte Gruppe.
         groups = {}
         for r in rows:
             groups.setdefault(r["main_char"], []).append(r)
         checks = []
+        _puffer_zeilen = []     # (Zeile, Rohmenge, tid) - fuer _puffer_zeigen
         for char in sorted(groups, key=lambda c: (c is None, str(c))):
             grows = groups[char]
             _gc = sum(1 for r in grows if r["status"] == "covered")
@@ -21794,19 +22079,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             gi = QTreeWidgetItem(tree, [
                 (f"{char}" if char else
                  _txt("\u26a0 Not held by any character (only in open orders)")),
-                "", "", "", "", "",
+                "", "", "", "", "", "", "",
                 f"{len(grows)} Items \u00b7 " + " \u00b7 ".join(_bits)])
             _f = gi.font(0); _f.setBold(True); gi.setFont(0, _f)
             gi.setForeground(0, QColor(theme.CYAN if char else theme.AMBER))
-            gi.setForeground(6, QColor(theme.MUTED))
+            gi.setForeground(8, QColor(theme.MUTED))
             gi.setFlags(gi.flags() & ~Qt.ItemIsUserCheckable)
             for r in grows:
                 it = QTreeWidgetItem(gi, [
                     r["name"], _num(r["need"]), _num(r["own"]),
                     _num((plan_stock or {}).get(r["tid"], 0)),
-                    _num(r["missing"]), _num(r.get("cart_qty")),
+                    _num(r["missing"]), _num(r.get("cart_qty")), "", "",
                     r["status_txt"]
                     + (" \u00b7 " + " \u00b7 ".join(r["flags"]) if r["flags"] else "")])
+                # Rohmenge merken - der Puffer wird daraus GERECHNET, nie aus
+                # dem schon gepufferten Zellentext zurueckgelesen (sonst
+                # waechst die Zahl bei jedem Neuzeichnen weiter).
+                _puffer_zeilen.append((it, r.get("cart_qty"), r["tid"]))
                 # Item-Bild wie in den anderen Listen (Nutzer: "sieht
                 # huebscher aus") - derselbe Helfer, also auch derselbe Cache.
                 _ric = self._table_icon(r["tid"])
@@ -21832,8 +22121,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                              or (r.get("own") or 0) <= 0))
                 it.setCheckState(0, Qt.Checked if _pre else Qt.Unchecked)
                 if _wird_gebaut:
-                    it.setText(6, _txt("this plan builds it"))
-                    it.setToolTip(6, _txt(
+                    it.setText(8, _txt("this plan builds it"))
+                    it.setToolTip(8, _txt(
                         "The build plan makes this item itself - the material "
                         "for it is already on the list. Buying it as well would "
                         "pay for it twice. Tick it only if you deliberately want "
@@ -21860,6 +22149,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     if _resv_t > 0:
                         _pl_t = ", ".join(
                             getattr(self, "_bd_reserved_plans", None) or [])
+                        # emm525: wer haelt wie viel - dieselbe Karte wie unten.
+                        _h_t = (getattr(self, "_bd_reserviert_je_item", None)
+                                or {}).get(int(r["tid"])) or []
                         it.setText(3, _num(_pq) + "  \u00b7 "
                                    + _txt("{n} reserved").format(
                                        n=f"{_resv_t:,}".replace(",", "'")))
@@ -21868,7 +22160,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                             _txt("{n} units are on site as well, but reserved for "
                                  "other build plans").format(
                                      n=f"{_resv_t:,}".replace(",", "'"))
-                            + (f" ({_pl_t})" if _pl_t else "")
+                            + (f" ({MainWindowHelpers.reservierung_text(_h_t)})"
+                               if _h_t else (f" ({_pl_t})" if _pl_t else ""))
                             + _txt(". Release the reservation on the other plan's "
                                    "card or finish that plan, then this plan can "
                                    "use them.")))
@@ -21888,12 +22181,28 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                             getattr(self, "_bd_reserved_plans", None) or [])
                         # "0 - reserved" las der Nutzer als "nichts reserviert"
                         # (01.10.2026) - der Satz sagt jetzt, WER es haelt.
-                        it.setText(3, "0  \u2013 " + _txt("reserved by other plans"))
+                        #
+                        # emm525: ... und ZU WIE VIEL, SICHTBAR in der Zeile.
+                        # Der Tooltip nannte alle reservierenden Plaene ohne
+                        # Mengen - bei "ich habe 270 und brauche 10" ist aber
+                        # genau die Menge die Antwort (Riggs 1 haelt 826).
+                        # Tooltips werden ausserdem nicht gelesen (emm509).
+                        _h9 = (getattr(self, "_bd_reserviert_je_item", None)
+                               or {}).get(int(r["tid"])) or []
+                        _wer9 = MainWindowHelpers.reservierung_text(_h9[:1])
+                        it.setText(3, ("0  \u2013 " + _wer9
+                                       + (_txt(" + {n} more").format(
+                                           n=len(_h9) - 1)
+                                          if len(_h9) > 1 else ""))
+                                   if _wer9 else
+                                   "0  \u2013 "
+                                   + _txt("reserved by other plans"))
                         it.setToolTip(3, (
                             _txt("It IS there on site, but {n} units are reserved "
                               "for other build plans").format(
                                 n=f"{_resv:,}".replace(",", "'"))
-                            + (f" ({_pl9})" if _pl9 else "")
+                            + (f" ({MainWindowHelpers.reservierung_text(_h9)})"
+                               if _h9 else (f" ({_pl9})" if _pl9 else ""))
                             + _txt(". This plan must therefore not schedule "
                                 "them. Release the reservation on the other "
                                 "plan's card ( button) or finish "
@@ -21906,10 +22215,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                               "stock scope to \u201e Everywhere\u201c)."))
                     it.setForeground(3, QColor(theme.AMBER))
                     _fb = it.font(3); _fb.setBold(True); it.setFont(3, _fb)
-                for c in (1, 2, 3, 4, 5):
+                for c in (1, 2, 3, 4, 5, 6, 7):
                     it.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
                 _col = QColor(_cols.get(r["status"], theme.MUTED))
-                it.setForeground(4, _col); it.setForeground(6, _col)
+                it.setForeground(4, _col); it.setForeground(8, _col)
                 it.setForeground(2, QColor(theme.GREEN if r["own"] else theme.MUTED))
                 _tip = [_txt("Required: ") + _num(r['need']),
                         _txt("Owned:  ") + _num(r['own']),
@@ -21927,15 +22236,116 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     for _c, _q in sorted(r["by_char"].items(),
                                          key=lambda kv: -kv[1]):
                         _si = QTreeWidgetItem(it, [_txt("\u21b3 with {who}").format(who=_c), "",
-                                                   _num(_q), "", "", "", ""])
+                                                   _num(_q), "", "", "", "", "", ""])
                         _si.setFlags(_si.flags() & ~Qt.ItemIsUserCheckable)
-                        for _c2 in range(7):
+                        for _c2 in range(9):
                             _si.setForeground(_c2, QColor(theme.MUTED))
                         _si.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
                 checks.append((it, r["tid"], r["name"], r.get("cart_qty")))
             gi.setExpanded(True)
-        for _c in range(1, 7):
+
+        # VOLUMEN DER LISTE (emm546). Es steht UNTER der Tabelle, weil es
+        # die Zahl ist, die er gegen die Fracht-Zeile des Bauplans und
+        # gegen eine Appraisal haelt - in einer Spalte muesste er 60
+        # Zeilen im Kopf addieren.
+        _vol_lbl = QLabel("")
+        _vol_lbl.setWordWrap(True)
+
+        def _vol_posten():
+            """Die Posten, deren Volumen unten summiert wird.
+
+            Im Kopier-Modus GENAU die Liste des Kopier-Knopfs (derselbe
+            Helfer, Regel 9) - sonst nennt die Zeile ein Volumen fuer
+            eine andere Liste als die kopierte. Im Wagen-Modus die
+            angehakten Zeilen - nur die legt der Wagen ab.
+            """
+            if copy_mode:
+                _p, _, _ = einkauf_posten(
+                    rows, "missing", getattr(self, "_bd_plan_builds", None))
+                return [(_t, _q) for _t, _n, _q in _p]
+            out = []
+            for _it, _t, _n, _q in checks:
+                if _it.checkState(0) == Qt.Checked and _q:
+                    out.append((int(_t), int(_q)))
+            return out
+
+        def _vol_zeigen():
+            _ges = 0.0
+            _ohne = 0
+            for _t, _q in _vol_posten():
+                _v = _volmap.get(int(_t))
+                if not _v:
+                    _ohne += 1
+                    continue
+                _ges += float(_v) * self._buy_surplus_qty(_q)
+            _txt_teile = [_txt("Volume of this list: {v} m³").format(
+                v=_m3(_ges))]
+            # Der Satz, mit dem der Bauplan die Fracht rechnet - damit die
+            # Zahl hier und dort vergleichbar ist, ohne zu rechnen.
+            _rate = float(self.settings.get("bau_transport_rate", 0) or 0)
+            if _rate > 0:
+                _txt_teile.append(
+                    _txt("× {r} ISK/m³ = {k} ISK freight").format(
+                        r=_m3(_rate), k=_num(round(_rate * _ges))))
+            _vol_lbl.setStyleSheet(
+                f"font-size:11px; color:{theme.AMBER if _ohne else theme.MUTED};")
+            if _ohne:
+                _txt_teile.append(_txt(
+                    "⚠ {n} position(s) without a known volume – "
+                    "they count as 0 m³").format(n=_ohne))
+            _vol_lbl.setText("  ·  ".join(_txt_teile))
+
+        def _puffer_zeigen():
+            """Spalten "To cart" und "Puffer" auf den aktuellen Puffer-Satz.
+
+            "To cart" zeigt die Menge, die der Kopier-Knopf und der
+            Einkaufswagen WIRKLICH nehmen (`_buy_surplus_qty`) - vorher
+            stand dort die Fehlmenge ohne Puffer, waehrend gekauft wurde
+            MIT. Gerechnet wird immer aus der gemerkten Rohmenge, nie aus
+            dem Zellentext (sonst puffert jeder Aufruf erneut).
+            """
+            _s = float(self.settings.get("bau_buy_surplus", 0) or 0)
+            tree.headerItem().setText(
+                5, _txt("To cart (+{p} %)").format(p=f"{_s:g}")
+                if _s > 0 else _txt("To cart"))
+            for _it, _roh, _tid in _puffer_zeilen:
+                if _roh is None:
+                    _it.setText(5, "–"); _it.setText(6, ""); _it.setText(7, "–")
+                    continue
+                _mit = self._buy_surplus_qty(_roh)
+                _it.setText(5, _num(_mit))
+                _plus = _mit - int(_roh)
+                _it.setText(6, ("+" + _num(_plus)) if _plus > 0 else "")
+                _it.setForeground(6, QColor(theme.AMBER if _plus > 0
+                                            else theme.MUTED))
+                _it.setToolTip(6, _txt(
+                    "{m} missing + {p} % buffer = {k} bought").format(
+                        m=_num(_roh), p=f"{_s:g}", k=_num(_mit))
+                    if _plus > 0 else "")
+                # m3 der Menge, die WIRKLICH gekauft wird - also mit
+                # Puffer, genau wie die Frachtrechnung des Bauplans.
+                _v = _volmap.get(int(_tid))
+                _it.setText(7, _m3(float(_v) * _mit) if _v else "?")
+                _it.setForeground(7, QColor(theme.MUTED if _v else theme.AMBER))
+                _it.setToolTip(7, _txt(
+                    "{v} m³ per unit × {k} = {g} m³").format(
+                        v=_m3(float(_v)), k=_num(_mit),
+                        g=_m3(float(_v) * _mit))
+                    if _v else _txt(
+                        "No packaged volume known – counts as 0 m³ "
+                        "for the freight."))
+            for _c in (5, 6, 7):
+                tree.resizeColumnToContents(_c)
+            _vol_zeigen()
+        _puffer_zeigen()
+        for _c in range(1, 9):
             tree.resizeColumnToContents(_c)
+        v.addWidget(_vol_lbl)
+        # Haken aendern die Wagen-Liste - dann aendert sich auch ihr
+        # Volumen. Nur die Fuss-Zeile neu schreiben, nie die Spalten:
+        # `setText` auf einer Zeile wuerde itemChanged erneut ausloesen.
+        if not copy_mode:
+            tree.itemChanged.connect(lambda *_a: _vol_zeigen())
         if non_conflict:
             # Beim Namen nennen - "1 neue Items" liess den Nutzer raten, WAS
             # ueberhaupt in den Wagen wandert.
@@ -21996,6 +22406,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _copy_note.setWordWrap(True)
 
             def _copy_rows(feld, was):
+                # Ein getippter, noch nicht bestaetigter Puffer gilt auch
+                # hier: wer die Zahl aendert und sofort auf Kopieren drueckt,
+                # bekommt sonst die alte Menge (emm545).
+                _puffer_uebernehmen()
                 # MENGEN AUS DEM PLAN, NICHT AUS DIESEM DIALOG. Der Dialog
                 # rechnet sein eigenes `missing` aus dem GLOBALEN Bestand; der
                 # Bauplan rechnet mit dem Bestand, den er selbst verplant hat.
@@ -22004,8 +22418,6 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # Frage. Massgeblich ist der Plan, also `copy_qty`; ohne das
                 # bleibt der bisherige Weg.
                 _lines = []
-                _n = 0
-                _skipped = []
                 # WAS DER PLAN SELBST BAUT, GEHOERT NICHT INS MULTIBUY
                 # (Nutzer-Befund Sitzung 20, an seiner Appraisal belegt).
                 # Der Materialien-Reiter meldete "0 zu kaufen - 7 werden
@@ -22018,31 +22430,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # Komponenten stehen bereits in derselben Liste. Wer beides
                 # kauft, zahlt zweimal - genau der kritische Fall, der schon
                 # einmal Geld gekostet hat.
-                _baut_kopie = set(getattr(self, "_bd_plan_builds", None) or ())
-                _gebaut_raus = []
-                for _r in rows:
-                    if int(_r["tid"]) in _baut_kopie:
-                        _gebaut_raus.append(_r.get("name") or f"#{_r['tid']}")
-                        continue
-                    # `rows` traegt im Kopier-Modus bereits die Plan-Zahlen
-                    # (siehe oben) - also EINE Quelle fuer Anzeige und Kopie,
-                    # statt hier nochmal separat nachzuschlagen.
-                    _q = int(_r.get(feld) or 0)
-                    if _q <= 0:
-                        continue
-                    _nm = (_r.get("name") or "").strip()
-                    # Unaufgeloeste Namen ("#16642") kann EVE-Multibuy nicht
-                    # lesen - sie landeten als roter Fehlerblock in der
-                    # Appraisal. Lieber benennen als still mitschicken.
-                    if not _nm or _nm.startswith("#"):
-                        _skipped.append(_nm or f"#{_r['tid']}")
-                        continue
+                # `rows` traegt im Kopier-Modus bereits die Plan-Zahlen
+                # (siehe oben) - also EINE Quelle fuer Anzeige und Kopie.
+                # AUSWAHL UND VOLUMEN-ZEILE AUS DEMSELBEN HELFER (emm546,
+                # Regel 9): sonst nennt die Zeile unten das Volumen einer
+                # anderen Liste als der, die hier kopiert wird.
+                _posten, _skipped, _gebaut_raus = einkauf_posten(
+                    rows, feld, getattr(self, "_bd_plan_builds", None))
+                for _tid, _nm, _q in _posten:
                     # PUFFER wie im Einkaufswagen (Nutzer). Derselbe Helfer
                     # und dieselbe Einstellung `bau_buy_surplus`, die auch der
                     # Bauplan-Fuss und `_plan_to_cart` benutzen - sonst haetten
                     # wir wieder zwei Puffer-Rechnungen nebeneinander.
                     _lines.append(f"{_nm}\t{self._buy_surplus_qty(_q)}")
-                    _n += 1
+                _n = len(_lines)
                 if not _n:
                     # SICHTBAR IM DIALOG (Nutzer-Vorfall Cerberus: "wird
                     # nichts kopiert"). Der Flash-Tip erschien im
@@ -22092,10 +22493,24 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                      "This is THE SAME buffer as below in the build plan and in the shopping "
                      "list (setting \u201ebau_buy_surplus\u201c) \u2013 changed here, it applies there too."))
 
-            def _save_puffer(_v):
-                self.settings["bau_buy_surplus"] = int(_v)
+            # ERST BEI ENTER ODER FOKUSWECHSEL (emm545, Nutzer: "es darf
+            # erst gerechnet werden wenn man enter drueckt oder mit der
+            # maus wo anders hinklickt, nicht schon beim hoch und runter
+            # schrauben der prozente"). Vorher hing `valueChanged` dran -
+            # jeder Pfeilklick schrieb die GANZE settings.json (bei ihm
+            # 17 MB) und zeichnete die Spalten neu. `keyboardTracking`
+            # aus, sonst meldet die Spinbox zusaetzlich jede getippte
+            # Ziffer (dokumentierte Qt-Falle).
+            _pf.setKeyboardTracking(False)
+
+            def _puffer_uebernehmen():
+                _v = int(_pf.value())
+                if int(self.settings.get("bau_buy_surplus", 0) or 0) == _v:
+                    return
+                self.settings["bau_buy_surplus"] = _v
                 config.save_settings(self.settings)
-            _pf.valueChanged.connect(_save_puffer)
+                _puffer_zeigen()
+            _pf.editingFinished.connect(_puffer_uebernehmen)
             # "Alle Materialien kopieren" ist ENTFERNT (Nutzer: "ich habe
             # mich anders entschieden, komplett entfernen") - direkt nach
             # dem Umbau auf die Fertigungsgrenzen-Semantik. Es bleibt EIN
@@ -29993,6 +30408,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         for _t, _js in (getattr(self, "_bd_active_jobs_map", None) or {}).items():
             _im_bestand[int(_t)] = (_im_bestand.get(int(_t), 0)
                                     + sum(int(_j.get("runs") or 0) for _j in (_js or [])))
+        # BESTANDSGEDECKTE RUNS (emm514): ihr "Erzeugnis" IST der Bestand in
+        # `live` - zaehlten sie nicht hier, gaelten sie als KOMMENDE
+        # Produktion UND der Bestand laege zusaetzlich in `live`: doppelt
+        # gedeckt, der Verbraucher-Bedarf fiele zu klein aus (Regel 3).
+        # Die Karte hat `_rest_geliefert_jetzt()` eben frisch gesetzt.
+        for _t, _n in (getattr(self, "_bd_bestand_runs", None) or {}).items():
+            _im_bestand[int(_t)] = _im_bestand.get(int(_t), 0) + int(_n or 0)
         _fehl = fehlbedarf_vorschau(build_runs, build_mats, out_qty,
                                     geliefert, live, im_bestand=_im_bestand)
         # REPROCESSING (1.0.9, Weg B): solange Stufe 0 nicht abgehakt ist,
@@ -30064,7 +30486,93 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self._bd_vorstufen_fertig.add(int(_t))
         except Exception as _ve:
             self._log_exception("Vorstufen erledigt", str(_ve))
+        # BESTAND DECKT RUNS - ANTEILIG (emm514, Nutzer: "es ist zu 100%
+        # klar, dass der Bauplan diese Fuelblocks nicht mehr braucht" - er
+        # hatte die Fuel Blocks zugekauft, die Verbraucher-Reaktionen liefen,
+        # der eingefrorene Plan verlangte trotzdem alle 202 Runs). NUR beim
+        # GESPEICHERTEN, EINGEFRORENEN Plan: ein nicht eingefrorener Plan
+        # hat den Bestand schon in production_plan verrechnet (stock_used) -
+        # hier nochmal abziehen hiesse doppelt, und der Nutzer stuende ohne
+        # Material da. Die Regel kann einen Rest nur SENKEN, nie erhoehen.
+        self._bd_bestand_runs = {}
+        try:
+            if (getattr(self, "_bd_open_plan_id", None)
+                    and getattr(self, "_bd_frozen", None)):
+                from eve_trader.ui.mw_helpers import bestand_deckt_runs
+                _plan_b = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
+                _enden_b = set()
+                for _tb in (_plan_b.get("buendel_enden") or {}):
+                    try:
+                        _enden_b.add(int(_tb))
+                    except (TypeError, ValueError):
+                        pass
+                for _eb in (getattr(self, "_bd_buendel_enden", None) or []):
+                    try:
+                        _enden_b.add(int(_eb[0]))
+                    except (TypeError, ValueError, IndexError):
+                        pass
+                _karte_b = bestand_deckt_runs(
+                    _plan_b.get("build_runs"), _plan_b.get("build_mats"),
+                    _plan_b.get("build_made"), geliefert,
+                    self._bestand_fuer_deckung(), _enden_b)
+                for _tb, _nb in _karte_b.items():
+                    geliefert[_tb] = int(geliefert.get(_tb, 0) or 0) + int(_nb)
+                self._bd_bestand_runs = _karte_b
+        except Exception as _bd_e:
+            self._bd_bestand_runs = {}
+            self._log_exception("Bestand deckt Runs", str(_bd_e))
         return geliefert
+
+    def _bestand_fuer_deckung(self):
+        """Der Bestand, den `bestand_deckt_runs` (emm514) anrechnen darf -
+        EINE Stelle, drei Abzuege, jeder gegen eine benannte Doppelzaehlung:
+
+        * Basis ist `_bd_opts["stock"]` - der fuer DIESEN Plan zaehlende
+          Bestand, fremde Reservierungen sind dort schon abgezogen
+          (`_reservierungen_anwenden`), dieselbe Quelle wie Einkaufsliste
+          und `_erz_durch_bestand` (Regel 9).
+        * MINUS Pipeline (`_bd_pipeline_live`): der Output laufender/fertiger
+          Jobs steckt in opts["stock"] mit drin - deren Runs zaehlen in der
+          Erledigt-Karte aber schon als erledigt, beides zusammen waere
+          doppelt (zu wenige Runs, der Job startet nicht).
+        * MINUS `lag_verbrauch`: Jobs, die NACH dem ESI-Bestandsstand
+          starteten, haben ihr Material im Spiel schon gefressen - der
+          Hangar-Stand zeigt es noch (emm424, Technetium-Fall). Basismengen
+          ohne ME = Obergrenze des Verbrauchs, also die sichere Seite.
+        Ohne `opts["stock"]` gibt es nichts anzurechnen -> {}.
+        """
+        _stock = (getattr(self, "_bd_opts", None) or {}).get("stock") or {}
+        if not _stock:
+            return {}
+        _pipe = getattr(self, "_bd_pipeline_live", None) or {}
+        _lag = {}
+        try:
+            from eve_trader.ui.mw_helpers import lag_verbrauch
+            _rec_b = getattr(self, "_bd_recipes", None)
+
+            def _mats_b(pid, act):
+                if _rec_b is None or act not in (1, 9, 11):
+                    return None
+                _bp_b = (getattr(_rec_b, "product_to_bp", None) or {}).get(int(pid))
+                if not _bp_b:
+                    return None
+                return (getattr(_rec_b, "bp_materials", None) or {}).get(
+                    (_bp_b[0], _bp_b[1]))
+            _lag = lag_verbrauch(getattr(self, "_bd_active_jobs_alle", None) or {},
+                                 getattr(self, "_bd_esi_stock_ts", None), _mats_b)
+        except Exception as _lg_e:
+            self._log_exception("Bestand fuer Deckung: ESI-Verzug", str(_lg_e))
+        out = {}
+        for _t, _q in _stock.items():
+            try:
+                _t = int(_t)
+                _q = (int(_q or 0) - int(_pipe.get(_t, 0) or 0)
+                      - int(_lag.get(_t, 0) or 0))
+            except (TypeError, ValueError):
+                continue
+            if _q > 0:
+                out[_t] = _q
+        return out
 
     def _rest_runs_jetzt(self):
         """{type_id: noch offene Runs} je Eigenbau-Item - oder None, wenn
@@ -31628,6 +32136,31 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         else:
             self._overlay_progress.setText(f"{done:,}".replace(",", "'") + " …")
 
+    # DER BALKEN GEHOERT GENAU EINEM JOB (emm537, Nutzer 12.10.2026: "Market
+    # scan sieht verbuggt aus, die Ladeleiste springt sehr schnell von 0 auf
+    # 100 und hin und her" - er hatte Portfolio laden UND Market scan
+    # gedrueckt). Es gibt EINEN Zustand (`_overlay_progress`), aber `_run`
+    # hing JEDEN Worker daran - auch Hintergrund-Jobs ohne eigenes Overlay -,
+    # und jeder Job meldet in seiner eigenen Skala (Scan: Seiten 2/6,
+    # Portfolio: Items 1'500/13'000). Deshalb schreibt nur noch der Job, fuer
+    # den das Overlay geoeffnet wurde; alle anderen melden ins Leere.
+    def _overlay_gehoert(self, worker):
+        return getattr(self, "_overlay_job", None) is worker
+
+    def _overlay_fortschritt(self, worker, done, total):
+        if self._overlay_gehoert(worker):
+            self._set_loading_progress(done, total)
+
+    def _overlay_status(self, worker, text):
+        # auch der Phasen-Text gehoert dem Besitzer: `_set_loading` LEERT den
+        # Balken, ein fremder Job wuerde ihn sonst mitten im Lauf wegwischen.
+        if self._overlay_gehoert(worker):
+            self._set_loading(text)
+
+    def _overlay_balken_leeren(self):
+        if not zerstoert(getattr(self, "_overlay_progress", None)):
+            self._overlay_progress.setText("")
+
     # ---- worker plumbing ---------------------------------------------------
     # SPINNER UND OVERLAY GEHOEREN DEM FENSTER (emm480): ihre Timer feuern
     # auch noch, wenn es das Fenster nicht mehr gibt - dann ist der
@@ -31663,6 +32196,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
     def _hide_overlay(self):
         self._overlay_want = 0
+        self._overlay_job = None        # Balken ist frei (emm537, auch nach Abbrechen)
         if not zerstoert(getattr(self, "_overlay_delay", None)):
             self._overlay_delay.stop()
         if not zerstoert(getattr(self, "_overlay_tip_timer", None)):
@@ -32327,15 +32861,22 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if label:
                 self._set_loading(label)
             self._overlay_want += 1
+            # erster Overlay-Job bekommt den Balken (emm537)
+            if getattr(self, "_overlay_job", None) is None:
+                self._overlay_job = worker
             if not self._overlay.isVisible() and not self._overlay_delay.isActive():
                 self._overlay_delay.start()
-        # route this worker's progress to the big overlay (X / Y + bar)
+        # route this worker's progress to the big overlay (X / Y + bar) - aber
+        # nur, wenn ihm der Balken gehoert (emm537)
         try:
-            worker.progress.connect(self._set_loading_progress)
+            worker.progress.connect(
+                lambda d, g, _w=worker: self._overlay_fortschritt(_w, d, g))
         except Exception:
             pass
         try:
-            worker.status.connect(self._set_loading)     # Phasen-Text („was passiert“)
+            # Phasen-Text („was passiert“) - ebenso nur fuer den Besitzer
+            worker.status.connect(
+                lambda s, _w=worker: self._overlay_status(_w, s))
         except Exception:
             pass
 
@@ -32365,6 +32906,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if worker in self._workers:
                 self._workers.remove(worker)
             worker.deleteLater()
+            # der Besitzer gibt den Balken frei und wischt ihn (emm537) -
+            # sonst stehen die Zahlen eines beendeten Jobs weiter da
+            if getattr(self, "_overlay_job", None) is worker:
+                self._overlay_job = None
+                self._overlay_balken_leeren()
             if overlay:
                 self._overlay_want = max(0, self._overlay_want - 1)
                 if self._overlay_want == 0:

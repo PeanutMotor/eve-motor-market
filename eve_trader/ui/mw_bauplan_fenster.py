@@ -478,8 +478,9 @@ class BauplanFenster:
         # persoenlichen (esi.fetch_blueprints, 26.09.2026). Ohne Job-Abruf
         # (keine Rolle / Fehler) bleibt die Liste wie sie ist.
         _alle_jobs = [j for _js in out["jobs"].values() for j in (_js or [])]
+        out["blueprints_belegt"] = []
         if _alle_jobs and out["blueprints"]:
-            out["blueprints"], _belegt = esi.blaupausen_in_jobs(
+            out["blueprints"], out["blueprints_belegt"] = esi.blaupausen_in_jobs(
                 out["blueprints"], _alle_jobs)
         return out
 
@@ -1204,6 +1205,15 @@ class BauplanFenster:
                        "signatur": _txt("run count")}
         # de_scan4: an
         d = QDialog(self._tool_parent())
+        # MAUSRAD NICHT AM DROPDOWN (emm520, Nutzer 11.10.2026: "Job
+        # assignments Fenster wenn ich mit der maus scrolle kann es
+        # passieren, dass ich in der Belongs To -Liste auf einen Bauplan
+        # komme und dann scrollt dieser durchs Dropdown! das darf nicht
+        # passieren bei einem Mouseover"). Dasselbe wie im Bauplan-Fenster
+        # (emm247): das Rad geht an die naechste Bildlauflaeche (hier die
+        # Tabelle), die Zuordnung bleibt stehen. Eine beim Scrollen still
+        # umgestellte Zuordnung waere besonders teuer - sie kostet Material.
+        combos_ohne_mausrad(d)
         d.setWindowTitle(_txt("Job assignments"))
         d.setMinimumWidth(820)
         d.setMinimumHeight(420)
@@ -1341,6 +1351,120 @@ class BauplanFenster:
                           "any linked character 30 minutes after ticking.").format(
                               items=", ".join(_items)))
         return list(weg)
+
+    def _einkauf_jetzt(self):
+        """WAS DER KOPIER-KNOPF JETZT WIRKLICH KAUFT - EINE STELLE (Regel 9).
+
+        Nutzer 13.10.2026: "ja aber ich brauche das Volumen des einkaufs !".
+        Der Bauplan nannte in der Frachtzeile das Volumen von `plan["buy"]`,
+        also den Schnappschuss des EINGEFRORENEN Plans; der Kopier-Knopf und
+        der Einkaufswagen rechnen dagegen den HEUTIGEN Restbedarf. Beides ist
+        richtig, aber es sind zwei Listen mit demselben Namen - bei ihm
+        329'380 m3 gegen 335'499 m3 (6'119 m3 = 2'722'781 ISK bei 445/m3).
+
+        Damit die Anzeige im Bauplan nicht wieder eine DRITTE Rechnung wird,
+        liegt die Mengenfrage ab jetzt hier: `_copy_materials` (Materialien-
+        Reiter) UND die Detail-Zeile "Einkauf jetzt" lesen dieselben Zahlen.
+
+        Liefert ein Woerterbuch:
+          "rest_kaufmenge"  die Funktion, die `_copy_materials` benutzt
+          "mengen"     {tid: Menge, die der Dialog als "missing" bekommt}
+          "posten"     [(tid, Name, Menge)] - genau die kopierten Zeilen
+                       (`mw_helpers.einkauf_posten`), Mengen OHNE Puffer
+                       (den rechnet `_buy_surplus_qty`)
+          "rest_modus" / "rest_da"  welcher Zweig gegolten hat
+        """
+        from .mw_helpers import einkauf_posten
+        _rows = getattr(self, "_bd_mat_rows", None) or []
+        # REST-MODUS = Haken an UND ein gerechneter Plan offen (emm457).
+        # NICHT an `_rest` festmachen: ist ALLES gebaut, ist der Restbedarf
+        # ein LEERES Dict - das sah aus wie "kein Plan", und der fertige
+        # Plan wollte die volle Menge noch einmal kaufen.
+        # Das Kaestchen ist die Vorgabe (an); gibt es keines, gilt ebenfalls
+        # "an" - sonst nennte die Detail-Zeile die Vollmenge, waehrend der
+        # Knopf den Rest kopiert.
+        _cb = getattr(self, "_bd_rest_only_cb", None)
+        _rest_modus = False
+        try:
+            _an = True if _cb is None else bool(_cb.isChecked())
+        except Exception:
+            _an = True
+        if _an:
+            try:
+                _p_rm = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
+                _rest_modus = bool(_p_rm.get("build_runs") and _p_rm.get("build_mats"))
+                self._restbedarf_jetzt()   # Probe: laeuft die Rest-Rechnung?
+            except Exception:
+                _rest_modus = False   # kein Plan offen -> Vollmenge
+        # Dieselbe Rechnung wie "Werkzeuge -> Fehlbedarf pruefen":
+        # `fehlbedarf_vorschau` rechnet gegen den ROHEN Live-Bestand und
+        # zaehlt die Produktion der OFFENEN Runs mit. Wer die Liste kauft,
+        # kann danach alle offenen Runs starten - das ist die Zusage, und
+        # sie steht als aa275 in der Suite.
+        _rest_fehlt = {}
+        if _rest_modus:
+            try:
+                _rest_fehlt = {int(_m): int(_f)
+                               for _m, _f, *_r in (self._fehlbedarf_jetzt() or [])}
+            except Exception:
+                _rest_fehlt = {}
+        # ERFINDUNGSMATERIAL FAELLT SONST DURCH (Sitzung 17, Nutzer:
+        # "ich habe nicht genuegend Datacores in den Einkaufswagen
+        # bekommen, obwohl das Materials-Tab erkennt, dass ich zu wenige
+        # habe"). GEMESSEN: `_fehlbedarf_jetzt` rechnet aus
+        # plan["build_runs"]/["build_mats"] - reines FERTIGUNGS-Material.
+        # Datacores/Decryptoren stehen bewusst in eigenen Feldern
+        # (inv_buy/inv_stock_used), damit ihre Kosten nicht doppelt
+        # zaehlen. Fuer sie lieferte _rest_fehlt also 0, und alles mit 0
+        # fliegt unten aus der Liste. Ergebnis: sie fehlten still.
+        # Fuer diese Zeilen zaehlt ihre EIGENE Fehlmenge (r["missing"]) -
+        # sie haengt nicht an den offenen Runs, denn erfunden wird vorab.
+        _inv_tids = set()
+        try:
+            _p_inv = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
+            _inv_tids = {int(_t) for _t in
+                         (set(_p_inv.get("inv_buy") or {})
+                          | set(_p_inv.get("inv_stock_used") or {}))}
+        except Exception:
+            _inv_tids = set()
+
+        def _rest_kaufmenge(r):
+            """Fehlmenge dieses Materials fuer die noch OFFENEN Runs."""
+            _t = int(r["tid"])
+            if _t in _inv_tids:
+                # Bestand zaehlt mit (27.09.2026, s. inv_kaufmenge): der
+                # eingefrorene inv_buy allein kaufte vorhandene Decryptoren.
+                from eve_trader.ui.mw_helpers import inv_kaufmenge
+                return inv_kaufmenge(r.get("missing", 0), r.get("total", 0),
+                                     r.get("owned", 0))
+            return int(_rest_fehlt.get(_t, 0) or 0)
+
+        # Nur die PROBE, ob die Rest-Rechnung laeuft - die Zahlen selbst
+        # liest `_rest_kaufmenge` aus `_rest_fehlt` (EINE Wahrheit).
+        try:
+            for _x in (self._fehlbedarf_jetzt() or []):
+                int(_x[0]), int(_x[1])
+            _rest_da = True
+        except Exception:
+            _rest_da = False
+        _mengen, _zeilen = {}, []
+        for r in _rows:
+            try:
+                _t = int(r["tid"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            try:
+                _m = (int(_rest_kaufmenge(r) or 0) if _rest_da
+                      else int(r.get("missing", 0) or 0))
+            except Exception:
+                _m = 0
+            _mengen[_t] = _m
+            _zeilen.append({"tid": _t, "name": r.get("name"), "missing": _m})
+        _posten = einkauf_posten(
+            _zeilen, "missing", getattr(self, "_bd_plan_builds", None))[0]
+        return {"rest_kaufmenge": _rest_kaufmenge, "mengen": _mengen,
+                "posten": _posten, "rest_modus": _rest_modus,
+                "rest_da": _rest_da}
 
     def _show_build_detail(self, type_id, name, res):
         from ..sprache import t as _txt   # `t` ist hier lokal belegt
@@ -2966,7 +3090,13 @@ class BauplanFenster:
                         ("= Baukosten gesamt", "= Total build cost"),
                         ("\u00f7 St\u00fcck", "\u00f7 units"),
                         ("Einkaufsliste (Jita Sell)", "Shopping list (Jita sell)"),
-                        ("Einkaufsliste / St\u00fcck", "Shopping list / unit")]
+                        ("Einkaufsliste / St\u00fcck", "Shopping list / unit"),
+                        # emm547, Nutzer 13.10.2026: "ja aber ich brauche das
+                        # Volumen des einkaufs !" - die Zeilen darueber
+                        # rechnen ueber plan["buy"] (Einfrier-Stand), der
+                        # Kopier-Knopf ueber den heutigen Restbedarf. Diese
+                        # Zeile nennt genau DIE Liste, die er kopiert.
+                        ("Einkauf jetzt", "Purchase now")]
         # RECHTE SPALTE - wie aus dem Verkauf der Gewinn wird. Reihenfolge und
         # Vorzeichen genau wie im bisherigen Gewinn-Tooltip, damit man beim
         # Umgewoehnen dieselbe Rechnung wiedererkennt.
@@ -3019,6 +3149,10 @@ class BauplanFenster:
                 "stock is not in here.",
             "Einkaufsliste / Stück":
                 "The shopping list divided by the quantity.",
+            "Einkauf jetzt":
+                "Volume and freight of the list the copy button puts on "
+                "your clipboard right now – today's remaining need, "
+                "including the buy buffer.",
             "Verkaufspreis / Stk":
                 "Price per unit at your sell hub – the basis of this "
                 "whole calculation.",
@@ -3050,6 +3184,7 @@ class BauplanFenster:
         self._bd_detail_val_lbls = _detail_val_lbls   # fuer die Waechter (b7v)
         _detail_caps = {}     # Beschriftungen, damit eine Zeile als GANZES
                               # ausgeblendet werden kann (Reaktionen: Invention)
+        self._bd_detail_caps = _detail_caps   # fuer die Waechter (b7v)
         for _ri, (_rlabel, _rtext) in enumerate(_detail_rows):
             _cap = QLabel(_txt(_rtext)); _cap.setObjectName("Muted")
             _cap.setStyleSheet("font-size:11px;")
@@ -3098,6 +3233,25 @@ class BauplanFenster:
                             "(way A) is already net of this tax.")
                 _cap.setToolTip(_tts); _val.setToolTip(_tts)
                 _cap.setVisible(False); _val.setVisible(False)
+            # de_scan4: aus - interner Dict-Schluessel (siehe _detail_rows)
+            # de_scan5: aus - dito, nie sichtbar
+            if _rlabel == "Einkauf jetzt":
+            # de_scan4: an
+            # de_scan5: an
+                # emm547: nur sichtbar, wenn wirklich etwas zu kaufen ist.
+                _tte = _txt(
+                    "Volume of the list that „Create shopping list“ "
+                    "copies RIGHT NOW: today's remaining need plus your buy "
+                    "buffer - the same quantities as in that window.\n\n"
+                    "The rows above (material, freight service, shopping "
+                    "list) come from the FROZEN plan. That is why the two "
+                    "volumes differ once you have built part of the plan - "
+                    "both are correct, they answer different questions.\n\n"
+                    "The ISK here is only freight at your ISK/m³ rate "
+                    "and is NOT part of the build cost.")
+                self._bd_ej_tip = _tte
+                _cap.setToolTip(_tte); _val.setToolTip(_tte)
+                _cap.setVisible(False); _val.setVisible(False)
             _detail_val_lbls[_rlabel] = _val
             _detail_caps[_rlabel] = _cap
         _profit_val_lbls = {}
@@ -3126,7 +3280,7 @@ class BauplanFenster:
         _set_row = QVBoxLayout()
         _set_row.setContentsMargins(18, 0, 0, 0)
         _set_row.setSpacing(6)
-        st_details_grid.addLayout(_set_row, 0, 4, 12, 1)
+        st_details_grid.addLayout(_set_row, 0, 4, 13, 1)
         st_details_grid.setColumnStretch(4, 2)
         # Beschriftung + Feld bleiben zusammen (Label, Widget, Label, Widget …)
         # - ein Label ohne sein Feld daneben ist keine Zeile, sondern Raetsel.
@@ -3682,10 +3836,10 @@ class BauplanFenster:
         # Name. Die Blaupausen-Frage darunter ist die feinste Stufe.
         _rcv.addWidget(self._collapsible(
             _txt("Blacklist"),
-            # STANDARD OFFEN (Nutzer, Sitzung 20) - die Gruppen-Haekchen sind
-            # eine Einstellung, die man beim Planen sehen will, keine, die man
-            # sucht.
-            self._build_blacklist_compact(), expanded=True, accent=theme.AMBER))
+            # STANDARD ZU (Nutzer 10.10.2026: "im Bauplan Blacklist und Do i
+            # have the blueprints bitte standardmaessig ab jetzt eingeklappt
+            # lassen" - ERSETZT den Sitzung-20-Entscheid "Standard offen").
+            self._build_blacklist_compact(), expanded=False, accent=theme.AMBER))
         # TITEL SAGT, WAS DIE HAEKCHEN TUN (Nutzer, Sitzung 20: "Categories
         # sagt zu wenig ueber die Funktionalitaet aus ... eher: habe ich
         # Blueprints oder muss ich kaufen"). Die Karte ist die feine Fassung
@@ -4386,16 +4540,15 @@ class BauplanFenster:
                 _lsid = _bs.get("link_structure_id")
                 if _lsid:
                     _bekannt.add(int(_lsid))
+            # DIE ZAEHLUNG KOMMT AUS EINER STELLE (emm536): derselbe Helfer,
+            # den der Blueprints-Reiter bei jedem Neuaufbau aus dem Cache
+            # ruft - sonst gibt es wieder zwei Staende, von denen einer
+            # altert (Regel 9).
+            counts, bpc_runs = self.bp_besitz_zaehlen(owned_bp)
             for b in owned_bp:
                 tid = b.get("type_id")
                 if not tid:
                     continue
-                if b.get("is_bpo"):
-                    counts[tid] = counts.get(tid, 0) + int(b.get("quantity", 1) or 1)
-                else:
-                    qty = int(b.get("quantity", 1) or 1)
-                    runs = int(b.get("runs", 0) or 0)
-                    bpc_runs[tid] = bpc_runs.get(tid, 0) + qty * runs
                 # OHNE verknuepfte Bau-Struktur wird NICHTS gezaehlt: dann ist
                 # "anderswo" keine Aussage, sondern eine Behauptung.
                 if _bau_orte:
@@ -4421,8 +4574,21 @@ class BauplanFenster:
                     "own is missing here.").format(names=", ".join(_bpf)))
                 bp_tab_status.setStyleSheet(f"color:{theme.RED}; font-weight:700;")
             else:
-                bp_tab_status.setText("")
-                bp_tab_status.setStyleSheet("")
+                # NUR EINE LAGE, KEIN FEHLSCHLAG (emm517): ohne Director-Rolle
+                # bzw. ohne angekreuzten Hangar schaut Eve MoMa im Corp-Hangar
+                # gar nicht nach. Wer keine Industrie-Corp hat, haette sonst
+                # dauerhaft eine rote Zeile - gedaempft statt Alarm, und die
+                # Kaufliste bleibt frei (der Besitz ist ja vollstaendig).
+                _bpi517 = [f for f in
+                           (getattr(self, "_bd_bp_corp_info", None) or []) if f]
+                if _bpi517:
+                    bp_tab_status.setText(_txt479(
+                        "Not read: {names} – only matters if you keep "
+                        "blueprints there.").format(names=", ".join(_bpi517)))
+                    bp_tab_status.setStyleSheet(f"color:{theme.MUTED};")
+                else:
+                    bp_tab_status.setText("")
+                    bp_tab_status.setStyleSheet("")
             _refill_schedule()   # Tabelle mit neuen Besitz-Daten neu füllen
 
         def _load_bp_ownership():
@@ -4484,7 +4650,11 @@ class BauplanFenster:
         mat_copy_btn = self._bd_mat_copy_btn = QPushButton(
             _txt("Create shopping list"))
         mat_copy_btn.setIcon(icons.icon("cart"))
-        _rest_only_cb = QCheckBox(_txt("only what is still missing"))
+        # AN self MERKEN (emm547): `_einkauf_jetzt` liest denselben Haken,
+        # damit die Detail-Zeile "Einkauf jetzt" genau die Liste nennt, die
+        # der Knopf daneben kopiert.
+        _rest_only_cb = self._bd_rest_only_cb = QCheckBox(
+            _txt("only what is still missing"))
         _rest_only_cb.setToolTip(_txt(
             "ON: only the material for the runs that are still OPEN \u2013 the "
             "list shrinks while you build (same calculation as \u201eCheck "
@@ -4607,14 +4777,12 @@ class BauplanFenster:
             # NICHT an `_rest` festmachen: ist ALLES gebaut, ist der
             # Restbedarf ein LEERES Dict - das sah aus wie "kein Plan" und
             # der fertige Plan wollte die volle Menge noch einmal kaufen.
-            _rest_modus = False
-            if _rest_only_cb.isChecked():
-                try:
-                    _p_rm = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
-                    _rest_modus = bool(_p_rm.get("build_runs") and _p_rm.get("build_mats"))
-                    self._restbedarf_jetzt()   # Probe: laeuft die Rest-Rechnung?
-                except Exception:
-                    _rest_modus = False   # kein Plan offen -> Vollmenge
+            # Die MENGENFRAGE steht in `_einkauf_jetzt` (emm547) - dieselbe
+            # Stelle, aus der die Detail-Zeile "Einkauf jetzt" ihr Volumen
+            # rechnet. Vorher stand sie nur hier, und der Bauplan nannte
+            # daneben das Volumen einer ANDEREN Liste.
+            _ej = self._einkauf_jetzt()
+            _rest_modus = bool(_ej["rest_modus"])
 
             # WAS MUSS ICH NOCH KAUFEN? – EINE WAHRHEIT (Sitzung 16).
             #
@@ -4632,49 +4800,9 @@ class BauplanFenster:
             #      schon Gebaute. Abgezogen wurde also Material, das erst
             #      entstehen muss.
             #
-            # Jetzt dieselbe Rechnung wie "Werkzeuge -> Fehlbedarf pruefen":
-            # `fehlbedarf_vorschau` rechnet gegen den ROHEN Live-Bestand und
-            # zaehlt die Produktion der OFFENEN Runs mit. Wer die Liste
-            # kauft, kann danach alle offenen Runs starten - das ist die
-            # Zusage, und sie steht als aa275 in der Suite.
-            _rest_fehlt = {}
-            if _rest_modus:
-                try:
-                    _rest_fehlt = {int(_m): int(_f)
-                                   for _m, _f, *_r in (self._fehlbedarf_jetzt() or [])}
-                except Exception:
-                    _rest_fehlt = {}
-
-            # ERFINDUNGSMATERIAL FAELLT SONST DURCH (Sitzung 17, Nutzer:
-            # "ich habe nicht genuegend Datacores in den Einkaufswagen
-            # bekommen, obwohl das Materials-Tab erkennt, dass ich zu wenige
-            # habe"). GEMESSEN: `_fehlbedarf_jetzt` rechnet aus
-            # plan["build_runs"]/["build_mats"] - reines FERTIGUNGS-Material.
-            # Datacores/Decryptoren stehen bewusst in eigenen Feldern
-            # (inv_buy/inv_stock_used), damit ihre Kosten nicht doppelt
-            # zaehlen. Fuer sie lieferte _rest_fehlt also 0, und alles mit 0
-            # fliegt unten aus der Liste. Ergebnis: sie fehlten still.
-            # Fuer diese Zeilen zaehlt ihre EIGENE Fehlmenge (r["missing"]) -
-            # sie haengt nicht an den offenen Runs, denn erfunden wird vorab.
-            _inv_tids = set()
-            try:
-                _p_inv = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
-                _inv_tids = {int(_t) for _t in
-                             (set(_p_inv.get("inv_buy") or {})
-                              | set(_p_inv.get("inv_stock_used") or {}))}
-            except Exception:
-                _inv_tids = set()
-
-            def _rest_kaufmenge(r):
-                """Fehlmenge dieses Materials fuer die noch OFFENEN Runs."""
-                _t = int(r["tid"])
-                if _t in _inv_tids:
-                    # Bestand zaehlt mit (27.09.2026, s. inv_kaufmenge): der
-                    # eingefrorene inv_buy allein kaufte vorhandene Decryptoren.
-                    from eve_trader.ui.mw_helpers import inv_kaufmenge
-                    return inv_kaufmenge(r.get("missing", 0), r.get("total", 0),
-                                         r.get("owned", 0))
-                return int(_rest_fehlt.get(_t, 0) or 0)
+            # Die Rechnung selbst steht in `_einkauf_jetzt`; hier wird nur
+            # noch ihre Funktion benutzt.
+            _rest_kaufmenge = _ej["rest_kaufmenge"]
 
             def _menge(r):
                 # OHNE HAKEN: der VOLLE Bedarf, aber OHNE die Stufen, die der
@@ -4729,15 +4857,9 @@ class BauplanFenster:
             # verloren (Transport, zerstoert) -> taucht wieder auf UND wird
             # zusaetzlich als "war gedeckt" markiert, damit man den
             # Unterschied zu "hatte ich nie" sieht.
-            # Nur die PROBE, ob die Rest-Rechnung laeuft - die Zahlen selbst
-            # liest `_rest_kaufmenge` aus `_rest_fehlt` (EINE Wahrheit; das
-            # frueher hier gebaute Dict las niemand, pyflakes-Fund emm485).
-            try:
-                for _x in (self._fehlbedarf_jetzt() or []):
-                    int(_x[0]), int(_x[1])
-                _rest_da = True
-            except Exception:
-                _rest_da = False
+            # Die PROBE, ob die Rest-Rechnung laeuft, steckt in
+            # `_einkauf_jetzt` - dort entsteht auch die Menge selbst.
+            _rest_da = bool(_ej["rest_da"])
             _cqty = {int(r["tid"]): {"need": int(r.get("total", 0) or 0),
                                      # Ohne Rest-Rechnung bleibt die
                                      # Plan-Menge stehen - lieber zu viel
@@ -5966,16 +6088,23 @@ class BauplanFenster:
             #   Frachtdienst  <- Feld "Frachtdienst" (ISK/m3) x Volumen
             #   Eigene Fahrt  <- Feld "Eigene Fahrt"  (Pauschale) x Fahrten
             _eigene_fahrt = float((tinfo or {}).get("cost_trip", 0) or 0)
-            _fr_in_mat = 0.0
-            if _fr_rate > 0:
-                try:
-                    _fr_in_mat = _fr_rate * sum(
-                        float(vols.get(_t, 0) or 0) * float(_q)
-                        for _t, _q in buy_map.items())
-                except Exception as _fr_err:
-                    # de_scan4: aus - Beschriftung fuer fehler.log, nicht Oberflaeche
-                    self._log_exception("Bauplan: Frachtanteil", str(_fr_err))
-                    # de_scan4: an
+            # EINE EINKAUFSLISTE FUER PREIS, VOLUMEN UND FRACHT (emm545,
+            # Nutzer-Befund 13.10.2026: Frachtdienst 46'109'654 ISK =
+            # 103'617.20 m3, seine kopierte Liste aber 104'743.48 m3).
+            # URSACHE: hier stand `buy_map` - die Mengen OHNE den
+            # Material-Puffer `bau_buy_surplus`. Gekauft und geflogen wird
+            # aber die Liste MIT Puffer (`_buy_surplus_qty`, Kopier-Knopf
+            # und Einkaufswagen), und genau die steckt in `buy_surplus`.
+            # Der Plan rechnete also mit weniger Frachtvolumen, als der
+            # Nutzer wirklich transportiert - die gefaehrliche Richtung
+            # (Regel 3): Baukosten zu klein, Gewinn zu gross.
+            # `tinfo["volume"]` IST die Summe ueber buy_surplus x vols
+            # (industry.transport_estimate) - dieselbe Zahl, die die
+            # Beschriftung der Zeile zeigt. Keine zweite Rechnung mehr
+            # (Regel 9), damit Betrag und ausgewiesene m3 nie auseinander
+            # laufen koennen.
+            _fr_vol = float((tinfo or {}).get("volume", 0) or 0)
+            _fr_in_mat = (_fr_rate * _fr_vol) if _fr_rate > 0 else 0.0
             # Der Frachtdienst zaehlt entweder im Materialpreis ODER in der
             # Transportsumme - nie in beiden. Fuer die ANZEIGE ist es dieselbe
             # Zeile; wo er verrechnet wird, sagt der Tooltip.
@@ -7036,6 +7165,20 @@ class BauplanFenster:
                 # de_scan4: an
                 _frl.setText(isk(_fracht_dienst, suffix=False)
                              if _fracht_dienst else "\u2013")
+                # DIE m3 STEHEN JETZT DANEBEN (emm545, Nutzer: er musste das
+                # Volumen aus dem ISK-Betrag zurueckrechnen, um es mit der
+                # Frachtseite zu vergleichen). Die eigene Transport-Zeile
+                # bleibt ausgeblendet, solange der Frachtraum reicht - das
+                # war seine Vorgabe; die Zahl gehoert aber an den Betrag.
+                # de_scan4: aus - interner Dict-Schluessel (siehe _detail_rows)
+                _frc = _detail_caps.get("Frachtdienst")
+                # de_scan4: an
+                if _frc is not None:
+                    _frc.setText(
+                        _txt("Freight service ({v} m\u00b3)").format(
+                            v=f"{_fr_vol:,.0f}".replace(",", "'"))
+                        if (_fracht_dienst and _fr_vol > 0)
+                        else _txt("Freight service"))
                 _frl.setToolTip(
                     _txt("ISK/m\u00b3 x volume of the shopping list. Included in the "
                          "material price (because \u201eFreight in decision\u201c is on) - "
@@ -7197,6 +7340,66 @@ class BauplanFenster:
                                  _detail_caps.get(_k_e)):
                         if _w_e is not None:
                             _w_e.setToolTip(_ekl_tip)
+                # --- EINKAUF JETZT: VOLUMEN DER LISTE, DIE ER KOPIERT ---
+                # emm547, Nutzer 13.10.2026: "ja aber ich brauche das Volumen
+                # des einkaufs !". Die Zeilen darueber rechnen ueber
+                # plan["buy"], also den Einfrier-Stand; der Kopier-Knopf
+                # rechnet den HEUTIGEN Restbedarf (bei ihm 329'380 m3 gegen
+                # 335'499 m3). Mengen und Volumen kommen deshalb aus
+                # DENSELBEN Stellen wie dort: `_einkauf_jetzt` (Regel 9),
+                # `_buy_surplus_qty` fuer den Puffer und
+                # `_item_volumes_with_esi_fix` fuer die m3.
+                #
+                # REINE ANZEIGE: keine Rechnung des Plans aendert sich, die
+                # ISK hier sind nur Fracht und stecken in KEINER Summe.
+                # de_scan4: aus - interner Dict-Schluessel (siehe _detail_rows)
+                _ej_lbl = _detail_val_lbls.get("Einkauf jetzt")
+                _ej_cap = _detail_caps.get("Einkauf jetzt")
+                # de_scan4: an
+                _ej_vol, _ej_n, _ej_ohne = 0.0, 0, 0
+                try:
+                    _ej_p = self._einkauf_jetzt()["posten"]
+                    _ej_vols = self._item_volumes_with_esi_fix(
+                        [_tv_j for _tv_j, _nv_j, _qv_j in _ej_p])[0] if _ej_p else {}
+                    for _t_j, _n_j, _q_j in _ej_p:
+                        _ej_n += 1
+                        _v_j = _ej_vols.get(int(_t_j))
+                        if not _v_j:
+                            _ej_ohne += 1
+                            continue
+                        _ej_vol += float(_v_j) * self._buy_surplus_qty(_q_j)
+                except Exception as _e_j:
+                    import traceback as _tb_j
+                    self._log_exception("Bauplan: Einkauf jetzt",
+                                        "".join(_tb_j.format_exception(_e_j)))
+                    _ej_vol, _ej_n, _ej_ohne = 0.0, 0, 0
+                _ej_rate = float(self.settings.get("bau_transport_rate", 0) or 0)
+                if _ej_lbl is not None:
+                    _ej_lbl.setText(isk(_ej_rate * _ej_vol, suffix=False)
+                                    if (_ej_rate > 0 and _ej_vol > 0) else "–")
+                    _ej_lbl.setStyleSheet(
+                        f"font-size:11px; font-weight:700; color:{theme.MUTED};")
+                    _ej_lbl.setVisible(bool(_ej_n))
+                if _ej_cap is not None:
+                    _ej_cap.setText(
+                        _txt("Purchase now ({v} m³)").format(
+                            v=f"{_ej_vol:,.0f}".replace(",", "'"))
+                        if _ej_vol > 0 else _txt("Purchase now"))
+                    _ej_cap.setVisible(bool(_ej_n))
+                # NICHT STILL: ein Posten ohne bekanntes Volumen zaehlt als
+                # 0 m3 - genau der Fehler, der aus 20 Mio/Stk 10 Mio/Stk
+                # gemacht hat (Sitzung 14). Die Warnung steht VOR der
+                # Erklaerung und verschwindet wieder, sobald das Volumen da
+                # ist (deshalb jedes Mal neu gesetzt, nicht angehaengt).
+                _ej_tip = getattr(self, "_bd_ej_tip", "") or ""
+                if _ej_ohne:
+                    _ej_tip = (_txt(
+                        "⚠ {n} position(s) without a known volume - they "
+                        "count as 0 m³ here.").format(n=_ej_ohne)
+                        + "\n\n" + _ej_tip)
+                for _w_j in (_ej_lbl, _ej_cap):
+                    if _w_j is not None:
+                        _w_j.setToolTip(_ej_tip)
                 # --- RECHTE SPALTE: die vollstaendige Gewinnrechnung ---
                 # Alle Werte stammen aus DENSELBEN Variablen, aus denen auch
                 # der Gewinn-Tooltip und die KPI-Karten gebaut werden - keine
@@ -7671,6 +7874,12 @@ class BauplanFenster:
                 # drueckte. Jetzt laufen sie hier mit (ein Abruf je
                 # Charakter, wie Assets/Jobs auch).
                 owned_bp_fresh = []
+                # BLAUPAUSEN IN JOBS GETRENNT MERKEN (emm507): dieselbe
+                # Aufteilung wie _bd_fetch_all_owned_blueprints - frei bleibt
+                # frei (Entscheid 26.09.2026), aber der Blueprints-Reiter
+                # erfaehrt, dass eine Blaupause im Kopier-/Forschungsjob
+                # EXISTIERT, statt rot "completely missing" zu behaupten.
+                bp_im_job_fresh = {}
                 bp_fetch_ok = True
                 for ch in chars:
                     try:
@@ -7680,7 +7889,14 @@ class BauplanFenster:
                         # ohne Job-Abruf holen sie sich selbst (None).
                         for _b in esi.fetch_blueprints(
                                 client_id, ch["character_id"],
-                                jobs=jobs_by_char.get(ch["character_id"])):
+                                jobs=jobs_by_char.get(ch["character_id"]),
+                                mit_belegten=True):
+                            _b["char"] = str(ch.get("character_name")
+                                             or ch.get("character_id"))
+                            if _b.get("in_job"):
+                                bp_im_job_fresh.setdefault(
+                                    int(_b.get("type_id") or 0), []).append(_b)
+                                continue
                             owned_bp_fresh.append(_b)
                     except Exception as _bp_err:
                         # Ein gescheiterter Charakter darf den ALTEN Cache
@@ -7701,6 +7917,12 @@ class BauplanFenster:
                 # dieselbe Regel wie bei den Charakteren: alter Vollstand
                 # statt Teilliste.
                 owned_bp_fresh.extend(_corp.get("blueprints") or [])
+                # Corp-Blaupausen in laufenden Corp-Jobs: gleiche Im-Job-
+                # Karte wie bei den Charakteren (REGEL CORP = CHARAKTER).
+                for _b in (_corp.get("blueprints_belegt") or []):
+                    _b["char"] = str(_b.get("_corp_name") or _txt("Corp"))
+                    bp_im_job_fresh.setdefault(
+                        int(_b.get("type_id") or 0), []).append(_b)
                 if _corp.get("bp_ok") is False:
                     bp_fetch_ok = False
 
@@ -7800,6 +8022,7 @@ class BauplanFenster:
                     # Pipeline mit zu überschreiben).
                     return {"agg": dict(_virt), "assets": {},
                             "owned_bp": owned_bp_fresh if bp_fetch_ok else None,
+                            "bp_im_job": bp_im_job_fresh if bp_fetch_ok else None,
                             "virt_map": dict(_virt), "located": False,
                             "no_locations": True, "active": active_by_product,
                             "delivered": delivered_jobs, "haken_jobs": _haken_jobs,
@@ -7848,6 +8071,7 @@ class BauplanFenster:
                         agg[t] = agg.get(t, 0) + q
                     return {"agg": agg, "assets": _assets_only,
                             "owned_bp": owned_bp_fresh if bp_fetch_ok else None,
+                            "bp_im_job": bp_im_job_fresh if bp_fetch_ok else None,
                             "virt_map": dict(_virt),
                             "loc_diag": _loc_diag, "loc_ids": _loc_ids,
                             "located": True, "loc_names": loc_names,
@@ -7981,6 +8205,10 @@ class BauplanFenster:
                 # Blaupausen-Deckel damit im selben Durchlauf an.
                 if result.get("owned_bp") is not None:
                     self._bd_owned_bp_cache = result["owned_bp"]
+                    # ... und die Im-Job-Karte dazu (emm507) - dieselbe
+                    # Quelle, derselbe Zeitpunkt: zwei Staende waeren eine
+                    # zweite Wahrheit (Regel 9).
+                    self._bd_bp_im_job = result.get("bp_im_job") or {}
                 # Rohschichten fuer planer_diagnose.txt (26.09.2026): Hangar
                 # ohne Pipeline und die Pipeline allein - nur zum Aufschreiben.
                 self._bd_hangar_only = dict(_assets)
@@ -8159,10 +8387,16 @@ class BauplanFenster:
                     if mins >= 30:
                         parts.append(_txt("\u26a0 ESI caches assets for up to 1 h \u2013 "
                                           "freshly delivered items may still be missing"))
+                _fail_zeile = None
                 if failed:
                     parts.append(_txt("\u26a0 Not loadable: {what} \u2013 the plan "
                                       "calculates WITHOUT their stock!").format(
                                           what=", ".join(failed)))
+                    # STRUKTURELL GEMERKT, nicht am Wortlaut wiedererkannt
+                    # (die dokumentierte Falle "uebersetzte Meldung nie am
+                    # Wortlaut erkennen") - der Sichtbarkeits-Filter unten
+                    # braucht genau diese eine Zeile.
+                    _fail_zeile = parts[-1]
                 # 🔒-RESERVIERUNGEN SICHTBAR MACHEN: der Abzug passiert in
                 # _recompute_bd_stock (das adone unten anstoesst) - ein
                 # still schrumpfender Bestand waere eine neue Falle. Namen
@@ -8203,16 +8437,18 @@ class BauplanFenster:
                 # Sichtbar bleibt nur, was eine ENTSCHEIDUNG ausloest: eine
                 # fremde Reservierung oder eine Warnung. Der Rest wandert
                 # unter die Maus.
-                # WORAN "wichtig" ERKANNT WIRD (Sitzung 16, zweite Fassung):
-                # frueher am Emoji-Praefix (\U0001F512 / \u26a0). Seit die
-                # Emojis raus sind, traegt nur noch die WARNUNG ein Zeichen -
-                # die Reservierungszeile wird deshalb am Text erkannt.
-                # Ein Praefix-Vergleich auf "" wuerde ALLES durchlassen; das
-                # war beim Emoji-Umbau kurz der Fall.
-                _res_kopf = _txt("Reserved by: ")
-                _wichtig = [_p for _p in parts
-                            if _p.lstrip().startswith("\u26a0")
-                            or _res_kopf.strip() in _p]
+                # NUR NOCH DIE EINE WARNUNG, DIE DIE RECHNUNG AENDERT
+                # (Nutzer 10.10.2026, Screenshot der Karte: "nimm diese
+                # Anzeigen raus die sind verwirrend und zu viel Text!" -
+                # gemeint: Director-Rolle, ESI-Cache-Hinweis und die
+                # "Reserved by"-Zeile). ERSETZT den Sitzung-16-Filter "jede
+                # \u26a0-Zeile + Reservierung". Sichtbar bleibt allein "Not
+                # loadable" - dann rechnet der Plan OHNE diesen Bestand
+                # (kostet ISK; steht zusaetzlich in Statuszeile + Hinweis).
+                # ALLES andere wandert vollstaendig in den Tooltip; die
+                # Reservierungs-Auskunft gibt es weiter je Zeile im
+                # Materialien-Tab ("0 - von anderen Plaenen reserviert").
+                _wichtig = [_fail_zeile] if _fail_zeile else []
                 asset_age_lbl.setText("\n".join(_wichtig))
                 asset_age_lbl.setVisible(bool(_wichtig))
                 asset_age_lbl.setToolTip("\n".join(parts))

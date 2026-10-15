@@ -355,6 +355,14 @@ def _fetch_all_assets(client_id: str, character_id: int) -> list:
     headers = _auth_headers(client_id, character_id)
     first = _get_with_retry(base, params={"page": 1}, headers=headers, timeout=30)
     first.raise_for_status()
+    # DATENSTAND MITSCHREIBEN (emm528, Nutzer: "hat ESI evtl. noch nicht
+    # getrackt? ich habe es seit ca. 10 Minuten"). Er hatte 5 R.A.M.-
+    # Robotics im Hangar, Stock locations meldete "fehlt 5". Diese
+    # Funktion warf den Last-Modified-Header weg - anders als die
+    # Zwillingsfunktion `fetch_hangar_assets` daneben. Ohne ihn konnte die
+    # Seite nicht sagen, wie alt ihr Bestand ist, und zeigte nur den
+    # Abruf-Zeitpunkt ("as of 15:42"), der nichts ueber die Daten aussagt.
+    _record_assets_meta(character_id, first)
     pages = int(first.headers.get("X-Pages", "1"))
     assets = list(first.json())
     for p in range(2, pages + 1):
@@ -1521,11 +1529,56 @@ def fetch_contract_items(contract_id: int) -> list:
 
 
 def resolve_structure(client_id: str, character_id: int, structure_id: int) -> dict:
-    """Name + solar system of a player structure (needs esi-universe.read_structures.v1)."""
+    """Name + solar system of a player structure (needs esi-universe.read_structures.v1).
+
+    GECACHED (emm553, Nutzer 15.10.2026: Fund in seiner eigenen fehler.log
+    direkt beim Programmstart - "error budget EXHAUSTED" fuer ein Dutzend
+    verschiedener Strukturen, gefolgt von blockierten Orders/Assets/
+    Blueprints/Industry-Jobs mehrerer Charaktere). Diese Funktion wird von
+    10 Stellen in der Oberflaeche aufgerufen und hatte BISHER KEIN Caching -
+    bei jedem Start wurden ALLE in gespeicherten Plaenen referenzierten
+    Strukturen frisch ueber ESI abgefragt, viele davon ohne Andockrecht
+    (403). Jeder 403 zaehlt gegen das GEMEINSAME ESI-Fehlerbudget (CCP,
+    ~100 je Zeitfenster) - das leerte das Budget schon beim Start und
+    blockierte dadurch wichtigere, nachfolgende Abrufe fuer die Dauer der
+    CCP-Sperre (30-60s). Siehe store.py (structure_cache) fuer die Tabelle.
+
+    Name/System einer Struktur aendern sich praktisch nie -> Erfolge lange
+    gecached (STRUCT_CACHE_OK_TAGE). Ein verweigerter Zugriff KANN sich
+    aendern (Standings, Rollen, neue Struktur) -> nur kurz gecached
+    (STRUCT_CACHE_FAIL_TAGE), damit ein spaeter erteiltes Andockrecht nicht
+    dauerhaft als "geht nicht" stehen bleibt. Andere Fehler (5xx, Netzwerk,
+    420) werden NIE gecacht - das sind transiente Stoerungen, keine
+    Eigenschaft der Struktur."""
+    sid = int(structure_id)
+    cached = store.cached_structure(sid)
+    if cached is not None:
+        _ttl_tage = (store.STRUCT_CACHE_OK_TAGE if cached.get("ok")
+                     else store.STRUCT_CACHE_FAIL_TAGE)
+        if (time.time() - float(cached.get("updated_at") or 0)) < _ttl_tage * 86400:
+            if cached.get("ok"):
+                return {"name": cached.get("name"),
+                        "solar_system_id": cached.get("solar_system_id"),
+                        "type_id": cached.get("type_id")}
+            # Erinnerter Fehlschlag: denselben Fehler nachbilden, OHNE ESI
+            # erneut zu belasten - genau das ist der Zweck des Caches.
+            raise requests.exceptions.HTTPError(
+                f"{sid}: structure access denied (cached, no re-check for "
+                f"{store.STRUCT_CACHE_FAIL_TAGE} day(s))")
     url = f"{config.ESI_BASE}/universe/structures/{structure_id}/"
-    r = _get_with_retry(url, headers=_auth_headers(client_id, character_id), timeout=30)
-    r.raise_for_status()
-    return r.json()  # {name, solar_system_id, type_id, ...}
+    try:
+        r = _get_with_retry(url, headers=_auth_headers(client_id, character_id),
+                            timeout=30)
+    except requests.exceptions.HTTPError as e:
+        _code = getattr(getattr(e, "response", None), "status_code", None)
+        if _code in (403, 404):
+            store.save_structure(sid, ok=False)
+        raise
+    data = r.json() or {}  # {name, solar_system_id, type_id, ...}
+    store.save_structure(sid, name=data.get("name"),
+                         solar_system_id=data.get("solar_system_id"),
+                         type_id=data.get("type_id"), ok=True)
+    return data
 
 
 def resolve_station(station_id: int) -> dict:

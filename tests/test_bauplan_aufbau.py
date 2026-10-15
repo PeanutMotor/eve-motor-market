@@ -33,6 +33,13 @@ for _strom in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
+# ZEITMESSUNG: so FRUEH wie moeglich anfangen (emm550, Erklaerung unten bei
+# `_zeitpunkte550`) - sonst fehlen die Importe und der Fensteraufbau.
+_zeit550 = os.environ.get("EMM_B_ZEIT") == "1"
+if _zeit550:
+    import time as _time550
+    _tproc550 = _time550.perf_counter()
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # PROJEKTWURZEL (Ordnerstruktur 18.09.2026): die Suite liegt in tests\,
 # alles, was sie liest, relativ zur Wurzel (eve_trader\, pruefe.py, ...).
@@ -60,7 +67,8 @@ except Exception:                                        # pragma: no cover
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QTabWidget, QApplication, QComboBox, QPushButton, QLabel,
                                QTableWidget, QTreeWidget, QCheckBox,
-                               QPlainTextEdit, QWidget, QFrame)
+                               QPlainTextEdit, QWidget, QFrame, QSpinBox,
+                               QMessageBox)
 
 _app = QApplication.instance() or QApplication([])
 # (b162) UNBEHANDELTE AUSNAHMEN IN SLOTS (pruefe.py 02.10.2026, Windows:
@@ -174,8 +182,12 @@ _ee_mod.ErstEinrichtung = _EinrichtungImTest
 # Stilllegen oben hing die Suite WEITER - an `QMessageBox.warning` im
 # ESI-Nachlauf des Bauplans ("No ESI access"). Ein modales Fenster ohne
 # Bildschirm wartet auf einen Klick, der nie kommt.
-# Die Wache sieht alle 250 ms nach: steht ein DIALOG laenger als 3 s modal
-# offen, wird er vermerkt und geschlossen. b59 macht den Vermerk rot.
+# Die Wache sieht alle 250 ms nach: steht ein DIALOG laenger als 1 s modal
+# offen, wird er vermerkt und geschlossen (emm550: vorher 3 s - jede
+# ungewollte Box kostete so drei Sekunden Laufzeit; 1 s sind immer noch
+# vier Takte, ein Fenster, das eine Pruefung selbst oeffnet und im
+# naechsten Ereignisdurchlauf schliesst, wird nicht angefasst). b59 macht
+# den Vermerk rot - und b59b am Ende des Laufs noch einmal.
 # Kein Test oeffnet selbst ein modales Fenster (gemessen: kein exec() in
 # dieser Datei) - die Wache kann also nichts Gewolltes stoeren.
 # `activeModalWidget` WIRD HIER FESTGEHALTEN: b57 taeuscht die Funktion
@@ -195,7 +207,7 @@ def _modal_wache():
         _modal_seit.clear()
         return
     _t0 = _modal_seit.setdefault(id(_w), _time_netz.time())
-    if _time_netz.time() - _t0 >= 3.0:
+    if _time_netz.time() - _t0 >= 1.0:
         _text = getattr(_w, "text", lambda: "")()
         _MODAL_UNBESTELLT.append(f"{type(_w).__name__} '{_w.windowTitle()}': "
                                  f"{str(_text)[:80]}")
@@ -207,6 +219,22 @@ _modal_timer = _QT_netz()
 _modal_timer.setInterval(250)
 _modal_timer.timeout.connect(_modal_wache)
 _modal_timer.start()
+
+# WARNBOXEN AUFSCHREIBEN STATT ZEIGEN (emm550, Tempo). GEMESSEN am
+# 13.10.2026: ohne Netz meldet der ESI-Nachlauf des Bauplans zweimal
+# `QMessageBox.warning` ("Load everything from ESI") - ein modales Fenster,
+# auf dessen Klick niemand wartet. Die Wache oben schloss es erst nach
+# 3 s, zwei Boxen kosteten also gut 6 s je Lauf (von 46 s). Schlimmer:
+# ihr Vermerk entstand NACH b59 und wurde nie geprueft - jede weitere
+# Warnbox waere unbemerkt geblieben. Deshalb hier abfangen und am ENDE
+# des Laufs pruefen (b59b): erlaubt sind nur die des ESI-Nachlaufs.
+_WARNBOXEN = []
+_warn_echt550 = QMessageBox.warning
+QMessageBox.warning = staticmethod(
+    lambda *_a550, **_k550: (
+        _WARNBOXEN.append((str(_a550[1]) if len(_a550) > 1 else "",
+                           str(_a550[2]) if len(_a550) > 2 else "")),
+        QMessageBox.Ok)[1])
 
 # Quelltext einmal einlesen: einige Pruefungen schauen auf die STRUKTUR des
 # Codes (Reihenfolge von Layout-Aufrufen o.ae.), die man am fertigen Widget
@@ -231,9 +259,29 @@ from PySide6.QtWidgets import QPushButton as _QPB23
 
 _fail = []
 
+# ZEITMESSUNG JE BLOCK (emm550, Nutzer 13.10.2026: "gut noch schneller
+# machen"). cProfile scheidet an DIESER Suite aus: b124 prueft den Profiler
+# selbst (ab Python 3.12 gibt es nur EINEN je Prozess) und die Suite endet
+# ueber os._exit - es wird also kein Profil geschrieben (emm549).
+# Deshalb eine eigene, billige Messung: mit EMM_B_ZEIT=1 merkt sich jede
+# Pruefung ihre Quelltextzeile und den Zeitpunkt; am Ende wird die Zeit
+# zwischen zwei Pruefungen dem Block zugeschlagen, in dem die ZWEITE steht
+# (Blockgrenzen sind die "# ---- (bNN)"-Marken dieser Datei). Ohne die
+# Umgebungsvariable kostet das genau ein `if` je Pruefung.
+_zeitpunkte550 = []
+if _zeit550:
+    _t0_550 = _time550.perf_counter()
+    _tc0_550 = _time550.thread_time()
+
 
 def check(label, cond):
     global _ok
+    if _zeit550:
+        _f550 = sys._getframe(1)
+        while _f550 is not None and _f550.f_code.co_name in ("check", "eq"):
+            _f550 = _f550.f_back
+        _zeitpunkte550.append((_f550.f_lineno if _f550 is not None else 0,
+                               _time550.perf_counter(), _time550.thread_time()))
     if cond:
         _ok += 1
     else:
@@ -272,6 +320,34 @@ def _pos_von(hay, needle, start=0):
         check(f"ANKER FEHLT: {needle!r:.60} nicht gefunden", False)
         return 0
 
+
+
+def _fn_quelle(src, name):
+    """Quelltext EINER Funktion aus einem grossen Text - ohne ast.parse.
+
+    WARUM (emm550, Tempo): zwei Pruefungen holten sich je EINE Funktion
+    ueber den Syntaxbaum (ast) aus dem zusammengehaengten Quelltext
+    aller ui-Dateien. Gemessen am 13.10.2026: 1,85 s (b23) und 0,66 s
+    (b17) von 46 s Gesamtlaufzeit - fuer zwei Funktionen. Abgegrenzt wird
+    der Block ueber die EINRUECKUNG, wie `_fn_src` in der aa-Suite.
+
+    Nicht gefunden -> "" (die zugehoerige Pruefung wird dann rot, die
+    Suite laeuft weiter - dieselbe Regel wie `_pos_von`).
+    """
+    import re as _re_fq
+    _m = _re_fq.search(r"^([ \t]*)def %s\(" % _re_fq.escape(name), src,
+                       _re_fq.M)
+    if _m is None:
+        check(f"ANKER FEHLT: Funktion {name!r} nicht im Quelltext", False)
+        return ""
+    _tief = len(_m.group(1))
+    _zeilen = src[_m.start():].splitlines()
+    _out = [_zeilen[0]]
+    for _z in _zeilen[1:]:
+        if _z.strip() and (len(_z) - len(_z.lstrip())) <= _tief:
+            break
+        _out.append(_z)
+    return "\n".join(_out)
 
 
 class _Recipes:
@@ -5014,7 +5090,6 @@ except Exception as _e2x:                                # pragma: no cover
 # neuesten Stand. Deshalb heisst der EVE-Knopf jetzt "EVE-Daten".
 _upd17 = [b for b in win.findChildren(QPushButton)
           if b.text() in (win.update_btn.text(), win.ver_btn.text())]
-import ast as _a17
 _src17 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
 check("b17 beide Knoepfe stehen im Fenster", len(_upd17) >= 2)
 # DIE BESCHRIFTUNGEN MUESSEN UNVERWECHSELBAR SEIN - das ist die Zusage,
@@ -5057,10 +5132,7 @@ check("b17 der Knopf in den Einstellungen bleibt erhalten",
       getattr(win, "s_ver_btn", None) is not None)
 # UND BEIDE muessen sich waehrend der Abfrage sperren und danach wieder
 # freigeben. Ohne den oberen wuerde man doppelt klicken koennen.
-_cpu17 = ""
-for _n17 in _a17.walk(_a17.parse(_src17)):
-    if isinstance(_n17, _a17.FunctionDef) and _n17.name == "check_programm_update":
-        _cpu17 = "\n".join(_src17.splitlines()[_n17.lineno - 1:_n17.end_lineno])
+_cpu17 = _fn_quelle(_src17, "check_programm_update")
 check("b17 die Abfrage sperrt beide Knoepfe, nicht nur einen",
       '("s_ver_btn", "ver_btn")' in _cpu17)
 
@@ -5388,12 +5460,7 @@ check("b23 der Baurezepte-Knopf hat ein eigenes Kontextmenue",
 check("b23 es ist mit dem Menue-Aufbau verbunden",
       "self.g_sde_btn.customContextMenuRequested.connect(" in _src_mw
       and "self._sde_kontextmenue" in _src_mw)
-_menu23 = _fn_src_mw23 = None
-import ast as _a23
-for _n23 in _a23.walk(_a23.parse(_src_mw)):
-    if isinstance(_n23, _a23.FunctionDef) and _n23.name == "_sde_kontextmenue":
-        _menu23 = "\n".join(
-            _src_mw.splitlines()[_n23.lineno - 1:_n23.end_lineno])
+_menu23 = _fn_quelle(_src_mw, "_sde_kontextmenue")
 check("b23 das Menue bietet genau die Tiefenpruefung an",
       _menu23 is not None
       and 'm.addAction(t("Deep-check values"))' in _menu23)
@@ -6360,6 +6427,40 @@ try:
     check("b41 active: ein echt laufender Job behaelt den Lauf-Punkt",
           _z_act41 is not None
           and _z_act41.icon(0).cacheKey() == _icons41.lauf_punkt().cacheKey())
+    # ---- G) GEDECKT OHNE JEDEN JOB (emm521) ----------------------------
+    # Nutzer 11.10.2026: "in einem anderen Bauplan ist jetzt Oxygen
+    # Fuelblock mit gruenem Punkt. ich glaube aber nicht dass ich das
+    # gebaut habe". Die Vorstufen-Regel (alle Verbraucher erledigt) hebt
+    # das Budget an - es gibt dazu aber weder einen gelieferten noch einen
+    # laufenden Job. Gruen hiesse hier "ESI hat geliefert" und waere eine
+    # Falschaussage.
+    # `_rest_geliefert_jetzt` setzt `_bd_vorstufen_fertig` selbst neu -
+    # hier geht es um die ANZEIGE der gedeckten Zeile, nicht um die
+    # Herkunft der Deckung, deshalb die Quelle stillgelegt.
+    _orig_rgj41 = win._rest_geliefert_jetzt
+    win._rest_geliefert_jetzt = lambda: {}
+    win._bd_vorstufen_fertig = {201, 202}
+    _vs41 = _fuelle41()
+    _s_vs41 = (_vs41.topLevelItem(_ikomp41)
+               if _ikomp41 is not None else None)
+    _z_vs41 = next((_v for _k, _v in _pos41(_s_vs41).items()
+                    if "KompA" in _k), None)
+    check("b41 ohne Job: die gedeckte Zeile traegt KEINEN gruenen Punkt",
+          _z_vs41 is not None
+          and _z_vs41.icon(0).cacheKey()
+          != _icons41.gruener_punkt().cacheKey())
+    check("b41 ohne Job: sondern den gedaempften Punkt",
+          _z_vs41 is not None
+          and _z_vs41.icon(0).cacheKey()
+          == _icons41.bestand_punkt().cacheKey())
+    check("b41 ohne Job: und der Tooltip sagt, dass nichts gebaut wurde",
+          _z_vs41 is not None
+          and ("does not need these runs any more"
+               in (_z_vs41.toolTip(0) or "")
+               or "braucht diese Runs nicht mehr"
+               in (_z_vs41.toolTip(0) or "")))
+    win._rest_geliefert_jetzt = _orig_rgj41
+    win._bd_vorstufen_fertig = set()
 except Exception as e:                                   # pragma: no cover
     import traceback
     traceback.print_exc()
@@ -6376,6 +6477,11 @@ finally:
     win._bd_active_jobs_map = win._bd_active_jobs_alle = {}
     win._bd_delivered_jobs = []
     win._bd_runplan_checked = set()
+    win._bd_vorstufen_fertig = set()
+    try:
+        win._rest_geliefert_jetzt = _orig_rgj41
+    except NameError:                                    # pragma: no cover
+        pass
 # ---------------------------------------------------------------- (b42)
 # DIE DREI BAU-SCHALTER SPERREN EINANDER (Nutzer, Sitzung 14: "komisch das
 # man beides anhacken kann, das eine sollte das andere aushebeln" / "wenn man
@@ -9205,11 +9311,15 @@ if _st66 is not None:
     # 220), die drei Lager-Kopfknoepfe min 40). Nur ausserhalb Windows -
     # dort gilt die echte 1366-Zusage oben.
     if sys.platform != "win32":
-        for _i66r in (5, 6):
+        # Je Seite ihr eigener Stand (emm540: die graue Statuszeile von
+        # Stock locations steht in ihrer eigenen Zeile und kuerzt mit
+        # "..." - gemessen 657 -> 641 px). Je enger die Ratsche, desto
+        # eher faellt ein Rueckfall HIER auf statt auf seinem Windows.
+        for _i66r, _max66r in ((5, 800), (6, 700)):
             _w66r = _st66.widget(_i66r).minimumSizeHint().width()
-            check(f"b66 Seite {_i66r} bleibt offscreen unter 820 px "
+            check(f"b66 Seite {_i66r} bleibt offscreen unter {_max66r} px "
                   f"({_w66r}; {_breiteste66(_st66.widget(_i66r))})",
-                  _w66r <= 820)
+                  _w66r <= _max66r)
 
 # ---------------------------------------------------------------- (b67)
 # WARNER FUER EINEN ALTEN ODER FALSCHEN MARKT (Nutzer, Sitzung 20).
@@ -10654,7 +10764,8 @@ finally:
 # 0.01 m3 x 445 ISK/m3 = 267 Fracht. Gesamt muss die 267 enthalten, die
 # Material-Zeile zeigt die 6'000 OHNE Fracht.
 _alt_set7v = {k: win.settings.get(k) for k in
-              ("bau_transport_rate", "bau_freight_in_decision", "bau_reprocess_on")}
+              ("bau_transport_rate", "bau_freight_in_decision", "bau_reprocess_on",
+               "bau_buy_surplus")}
 _alt_vol7v = win._item_volumes_with_esi_fix
 _alt_save7v = config.save_settings
 config.save_settings = lambda s: None
@@ -10693,6 +10804,27 @@ try:
     eq("b7v Gesamt-Baukosten ENTHALTEN die Fracht",
        _lb7v["= Baukosten gesamt"].text(),
        _isk7v(6000.0 + 267.0 + _jc7v + _sc7v + _iv7v, suffix=False))
+    # emm545: DER MATERIAL-PUFFER FLIEGT MIT (Nutzer-Befund 13.10.2026 am
+    # Fuelblock-Plan: Frachtdienst 46'109'654 ISK = 103'617.20 m3, seine
+    # kopierte Einkaufsliste aber 104'743.48 m3 - 501'195 ISK Fracht fehlten).
+    # Hier: 60 Testmat + 10 % = 66 Stueck x 0.01 m3 x 445 = 293.70.
+    win.settings["bau_buy_surplus"] = 10
+    win._bd_full_rebuild()
+    _app.processEvents()
+    _lb7v = getattr(win, "_bd_detail_val_lbls", None) or {}
+    eq("b7v Puffer 10 %: Fracht ueber die GEPUFFERTE Liste (66 x 0.01 x 445)",
+       _lb7v["Frachtdienst"].text(), _isk7v(293.7, suffix=False))
+    _frc7v = (getattr(win, "_bd_detail_caps", None) or {}).get("Frachtdienst")
+    check("b7v ... und die Beschriftung nennt die m³",
+          _frc7v is not None and "m³" in (_frc7v.text() or ""))
+    # GEGENPROBE: ohne Puffer steht wieder genau die alte Zahl da - die
+    # Aenderung wirkt NUR ueber den Puffer, nicht als stiller Zuschlag.
+    win.settings["bau_buy_surplus"] = 0
+    win._bd_full_rebuild()
+    _app.processEvents()
+    _lb7v = getattr(win, "_bd_detail_val_lbls", None) or {}
+    eq("b7v ohne Puffer unveraendert 267",
+       _lb7v["Frachtdienst"].text(), _isk7v(267.0, suffix=False))
     # KEINE ZWEITE MARGE (emm393/394, Nutzer 04.10.2026: erst "wieso steht
     # oben gross 2.3 % und unten klein 2.1 %?", nach der Vereinheitlichung
     # dann "wenn es dieselbe Zahl ist ... nimm die kleine Marge unten
@@ -14370,12 +14502,21 @@ try:
     check(f"b124 fremder Profiler aktiv: der Job laeuft trotzdem durch ({_erg124})",
           _erg124 == [5])
     # Oberflaeche: vom Start bis alles ruhig ist (keine Jobs, 2x ruhig).
+    # TAKT UND VORLAUF KOMMEN AUS `ladezeit` (emm550): mit den Vorgaben
+    # (500 ms, 2 s) musste diese EINE Pruefung 3,6 s echte Zeit abwarten.
+    # Hier werden sie klein gesetzt und im finally zurueckgestellt; die
+    # Ruhe-REGEL selbst (2x ruhig in Folge) bleibt unveraendert und wird
+    # genau so gefahren.
     from PySide6.QtTest import QTest as _QT124
+    _ruhe124 = (_lz124.RUHE_INTERVALL_MS, _lz124.RUHE_VORLAUF_S)
+    _lz124.RUHE_INTERVALL_MS, _lz124.RUHE_VORLAUF_S = 20, 0.05
     _lz124.ui_start("b124 Plan")
     _wk_alt124 = list(getattr(win, "_workers", []) or [])
     win._workers = []
     win._ladezeit_warten()
-    _QT124.qWait(3600)
+    _QT124.qWait(int(_lz124.RUHE_VORLAUF_S * 1000)
+                 + 4 * int(_lz124.RUHE_INTERVALL_MS) + 150)
+    _lz124.RUHE_INTERVALL_MS, _lz124.RUHE_VORLAUF_S = _ruhe124
     win._workers = _wk_alt124
     _txt124b = open(_lz124.DATEI, encoding="utf-8").read()
     check("b124 Oberflaechen-Messung endet von selbst, wenn alles ruhig ist",
@@ -15402,6 +15543,43 @@ try:
         _n142 = [_t142.item(r, 0).text() for r in range(_t142.rowCount())]
         check(f"b142 T1-Plan mit 20 %: nur 'Kandidat T1' ({_n142})",
               _n142 == ["Kandidat T1"])
+        # ITEM-BILD IN DER ERSTEN SPALTE (emm548, Nutzer 13.10.2026:
+        # "suggested products ... hat keine Bilder mehr der products").
+        # Gefragt wird NICHT, ob ein Bild im Cache liegt (das haengt am
+        # Rechner), sondern ob die Zeile das Bild NIMMT, das `_table_icon`
+        # liefert - und ob der Hintergrund-Nachtrag angestossen wird.
+        from PySide6.QtGui import (QPixmap as _QPx142, QIcon as _QIc142)
+        _ic_alt142 = win._table_icon
+        _pref142 = []
+        _pf_alt142 = win._icon_prefetch_pending
+        try:
+            _px142 = _QPx142(20, 20)
+            _px142.fill()
+            win._table_icon = lambda tid, size=20, kind="icon": (
+                _QIc142(_px142) if int(tid) == 901 else None)
+            win._icon_prefetch_pending = lambda cb=None: _pref142.append(cb)
+            _d142i = win._multi_vorschlag_fenster()
+            _it142 = win._bd_vorschlag_tbl.item(0, 0)
+            check("b142 die Zeile traegt das Item-Bild",
+                  _it142 is not None and not _it142.icon().isNull())
+            check("b142 ... und der Nachtrag wird angestossen",
+                  len(_pref142) == 1 and callable(_pref142[-1]))
+            # GEGENPROBE: ohne Bild im Cache bleibt die Zeile ohne - kein
+            # Platzhalter (dieselbe Regel wie in allen anderen Tabellen).
+            win._table_icon = lambda tid, size=20, kind="icon": None
+            _d142i.close()
+            _d142o = win._multi_vorschlag_fenster()
+            check("b142 ohne Bild bleibt die Zeile leer, kein Platzhalter",
+                  win._bd_vorschlag_tbl.item(0, 0).icon().isNull())
+            # Der Nachtrag traegt nach, sobald das Bild da ist.
+            win._table_icon = lambda tid, size=20, kind="icon": _QIc142(_px142)
+            (_pref142[-1] or (lambda: None))()
+            check("b142 der Nachtrag traegt das Bild nach",
+                  not win._bd_vorschlag_tbl.item(0, 0).icon().isNull())
+            _d142o.close()
+        finally:
+            win._table_icon = _ic_alt142
+            win._icon_prefetch_pending = _pf_alt142
         _d142.close()
         # FENSTER-REIHENFOLGE (emm353, Nutzer: "Tools -> Suggestions: das
         # Fenster geht auf, aber der Bauplan rutscht ganz nach hinten" -
@@ -18162,9 +18340,19 @@ try:
         product_to_bp = {}
     _alt196 = {k: getattr(win, k, None) for k in (
         "_bd_opts", "_bd_bp_owned_counts", "_bd_bp_owned_bpc_runs",
-        "_bd_bp_fehler", "_bd_bp_kaufliste", "_bd_owned_bp_cache")}
+        "_bd_bp_fehler", "_bd_bp_kaufliste", "_bd_owned_bp_cache",
+        "_bd_bp_im_job")}
     _fb196 = esi.fetch_blueprints
     _lc196 = store.list_characters
+    # Schritt (1)-(5) pruefen NUR den Charakter-Abruf (fetch_blueprints),
+    # nicht den Corp-Hangar - erst Schritt (6) handelt bewusst von Corp und
+    # ersetzt dafuer _corp_blaupausen komplett. Ohne diesen Riegel haengt
+    # Schritt (3) am gerade zufaelligen Stand von use_corp/corp_divisions:
+    # ist er (aus irgendeinem Grund) an, ruft _bd_fetch_all_owned_blueprints
+    # den ECHTEN Corp-Pfad mit auf, und b196 Peanut/Fredy (ohne echtes Token)
+    # landen ungewollt als "re-link needed" in _bd_bp_fehler.
+    _alt_uc196 = win.settings.get("use_corp")
+    win.settings["use_corp"] = False
     try:
         _jobs196 = [
             {"tid": 983001, "bp_id": 983101, "activity": I.MANUFACTURING,
@@ -18174,6 +18362,8 @@ try:
         win._bd_bp_owned_counts = {}
         win._bd_bp_owned_bpc_runs = {}
         win._bd_bp_fehler = []
+        win._bd_bp_im_job = {}
+        win._bd_owned_bp_cache = []
         _tbl196 = _QTW196(0, 7)
         win._fill_blueprint_tab(_jobs196, [], _Rec196(), _tbl196)
         def _pill196(tbl):
@@ -18220,15 +18410,212 @@ try:
            [f for f in (win._bd_bp_fehler or []) if "b196" in f], ["b196 Peanut"])
         check(f"b196 ... und die Blaupausen des anderen kommen trotzdem an "
               f"({len(_bp196)})", len(_bp196) == 1)
+        # (4) BLAUPAUSE IM LAUFENDEN KOPIERJOB (emm507, Nutzer: "Was ich
+        # allerdings habe ist Prophecy und Magnate Blueprint Originale,
+        # diese sind jetzt aber im Kopiervorgang ingame" - die Zeile stand
+        # rot "completely missing"): AMBER "im Job", keine Kaufliste mit
+        # ihr, und der Besitz-Tooltip nennt den Charakter.
+        win._bd_bp_fehler = []
+        win._bd_bp_im_job = {983101: [
+            {"type_id": 983101, "quantity": 1, "is_bpo": True,
+             "char": "b196 Peanut", "in_job": {"activity_id": 5}}]}
+        # emm508: der Tooltip nennt den ORT, aber nur wenn er NICHT eine
+        # Bau-Struktur des Plans ist (Nutzer: "nur fuer Sachen die nicht
+        # vor Ort sind"). Eintrag 1 liegt an einer gemerkten fremden
+        # Station, Eintrag 2 (im Job) traegt keinen Ort -> kein Zusatz.
+        _lon196 = win.settings.get("lager_ort_namen")
+        win.settings["lager_ort_namen"] = {"777001": "b196 Fremdort"}
+        win._bd_owned_bp_cache = [
+            {"type_id": 983101, "quantity": 1, "is_bpo": True,
+             "runs": -1, "char": "b196 Fredy", "location_id": 777001},
+            # emm509: zweiter Eintrag an UNBEKANNTEM Ort (Container/fremde
+            # Station, nicht aufloesbar) - Menge 2, damit die Zaehlung der
+            # Pille sichtbar ueber quantity summiert.
+            {"type_id": 983101, "quantity": 2, "is_bpo": False,
+             "runs": 5, "char": "b196 Peanut", "location_id": 888001}]
+        win._bd_bp_owned_counts = {983101: 1}
+        _tbl196c = _QTW196(0, 7)
+        win._fill_blueprint_tab(_jobs196, [], _Rec196(), _tbl196c)
+        _tt196c = _tbl196c.item(0, 5).toolTip() or ""
+        check("b196 Besitz-Tooltip nennt den fremden Ort (emm508)",
+              "b196 Fremdort" in _tt196c
+              and ("NOT a build structure" in _tt196c
+                   or "KEINE Bau-Struktur" in _tt196c))
+        # emm509 (Nutzer: "ja vielleicht in einer anderen farbe"): der
+        # Ort-Zusatz steht SICHTBAR in der Status-Pille - amber fuer den
+        # beweisbar fremden Ort, grau (MUTED) fuer unbekannte Orte, je mit
+        # der Stueckzahl.
+        from eve_trader.ui import theme as _th196
+        _s196w = _pill196(_tbl196c)
+        check("b196 Pille traegt beide Ort-Zusaetze in eigener Farbe "
+              f"(emm509) ({_s196w})",
+              ("not at the build structure" in _s196w
+               or "nicht an der Baustruktur" in _s196w)
+              and ("location unknown" in _s196w or "Ort unbekannt" in _s196w)
+              and "(1" in _s196w and "(2" in _s196w
+              and f"color:{_th196.AMBER}" in _s196w
+              and f"color:{_th196.MUTED}" in _s196w)
+        # jetzt der eigentliche Im-Job-Fall ohne freien Besitz
+        win._bd_owned_bp_cache = []
+        win._bd_bp_owned_counts = {}
+        win.settings["lager_ort_namen"] = _lon196 or {}
+        _tbl196c = _QTW196(0, 7)
+        win._fill_blueprint_tab(_jobs196, [], _Rec196(), _tbl196c)
+        _s196c = _pill196(_tbl196c)
+        check(f"b196 im Kopierjob: NICHT 'completely missing' ({_s196c})",
+              "missing" not in _s196c and "fehlt komplett" not in _s196c
+              and ("in a job" in _s196c or "im Job" in _s196c))
+        # emm509-Gegenprobe: der Ort-Zusatz gilt NUR bei "genug" (gruen) -
+        # die amberne Im-Job-Pille bleibt ohne Farb-Span.
+        check("b196 keine Ort-Spans an einer nicht-gruenen Pille",
+              "<span" not in _s196c)
+        eq("b196 ... und die Kaufliste ist LEER (er besitzt sie ja)",
+           win._bd_bp_kaufliste, [])
+        check("b196 ... Spalte 'Besitze' sagt 'im Job', Tooltip nennt den "
+              "Charakter",
+              "job" in _tbl196c.item(0, 5).text().lower()
+              and "b196 Peanut" in (_tbl196c.item(0, 5).toolTip() or ""))
+        # (5) DER ABRUF SORTIERT SELBST EIN: ein in_job-Eintrag landet in
+        # `_bd_bp_im_job` (mit Besitzer), NIE in der freien Liste.
+        def _fb196y(cid_, c, jobs=None, mit_belegten=False):
+            return [{"item_id": 2, "type_id": 983102, "quantity": 1,
+                     "material_efficiency": 0, "time_efficiency": 0,
+                     "runs": -1, "is_bpo": True, "location_id": 60003760,
+                     "in_job": {"job_id": 9, "activity_id": 5,
+                                "end_date": "2099-01-01T00:00:00Z"}}]
+        esi.fetch_blueprints = _fb196y
+        store.list_characters = lambda: [
+            {"character_id": 983303, "character_name": "b196 Gotflow"}]
+        _bp196y = win._bd_fetch_all_owned_blueprints(force=True, merken=False)
+        check("b196 in_job-Blaupause: nicht frei, aber in _bd_bp_im_job mit "
+              "Besitzer",
+              _bp196y == []
+              and [e.get("char") for e in
+                   (win._bd_bp_im_job or {}).get(983102, [])] == ["b196 Gotflow"])
+        # (6) DER CORP-ABRUF SCHEITERT LEISE (emm516, Nutzer 11.10.2026:
+        # "mir fehlen keine blaupausen", waehrend der Reiter zehn
+        # Reaktionsformeln rot zeigte). `_corp_blaupausen` WIRFT nicht, es
+        # MELDET - failed/ohne_rolle/relink/keine_division. Gelesen wurde nur
+        # `blueprints`: eine Formel im Corp-Hangar stand damit rot als
+        # "completely missing" und landete in "Buy Missing Blueprints".
+        # Jetzt stehen alle vier Gruende in `_bd_bp_fehler` - und damit
+        # greift der emm479-Riegel (amber "?", keine Kaufliste).
+        esi.fetch_blueprints = lambda *a, **k: []
+        win._corp_blaupausen = lambda *a, **k: {
+            "blueprints": [], "failed": ["b196 Corp blueprints: Acme"],
+            "ohne_rolle": ["b196 Acme"], "relink": ["b196 Fredy"],
+            "keine_division": True}
+        win._bd_fetch_all_owned_blueprints(force=True, merken=False)
+        _f196z = [str(f) for f in (win._bd_bp_fehler or [])]
+        check(f"b196 Corp: der gescheiterte Abruf steht in _bd_bp_fehler "
+              f"({_f196z})", "b196 Corp blueprints: Acme" in _f196z)
+        _i196z = [str(f) for f in (win._bd_bp_corp_info or [])]
+        check(f"b196 Corp: fehlende Director-Rolle wird gemeldet ({_i196z})",
+              any("b196 Acme" in f and "Director" in f for f in _i196z))
+        # emm517: keine Rolle / kein Hangar sind KEIN Fehlschlag - sonst
+        # steht bei jedem ohne Industrie-Corp dauerhaft eine rote Zeile.
+        check("b196 Corp: die Lage steht NICHT in _bd_bp_fehler",
+              not any("Director" in f for f in _f196z))
+        check("b196 Corp: fehlender Corp-Scope wird gemeldet",
+              any("b196 Fredy" in f and ("re-link" in f or "verlink" in f)
+                  for f in _f196z))
+        check("b196 Corp: kein angekreuzter Hangar wird gemeldet",
+              any("division" in f.lower() or "angekreuzt" in f
+                  for f in _i196z))
     finally:
         esi.fetch_blueprints = _fb196
         store.list_characters = _lc196
+        try:
+            del win._corp_blaupausen
+        except AttributeError:
+            pass
         for _k, _v in _alt196.items():
             setattr(win, _k, _v)
+        if _alt_uc196 is None:
+            win.settings.pop("use_corp", None)
+        else:
+            win.settings["use_corp"] = _alt_uc196
+        # emm508: Test-Ortsname nie in .smoke_home zuruecklassen (Suiten-
+        # Zustand ueberlebt Laeufe - die dokumentierte b46-Falle).
+        if "_lon196" in globals():
+            win.settings["lager_ort_namen"] = _lon196 or {}
 except Exception as _e196:                               # pragma: no cover
     import traceback as _tb196
     _fail.append(f"b196 Blaupausen-Abruf: {type(_e196).__name__}: {_e196} | "
                  + _tb196.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b202)
+# DIE STATUS-PILLE DARF NICHT GESTAUCHT WERDEN (emm515, Nutzer 11.10.2026:
+# "teilweise auch unlesbar zerdrueckt"). GEMESSEN am echten Reiter mit dem
+# echten Thema: `QTableWidget::item` nimmt oben und unten Polster, die Zeile
+# blieb auf 30 px - die Pille bekam 14 statt ihrer 19 px, der Text lag halb
+# ausserhalb. Eigener Block (nicht an b196 angehaengt): ein Abbruch dort
+# darf diese Zusage nicht verschlucken (Lehre b89).
+try:
+    from PySide6.QtWidgets import (QTableWidget as _QTW202, QLabel as _QL202)
+    from eve_trader.ui import theme as _th202
+
+    class _Rec202:
+        invention_for_bpc = {}
+        activity_max_runs = {}
+        reaction_products = set()
+        bp_materials = {}
+        product_to_bp = {}
+    _alt202 = {k: getattr(win, k, None) for k in (
+        "_bd_opts", "_bd_bp_owned_counts", "_bd_bp_owned_bpc_runs",
+        "_bd_bp_fehler", "_bd_bp_kaufliste", "_bd_owned_bp_cache",
+        "_bd_bp_im_job")}
+    try:
+        win._bd_opts = {}
+        win._bd_bp_owned_counts = {}
+        win._bd_bp_owned_bpc_runs = {}
+        win._bd_bp_fehler = []
+        win._bd_bp_im_job = {}
+        win._bd_owned_bp_cache = []
+        # Zwei Zeilen mit LANGEM Status ("completely missing - you need n") -
+        # genau die, die auf seinem Schirm abgeschnitten waren.
+        _jobs202 = [
+            {"tid": 984001, "bp_id": 984101, "activity": I.MANUFACTURING,
+             "runs": 7, "name": "b202 Sylramic Fibers"},
+            {"tid": 984002, "bp_id": 984102, "activity": I.MANUFACTURING,
+             "runs": 3, "name": "b202 Fullerides"}]
+        _tbl202 = _QTW202(0, 7)
+        _tbl202.setStyleSheet(_th202.QSS)      # ohne das Thema kein Polster
+        win._fill_blueprint_tab(_jobs202, [], _Rec202(), _tbl202)
+        _tbl202.resize(1200, 200)
+        _tbl202.show()
+        _app.processEvents()
+        check(f"b202 der Reiter hat die zwei Zeilen ({_tbl202.rowCount()})",
+              _tbl202.rowCount() == 2)
+        _eng202 = []
+        for _r202 in range(_tbl202.rowCount()):
+            _w202 = _tbl202.cellWidget(_r202, 6)
+            _p202 = _w202.findChild(_QL202) if _w202 is not None else None
+            if _p202 is None:
+                _eng202.append((_r202, "keine Pille", 0, 0))
+                continue
+            _soll202 = _p202.sizeHint().height()
+            if _p202.height() < _soll202:
+                _eng202.append((_r202, _p202.text()[:20], _p202.height(), _soll202))
+        check(f"b202 jede Pille bekommt ihre volle Hoehe ({_eng202})",
+              not _eng202)
+        # Und die Zeile traegt sie: Hoehe >= sizeHint + Zell-Polster.
+        _zu202 = []
+        for _r202 in range(_tbl202.rowCount()):
+            _p202 = _tbl202.cellWidget(_r202, 6).findChild(_QL202)
+            _noetig202 = _p202.sizeHint().height() + _th202.ZELL_POLSTER_V
+            if _tbl202.rowHeight(_r202) < _noetig202:
+                _zu202.append((_r202, _tbl202.rowHeight(_r202), _noetig202))
+        check(f"b202 die Zeilenhoehe traegt Pille + Zell-Polster ({_zu202})",
+              not _zu202)
+        _tbl202.hide()
+    finally:
+        for _k, _v in _alt202.items():
+            setattr(win, _k, _v)
+except Exception as _e202:                               # pragma: no cover
+    import traceback as _tb202
+    _fail.append(f"b202 Pillen-Hoehe: {type(_e202).__name__}: {_e202} | "
+                 + _tb202.format_exc().splitlines()[-3].strip())
 
 
 # ---------------------------------------------------------------- (b155)
@@ -19275,7 +19662,8 @@ try:
     _alt171 = {k: win.__dict__.get(k, "<weg>") for k in
                ("_bd_invention_needs", "_bd_inv_split", "_bd_inv_slots",
                 "_bd_active_jobs_alle", "_bd_runplan_checked",
-                "_bd_decryptor_map", "_sched_tree_ref", "_bd_science_names")}
+                "_bd_decryptor_map", "_sched_tree_ref", "_bd_science_names",
+                "_bd_bp_owned_counts")}
     _alt171s = {k: win.settings.get(k, "<weg>") for k in
                 ("bau_copy_chars", "bau_invention_chars", "bau_char_slots")}
     _alt171lc = store.list_characters
@@ -19434,6 +19822,140 @@ try:
                    if k == "stufe|invention"]) == 1
               and _za2 is not None and _za2.text(1) == "4"
               and "char|inv|9002" not in _ic2)
+        # AUS EINER KOPIE KANN MAN NICHT KOPIEREN (emm510, Nutzer: "ich
+        # habe 1 originale also kann ich nur 1mal kopieren ... dass muesste
+        # ich in 2 schritten erledigen"): zwei T2-Blaupausen brauchen
+        # DASSELBE T1-Original - mit EINEM Original startet der zweite
+        # Kopierjob als Welle 2 mit Grund in der Stage-Spalte, mit ZWEI
+        # Originalen laufen beide parallel.
+        _nm510 = dict(_nm171); _nm510[90173] = "b171 Xing II Blueprint"
+        _nd510 = {"datacores": [], "decryptor_id": 0, "decryptor_qty": 0,
+                  "attempts": 4, "successes_needed": 2, "inv_secs": 0,
+                  "copy_secs": 0, "runs_je_kopie": 2, "prob": 0.5,
+                  "ipa": 0.0, "cpr": 0.0, "t1": 90172}
+        win._bd_invention_needs = {90171: dict(_nd510), 90173: dict(_nd510)}
+        win._bd_inv_split = {90171: 1, 90173: 1}
+        # DER BESITZ KOMMT AUS DEM CACHE (emm536): die gespeicherte Zaehlung
+        # alterte und wird nur noch als Rueckfall gelesen - der Test setzt
+        # deshalb dieselbe Rohliste, die auch das Fenster bekommt. Die
+        # Sicherung steht VOR der ersten Zuweisung (b46-Falle: Suiten-
+        # Zustand ueberlebt Laeufe), das finally unten stellt sie zurueck.
+        _alt512 = win.__dict__.get("_bd_owned_bp_cache", "<weg>")
+        win._bd_bp_owned_counts = {}
+        win._bd_owned_bp_cache = [
+            {"type_id": 90172, "quantity": 1, "runs": -1, "is_bpo": True}]
+        _t171o = _TW171(); _t171o.setColumnCount(6)
+        win._science_block(_t171o, _nm510, {})
+        _kko = _tops(_t171o).get("stufe|copying")
+        _kco = _kinder(_kko) if _kko is not None else {}
+        check("b171 ein Original, zwei Kopierjobs -> der zweite ist Welle 2 "
+              "(emm510)",
+              "char|copy|9001" in _kco and "char|copy|9001|w2" in _kco)
+        _z510 = (_kinder(_kco["char|copy|9001|w2"]).get("copy|9001|90172|w2")
+                 if "char|copy|9001|w2" in _kco else None)
+        check("b171 ... die Zeile nennt Schritt 2 und die Original-Zahl",
+              _z510 is not None
+              and ("step 2" in _z510.text(4) or "Schritt 2" in _z510.text(4))
+              and ("(only 1" in _z510.text(4) or "(nur 1" in _z510.text(4)))
+        win._bd_owned_bp_cache = [
+            {"type_id": 90172, "quantity": 2, "runs": -1, "is_bpo": True}]
+        _t171o2 = _TW171(); _t171o2.setColumnCount(6)
+        win._science_block(_t171o2, _nm510, {})
+        _kko2 = _tops(_t171o2).get("stufe|copying")
+        _kco2 = _kinder(_kko2) if _kko2 is not None else {}
+        check("b171 zwei Originale -> beide Kopierjobs parallel (keine "
+              "Welle 2)",
+              "char|copy|9001" in _kco2
+              and "char|copy|9001|w2" not in _kco2)
+        # T1-ORIGINAL-BESITZ (emm512, sein Befund vom Sitzungsanfang: "im
+        # Hangar hatte ich nur T1 Copys liegen keine T1 Originale"): die
+        # Kopierzeile sagt es, sobald der Besitz GELADEN ist - ohne Cache
+        # bleibt sie stumm (Regel 1).
+        try:
+            win._bd_invention_needs = {90171: dict(_nd510)}
+            win._bd_inv_split = {90171: 1}
+            win._bd_bp_owned_counts = {}
+            win._bd_owned_bp_cache = None
+            _t512a = _TW171(); _t512a.setColumnCount(6)
+            win._science_block(_t512a, _nm510, {})
+            _z512a = _kinder(_kinder(_tops(_t512a)["stufe|copying"])
+                             ["char|copy|9001"])["copy|9001|90172"]
+            check("b171 ohne geladenen Besitz keine Besitz-Behauptung (emm512)",
+                  "own" not in _z512a.text(4).lower()
+                  and "besitz" not in _z512a.text(4).lower())
+            # Jetzt NUR Kopien im Hangar - genau sein Fall.
+            win._bd_owned_bp_cache = [
+                {"type_id": 90172, "quantity": 2, "is_bpo": False, "runs": 10}]
+            _t512b = _TW171(); _t512b.setColumnCount(6)
+            win._science_block(_t512b, _nm510, {})
+            _z512b = _kinder(_kinder(_tops(_t512b)["stufe|copying"])
+                             ["char|copy|9001"])["copy|9001|90172"]
+            check("b171 nur T1-Kopien im Hangar -> die Kopierzeile sagt es "
+                  f"({_z512b.text(4)})",
+                  ("only own copies" in _z512b.text(4)
+                   or "nur Kopien" in _z512b.text(4)))
+            # Gegenprobe: mit Original bleibt die Zeile sauber.
+            win._bd_owned_bp_cache = [
+                {"type_id": 90172, "quantity": 1, "is_bpo": True, "runs": -1}]
+            _t512c = _TW171(); _t512c.setColumnCount(6)
+            win._science_block(_t512c, _nm510, {})
+            _z512c = _kinder(_kinder(_tops(_t512c)["stufe|copying"])
+                             ["char|copy|9001"])["copy|9001|90172"]
+            check("b171 mit T1-Original keine Warnung (Gegenprobe)",
+                  "only own copies" not in _z512c.text(4)
+                  and "nur Kopien" not in _z512c.text(4))
+        finally:
+            if _alt512 == "<weg>":
+                win.__dict__.pop("_bd_owned_bp_cache", None)
+            else:
+                win.__dict__["_bd_owned_bp_cache"] = _alt512
+        # WO MACHT MAN DAS? (emm529, Nutzer: "im Runplanner bei Copying und
+        # Invention steht ja gar nicht, an welcher Station / Struktur man das
+        # machen soll"): beide Koepfe tragen den Strukturnamen im Format der
+        # Bau-Stufen; ohne Science-faehige Struktur behaupten sie keinen Ort.
+        _alt529 = {k: win.settings.get(k, "<weg>") for k in
+                   ("bau_structures", "bau_activity_struct")}
+        try:
+            win._bd_invention_needs = {90171: dict(_nd510)}
+            win._bd_inv_split = {90171: 1}
+            win.settings["bau_structures"] = [
+                {"id": 529001, "name": "b529 Dockside", "type": "raitaru",
+                 "security": 1.0, "rigs": []}]
+            win.settings["bau_activity_struct"] = {"invention": 529001}
+            _t529 = _TW171(); _t529.setColumnCount(6)
+            win._science_block(_t529, _nm510, {})
+            _tp529 = _tops(_t529)
+            _k529, _i529 = _tp529.get("stufe|copying"), _tp529.get("stufe|invention")
+            check("b171 Copying-Kopf nennt die Struktur (emm529: "
+                  f"{(_k529.text(0) if _k529 else '?')})",
+                  _k529 is not None and "b529 Dockside" in _k529.text(0))
+            check("b171 Invention-Kopf nennt dieselbe Struktur",
+                  _i529 is not None and "b529 Dockside" in _i529.text(0))
+            check("b171 der alte Science-Slot-Satz steht nur im Tooltip",
+                  _k529 is not None
+                  and "parallel to the build" not in _k529.text(0)
+                  and "parallel zum Bau" not in _k529.text(0)
+                  and ("parallel to the build" in _k529.toolTip(0)
+                       or "parallel zum Bau" in _k529.toolTip(0)))
+            # Refinery kann kein Invention -> KEIN Ort behauptet (Regel 1).
+            win.settings["bau_structures"] = [
+                {"id": 529002, "name": "b529 Athanor", "type": "athanor",
+                 "security": 1.0, "rigs": []}]
+            win.settings["bau_activity_struct"] = {}
+            _t529b = _TW171(); _t529b.setColumnCount(6)
+            win._science_block(_t529b, _nm510, {})
+            _k529b = _tops(_t529b).get("stufe|copying")
+            check("b171 keine Science-faehige Struktur -> Hinweis statt Ort",
+                  _k529b is not None
+                  and "b529 Athanor" not in _k529b.text(0)
+                  and ("no structure for science" in _k529b.text(0)
+                       or "keine Struktur" in _k529b.text(0)))
+        finally:
+            for _k, _v in _alt529.items():
+                if _v == "<weg>":
+                    win.settings.pop(_k, None)
+                else:
+                    win.settings[_k] = _v
         # T1-Plan (keine Versuche) -> GAR KEIN Block.
         win._bd_invention_needs = {90171: {"attempts": 0, "t1": 90172}}
         _t171c = _TW171(); _t171c.setColumnCount(6)
@@ -20145,6 +20667,45 @@ try:
         _cb194 = [win._lager_plan_cb.itemText(i) for i in range(win._lager_plan_cb.count())]
         check(f"b194 Dropdown: alle + nur der eingefrorene, offene Plan ({_cb194})",
               len(_cb194) == 2 and _cb194[1] == "b194 Plan")
+        # DIE GRAUE STATUSZEILE DRUECKT DIE KNOEPFE NICHT MEHR ZUSAMMEN
+        # (emm540, Nutzer: "haben die buttons wie Copy shoppingslist usw
+        # in Gold, kaum Platz und werden zusammengedrueckt"). Sie steht in
+        # ihrer EIGENEN Zeile - und sie kuerzt mit "..." statt die Seite
+        # breit zu machen (b66-Ratsche).
+        from PySide6.QtWidgets import QLayout as _QL194
+
+        def _zeilen194(_w194o):
+            _out194 = []
+            for _l194 in win.b_stack.widget(6).findChildren(_QL194):
+                for _i194 in range(_l194.count()):
+                    if _l194.itemAt(_i194).widget() is _w194o:
+                        _out194.append(_l194)
+            return _out194
+        _zs194 = _zeilen194(win._lager_stand_lbl)
+        _zk194 = _zeilen194(win._lager_kauf_btn)
+        check(f"b194 Statuszeile und Knopf-Zeile sind NICHT dieselbe Zeile "
+              f"({len(_zs194)}/{len(_zk194)})",
+              len(_zs194) == 1 and len(_zk194) == 1
+              and _zs194[0] is not _zk194[0])
+        _stand_alt194 = win._lager_stand_lbl.voller_text()
+        _br194 = win.b_stack.widget(6).minimumSizeHint().width()
+        win._lager_stand_lbl.setText("b194 " + ("sehr langer Stand " * 20))
+        _app.processEvents()
+        _br2_194 = win.b_stack.widget(6).minimumSizeHint().width()
+        check(f"b194 ein langer Stand macht die Seite nicht breiter - sonst "
+              f"werden die Knoepfe daneben zusammengedrueckt "
+              f"({_br194} -> {_br2_194})",
+              _br2_194 <= _br194 + 4)
+        check(f"b194 Statuszeile kuerzt mit '...' ({win._lager_stand_lbl.text()[-20:]})",
+              win._lager_stand_lbl.text() != win._lager_stand_lbl.voller_text()
+              and "sehr langer Stand" in win._lager_stand_lbl.voller_text()
+              and win._lager_stand_lbl.toolTip()
+              == win._lager_stand_lbl.voller_text())
+        check("b194 ... und die drei Kopf-Knoepfe duerfen schrumpfen (emm501)",
+              win._lager_kauf_btn.minimumWidth() <= 40
+              and win._lager_auf_btn.minimumWidth() <= 40
+              and win._lager_refresh_btn.minimumWidth() <= 40)
+        win._lager_stand_lbl.setText(_stand_alt194)
         # KARTEN JE ORT (emm461): eine Karte je Station/Struktur, Items
         # darin aufklappbar; rechts die Orts-Schalter.
         _karten194 = dict(win._lager_karten)
@@ -20181,8 +20742,12 @@ try:
         check(f"b194 ohne Suche nur Plan-Material ({sorted(_dock194)})",
               set(_dock194) == {"b194 Particle", "b194 Tritanium"}
               and set(_jita194) == {"b194 Particle"})
-        eq("b194 selbst gebautes Item: kein Fehlbetrag, obwohl 999 gebraucht "
-           "und nur 51 da sind (emm465)",
+        # WAS DER PLAN SELBST BAUT, MELDET ER NICHT (emm527) - die Zeile
+        # bleibt aber mit Menge und Ort sichtbar ("wo liegt mein Material"),
+        # nur ohne Fehlbetrag. Sein Bildschirm hat gezeigt, warum hier nicht
+        # anteilig gerechnet werden darf: diese Seite kennt den Fortschritt
+        # zu schlecht ("ich habe fast 60 Bauschleifen belegt").
+        eq("b194 selbst gebautes Item: sichtbar, aber kein Fehlbetrag",
            _dock194["b194 Tritanium"][1], "\u2713")
         eq("b194 Dockside 314 (5 lose + 293 Container + 7 Container im Container "
            "+ 9 Corp), Frachtraum zaehlt nicht",
@@ -20233,7 +20798,7 @@ try:
             _app.processEvents()
             eq("b194 Einkaufsliste in der Zwischenablage (fehlende 236 Particle)",
                _QA194.clipboard().text(), "b194 Particle\t236")
-            check("b194 ... und nichts, was die Plaene selbst bauen",
+            check("b194 ... und nichts, was dieser Plan selbst baut",
                   "b194 Ende" not in _QA194.clipboard().text()
                   and "b194 Tritanium" not in _QA194.clipboard().text())
         finally:
@@ -20334,9 +20899,9 @@ try:
         eq("b194 ... und der rote Fehlbetrag ist weg (314 + 50 + 9 > 300)",
            _dock4["b194 Particle"][1], "\u2713")
         check(f"b194 die Statuszeile sagt, dass mitgezaehlt wurde "
-              f"({win._lager_stand_lbl.text()})",
-              "1" in win._lager_stand_lbl.text()
-              and win._lager_stand_lbl.text() != "")
+              f"({win._lager_stand_lbl.voller_text()})",
+              "1" in win._lager_stand_lbl.voller_text()
+              and win._lager_stand_lbl.voller_text() != "")
         # STILL FESTSCHREIBEN (emm478, Nutzer-Entscheid): der eindeutige Job
         # gehoert ab jetzt dauerhaft diesem Plan - sonst muss der Nutzer den
         # Plan oeffnen, damit die Zuordnung ueberhaupt entsteht.
@@ -20345,9 +20910,9 @@ try:
            {919501: ("919001", 919410, 10, "eindeutig")})
         eq("b194 ... und die Seite sagt, wie viele", win._lager_daten["job_fest"], 1)
         check(f"b194 ... sichtbar in der Statuszeile "
-              f"({win._lager_stand_lbl.text()})",
-              "assigned automatically" in win._lager_stand_lbl.text()
-              or "automatisch zugeordnet" in win._lager_stand_lbl.text())
+              f"({win._lager_stand_lbl.voller_text()})",
+              "assigned automatically" in win._lager_stand_lbl.voller_text()
+              or "automatisch zugeordnet" in win._lager_stand_lbl.voller_text())
         # Zweiter Lauf: die erste Entscheidung gewinnt, nichts wird neu
         # geschrieben (INSERT OR IGNORE) - und die Meldung bleibt weg.
         win._lager_daten = None
@@ -20422,9 +20987,9 @@ try:
            (_FEST194, [j["job_id"] for j in win._lager_daten["job_offen"]]),
            ({}, [919502]))
         check(f"b194 ... und die Warnung steht sichtbar in der Statuszeile "
-              f"({win._lager_stand_lbl.text()})",
-              "no plan" in win._lager_stand_lbl.text()
-              or "keinem Plan" in win._lager_stand_lbl.text())
+              f"({win._lager_stand_lbl.voller_text()})",
+              "no plan" in win._lager_stand_lbl.voller_text()
+              or "keinem Plan" in win._lager_stand_lbl.voller_text())
         # PASST NIRGENDS GANZ: 30 Runs > jede offene Run-Zahl -> Warnung.
         _JOBS194[:] = [{"job_id": 919503, "activity_id": 1,
                         "product_type_id": 919410, "runs": 30,
@@ -21068,9 +21633,15 @@ try:
         _esi199.fetch_delivered_jobs = lambda cid, ch: list(_jobs199)
         _esi199.fetch_active_jobs = lambda cid, ch: []
         win.settings["bau_saved_plans"] = [_PLANB199, _PLANE199]
-        win._reload_saved_plans(); _app.processEvents()
+        # _run SYNCHRON VOR _reload_saved_plans (b199 war ZWEIMAL rot,
+        # 10.10.2026 - Lehre b162: ab dem zweiten Mal festnageln):
+        # _reload_saved_plans startet selbst _check_saved_plan_completions;
+        # mit dem echten _run lief das als THREAD mit den Phase-1-Jobs, und
+        # sein done() landete je nach Timing erst im processEvents von
+        # Phase 2 - und ueberschrieb den frischen 100-%-Balken mit 99 %.
         win._run = (lambda worker, done_cb, fail_cb=None, **kw:
                     done_cb(worker._fn()))
+        win._reload_saved_plans(); _app.processEvents()
         win._check_saved_plan_completions([_PLANB199, _PLANE199])
         _app.processEvents()
         _lblB199 = win._plan_done_labels.get(199000)
@@ -21224,11 +21795,551 @@ except Exception as _e200:                               # pragma: no cover
     _fail.append(f"b200 Preis-Trend-Spalten: {type(_e200).__name__}: {_e200} | "
                  + _tb200x.format_exc().splitlines()[-3].strip())
 
+# ---------------------------------------------------------------- (b201)
+# BESTAND DECKT RUNS, AM ECHTEN FENSTER (emm514, Nutzer: "es ist zu 100%
+# klar, dass der Bauplan diese Fuelblocks nicht mehr braucht" - zugekaufte
+# Helium Fuel Blocks senkten die 202 Fuel-Runs des eingefrorenen Plans nie).
+# Mini-Plan nach seinen Zahlen in `_bd_plan_ref`, gerechnet von den ECHTEN
+# Methoden (`_rest_geliefert_jetzt` -> `_bestand_fuer_deckung` ->
+# `bestand_deckt_runs` -> `_rest_runs_jetzt`): Fuel 9002 (202 Runs, 40
+# Stueck je Run), Verbraucher 9001 (329 Runs, 246 erledigt) und 9003 (672
+# Runs offen) je 5 je Run -> offener Bedarf 3'775; Bestand 3'513 ->
+# noetig 7 Runs, 195 gedeckt.
+try:
+    _keys201 = ("_bd_plan_ref", "_bd_runplan_delivered_sicher",
+                "_bd_active_jobs_map", "_bd_active_jobs_alle",
+                "_bd_runplan_checked", "_bd_runplan_runs_by_key",
+                "_bd_open_plan_id", "_bd_frozen", "_bd_opts",
+                "_bd_pipeline_live", "_bd_esi_stock_ts",
+                "_bd_buendel_enden", "_bd_bestand_runs")
+    _alt201 = {k: win.__dict__.get(k, "<weg>") for k in _keys201}
+    try:
+        win._bd_plan_ref = {"plan": {
+            "build_runs": {9001: 329, 9002: 202, 9003: 672},
+            "build_mats": {9001: [[9002, 1645]], 9003: [[9002, 3360]],
+                           9002: [[34, 202000]]},
+            "build_made": {9002: 8080}}}
+        win._bd_runplan_delivered_sicher = {9001: 246}
+        win._bd_active_jobs_map = {}
+        win._bd_active_jobs_alle = {}
+        win._bd_runplan_checked = set()
+        win._bd_runplan_runs_by_key = {}
+        win._bd_opts = {"stock": {9002: 3513}}
+        win._bd_pipeline_live = {}
+        win._bd_esi_stock_ts = None
+        win._bd_buendel_enden = None
+        win._bd_open_plan_id = 9201201
+        # (1) NICHT EINGEFROREN: production_plan hat den Bestand selbst
+        # verrechnet - hier darf NICHTS zusaetzlich sinken (Doppelabzug).
+        win._bd_frozen = None
+        _offen201a = dict(win._rest_runs_jetzt() or {})
+        _karte201a = dict(getattr(win, "_bd_bestand_runs", None) or {})
+        # (2) EINGEFROREN: der Zukauf senkt die offenen Runs auf 7.
+        win._bd_frozen = {"ts": 1.0}
+        _offen201b = dict(win._rest_runs_jetzt() or {})
+        _karte201b = dict(getattr(win, "_bd_bestand_runs", None) or {})
+        # (3) PIPELINE FRISST DEN BESTAND (Doppelzaehlungs-Riegel): der
+        # Output laufender Jobs zaehlt als erledigte Runs, nie als Bestand.
+        # Ohne Bestand senkt nur der erledigte Verbraucher-Anteil:
+        # noetig ceil(3'775/40) = 95.
+        win._bd_pipeline_live = {9002: 3513}
+        _offen201c = dict(win._rest_runs_jetzt() or {})
+        # (4) UNGESPEICHERT: keine Zuordnung, keine Senkung.
+        win._bd_pipeline_live = {}
+        win._bd_open_plan_id = None
+        _offen201d = dict(win._rest_runs_jetzt() or {})
+        _karte201d = dict(getattr(win, "_bd_bestand_runs", None) or {})
+    finally:
+        for _k, _v in _alt201.items():
+            if _v == "<weg>":
+                win.__dict__.pop(_k, None)
+            else:
+                win.__dict__[_k] = _v
+    eq("b201 nicht eingefroren: Bestand senkt NICHTS (sonst Doppelabzug)",
+       (_offen201a.get(9002), _karte201a), (202, {}))
+    eq("b201 eingefroren: Zukauf senkt die Fuel-Runs auf 7 (195 gedeckt)",
+       (_offen201b.get(9002), _karte201b.get(9002)), (7, 195))
+    eq("b201 Pipeline zaehlt nie als Bestand (sonst doppelt): Rest 95",
+       _offen201c.get(9002), 95)
+    eq("b201 ungespeichert: keine Senkung, Karte leer",
+       (_offen201d.get(9002), _karte201d), (202, {}))
+except Exception as _e201:                               # pragma: no cover
+    import traceback as _tb201
+    _fail.append(f"b201 Bestand deckt Runs: {type(_e201).__name__}: {_e201} | "
+                 + _tb201.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b203)
+# NEU GEKAUFTE BLAUPAUSEN STEHEN SOFORT DA (emm536, Nutzer 11.10.2026:
+# "jetzt wird behauptet ich habe nicht alle blueprints, aber ich habe sie"
+# -> nach "Alles aus ESI laden": "ja ploetzlich waren sie alle vorhanden").
+# Der Bestands-Refresh holt die Blaupausen seit Sitzung 8 mit, die Zaehlung
+# des Reiters entstand aber nur beim Lade-Knopf - und ueberlebte sogar das
+# Schliessen eines Bauplans. Eigener Block (Lehre b89): ein Abbruch in b196
+# darf diese Zusage nicht verschlucken.
+try:
+    from PySide6.QtWidgets import QTableWidget as _QTW203, QLabel as _QL203
+
+    class _Rec203:
+        invention_for_bpc = {}
+        activity_max_runs = {}
+        reaction_products = set()
+        bp_materials = {}
+        product_to_bp = {}
+    _alt203 = {k: getattr(win, k, None) for k in (
+        "_bd_opts", "_bd_bp_owned_counts", "_bd_bp_owned_bpc_runs",
+        "_bd_bp_fehler", "_bd_bp_kaufliste", "_bd_owned_bp_cache",
+        "_bd_bp_im_job")}
+    try:
+        _jobs203 = [
+            {"tid": 983201, "bp_id": 983301, "activity": I.MANUFACTURING,
+             "runs": 10, "name": "Hobgoblin I b203"}]
+        win._bd_opts = {}
+        win._bd_bp_fehler = []
+        win._bd_bp_im_job = {}
+        # DIE ALTE ZAEHLUNG SAGT "nichts da" - sein Stand von gestern.
+        win._bd_bp_owned_counts = {}
+        win._bd_bp_owned_bpc_runs = {}
+        # DER FRISCHE CACHE (Bestands-Refresh) KENNT DAS ORIGINAL.
+        win._bd_owned_bp_cache = [
+            {"type_id": 983301, "quantity": 1, "runs": -1, "is_bpo": True,
+             "char": "b203 Banana", "location_id": 60003760}]
+
+        def _pill203(tbl):
+            _w = tbl.cellWidget(0, 6) if tbl.rowCount() else None
+            _l = _w.findChild(_QL203) if _w is not None else None
+            return _l.text() if _l is not None else ""
+        _tbl203 = _QTW203(0, 7)
+        win._fill_blueprint_tab(_jobs203, [], _Rec203(), _tbl203)
+        _s203 = _pill203(_tbl203)
+        check(f"b203 frisch geholte BPO: NICHT 'completely missing' ({_s203})",
+              "missing" not in _s203 and "fehlt komplett" not in _s203
+              and ("enough" in _s203 or "genug" in _s203))
+        eq("b203 ... Spalte 'Besitze' zeigt die 1 aus dem Cache",
+           _tbl203.item(0, 5).text(), "1")
+        eq("b203 ... und die Kaufliste bleibt LEER (sonst kauft er doppelt)",
+           win._bd_bp_kaufliste, [])
+        # GEGENPROBE ANDERER ART (Regel 8b): eine Blaupause, die der Cache
+        # wirklich nicht kennt, bleibt rot - obwohl die ALTE Zaehlung sie
+        # noch hat. Eine veraltete Zahl darf auch nicht zu viel behaupten.
+        win._bd_bp_owned_counts = {983301: 5}
+        win._bd_owned_bp_cache = []
+        _tbl203b = _QTW203(0, 7)
+        win._fill_blueprint_tab(_jobs203, [], _Rec203(), _tbl203b)
+        _s203b = _pill203(_tbl203b)
+        check(f"b203 Gegenprobe: leerer Cache schlaegt die alte Zahl ({_s203b})",
+              "missing" in _s203b or "fehlt" in _s203b)
+        # Ohne jeden Abruf in dieser Sitzung bleibt es beim ehrlichen "?".
+        win._bd_bp_owned_counts = None
+        win._bd_owned_bp_cache = None
+        _tbl203c = _QTW203(0, 7)
+        win._fill_blueprint_tab(_jobs203, [], _Rec203(), _tbl203c)
+        eq("b203 ohne Blaupausen-Abruf sagt die Spalte '?' statt 0",
+           _tbl203c.item(0, 5).text(), "?")
+    finally:
+        for _k, _v in _alt203.items():
+            setattr(win, _k, _v)
+except Exception as _e203:                               # pragma: no cover
+    import traceback as _tb203
+    _fail.append(f"b203 Besitz-Zaehlung: {type(_e203).__name__}: {_e203} | "
+                 + _tb203.format_exc().splitlines()[-3].strip())
+
 # ---------------------------------------------------------------- (b162)
 _app.processEvents()
 check("b162 keine unbehandelte Ausnahme in einem Slot waehrend des Laufs"
       + (" - " + " | ".join(_unbehandelt162[:3]) if _unbehandelt162 else ""),
       not _unbehandelt162)
+
+# ---------------------------------------------------------------- (b204)
+# DIE LADELEISTE SPRINGT NICHT MEHR (emm537, Nutzer 12.10.2026: "Market scan
+# sieht verbuggt aus, die Ladeleiste springt sehr schnell von 0 auf 100 und
+# hin und her" - er hatte Portfolio laden UND Market scan gedrueckt). Hier am
+# ECHTEN `_run` mit ZWEI Jobs in verschiedenen Skalen: Overlay-Job meldet
+# SEITEN (2/6), Hintergrund-Job ITEMS (1'500/13'000). Eigener Block (Lehre
+# b89): ein Abbruch woanders darf diese Zusage nicht verschlucken.
+try:
+    import eve_trader.workers as _wk204
+
+    class _Job204(_wk204.Worker):
+        """Kein echter Thread - der Test treibt die Signale selbst, sonst
+        haengt das Ergebnis am Zufall der Thread-Reihenfolge."""
+
+        def start(self):
+            pass
+
+    _wk_alt204 = list(getattr(win, "_workers", []) or [])
+    _want_alt204 = getattr(win, "_overlay_want", 0)
+    _job_alt204 = getattr(win, "_overlay_job", None)
+    _txt_alt204 = win._overlay_progress.text()
+    _kopf_alt204 = win._overlay_text.text()
+    try:
+        win._overlay_job = None
+        _scan204 = _Job204(lambda: None)
+        _pf204 = _Job204(lambda: None)
+        win._run(_scan204, None, label="b204 Scanning", overlay=True)
+        win._run(_pf204, None, overlay=False)
+        _besitz204 = win._overlay_job is _scan204
+        _scan204.progress.emit(2, 6)
+        _a204 = win._overlay_progress.text()
+        _pf204.progress.emit(1500, 13000)
+        _pf204.progress.emit(13000, 13000)
+        _pf204.status.emit("b204 Portfolio")
+        _b204 = win._overlay_progress.text()
+        _kopf204 = win._overlay_text.text()
+        _scan204.progress.emit(4, 6)
+        _c204 = win._overlay_progress.text()
+        # Besitzer endet: Balken ist frei und leer, der NAECHSTE Overlay-Job
+        # bekommt ihn.
+        _scan204.finished.emit()
+        _app.processEvents()
+        _frei204 = (win._overlay_job is None
+                    and win._overlay_progress.text() == "")
+        _neu204 = _Job204(lambda: None)
+        win._run(_neu204, None, label="b204 zweiter", overlay=True)
+        _neu204.progress.emit(1, 4)
+        _d204 = win._overlay_progress.text()
+        _neu204.finished.emit()
+        _app.processEvents()
+        # Ein Job OHNE Overlay bekommt den Balken nie.
+        _nur204 = _Job204(lambda: None)
+        win._run(_nur204, None, overlay=False)
+        _nur204.progress.emit(7, 9)
+        _e204 = (win._overlay_job is None
+                 and win._overlay_progress.text() == "")
+        _nur204.finished.emit()
+        _app.processEvents()
+    finally:
+        win._workers[:] = _wk_alt204
+        win._overlay_want = _want_alt204
+        win._overlay_job = _job_alt204
+        win._overlay_progress.setText(_txt_alt204)
+        win._overlay_text.setText(_kopf_alt204)
+        win._hide_overlay()
+        win._spinner_stop()
+    check(f"b204 der Overlay-Job besitzt den Balken und zeichnet Seiten "
+          f"({_a204[-16:]!r})",
+          _besitz204 and "2 / 6" in _a204 and "33 %" in _a204)
+    check(f"b204 der Hintergrund-Job schreibt NICHT hinein (kein Sprung auf "
+          f"100 %, {_b204[-16:]!r})",
+          _b204 == _a204 and "13'000" not in _b204)
+    # EIGENE PRUEFUNG fuer den Phasen-Text (emm537-Nachtrag): die Rotprobe
+    # fuehrt nur die Suite der erwarteten Pruefung - haengt eine Mutation an
+    # `_run` an einer aa-Erwartung, laeuft die b-Suite nie und sie gilt als
+    # BLIND. `_set_loading` LEERT ausserdem den Balken, ein fremder Job
+    # wischt ihn also mitten im Lauf weg.
+    check(f"b204 ... und auch nicht in den Phasen-Text ({_kopf204[:24]!r})",
+          "b204 Portfolio" not in _kopf204)
+    check(f"b204 der Besitzer zeichnet weiter ({_c204[-16:]!r})",
+          "4 / 6" in _c204 and "66 %" in _c204)
+    check("b204 am Ende des Besitzers wird der Balken frei und geleert",
+          _frei204)
+    check(f"b204 ... und der naechste Overlay-Job bekommt ihn ({_d204[-16:]!r})",
+          "1 / 4" in _d204 and "25 %" in _d204)
+    check("b204 ein Job ohne Overlay bekommt den Balken nie", _e204)
+except Exception as _e204e:                               # pragma: no cover
+    import traceback as _tb204
+    _fail.append(f"b204 Ladeleiste: {type(_e204e).__name__}: {_e204e} | "
+                 + _tb204.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b205)
+# DER MATERIAL-PUFFER IST SICHTBAR, UND ER RECHNET ERST BEI ENTER
+# (emm545, Nutzer 13.10.2026: "da moechte ich, dass das ersichtlich wird in
+# der Einkaufsliste, wieviel mehr man einkauft" und "es darf erst gerechnet
+# werden wenn man enter drueckt, oder mit der maus wo anders hinklickt,
+# nicht schon beim hoch und runter schrauben der prozente").
+# EIGENER BLOCK (Lehre b89): ein Abbruch in b204 darf diese Zusage nicht
+# verschlucken. Gefahren wird der ECHTE Dialog - nur `exec` ist still-
+# gelegt, sonst bliebe die Suite modal stehen.
+_alt205 = {k: win.settings.get(k)
+           for k in ("bau_buy_surplus", "bau_transport_rate")}
+_alt_vol205 = win._item_volumes_with_esi_fix
+_alt_rows205 = win._cart_conflict_rows
+_alt_os205 = win._owned_and_selling
+_alt_ow205 = win._owned_where
+_alt_save205 = config.save_settings
+from PySide6.QtWidgets import QDialog as _QD205
+_alt_exec205 = _QD205.exec
+_gefangen205 = []
+try:
+    config.save_settings = lambda s: None
+    win.settings["bau_buy_surplus"] = 0
+    # VOLUMEN (emm546): vorgegeben statt aus der SDE geholt - geprueft wird
+    # die Rechnung des Dialogs, nicht die Datenlage. 205003 fehlt bewusst:
+    # ein unbekanntes Volumen muss SICHTBAR werden, nicht still 0 sein.
+    win.settings["bau_transport_rate"] = 445.0
+    win._item_volumes_with_esi_fix = lambda ids: (
+        {205001: 0.5, 205002: 100.0}, set())
+    win._owned_and_selling = lambda: ({}, set())
+    win._owned_where = lambda t: {}
+    win._cart_conflict_rows = (lambda items, needed, owned, where, selling,
+                               buying, show_all=False, scope_stock=None: [
+        {"tid": 205001, "name": "b205 Fehlt viel", "need": 1000, "own": 0,
+         "missing": 1000, "cart_qty": 1000, "status": "none",
+         "status_txt": "missing entirely", "flags": [],
+         "main_char": "b205 Pilot", "by_char": {}},
+        {"tid": 205002, "name": "b205 Teilweise", "need": 100, "own": 97,
+         "missing": 3, "cart_qty": 3, "status": "partial",
+         "status_txt": "partly", "flags": [],
+         "main_char": "b205 Pilot", "by_char": {}},
+        {"tid": 205003, "name": "b205 Ohne Volumen", "need": 10, "own": 0,
+         "missing": 10, "cart_qty": 10, "status": "none",
+         "status_txt": "missing entirely", "flags": [],
+         "main_char": "b205 Pilot", "by_char": {}}])
+
+    def _exec205(self_dlg):
+        _gefangen205.append(self_dlg)
+        return 0
+    _QD205.exec = _exec205
+    win._cart_conflict_filter([(205001, "b205 Fehlt viel"),
+                               (205002, "b205 Teilweise"),
+                               (205003, "b205 Ohne Volumen")],
+                              needed={205001: 1000, 205002: 100,
+                                      205003: 10},
+                              show_all=True, copy_mode=True)
+    _app.processEvents()
+    _dlg205 = _gefangen205[-1] if _gefangen205 else None
+    _tree205 = (_dlg205.findChildren(QTreeWidget)[0]
+                if _dlg205 is not None and _dlg205.findChildren(QTreeWidget)
+                else None)
+    check("b205 der Dialog ging auf", _tree205 is not None)
+    eq("b205 neun Spalten (Puffer + m3 dazu)", _tree205.columnCount(), 9)
+
+    def _zeilen205():
+        _out = []
+        for _i in range(_tree205.topLevelItemCount()):
+            _g = _tree205.topLevelItem(_i)
+            for _j in range(_g.childCount()):
+                _out.append(_g.child(_j))
+        return _out
+    _rows205 = {_it.text(0): _it for _it in _zeilen205()}
+    check(f"b205 alle Zeilen da ({sorted(_rows205)})", len(_rows205) == 3)
+    _r1 = _rows205["b205 Fehlt viel"]
+    # OHNE PUFFER: "In den Wagen" = Fehlmenge, Puffer-Spalte leer.
+    eq("b205 ohne Puffer: In den Wagen = Fehlmenge", _r1.text(5), "1'000")
+    eq("b205 ohne Puffer: Puffer-Spalte leer", _r1.text(6), "")
+    # m3 DER GEKAUFTEN MENGE (emm546): 0.5 m3 x 1'000 = 500.
+    eq("b205 ohne Puffer: m3 der Zeile", _r1.text(7), "500")
+    _r3 = _rows205["b205 Ohne Volumen"]
+    eq("b205 unbekanntes Volumen zeigt ?", _r3.text(7), "?")
+
+    _vl205 = next((w for w in _dlg205.findChildren(QLabel)
+                   if ("Volume of this list" in (w.text() or "")
+                       or "Volumen dieser Liste" in (w.text() or ""))), None)
+    check("b205 Volumen-Zeile unter der Liste da", _vl205 is not None)
+    # 0.5 x 1'000 + 100 x 3 = 800 m3; 205003 zaehlt als 0, wird aber gemeldet.
+    check(f"b205 Volumen-Summe ohne Puffer ({_vl205.text()!r})",
+          "800" in _vl205.text())
+    check("b205 ... und der Frachtsatz steht daneben (445 x 800)",
+          "356'000" in _vl205.text())
+    check("b205 ... unbekanntes Volumen wird gemeldet",
+          "1" in _vl205.text()
+          and ("without a known volume" in _vl205.text()
+               or "ohne bekanntes Volumen" in _vl205.text()))
+    # Die Spinbox darf NICHT auf valueChanged haengen - sonst schreibt jeder
+    # Pfeilklick die ganze settings.json.
+    _spin205 = [w for w in _dlg205.findChildren(QSpinBox)
+                if (w.suffix() or "").strip() == "%"]
+    check("b205 Puffer-Feld gefunden", len(_spin205) == 1)
+    _sp205 = _spin205[0]
+    check("b205 Spinbox meldet nicht jede Ziffer", not _sp205.keyboardTracking())
+    _geschrieben205 = []
+    config.save_settings = lambda s: _geschrieben205.append(1)
+    _sp205.setValue(5)          # wie Pfeilklick/Tippen - noch kein Enter
+    _app.processEvents()
+    check("b205 blosses Hochschrauben rechnet und speichert NICHT",
+          not _geschrieben205 and _r1.text(5) == "1'000"
+          and int(win.settings.get("bau_buy_surplus", 0) or 0) == 0)
+    _sp205.editingFinished.emit()   # Enter bzw. Fokuswechsel
+    _app.processEvents()
+    check("b205 Enter uebernimmt den Puffer", len(_geschrieben205) == 1
+          and int(win.settings.get("bau_buy_surplus", 0) or 0) == 5)
+    eq("b205 ... In den Wagen zeigt die gekaufte Menge (1'000 + 5 %)",
+       _r1.text(5), "1'050")
+    eq("b205 ... und die Puffer-Spalte den Aufschlag", _r1.text(6), "+50")
+    # m3 waechst mit dem Puffer: 0.5 x 1'050 = 525; Summe 525 + 400 = 925.
+    eq("b205 ... m3 der Zeile waechst mit (0.5 x 1'050)", _r1.text(7), "525")
+    check(f"b205 ... Volumen-Summe folgt dem Puffer ({_vl205.text()!r})",
+          "925" in _vl205.text() and "411'625" in _vl205.text())
+    # AUFRUNDEN, auch wenn es nur ein Stueck ist (Regel 3).
+    _r2 = _rows205["b205 Teilweise"]
+    eq("b205 kleine Fehlmenge rundet AUF (3 + 5 % = 4)", _r2.text(5), "4")
+    eq("b205 ... Aufschlag +1", _r2.text(6), "+1")
+    # Beschriftung in BEIDEN Sprachen pruefen - sonst haengt die Zusage an
+    # der Sprache des Testfensters.
+    check(f"b205 Kopfzeile nennt den Satz ({_tree205.headerItem().text(5)!r})",
+          _tree205.headerItem().text(5) in ("To cart (+5 %)",
+                                            "In den Wagen (+5 %)"))
+    # Status steht jetzt in Spalte 8 - sonst uebermalt er Puffer oder m3.
+    check(f"b205 Status in Spalte 8 ({_r2.text(8)!r})", bool(_r2.text(8)))
+    check(f"b205 Kopfzeile nennt m3 ({_tree205.headerItem().text(7)!r})",
+          "m\u00b3" in _tree205.headerItem().text(7))
+except Exception as _e205:                                # pragma: no cover
+    import traceback as _tb205
+    _fail.append(f"b205 Puffer-Spalte: {type(_e205).__name__}: {_e205} | "
+                 + _tb205.format_exc().splitlines()[-3].strip())
+finally:
+    win._item_volumes_with_esi_fix = _alt_vol205
+    _QD205.exec = _alt_exec205
+    win._cart_conflict_rows = _alt_rows205
+    win._owned_and_selling = _alt_os205
+    win._owned_where = _alt_ow205
+    config.save_settings = _alt_save205
+    for _k, _v in _alt205.items():
+        if _v is None:
+            win.settings.pop(_k, None)
+        else:
+            win.settings[_k] = _v
+    try:
+        for _d in _gefangen205:
+            _d.close()
+        _app.processEvents()
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------- (b206)
+# "EINKAUF JETZT" NENNT DAS VOLUMEN DER LISTE, DIE ER KOPIERT
+# (emm547, Nutzer 13.10.2026: "ja aber ich brauche das Volumen des
+# einkaufs !"). Die Zeilen darueber rechnen ueber plan["buy"], also den
+# Einfrier-Stand; diese Zeile rechnet den HEUTIGEN Restbedarf - dieselbe
+# Mengenquelle wie der Kopier-Knopf (`_einkauf_jetzt`, Regel 9).
+# EIGENER BLOCK (Lehre b89) und am ECHTEN Fenster: eine Mutation am
+# LAUFZEIT-Weg braucht eine b-Erwartung (Lehre emm537).
+_alt206 = {k: win.settings.get(k)
+           for k in ("bau_buy_surplus", "bau_transport_rate",
+                     "bau_freight_in_decision")}
+_alt_vol206 = win._item_volumes_with_esi_fix
+_alt_fehl206 = win._fehlbedarf_jetzt
+_alt_save206 = config.save_settings
+_dlg206 = None
+try:
+    config.save_settings = lambda s: None
+    win.settings["bau_buy_surplus"] = 0
+    win.settings["bau_transport_rate"] = 445.0
+    win.settings["bau_freight_in_decision"] = False
+    # 10 m3 je Testmat - gross genug, dass die gerundete m3-Zahl eindeutig
+    # ist (0.01 waere auf 0 gerundet und damit keine Zusage).
+    win._item_volumes_with_esi_fix = lambda ids: ({200: 100.0, 100: 100.0},
+                                                  set())
+    # OHNE REST-RECHNUNG faellt die Menge auf die Fehlmenge der Planzeile
+    # zurueck (Regel 3: lieber zu viel anbieten als eine Luecke
+    # verschweigen). Genau diesen Zweig fahren wir hier - er braucht keinen
+    # gespeicherten Plan.
+    def _fehl206():
+        raise RuntimeError("b206: keine Rest-Rechnung")
+    win._fehlbedarf_jetzt = _fehl206
+    win._bd_pricemap = dict(PRICES)
+    win._bd_recipes = _Recipes()
+    win._bd_opts = {"me": 0, "te": 0, "job_pct": 0, "build_reactions": False,
+                    "tree_depth": 4, "stock": {200: 40}}
+    win._bd_type = 100
+    win._bd_qty = 10
+    _plan206 = I.production_plan(100, 10, PRICES.get, _Recipes(),
+                                 dict(win._bd_opts))
+    _tree206 = I.build_tree(100, PRICES.get, _Recipes(), dict(win._bd_opts))
+    _sbd_frisch(100, "Testship", {"tree": _tree206,
+                                  "names": {100: "Testship", 200: "Testmat"},
+                                  "sell": 6000.0, "sell_is_contract": False,
+                                  "plan": _plan206})
+    _dlg206 = getattr(win, "_bd_dialog", None)
+    _app.processEvents()
+    _caps206 = getattr(win, "_bd_detail_caps", None) or {}
+    _lbs206 = getattr(win, "_bd_detail_val_lbls", None) or {}
+    _c206 = _caps206.get("Einkauf jetzt")
+    _v206 = _lbs206.get("Einkauf jetzt")
+    check("b206 die Zeile 'Einkauf jetzt' gibt es",
+          _c206 is not None and _v206 is not None)
+    # DIESELBEN MENGEN WIE IM KOPIER-FENSTER (Regel 9): die Zeile rechnet
+    # ueber `_einkauf_jetzt`, und das liest genau `_bd_mat_rows` - also
+    # muessen Posten und Planzeilen zusammenpassen. Die Zahlen des
+    # Mini-Plans werden nicht behauptet, sondern GEMESSEN und danach gegen
+    # die Anzeige gehalten.
+    _ej206 = win._einkauf_jetzt()
+    _mr206 = {int(r["tid"]): r for r in (getattr(win, "_bd_mat_rows", None) or [])}
+    check(f"b206 es gibt eine Planzeile mit Fehlmenge ({sorted(_mr206)})",
+          bool(_ej206["posten"]))
+    eq("b206 `_einkauf_jetzt` nimmt genau die Fehlmengen der Planzeilen",
+       sorted((t, q) for t, n, q in _ej206["posten"]),
+       sorted((t, int(r.get("missing", 0) or 0)) for t, r in _mr206.items()
+              if int(r.get("missing", 0) or 0) > 0))
+    _soll206 = sum(100.0 * q for _t, _n, q in _ej206["posten"])
+    check(f"b206 die Beschriftung nennt die m3 ({_c206.text()!r})",
+          f"{_soll206:,.0f}".replace(",", "'") in _c206.text()
+          and "m\u00b3" in _c206.text() and _soll206 > 0)
+    from eve_trader.ui.mw_basis import isk as _isk206
+    eq("b206 der Betrag ist die Fracht dieser Liste (445 x m3)",
+       _v206.text(), _isk206(445.0 * _soll206, suffix=False))
+    # NICHT isVisible() fragen (dokumentierte Falle: in einem nie
+    # angezeigten Fenster ist das IMMER False, und die Details-Klappe ist
+    # ausserdem zu). Gefragt wird, ob die Zeile EINGESCHALTET ist -
+    # `isHidden()` ist nur nach einem ausdruecklichen hide() True.
+    check("b206 die Zeile ist eingeschaltet",
+          not _c206.isHidden() and not _v206.isHidden())
+    # DER PUFFER FLIEGT MIT - es ist die Menge, die wirklich gekauft wird
+    # (emm545/546): aus 10 Stueck werden 11, aus 1'000 m3 also 1'100.
+    win.settings["bau_buy_surplus"] = 10
+    win._bd_full_rebuild()
+    _app.processEvents()
+    _caps206 = getattr(win, "_bd_detail_caps", None) or {}
+    _lbs206 = getattr(win, "_bd_detail_val_lbls", None) or {}
+    _c206 = _caps206.get("Einkauf jetzt")
+    _v206 = _lbs206.get("Einkauf jetzt")
+    _soll206b = sum(100.0 * win._buy_surplus_qty(q)
+                    for _t, _n, q in win._einkauf_jetzt()["posten"])
+    check(f"b206 mit Puffer 10 % waechst das Volumen ({_c206.text()!r})",
+          _soll206b > _soll206
+          and f"{_soll206b:,.0f}".replace(",", "'") in _c206.text())
+    eq("b206 ... und die Fracht dazu (445 x m3 mit Puffer)",
+       _v206.text(), _isk206(445.0 * _soll206b, suffix=False))
+    # GEGENPROBE: ohne bekanntes Volumen zaehlt der Posten als 0 m3 - und
+    # das wird GESAGT, nicht verschwiegen (Sitzung 14).
+    win.settings["bau_buy_surplus"] = 0
+    win._item_volumes_with_esi_fix = lambda ids: ({}, set())
+    win._bd_full_rebuild()
+    _app.processEvents()
+    _c206 = (getattr(win, "_bd_detail_caps", None) or {}).get("Einkauf jetzt")
+    check(f"b206 ohne Volumen wird es gemeldet ({(_c206.toolTip() or '')[:60]!r})",
+          "without a known volume" in (_c206.toolTip() or "")
+          or "ohne bekanntes Volumen" in (_c206.toolTip() or ""))
+    # GEGENPROBE ZUR SICHTBARKEIT: ist nichts zu kaufen, bleibt die Zeile
+    # AUS - eine Zeile mit "-" waere eine Aussage ueber nichts.
+    _alte206 = win._einkauf_jetzt
+    try:
+        win._einkauf_jetzt = lambda: {"rest_kaufmenge": lambda r: 0,
+                                      "mengen": {}, "posten": [],
+                                      "rest_modus": False, "rest_da": True}
+        win._bd_full_rebuild()
+        _app.processEvents()
+        _c206 = (getattr(win, "_bd_detail_caps", None) or {}).get("Einkauf jetzt")
+        check("b206 ohne Posten bleibt die Zeile aus", _c206.isHidden())
+    finally:
+        win._einkauf_jetzt = _alte206
+    # WAS DER PLAN SELBST BAUT, STEHT NICHT AUF DER LISTE - dieselbe Regel
+    # wie im Kopier-Fenster (mw_helpers.einkauf_posten).
+    _altb206 = getattr(win, "_bd_plan_builds", None)
+    try:
+        win._bd_plan_builds = set(_mr206)
+        eq("b206 Selbstgebautes faellt aus der Liste",
+           win._einkauf_jetzt()["posten"], [])
+    finally:
+        win._bd_plan_builds = _altb206
+except Exception as _e206:                                # pragma: no cover
+    import traceback as _tb206
+    _fail.append(f"b206 Einkauf jetzt: {type(_e206).__name__}: {_e206} | "
+                 + _tb206.format_exc().splitlines()[-3].strip())
+finally:
+    win._item_volumes_with_esi_fix = _alt_vol206
+    win._fehlbedarf_jetzt = _alt_fehl206
+    config.save_settings = _alt_save206
+    for _k, _v in _alt206.items():
+        if _v is None:
+            win.settings.pop(_k, None)
+        else:
+            win.settings[_k] = _v
+    try:
+        if _dlg206 is not None:
+            _dlg206.close()
+        _app.processEvents()
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------- (b79)
 # FEHLER.LOG-NETZ (siehe Kopf der Datei): alles, was dieser Lauf an
@@ -21248,6 +22359,59 @@ _flog_bad = [_z.strip() for _z in _flog_neu.splitlines()
 check("b79 fehler.log: keine Programmierfehler waehrend des Laufs angehaengt"
       + (" - " + " | ".join(sorted(set(_flog_bad))[:3]) if _flog_bad else ""),
       not _flog_bad)
+
+# ---------------------------------------------------------------- (b59b)
+# DASSELBE NOCH EINMAL AM ENDE (emm550). b59 prueft die beiden Vermerke
+# weit vorn in der Datei - alles, was DANACH ein modales Fenster oeffnet
+# oder eine Warnbox zeigt, wurde zwar aufgeschrieben, aber nie geprueft
+# (gefunden am 13.10.2026: zwei Warnboxen des ESI-Nachlaufs kosteten je
+# 3 s Laufzeit und fielen niemandem auf). Erlaubt sind nur die Warnungen
+# des ESI-Nachlaufs - ohne Netz sind sie der Normalfall.
+check(f"b59b kein modales Fenster blieb im ganzen Lauf offen ({_MODAL_UNBESTELLT})",
+      not _MODAL_UNBESTELLT)
+_warn_fremd = [(_tt, _xx) for _tt, _xx in _WARNBOXEN
+               if _tt not in (_t4("Load everything from ESI"),
+                              "Load everything from ESI")]
+check(f"b59b Warnboxen nur aus dem ESI-Nachlauf ({_warn_fremd})",
+      not _warn_fremd)
+
+if _zeit550 and _zeitpunkte550:
+    # BERICHT DER ZEITMESSUNG (emm550, nur mit EMM_B_ZEIT=1).
+    import bisect as _bis550
+    _quell550 = open(os.path.abspath(__file__), encoding="utf-8").read().splitlines()
+    _marken550 = [(_i + 1, _z) for _i, _z in enumerate(_quell550)
+                  if _z.startswith("# ---") and "(b" in _z]
+    _mz550 = [_m[0] for _m in _marken550]
+    _summe550 = {}
+    _rechnet550 = {}
+    _zahl550 = {}
+    _vor550 = _t0_550
+    _vorc550 = _tc0_550
+    for _ln550, _ts550, _tc550 in _zeitpunkte550:
+        _i550 = _bis550.bisect_right(_mz550, _ln550) - 1
+        _nam550 = ("b" + _marken550[_i550][1].split("(b", 1)[1].split(")", 1)[0]
+                   if _i550 >= 0 else "Vorlauf")
+        _summe550[_nam550] = _summe550.get(_nam550, 0.0) + (_ts550 - _vor550)
+        _rechnet550[_nam550] = _rechnet550.get(_nam550, 0.0) + (_tc550 - _vorc550)
+        _zahl550[_nam550] = _zahl550.get(_nam550, 0) + 1
+        _vor550 = _ts550
+        _vorc550 = _tc550
+    print("(b) ZEIT je Block (EMM_B_ZEIT=1), die 20 teuersten:")
+    for _nam550, _s550 in sorted(_summe550.items(), key=lambda _x: -_x[1])[:20]:
+        print(f"    {_s550:7.2f} s  {_nam550:12s} davon rechnend "
+              f"{_rechnet550[_nam550]:6.2f} s  ({_zahl550[_nam550]} Pruefungen)")
+    print("(b) ZEIT die 15 teuersten Einzelabschnitte (Zeile der Pruefung):")
+    _ein550 = []
+    _vor550 = _t0_550
+    for _ln550, _ts550, _tc550 in _zeitpunkte550:
+        _ein550.append((_ts550 - _vor550, _ln550))
+        _vor550 = _ts550
+    for _s550, _ln550 in sorted(_ein550, reverse=True)[:15]:
+        print(f"    {_s550:7.2f} s  bis Zeile {_ln550}")
+    print(f"    {_t0_550 - _tproc550:7.2f} s  VORLAUF      (Importe, Quelltext lesen)")
+    print(f"    {sum(_summe550.values()):7.2f} s  SUMME bis zur letzten Pruefung "
+          f"({len(_summe550)} Bloecke)")
+    _tend550 = _time550.perf_counter()
 
 print(f"(b) Bauplan-Aufbau: {_ok}/{_ok + len(_fail)} gruen")
 for f in _fail:
@@ -21293,6 +22457,10 @@ print(f"(b) Aufraeumen fertig ({len(_laufend_b)} Hintergrund-Jobs liefen noch, "
 # PySide); dort knallt es. TerminateProcess ueberspringt genau diesen
 # Schritt, der Rueckgabewert bleibt der der Suite. Nur die Testsuite endet
 # so - das Programm selbst ruft os._exit nirgends auf.
+if _zeit550 and _zeitpunkte550:
+    print(f"(b) ZEIT Aufraeumen: {_time550.perf_counter() - _tend550:.2f} s, "
+          f"ganzer Lauf {_time550.perf_counter() - _tproc550:.2f} s",
+          file=sys.stderr, flush=True)
 _code_b = 1 if _fail else 0
 if sys.platform == "win32":
     try:

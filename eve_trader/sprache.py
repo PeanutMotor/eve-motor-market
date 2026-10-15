@@ -1484,9 +1484,16 @@ KATALOG = {
             "Wie viele Invention-Jobs gleichzeitig laufen \u2013 je eine T1-Kopie, je ein Science-Slot.\nLinks = 1 Job (langsam, 1 Slot belegt),\nrechts = alle freien Science-Slots (so schnell wie m\u00f6glich).\nDas \u00e4ndert NICHT, wie viele T2-Blaupausen du bekommst \u2013 das h\u00e4ngt an Menge und Decryptor.",
         "Copy your T1 original like this \u2192":
             "Kopiere dein T1-Original so \u2192",
-        # Science-Stufen im Runplaner (emm411)
-        "science slots \u2013 runs parallel to the build":
-            "Science-Slots \u2013 l\u00e4uft parallel zum Bau",
+        # Science-Stufen im Runplaner (emm411; Ort im Kopf: emm529)
+        "no structure for science yet \u2013 set one in the Structures tab":
+            "noch keine Struktur f\u00fcr Science \u2013 im Struktur-Reiter "
+            "w\u00e4hlen",
+        "Science slots \u2013 these runs go parallel to the build.":
+            "Science-Slots \u2013 diese Runs laufen parallel zum Bau.",
+        "Copying and invention use the structure assigned to invention in "
+        "the Structures tab.":
+            "Kopieren und Invention nutzen die Struktur, die im "
+            "Struktur-Reiter der Invention zugewiesen ist.",
         "Copy your T1 originals for invention. Same numbers as the "
         "Invention tab \u2013 the slider there sets the parallel copies.":
             "Kopiere deine T1-Originale f\u00fcr die Invention. Dieselben "
@@ -1497,6 +1504,33 @@ KATALOG = {
             "Invention-Versuche nach dem Kopieren. Datacores und "
             "Decryptoren stehen auf der Einkaufsliste.",
         "Copy job": "Kopierjob",
+        "⚠ You do not own the T1 ORIGINAL – only copies ({n} runs). "
+        "You cannot copy from a copy: buy or research the original first.":
+            "⚠ Du besitzt das T1-ORIGINAL nicht – nur Kopien "
+            "({n} Runs). Aus einer Kopie kann man nicht kopieren: kauf oder "
+            "erforsche zuerst das Original.",
+        "⚠ You do not own this T1 blueprint – buy the original "
+        "before copying.":
+            "⚠ Du besitzt diese T1-Blaupause nicht – kauf das "
+            "Original, bevor du kopierst.",
+        "⚠ Your T1 original is in a job right now – free again "
+        "when it finishes.":
+            "⚠ Dein T1-Original läuft gerade in einem Job – "
+            "wieder frei, wenn er endet.",
+        "you only own copies – not the original":
+            "du besitzt nur Kopien – nicht das Original",
+        "you do not own this original":
+            "du besitzt dieses Original nicht",
+        "You cannot copy from a copy: buy or research the T1 original first.":
+            "Aus einer Kopie kann man nicht kopieren: kauf oder erforsche "
+            "zuerst das T1-Original.",
+        "step {s} (only {n} original(s))":
+            "Schritt {s} (nur {n} Original(e))",
+        "You cannot copy from a copy: the T1 original is busy in the "
+        "copy job before – start this one when it is free again.":
+            "Aus einer Kopie kann man nicht kopieren: das T1-Original ist "
+            "im Kopierjob davor belegt – starte diesen, sobald es "
+            "wieder frei ist.",
         "Click copies {r} \u2013 paste it into the field in game.":
             "Klick kopiert {r} \u2013 f\u00fcge es ingame ins Feld ein.",
         "{n} job(s)": "{n} Job(s)",
@@ -2859,6 +2893,8 @@ KATALOG = {
             "durch ESI-Bestand gedeckt \u2013 nichts zu tun",
         "Freight service":
             "Frachtdienst",
+        "Freight service ({v} m³)":
+            "Frachtdienst ({v} m³)",
         "Job cost":
             "Job-Kosten",
         "Invention (\u00d8)":
@@ -2873,6 +2909,40 @@ KATALOG = {
             "Einkaufsliste (Jita Sell)",
         "Shopping list / unit":
             "Einkaufsliste / St\u00fcck",
+        # emm547: das Volumen der Liste, die der Kopier-Knopf JETZT abgibt.
+        "Purchase now":
+            "Einkauf jetzt",
+        "Purchase now ({v} m\u00b3)":
+            "Einkauf jetzt ({v} m\u00b3)",
+        "Volume and freight of the list the copy button puts on your "
+        "clipboard right now \u2013 today's remaining need, including the "
+        "buy buffer.":
+            "Volumen und Fracht der Liste, die der Kopier-Knopf JETZT in "
+            "die Zwischenablage legt \u2013 der heutige Restbedarf, "
+            "Einkaufs-Puffer eingerechnet.",
+        "Volume of the list that \u201eCreate shopping list\u201c copies "
+        "RIGHT NOW: today's remaining need plus your buy buffer - the same "
+        "quantities as in that window.\n\n"
+        "The rows above (material, freight service, shopping list) come "
+        "from the FROZEN plan. That is why the two volumes differ once you "
+        "have built part of the plan - both are correct, they answer "
+        "different questions.\n\n"
+        "The ISK here is only freight at your ISK/m\u00b3 rate and is NOT "
+        "part of the build cost.":
+            "Volumen der Liste, die \u201eEinkaufsliste erstellen\u201c "
+            "GERADE JETZT kopiert: der heutige Restbedarf samt deinem "
+            "Einkaufs-Puffer \u2013 dieselben Mengen wie in jenem Fenster."
+            "\n\nDie Zeilen darueber (Material, Frachtdienst, "
+            "Einkaufsliste) kommen aus dem EINGEFRORENEN Plan. Darum "
+            "weichen die beiden Volumen voneinander ab, sobald ein Teil "
+            "des Plans gebaut ist \u2013 beide sind richtig, sie "
+            "antworten auf verschiedene Fragen."
+            "\n\nDie ISK hier sind nur Fracht zu deinem ISK/m\u00b3-Satz "
+            "und stecken NICHT in den Baukosten.",
+        "\u26a0 {n} position(s) without a known volume - they count as "
+        "0 m\u00b3 here.":
+            "\u26a0 {n} Position(en) ohne bekanntes Volumen \u2013 sie "
+            "zaehlen hier als 0 m\u00b3.",
         "Sale price / unit":
             "Verkaufspreis / Stk",
         "Gross sale proceeds":
@@ -3361,6 +3431,36 @@ KATALOG = {
             "am Bau-Ort",
         "To cart":
             "In den Wagen",
+        "To cart (+{p} %)":
+            "In den Wagen (+{p} %)",
+        "Buffer":
+            "Puffer",
+        "What the buffer adds on top – „To cart“ already "
+        "contains it. 0 % means no extra.":
+            "Was der Puffer obendrauf legt – „In den Wagen“ "
+            "enthält ihn schon. 0 % heißt kein Aufschlag.",
+        "{m} missing + {p} % buffer = {k} bought":
+            "{m} fehlen + {p} % Puffer = {k} gekauft",
+        "m³":
+            "m³",
+        "Packaged volume of the quantity in „To cart“ – the same "
+        "value the build plan charges freight on.":
+            "Gepacktes Volumen der Menge in „In den Wagen“ – "
+            "genau das Volumen, auf das der Bauplan Fracht rechnet.",
+        "{v} m³ per unit × {k} = {g} m³":
+            "{v} m³ je Stück × {k} = {g} m³",
+        "No packaged volume known – counts as 0 m³ "
+        "for the freight.":
+            "Kein gepacktes Volumen bekannt – zählt für die "
+            "Fracht als 0 m³.",
+        "Volume of this list: {v} m³":
+            "Volumen dieser Liste: {v} m³",
+        "× {r} ISK/m³ = {k} ISK freight":
+            "× {r} ISK/m³ = {k} ISK Fracht",
+        "⚠ {n} position(s) without a known volume – "
+        "they count as 0 m³":
+            "⚠ {n} Position(en) ohne bekanntes Volumen – "
+            "sie zählen als 0 m³",
         "What you own IN TOTAL \u2013 per portfolio, at ANY location.":
             "Was du INSGESAMT besitzt \u2013 laut Portfolio, an JEDEM Ort.",
         "{n} histories loaded":
@@ -4695,6 +4795,12 @@ KATALOG = {
             "Hier ist nichts mehr zu tun \u2013 ESI hat das abgedeckt. Die Zeile bleibt stehen, damit du sp\u00e4ter nachsehen kannst, was gebaut wurde und was es gebraucht hat.",
         "Currently in the build queue according to ESI \u2013 nothing to do here.":
             "Steckt laut ESI gerade in der Bauschleife \u2013 hier ist nichts zu tun.",
+        "No job and no stock for this \u2013 the plan does not need these runs any more: every item that would use them is done.":
+            "Kein Job und kein Bestand daf\u00fcr \u2013 der Plan braucht diese Runs nicht mehr: alles, was sie verbrauchen w\u00fcrde, ist erledigt.",
+        "Nothing to do here \u2013 but there is no delivered job and no stock for it either. Nothing of this was built as far as the tool can tell.":
+            "Hier ist nichts zu tun \u2013 es gibt daf\u00fcr aber weder einen abgelieferten Job noch Bestand. Soweit das Werkzeug sehen kann, wurde davon nichts gebaut.",
+        "{n} run(s) of it are covered by stock of the product itself (e.g. bought in) \u2013 nothing needs to be built for them.":
+            "{n} Run(s) davon deckt der Bestand des Erzeugnisses selbst (z. B. zugekauft) \u2013 daf\u00fcr muss nichts mehr gebaut werden.",
         "finished \u00b7 {n} position(s) completed":
             "fertig \u00b7 {n} Position(en) erledigt",
         "Planned duration of this stage was {d}.":
@@ -4876,6 +4982,8 @@ KATALOG = {
             "kaufen \u00b7 teils aus Bestand",
         " ({n} not at the build structure)":
             " ({n} nicht an der Baustruktur)",
+        " ({n} location unknown)":
+            " ({n} Ort unbekannt)",
         "Never buy and never build these groups:":
             "Diese Gruppen nie kaufen und nie bauen:",
         "(order running)":
@@ -4892,8 +5000,12 @@ KATALOG = {
             "Kopierjob: \u2248{d}",
         "Then invention:":
             "Danach Invention:",
+        "stock data {n} min old (ESI caches ~1 h)":
+            "Bestand {n} Min alt (ESI cacht ~1 h)",
         "reserved by other plans":
             "von anderen Pl\u00e4nen reserviert",
+        " + {n} more":
+            " + {n} weitere",
         "{n} reserved":
             "{n} reserviert",
         "Hide this number \u2013 for screenshots and streams. Only the display "
@@ -4910,6 +5022,11 @@ KATALOG = {
             "Habe ich die Blaupausen?",
         "Click copies the blueprint name:":
             "Klick kopiert den Blaupausen-Namen:",
+        "Only {b} original(s) planned - {k} started copy(ies) are left out: "
+        "a job on a small copy would not start in game.":
+            "Nur {b} Original(e) verplant - {k} angefangene Kopie(n) bleiben "
+            "liegen: ein Job auf einer kleinen Kopie wuerde im Spiel nicht "
+            "starten.",
         "Copy T1 Blueprint":
             "T1-Blueprint kopieren",
         "{name} copied \u2713":
@@ -5000,6 +5117,15 @@ KATALOG = {
             "Corp-Blaupausen: {name}",
         "Corp jobs: {name}":
             "Corp-Jobs: {name}",
+        # ---- Corp-Besitz unvollstaendig (emm516) ----
+        "Corp hangar {name} (no Director role)":
+            "Corp-Hangar {name} (keine Director-Rolle)",
+        "Corp hangar via {name} (re-link needed)":
+            "Corp-Hangar über {name} (neu verlinken)",
+        "Corp hangar (no hangar division ticked)":
+            "Corp-Hangar (kein Hangar angekreuzt)",
+        "Not read: {names} \u2013 only matters if you keep blueprints there.":
+            "Nicht gelesen: {names} \u2013 nur wichtig, wenn du dort Blaupausen liegen hast.",
         # ---- Corp-Blaupausen in My Blueprints (1.1.0) ----
         "{corp} · several hangars":
             "{corp} · mehrere Hangars",
@@ -5918,6 +6044,25 @@ KATALOG = {
             "Kopieren",
         "Job":
             "Job",
+        # emm507: Blaupause im laufenden Job (Blueprints-Reiter des Bauplans)
+        "Research":
+            "Forschung",
+        "{n} in job":
+            "{n} im Job",
+        "in a job right now ({act}) – yours, free again when it "
+        "finishes":
+            "läuft gerade im Job ({act}) – gehört dir, wieder "
+            "frei wenn er endet",
+        "in a job right now":
+            "läuft gerade im Job",
+        # emm508: Ort im Besitz-Tooltip, nur wenn nicht an einer
+        # Bau-Struktur dieses Plans
+        "at: {ort} – NOT a build structure of this plan":
+            "liegt an: {ort} – KEINE Bau-Struktur dieses Plans",
+        "location unknown (#{id} – container or foreign station; "
+        "in game: Personal Assets → Search)":
+            "Ort unbekannt (#{id} – Container oder fremde Station; "
+            "ingame: Personal Assets → Suche)",
         "Blueprints that are in an industry job right now (research, copy, "
         "invention, manufacturing) are shown as \u201ein job\u201c and do not "
         "count as available \u2013 neither here nor in the build plan.":
