@@ -586,6 +586,7 @@ class MultiBauplan:
             self._bd_manual_meta_pending = None
             self._bd_bp_type = None
             self._bd_open_plan_id = None
+            self._bd_runplan_ziel = {"std": 0, "stufen": {}}   # emm563
             for _pk, _sk in (("blacklist_names", "bau_blacklist_names"),
                              ("blacklist_gruppen", "bau_blacklist_gruppen")):
                 if _pk in eintrag:

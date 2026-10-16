@@ -1771,11 +1771,22 @@ if _dlg is not None:
     # lieber Bildchen statt Zahlen links").
     # Der Materialien-Tab ist ein BAUM (kein Gitter/keine Zeilennummern-API),
     # der Blueprints-Tab weiterhin eine Tabelle.
+    # NICHT MEHR UEBER DIE SPALTENZAHL GESUCHT (emm561): mit der ME/TE-
+    # Spalte hatte die Tabelle 8 statt 7 Spalten, die Suche fand nichts -
+    # und die vier Pruefungen fielen STILL weg statt rot zu werden. Jetzt
+    # ueber das Feld, und ein Fehlen ist selbst ein Befund.
     _bp_tbls = [x for x in _dlg.findChildren(QTableWidget)
-                if x.columnCount() == 7]
+                if x is getattr(win, "_bd_bp_tab_tbl", None)]
+    check("b5b Blueprints-Tabelle im Dialog gefunden", bool(_bp_tbls))
     for _tb, _nm in ((_bp_tbls[0] if _bp_tbls else None, "Blueprints"),):
         if _tb is None:
             continue
+        eq(f"b5b {_nm}: 8 Spalten, die letzte ist ME / TE",
+           (_tb.columnCount(), _tb.horizontalHeaderItem(7).text()
+            if _tb.columnCount() > 7 and _tb.horizontalHeaderItem(7) else None),
+           (8, _t4("ME / TE")))
+        eq(f"b5b {_nm}: ME / TE steht sichtbar neben 'Stage'",
+           _tb.horizontalHeader().visualIndex(7), 2)
         check(f"b5b {_nm}: kein Gitter", not _tb.showGrid())
         check(f"b5b {_nm}: keine Zeilennummern",
               not _tb.verticalHeader().isVisible())
@@ -10206,8 +10217,9 @@ try:
     # Pruefung hier und baut sich keinen zweiten Plan.
     try:
         from PySide6.QtWidgets import QComboBox as _QCb102
-        _alt102 = (dict(win.settings.get("bau_runplan_ziel") or {}),
-                   win.settings.get("bau_runplan_ziel_std", 0))
+        # emm563: die Zielzeit gehoert zum offenen Plan, nicht zum Programm
+        import copy as _copy102
+        _alt102 = _copy102.deepcopy(win._runplan_ziel_jetzt())
         # DER NEUAUFBAU WIRD FUER DIESEN BLOCK STILLGELEGT: eine Auswahl
         # stoesst ihn an, und er loescht genau die Felder, die hier geprueft
         # werden ("Internal C++ object already deleted", gemessen 24.09.2026).
@@ -10433,8 +10445,7 @@ try:
                           and str(_x.data(0, Qt.UserRole + 6) or "") != _k_s
                           and _x.isExpanded() for _x in _alle_s))
                 (getattr(win, "_bd_sched_klapp", None) or {}).pop(_k_s, None)
-        win.settings["bau_runplan_ziel"] = _alt102[0]
-        win.settings["bau_runplan_ziel_std"] = _alt102[1]
+        win._bd_runplan_ziel = _copy102.deepcopy(_alt102)
         if _altfr102 is not None:
             win._bd_full_rebuild = _altfr102
 
@@ -10508,12 +10519,11 @@ try:
            sorted(win._runplan_ziel_sekunden().items()),
            sorted({_st: 8 * 3600.0 for _st in win._RUNPLAN_STUFEN}.items()))
         eq("b102 ... und die Ausnahme der Stufe ist weg",
-           dict(win.settings.get("bau_runplan_ziel") or {}), {})
+           dict(win._runplan_ziel_jetzt().get("stufen") or {}), {})
         win._runplan_ziel_alle_gewaehlt(0)
         eq("b102 'so schnell wie moeglich' laesst den Planer wieder frei",
            win._runplan_ziel_sekunden(), {})
-        win.settings["bau_runplan_ziel"] = _alt102[0]
-        win.settings["bau_runplan_ziel_std"] = _alt102[1]
+        win._bd_runplan_ziel = _copy102.deepcopy(_alt102)
     except Exception as _e102:                           # pragma: no cover
         _fail.append(f"b102 Block geplatzt: {_e102!r}")
     _st7w_times = getattr(win, "_bd_last_stage_times", None) or {}
@@ -22340,6 +22350,391 @@ finally:
         _app.processEvents()
     except Exception:
         pass
+
+# ---------------------------------------------------------------- (b207)
+# HAKEN AUS MUSS DEN VOLLKAUF LIEFERN, NICHT NULL (emm556, Nutzer
+# 15.10.2026: "heisst das wenn der Nutzer und ich diesen Hacken aus haben
+# und Einkaufsliste erstellen wollen kommt die Meldung: nichts kopiert es
+# gibt keine missing Items ... ist das korrekt?" - es war korrekt
+# beobachtet und falsch programmiert).
+#
+# BEFUND: die Menge haengte an `_rest_da` (LAEUFT die Rest-Rechnung?)
+# statt an der Haken-Lage (WILL der Nutzer den Rest?). Ohne Haken wird
+# `_rest_fehlt` nie gefuellt - `_rest_kaufmenge` lieferte also 0 fuer
+# JEDE Zeile: leere Einkaufsliste, ausgeschaltete Frachtzeile.
+#
+# WARUM HIER UND NICHT NUR ALS TEXT-PRUEFUNG: aa275 verglich die beiden
+# Code-Stellen als TEXT und war die ganze Zeit gruen - beide Texte
+# standen ja da, sie fragten nur Verschiedenes. Diese Pruefung rechnet
+# nach (Lehre emm537: der Laufzeit-Weg braucht eine b-Erwartung).
+_alt207 = {}
+try:
+    from PySide6.QtWidgets import QCheckBox as _QCB207
+    _alt207 = {"rows": getattr(win, "_bd_mat_rows", None),
+               "plan": getattr(win, "_bd_plan_ref", None),
+               "builds": getattr(win, "_bd_plan_builds", None),
+               "cb": getattr(win, "_bd_rest_only_cb", None),
+               "fehl": win._fehlbedarf_jetzt,
+               "rest": win._restbedarf_jetzt}
+    # EINE Zeile, alle drei Zahlen verschieden, damit keine zwei Zweige
+    # zufaellig dasselbe liefern: Bedarf 1000, davon 400 selbst gebaut und
+    # 100 aus Reprocessing -> Vollkauf 500. Plan-Fehlmenge 700,
+    # Restbedarf 120.
+    win._bd_mat_rows = [{"tid": 34, "name": "b207 Tritanium", "total": 1000,
+                         "built": 400, "reprocessed": 100, "missing": 700,
+                         "owned": 0}]
+    win._bd_plan_ref = {"plan": {"build_runs": {34: 1},
+                                 "build_mats": {34: [(34, 1)]}}}
+    win._bd_plan_builds = set()
+    win._fehlbedarf_jetzt = lambda: [(34, 120, 0, 0, 0)]
+    win._restbedarf_jetzt = lambda: {34: 120}
+    win._bd_rest_only_cb = _QCB207()
+    # 1. HAKEN AN: der Restbedarf - wie bisher, das war nie kaputt.
+    win._bd_rest_only_cb.setChecked(True)
+    _ej207 = win._einkauf_jetzt()
+    eq("b207 Haken an: die Menge ist der Restbedarf",
+       _ej207["mengen"], {34: 120})
+    check("b207 Haken an: Rest-Modus erkannt", _ej207["rest_modus"] is True)
+    # 2. HAKEN AUS: VOLLKAUF an der Fertigungsgrenze, 1000 - 400 - 100.
+    #    Nicht 0 (der Fehler) und auch nicht die Plan-Fehlmenge 700 - die
+    #    zieht Bestand ab, der Vollkauf gerade nicht.
+    win._bd_rest_only_cb.setChecked(False)
+    _ej207b = win._einkauf_jetzt()
+    eq("b207 Haken AUS: Vollkauf statt 0", _ej207b["mengen"], {34: 500})
+    check("b207 Haken AUS: kein Rest-Modus", _ej207b["rest_modus"] is False)
+    eq("b207 Haken AUS: die Posten tragen dieselbe Menge",
+       [(_t, _q) for _t, _n, _q in _ej207b["posten"]], [(34, 500)])
+    # 3. HAKEN AN, aber die Rest-Rechnung scheitert: die Plan-Menge bleibt
+    #    stehen (Regel 3 - lieber zu viel anbieten als eine Luecke
+    #    verschweigen). Vorher kam auch hier 0 heraus, weil `_rest_fehlt`
+    #    leer blieb und trotzdem gelesen wurde.
+    def _fehl207():
+        raise RuntimeError("b207: keine Rest-Rechnung")
+    win._fehlbedarf_jetzt = _fehl207
+    win._bd_rest_only_cb.setChecked(True)
+    _ej207c = win._einkauf_jetzt()
+    eq("b207 ohne Rest-Rechnung: die Plan-Fehlmenge bleibt stehen",
+       _ej207c["mengen"], {34: 700})
+    # 4. EINE RECHNUNG: die Funktion, die der Kopier-Knopf fuer seine
+    #    Zeilen benutzt, sagt dasselbe wie die Mengenliste.
+    eq("b207 `kaufmenge` ist dieselbe Rechnung wie `mengen`",
+       {34: int(_ej207c["kaufmenge"](win._bd_mat_rows[0]))}, _ej207c["mengen"])
+except Exception as _e207:                                # pragma: no cover
+    import traceback as _tb207
+    _fail.append(f"b207 Haken-aus-Menge: {type(_e207).__name__}: {_e207} | "
+                 + _tb207.format_exc().splitlines()[-3].strip())
+finally:
+    for _k207, _a207 in (("rows", "_bd_mat_rows"), ("plan", "_bd_plan_ref"),
+                         ("builds", "_bd_plan_builds"),
+                         ("cb", "_bd_rest_only_cb")):
+        if _k207 in _alt207:
+            setattr(win, _a207, _alt207[_k207])
+    if "fehl" in _alt207:
+        win._fehlbedarf_jetzt = _alt207["fehl"]
+    if "rest" in _alt207:
+        win._restbedarf_jetzt = _alt207["rest"]
+
+# ---------------------------------------------------------------- (b208)
+# DER BAUPLAN-KOPF SAGT, WIE ALT DIE ESI-DATEN SIND (emm560, Nutzer
+# 15.10.2026: "last checked 21:13 (just now)", obwohl ESI einen fast
+# stundenalten Bestand lieferte - gekauftes Material fehlte im Plan und es
+# sah nach einem Rechenfehler aus). aa560 rechnet die Textfunktion nach;
+# HIER geht es den Weg des Fensters: `_bd_update_esi_stand` am echten
+# MainWindow, echtes QLabel, Datenstand ueber `_bd_esi_stock_ts` - genau
+# das Feld, das adone() aus dem Last-Modified-Alter setzt.
+_alt208 = {}
+try:
+    import time as _time208
+    from PySide6.QtWidgets import QLabel as _QL208
+    _alt208 = {"lbl": getattr(win, "_bd_esi_stand_lbl", None),
+               "ts": getattr(win, "_bd_esi_stock_ts", None)}
+    win._bd_esi_stand_lbl = _QL208("")
+    _j208 = _time208.time()
+    _st208 = {"checked_at": _j208 - 5, "changed_at": _j208 - 1800,
+              "erstaufzeichnung": False}
+    # 1. Daten 51 min alt, Abruf gerade eben: BEIDES steht im Kopf.
+    win._bd_esi_stock_ts = _j208 - 3065
+    win._bd_update_esi_stand(_st208)
+    _t208 = win._bd_esi_stand_lbl.text()
+    check(f"b208 Kopf nennt den Abruf UND das Datenalter ({_t208!r})",
+          "(just now)" in _t208 and "51 min old" in _t208)
+    # 2. Gegenprobe: kein ESI-Datenstand (ESI-Seite aus / neuer Plan) ->
+    #    kein erfundenes Alter.
+    win._bd_esi_stock_ts = None
+    win._bd_update_esi_stand(_st208)
+    check("b208 ohne Datenstand kein Alter im Kopf",
+          "min old" not in win._bd_esi_stand_lbl.text()
+          and "last checked" in win._bd_esi_stand_lbl.text())
+    # 3. Gegenprobe: frische Daten (2 min) -> kein Zusatz, sonst stuende
+    #    dort bei jedem Abruf ein beunruhigendes "2 min old".
+    win._bd_esi_stock_ts = _j208 - 120
+    win._bd_update_esi_stand(_st208)
+    check("b208 frische Daten: kein Zusatz",
+          "min old" not in win._bd_esi_stand_lbl.text())
+except Exception as _e208:                                # pragma: no cover
+    _fail.append(f"b208 Bestandsalter im Bauplan-Kopf: {type(_e208).__name__}: {_e208}")
+finally:
+    if "lbl" in _alt208:
+        win._bd_esi_stand_lbl = _alt208["lbl"]
+    if "ts" in _alt208:
+        win._bd_esi_stock_ts = _alt208["ts"]
+
+# ---------------------------------------------------------------- (b209)
+# ME/TE IM BLUEPRINTS-REITER (emm561, Nutzer-Wunsch: "je Komponente
+# sichtbar machen, welchen - naemlich den schlechtesten - eigenen Blueprint
+# MoMa zum Rechnen nimmt"). Am echten `_fill_blueprint_tab`, und jede
+# angezeigte Zahl wird GEGEN DIE RECHNUNG gehalten: `_bau_category_me_map`
+# (Material) und `_bau_category_te_factor` ohne Struktur (Zeit). Eine
+# Anzeige, die nur ihren eigenen Text prueft, waere blind gegen genau den
+# Fehler, um den es geht - dass sie etwas anderes sagt als der Plan rechnet.
+_alt209 = {}
+try:
+    from PySide6.QtWidgets import QTableWidget as _QTW209
+    _E209, _C209, _R209 = 983001, 983002, 983003
+    _BE209, _BC209, _BR209 = 983101, 983102, 983103
+
+    class _Rec209:
+        invention_for_bpc = {}
+        activity_max_runs = {}
+        reaction_products = {_R209}
+        bp_materials = {}
+        product_to_bp = {_E209: (_BE209, I.MANUFACTURING, 1),
+                         _C209: (_BC209, I.MANUFACTURING, 1),
+                         _R209: (_BR209, I.REACTION, 1)}
+    _rec209 = _Rec209()
+    _keys209 = ("_bd_opts", "_bd_owned_bp_cache", "_bd_bp_owned_counts",
+                "_bd_bp_owned_bpc_runs", "_bd_groups", "_bd_me", "_bd_te",
+                "_bd_me_component", "_bd_te_component", "_bd_me_je_ende",
+                "_bd_te_je_ende", "_bd_recipes", "_bd_bp_im_job", "_bd_bp_fehler")
+    _alt209 = {k: getattr(win, k, None) for k in _keys209}
+    _alt209["_setting"] = win.settings.get("bau_me_aus_esi", "_fehlt")
+    _grp209 = {_C209: "Construction Component"}
+    win._bd_recipes = _rec209
+    win._bd_groups = _grp209
+    win._bd_opts = {"invention": False}
+    win._bd_me, win._bd_te = 3, 6
+    win._bd_me_component, win._bd_te_component = 10, 20
+    win._bd_me_je_ende = {}; win._bd_te_je_ende = {}
+    win._bd_bp_im_job = {}; win._bd_bp_fehler = []
+    win._bd_bp_owned_counts = {}; win._bd_bp_owned_bpc_runs = {}
+    # ZWEI eigene Kopien des Bauteils, verschieden erforscht: die
+    # schlechtere (7/14) muss gewinnen (Regel 3).
+    win._bd_owned_bp_cache = [
+        {"type_id": _BC209, "material_efficiency": 9, "time_efficiency": 18,
+         "is_bpo": True, "quantity": 1, "char": "b209"},
+        {"type_id": _BC209, "material_efficiency": 7, "time_efficiency": 14,
+         "is_bpo": False, "quantity": 1, "runs": 5, "char": "b209"}]
+    win.settings.pop("bau_me_aus_esi", None)
+    _jobs209 = [
+        {"tid": _E209, "bp_id": _BE209, "activity": I.MANUFACTURING, "runs": 1,
+         "is_end": True, "name": "Endstueck b209"},
+        {"tid": _C209, "bp_id": _BC209, "activity": I.MANUFACTURING, "runs": 4,
+         "name": "Bauteil b209"},
+        {"tid": _R209, "bp_id": _BR209, "activity": I.REACTION, "runs": 2,
+         "name": "Reaktion b209"}]
+
+    def _lies209():
+        _t = _QTW209(0, 8)
+        win._fill_blueprint_tab(_jobs209, [], _rec209, _t, type_id=_E209)
+        _out = {}
+        for _r in range(_t.rowCount()):
+            _n = _t.item(_r, 0).text()
+            _z = _t.item(_r, 7)
+            for _k in ("Endstueck", "Bauteil", "Reaktion"):
+                if _k in _n:
+                    _out[_k] = ((_z.text(), _z.toolTip()) if _z is not None
+                                else ("", ""))
+        return _out
+
+    def _rechnung209():
+        """Was die RECHNUNG fuer das Bauteil nimmt - ME aus der Kategorie-
+        Karte des Plans, TE aus dem Zeitfaktor ohne Struktur."""
+        _me = win._bau_category_me_map([_C209], _grp209, {_R209}, _E209,
+                                       recipes=_rec209)[_C209]
+        _f = win._bau_category_te_factor(_C209, _grp209, {_R209}, _E209,
+                                         recipes=_rec209, opts=win._bd_opts)
+        return f"{int(round(_me))} / {int(round((1 - _f) * 100))}"
+
+    # 1. ESI an, zwei eigene Kopien: die schlechtere, und genau die rechnet.
+    _a209 = _lies209()
+    eq("b209 Bauteil zeigt die SCHLECHTESTE eigene Kopie",
+       _a209.get("Bauteil", ("",))[0], "7 / 14")
+    eq("b209 ... und das ist, was die Rechnung nimmt",
+       _a209.get("Bauteil", ("",))[0], _rechnung209())
+    check(f"b209 ... Tooltip nennt die Quelle ({_a209.get('Bauteil')})",
+          "ESI" in _a209.get("Bauteil", ("", ""))[1]
+          and "2" in _a209.get("Bauteil", ("", ""))[1])
+    # 2. Endprodukt: die Eingabe oben, nicht die Kategorie-Karte.
+    eq("b209 Endprodukt zeigt die Eingabe oben im Plan",
+       _a209.get("Endstueck", ("",))[0], "3 / 6")
+    # 3. Reaktion: nicht erforschbar, keine Zahl.
+    eq("b209 Reaktion zeigt keine ME/TE", _a209.get("Reaktion", ("",))[0],
+       "\u2013")
+    # 4. Kategorie auf MANUELL: jetzt gilt das Drehfeld, OBWOHL eigene
+    #    Kopien da sind - genau der Fall, in dem "eigener Blueprint" die
+    #    falsche Anzeige waere (START_SITZUNG_24, Punkt 2).
+    win.settings["bau_me_aus_esi"] = {"components": False}
+    _b209 = _lies209()
+    eq("b209 manuell: das Drehfeld gilt, nicht der eigene Blueprint",
+       _b209.get("Bauteil", ("",))[0], "10 / 20")
+    eq("b209 ... und das ist wieder, was die Rechnung nimmt",
+       _b209.get("Bauteil", ("",))[0], _rechnung209())
+    # 5. ESI an, aber keine eigene Kopie: Rueckfall aufs Drehfeld.
+    win.settings.pop("bau_me_aus_esi", None)
+    win._bd_owned_bp_cache = []
+    _c209 = _lies209()
+    eq("b209 ohne eigene Blaupause: Drehfeld",
+       _c209.get("Bauteil", ("",))[0], _rechnung209())
+    # 6. Invention: die erfundene Kopie hat 2 % / 4 % (ohne Decryptor),
+    #    unabhaengig von der Eingabe oben.
+    _Rec209.invention_for_bpc = {_BE209: (_BC209, 1, 0.3, [])}
+    win._bd_opts = {"invention": True}
+    _d209 = _lies209()
+    eq("b209 erfundenes Endprodukt: 2 / 4", _d209.get("Endstueck", ("",))[0],
+       "2 / 4")
+except Exception as _e209:                                # pragma: no cover
+    import traceback as _tb209
+    _fail.append(f"b209 ME/TE im Blueprints-Reiter: {type(_e209).__name__}: "
+                 f"{_e209} | " + _tb209.format_exc().splitlines()[-3].strip())
+finally:
+    for _k209 in _keys209 if _alt209 else ():
+        setattr(win, _k209, _alt209.get(_k209))
+    if _alt209:
+        if _alt209["_setting"] == "_fehlt":
+            win.settings.pop("bau_me_aus_esi", None)
+        else:
+            win.settings["bau_me_aus_esi"] = _alt209["_setting"]
+
+# ---------------------------------------------------------------- (b210)
+# "SO LANGE WIE MOEGLICH" DARF DEN PLANER NICHT UMWERFEN (emm562, Discord
+# 16.10.2026, Spaceballs 2: "OverflowError: cannot convert float infinity
+# to integer" beim Oeffnen eines Plans "in progress" - und weil die
+# Zielzeit fuer ALLE Plaene gilt und nur im Runplaner eines offenen Plans
+# zu aendern ist, kam er in KEINEN Plan mehr hinein).
+#
+# WARUM b102 DAS NIE FAND: b102 stellt "so lange wie noetig" ein und baut
+# danach neu - aber sein Plan hat keine Stufe, in der ein Item mehr als
+# einen Slot bekommt. Nur dort wird gestrafft, nur dort wurde aus
+# Unendlich eine ganze Zahl. Hier deshalb genau dieser Fall: 40 Runs auf
+# 10 Slots, und die Zielzeit kommt ueber den ECHTEN Weg
+# (`_runplan_ziel_sekunden` aus der Zielzeit des Plans), wie in
+# `_fill_bauplan_schedule`.
+_alt210 = None
+try:
+    _alt210 = getattr(win, "_bd_runplan_ziel", None)
+    _jobs210 = [{"tid": 984001, "name": "b210 Bauteil", "runs": 40,
+                 "activity": I.MANUFACTURING, "base_time": 3600,
+                 "is_end": False},
+                {"tid": 984002, "name": "b210 Kleinteil", "runs": 5,
+                 "activity": I.MANUFACTURING, "base_time": 600,
+                 "is_end": False}]
+    _chars210 = [{"id": 1, "name": "b210", "mfg_slots": 10,
+                  "reaction_slots": 0, "can_mfg": True, "can_react": False}]
+
+    def _plane210(std):
+        win._bd_runplan_ziel = {"std": std, "stufen": {}}
+        _r = I.schedule_build(_jobs210, _chars210, mfg_bp=10,
+                              stage_ziel=win._runplan_ziel_sekunden())
+        return {a["tid"]: (a["jobs"], a["runs"]) for a in _r["assignments"]}
+    try:
+        _inf210 = _plane210(-1)
+        _f210 = None
+    except Exception as _x210:
+        _inf210, _f210 = {}, f"{type(_x210).__name__}: {_x210}"
+    check(f"b210 'so lange wie moeglich' plant ohne Absturz ({_f210})",
+          _f210 is None)
+    eq("b210 ... EINE Kopie faehrt alle 40 Runs (so wenige Jobs wie moeglich)",
+       _inf210.get(984001), (1, 40))
+    # GEGENPROBEN: die beiden anderen Einstellungen rechnen wie bisher -
+    # sonst koennte der Fix still auch die normalen Plaene umbauen.
+    eq("b210 Gegenprobe 'so schnell wie moeglich': alle 10 Slots",
+       _plane210(0).get(984001), (10, 40))
+    eq("b210 Gegenprobe 23 h: zwei Kopien (23 Runs passen in 23 h)",
+       _plane210(23).get(984001), (2, 40))
+except Exception as _e210:                                # pragma: no cover
+    _fail.append(f"b210 Zielzeit unendlich: {type(_e210).__name__}: {_e210}")
+finally:
+    win._bd_runplan_ziel = _alt210
+
+# ---------------------------------------------------------------- (b211)
+# DIE ZIELZEIT GEHOERT ZUM PLAN (emm563, Nutzer 16.10.2026: "standard-
+# maessig beim Erstellen eines Bauplanes ist die Runplaner-Zeit immer auf
+# 'so schnell wie moeglich' gestellt? sollte so"). Am ECHTEN Weg:
+# `open_build_detail(fresh=True)` fuer einen neuen Plan (Stubs wie b167 -
+# geprueft wird der Zustand, nicht die Rechnung), `_open_saved_plan_zustand`
+# fuer gespeicherte, `_runplan_ziel_setzen` fuer die Auto-Speicherung.
+_alt211 = None
+try:
+    from eve_trader import store as _st211, industry as _I211
+    _alt211 = {"snap": _st211.get_snapshot, "pp": _I211.production_plan,
+               "sde": _I211.sde_ready, "run": win._run,
+               "ziel": getattr(win, "_bd_runplan_ziel", None),
+               "pid": getattr(win, "_bd_open_plan_id", None),
+               "plans": [dict(_p) for _p in (win.settings.get("bau_saved_plans") or [])]}
+
+    def _pp211(*a, **k):
+        raise RuntimeError("b211 kein Rechnen noetig")
+    _st211.get_snapshot = lambda *a, **k: [
+        {"type_id": 100, "sell_min": 1000.0, "buy_max": 900.0}]
+    _I211.sde_ready = lambda: True
+    _I211.production_plan = _pp211
+    win._run = lambda w, done, fail_cb=None, **k: None
+    # 1. Der vorige Plan stand auf "so lange wie moeglich" - der NEUE
+    #    beginnt trotzdem bei "so schnell wie moeglich". Genau das war bis
+    #    1.1.3 kaputt (global, und so kam der Absturz aus emm562 zustande).
+    win._bd_runplan_ziel = {"std": -1, "stufen": {"reaction_2": 23}}
+    win.open_build_detail(100, "b211 neuer Plan", fresh=True)
+    _app.processEvents()
+    eq("b211 neuer Plan: so schnell wie moeglich, keine Ausnahmen",
+       win._runplan_ziel_jetzt(), {"std": 0, "stufen": {}})
+    eq("b211 ... und der Planer bekommt keine Zielzeit",
+       win._runplan_ziel_sekunden(), {})
+    _d211 = win._offener_bauplan()
+    if _d211 is not None:
+        _d211.close(); _app.processEvents()
+    # 2. Ein gespeicherter Plan bringt SEINE Zielzeit mit ...
+    win._open_saved_plan_zustand(
+        {"id": 2110, "type_id": 100, "qty": 1, "me": 10, "te": 20,
+         "runplan_ziel": {"std": 23, "stufen": {"reaction_2": -1}}}, 2110)
+    eq("b211 gespeicherter Plan bringt seine Zielzeit mit",
+       (win._runplan_ziel_stunden("component"),
+        win._runplan_ziel_stunden("reaction_2")), (23, -1))
+    # ... ein ALTER Plan (1.1.3, ohne Eintrag) beginnt bei 0 - die alte
+    # globale Einstellung rechnet nicht mehr mit.
+    win.settings["bau_runplan_ziel_std"] = -1        # Rest aus 1.1.3
+    win._open_saved_plan_zustand(
+        {"id": 2111, "type_id": 100, "qty": 1, "me": 10, "te": 20}, 2111)
+    eq("b211 Plan aus 1.1.3: so schnell wie moeglich, die alte globale "
+       "Einstellung zaehlt nicht", win._runplan_ziel_sekunden(), {})
+    win.settings.pop("bau_runplan_ziel_std", None)
+    # 3. Aendern am gespeicherten Plan landet SOFORT in seinem Eintrag
+    #    (wie die Runplaner-Haken) - und nur dort.
+    win.settings["bau_saved_plans"] = [
+        {"id": 2112, "type_id": 100, "item_name": "b211 A"},
+        {"id": 2113, "type_id": 100, "item_name": "b211 B"}]
+    win._open_saved_plan_zustand(
+        {"id": 2112, "type_id": 100, "qty": 1, "me": 10, "te": 20}, 2112)
+    win._bd_open_plan_id = 2112
+    win._runplan_ziel_setzen("reaction_1", 12)
+    _pl211 = {p["id"]: p for p in win.settings["bau_saved_plans"]}
+    eq("b211 Aenderung landet im Eintrag DIESES Plans",
+       _pl211[2112].get("runplan_ziel"), {"std": 0, "stufen": {"reaction_1": 12}})
+    check("b211 ... und nicht im anderen", "runplan_ziel" not in _pl211[2113])
+    eq("b211 ... und gelesen wird sie beim naechsten Oeffnen wieder",
+       win.runplan_ziel_aus_plan(_pl211[2112]),
+       {"std": 0, "stufen": {"reaction_1": 12}})
+except Exception as _e211:                                # pragma: no cover
+    import traceback as _tb211
+    _fail.append(f"b211 Zielzeit je Plan: {type(_e211).__name__}: {_e211} | "
+                 + _tb211.format_exc().splitlines()[-3].strip())
+finally:
+    if _alt211 is not None:
+        _st211.get_snapshot = _alt211["snap"]; _I211.production_plan = _alt211["pp"]
+        _I211.sde_ready = _alt211["sde"]; win._run = _alt211["run"]
+        win._bd_runplan_ziel = _alt211["ziel"]
+        win._bd_open_plan_id = _alt211["pid"]
+        win.settings["bau_saved_plans"] = _alt211["plans"]
+        win.settings.pop("bau_runplan_ziel_std", None)
 
 # ---------------------------------------------------------------- (b79)
 # FEHLER.LOG-NETZ (siehe Kopf der Datei): alles, was dieser Lauf an

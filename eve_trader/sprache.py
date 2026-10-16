@@ -3007,6 +3007,29 @@ KATALOG = {
             "Live per ESI: eigene BPOs (unbegrenzt) und BPCs (begrenzte Runs, gegen den Bedarf gepr\u00fcft).",
         "Is what you own enough for this plan?":
             "Reicht dein Besitz f\u00fcr diesen Plan?",
+        # ---- ME/TE-Spalte im Blueprints-Reiter (emm561) ----
+        "ME / TE":
+            "ME / TE",
+        "Material / time efficiency (%) of the blueprint the plan calculates with \u2013 hover a cell to see where it comes from. Rig and structure bonuses come on top and are not included here.":
+            "Material- / Zeiteffizienz (%) der Blaupause, mit der der Plan rechnet \u2013 Maus auf eine Zelle zeigt, woher der Wert kommt. Rig- und Strukturboni kommen obendrauf und sind hier nicht enthalten.",
+        "Reactions cannot be researched \u2013 no ME/TE.":
+            "Reaktionen lassen sich nicht erforschen \u2013 kein ME/TE.",
+        "your own blueprint per ESI \u2013 the worst of {n} (the plan assumes the worst one goes into the job)":
+            "deine eigene Blaupause laut ESI \u2013 die schlechteste von {n} (der Plan nimmt an, dass die schlechteste in den Job geht)",
+        "no own blueprint found \u2013 value from the card \u201eOther blueprints (ME/TE)\u201c":
+            "keine eigene Blaupause gefunden \u2013 Wert aus der Karte \u201eAndere Blaupausen (ME/TE)\u201c",
+        "category set to manual \u2013 value from the card \u201eOther blueprints (ME/TE)\u201c":
+            "Kategorie steht auf manuell \u2013 Wert aus der Karte \u201eAndere Blaupausen (ME/TE)\u201c",
+        "end product \u2013 the blueprint ME/TE at the top of this plan":
+            "Endprodukt \u2013 die Blaupausen-ME/TE oben in diesem Plan",
+        "invented T2 copy \u2013 2 % ME / 4 % TE plus decryptor":
+            "erfundene T2-Kopie \u2013 2 % ME / 4 % TE plus Decryptor",
+        "ME {me} % / TE {te} %: {quelle}":
+            "ME {me} % / TE {te} %: {quelle}",
+        "ME {v} %: {quelle}":
+            "ME {v} %: {quelle}",
+        "TE {v} %: {quelle}":
+            "TE {v} %: {quelle}",
         "Select the hangar in game \u2192 Ctrl+C \u2192 paste here \u2192 Apply.\nExpected is ONE item per line: name, then quantity.":
             "Hangar ingame markieren \u2192 Strg+C \u2192 hier einf\u00fcgen \u2192 \u00dcbernehmen.\nErwartet wird EIN Item pro Zeile: Name, dann Menge.",
         "{ok} recognised, {bad} unknown \u2013 applied as pasted stock":

@@ -1853,8 +1853,35 @@ class MainWindowHelpers:
         return trenner.join(
             f"{_n}: {int(_q):,}".replace(",", "'") for _n, _q in (halter or []))
 
+    # AB WANN DAS DATENALTER GENANNT WIRD (emm560): unter 5 Minuten ist der
+    # ESI-Stand so frisch, wie er werden kann - die Zusatzangabe waere nur
+    # Laerm. EINE Zahl fuer Bauplan-Kopf und Stock locations (Regel 9).
+    ESI_ALTER_ZEIGEN_AB_S = 300
+
     @staticmethod
-    def bestand_stand_text(info, jetzt=None):
+    def bestand_alter_text(alter_s):
+        """"stock data 51 min old (ESI caches ~1 h)" - oder "" (unbekannt
+        oder juenger als ESI_ALTER_ZEIGEN_AB_S).
+
+        EINE Formatstelle fuer das ALTER DER DATEN (emm528 Stock locations,
+        emm560 Bauplan-Kopf). Das Alter kommt aus dem Last-Modified-Header
+        der Asset-Antwort (`esi.assets_age_seconds`) und ist etwas anderes
+        als der Abruf-Zeitpunkt: CCP cacht /assets/ rund eine Stunde, ein
+        Abruf "gerade eben" kann also 50 Minuten alte Daten liefern."""
+        from ..sprache import t as _txt
+        if alter_s is None:
+            return ""
+        try:
+            alter_s = float(alter_s)
+        except (TypeError, ValueError):
+            return ""
+        if alter_s < MainWindowHelpers.ESI_ALTER_ZEIGEN_AB_S:
+            return ""
+        return _txt("stock data {n} min old (ESI caches ~1 h)").format(
+            n=int(alter_s // 60))
+
+    @staticmethod
+    def bestand_stand_text(info, jetzt=None, daten_ts=None):
         """Kopfzeile fuer den Bauplan: wann hat sich der ESI-Bestand zuletzt
         WIRKLICH geaendert - und wann wurde zuletzt nachgesehen.
 
@@ -1893,13 +1920,34 @@ class MainWindowHelpers:
             return _txt("Stock (ESI): no fetch yet in this installation")
         geprueft = _wann(info.get("checked_at"))
         if info.get("erstaufzeichnung"):
-            return _txt("Stock (ESI): last checked {checked} \u00b7 changes are "
+            kopf = _txt("Stock (ESI): last checked {checked} \u00b7 changes are "
                         "recorded from now on").format(checked=geprueft)
-        geaendert = _wann(info.get("changed_at"))
-        if not geaendert:
-            return _txt("Stock (ESI): last checked {checked}").format(checked=geprueft)
-        return _txt("Stock (ESI): last detected change {changed} \u00b7 last checked "
-                    "{checked}").format(changed=geaendert, checked=geprueft)
+        else:
+            geaendert = _wann(info.get("changed_at"))
+            if not geaendert:
+                kopf = _txt("Stock (ESI): last checked {checked}").format(
+                    checked=geprueft)
+            else:
+                kopf = _txt("Stock (ESI): last detected change {changed} "
+                            "\u00b7 last checked {checked}").format(
+                                changed=geaendert, checked=geprueft)
+        # DAS ALTER DER DATEN DAZU (emm560, Nutzer 15.10.2026: er hatte
+        # Material gekauft, der Plan sah es nicht, die Zeile sagte "last
+        # checked 21:13 (just now)" - es sah nach einem Rechenfehler aus und
+        # kostete eine Dreiviertelstunde). "(just now)" stimmt nur fuer "MoMa
+        # hat gefragt"; ESI liefert bis zu einer Stunde alte Daten.
+        # `daten_ts` = Zeitpunkt, bis zu dem ESI den Bestand gesehen hat
+        # (`_bd_esi_stock_ts`, aeltester Charakter - Regel 3). Gerechnet wird
+        # gegen DIESELBE Uhr wie oben (`jetzt`).
+        if daten_ts is not None:
+            try:
+                _zus = MainWindowHelpers.bestand_alter_text(
+                    max(0.0, jetzt - float(daten_ts)))
+            except (TypeError, ValueError):
+                _zus = ""
+            if _zus:
+                kopf = kopf + " \u00b7 " + _zus
+        return kopf
 
     # ---------------------------------------------------------------- #
     # UNTERBIETEN AM AKTIVEN HUB (Nutzer-Wunsch, Sitzung 8)

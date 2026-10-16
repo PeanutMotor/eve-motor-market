@@ -59,7 +59,7 @@ _BERICHT = open(os.path.join("berichte", "pruefe_bericht.txt"), "w",
 sys.stdout = _Doppelt(sys.stdout, _BERICHT)
 sys.stderr = _Doppelt(sys.stderr, _BERICHT)
 import datetime as _dt
-print(f"pruefe.py Fassung 7 - {_dt.datetime.now():%Y-%m-%d %H:%M:%S} - "
+print(f"pruefe.py Fassung 8 - {_dt.datetime.now():%Y-%m-%d %H:%M:%S} - "
       f"Python {sys.version.split()[0]}")
 
 
@@ -156,6 +156,24 @@ def _suite_ok(aus):
     m = re.search(r"(\d+)/(\d+) gruen", aus)
     return bool(m) and m.group(1) == m.group(2) and "FEHLER" not in aus
 
+
+# SCHRITT 0: ZEILENENDEN DER .bat (Fassung 8, emm564, Nutzer 16.10.2026:
+# "ich finde das eh nie" - gemeint war fix_crlf.py ausserhalb des
+# Projekts, von Hand nach jeder neuen .bat). Jetzt repariert die Pruefung
+# das selbst, BEVOR sie prueft, und sagt, welche Dateien es waren.
+print("\n=== Zeilenenden (.bat) " + "=" * 38)
+try:
+    sys.path.insert(0, "werkzeuge")
+    import zeilenenden as _ze
+    _rep = _ze.reparieren(".")
+    if _rep:
+        for _r in _rep:
+            print(f"  auf CRLF gebracht: {_r}")
+    else:
+        print("  alle .bat haben schon CRLF")
+except Exception as _ze_err:
+    # Darf die Pruefung nie verhindern - aa530 meldet dann, was falsch ist.
+    print(f"  WARNUNG Zeilenenden nicht geprueft: {_ze_err}")
 
 ergebnis["Bestand-Herkunft (aa)"] = lauf(
     "Bestand-Herkunft", [PY, os.path.join("tests", "test_bestand_herkunft.py")],

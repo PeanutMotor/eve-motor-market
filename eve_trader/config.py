@@ -311,13 +311,10 @@ DEFAULT_SETTINGS = {
     # einklappen (Nutzer 23.09.2026) - standardmaessig OFFEN, weil dort die
     # Mengen und ME/TE jedes Endes geschraubt werden.
     "bau_multi_enden_offen": True,
-    # ZIELZEIT JE STUFE IM RUNPLANER (Nutzer 24.09.2026: "abends
-    # einloggen, Runs starten auf 23 h, am naechsten Tag Components").
-    # {stage: Stunden}; 0 oder fehlend = automatisch (nur straffen, die
-    # Stufe wird nicht laenger als noetig). `..._std` gilt fuer jede
-    # Stufe ohne eigenen Wert.
-    "bau_runplan_ziel": {},
-    "bau_runplan_ziel_std": 0,
+    # ZIELZEIT JE STUFE IM RUNPLANER: seit emm563 (1.1.4) KEIN Programm-
+    # Schluessel mehr, sondern Teil des Plans (`runplan_ziel` im Eintrag,
+    # `_bd_runplan_ziel` am offenen Plan). Die alten Schluessel
+    # `bau_runplan_ziel`/`bau_runplan_ziel_std` entfernt `_nach_migrationen`.
     # GANZE GRUPPEN nie bauen und nie kaufen (Nutzer, Sitzung 20).
     # Werte = die Gruppen des Materialien-Reiters, s. _MATERIAL_GRUPPEN.
     "bau_blacklist_gruppen": [],
@@ -699,6 +696,13 @@ def plaene_archivieren(data, jetzt=None) -> int:
 
 
 def _nach_migrationen(data: dict) -> dict:
+    # Migration (emm563, 1.1.4): die Runplaner-Zielzeit war global und ist
+    # jetzt Sache des Plans. Die alten Werte RECHNEN NICHTS MEHR (Regel 7a) -
+    # sie liegen sonst unsichtbar in der Datei und wuerden beim naechsten
+    # Umbau versehentlich wieder gelesen. Ohne Marker: Entfernen ist
+    # wiederholbar.
+    data.pop("bau_runplan_ziel", None)
+    data.pop("bau_runplan_ziel_std", None)
     # Migration: tx_cache_minutes war nie über die UI einstellbar - jeder
     # gespeicherte Wert von genau 30 ist also der alte hartkodierte Default,
     # nicht eine bewusste Nutzerwahl. Auf den neuen, kürzeren Default heben,

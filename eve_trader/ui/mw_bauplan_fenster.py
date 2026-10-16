@@ -1368,6 +1368,9 @@ class BauplanFenster:
 
         Liefert ein Woerterbuch:
           "rest_kaufmenge"  die Funktion, die `_copy_materials` benutzt
+          "kaufmenge"  die Menge je Zeile NACH Haken-Lage (Rest / Vollkauf /
+                       Plan-Menge) - die eine Rechnung, die auch `_mengen`
+                       und `_posten` fuellt
           "mengen"     {tid: Menge, die der Dialog als "missing" bekommt}
           "posten"     [(tid, Name, Menge)] - genau die kopierten Zeilen
                        (`mw_helpers.einkauf_posten`), Mengen OHNE Puffer
@@ -1447,6 +1450,30 @@ class BauplanFenster:
             _rest_da = True
         except Exception:
             _rest_da = False
+        # HAKEN AUS HIESS BISHER NULL (emm556, Nutzer: "kriegen wir die
+        # Meldung: nichts kopiert, es gibt keine missing Items"). Die Menge
+        # hing an `_rest_da` - also daran, OB die Rest-Rechnung laeuft -,
+        # nicht daran, ob der Haken sie ueberhaupt WILL. Ohne Haken bleibt
+        # `_rest_fehlt` aber leer (es wird nur im Rest-Modus gefuellt), und
+        # `_rest_kaufmenge` lieferte damit fuer JEDE Zeile 0: leere
+        # Einkaufsliste, ausgeschaltete Frachtzeile, "keine missing Items".
+        # Jetzt entscheidet die Haken-Lage, und zwar an EINER Stelle:
+        #   Haken an + Plan + Rechnung laeuft -> Restbedarf
+        #   Haken AUS                          -> Vollkauf an der
+        #       Fertigungsgrenze (wie `_menge` im Kopier-Fenster): voller
+        #       Bedarf, ohne die Stufen, die der Plan selbst baut, und ohne
+        #       das, was Reprocessing deckt - sonst stuenden Zwischenstufe
+        #       UND ihre Rohstoffe doppelt auf der Liste (aa304).
+        #   Haken an, aber keine Rest-Rechnung -> Plan-Menge (Regel 3:
+        #       lieber zu viel anbieten als eine Luecke verschweigen, b206).
+        def _kaufmenge(r):
+            if _rest_modus and _rest_da:
+                return int(_rest_kaufmenge(r) or 0)
+            return (max(0, int(r.get("total", 0) or 0)
+                        - int(r.get("built", 0) or 0)
+                        - int(r.get("reprocessed", 0) or 0)) if not _an
+                    else int(r.get("missing", 0) or 0))
+
         _mengen, _zeilen = {}, []
         for r in _rows:
             try:
@@ -1454,17 +1481,16 @@ class BauplanFenster:
             except (KeyError, TypeError, ValueError):
                 continue
             try:
-                _m = (int(_rest_kaufmenge(r) or 0) if _rest_da
-                      else int(r.get("missing", 0) or 0))
+                _m = int(_kaufmenge(r) or 0)
             except Exception:
                 _m = 0
             _mengen[_t] = _m
             _zeilen.append({"tid": _t, "name": r.get("name"), "missing": _m})
         _posten = einkauf_posten(
             _zeilen, "missing", getattr(self, "_bd_plan_builds", None))[0]
-        return {"rest_kaufmenge": _rest_kaufmenge, "mengen": _mengen,
-                "posten": _posten, "rest_modus": _rest_modus,
-                "rest_da": _rest_da}
+        return {"rest_kaufmenge": _rest_kaufmenge, "kaufmenge": _kaufmenge,
+                "mengen": _mengen, "posten": _posten,
+                "rest_modus": _rest_modus, "rest_da": _rest_da}
 
     def _show_build_detail(self, type_id, name, res):
         from ..sprache import t as _txt   # `t` ist hier lokal belegt
@@ -4330,7 +4356,7 @@ class BauplanFenster:
             "own row below."))
         for _hz in (0, 8, 12, 16, 20, 23, 24, 36, 48, 72, 168, -1):
             _zl_cb.addItem(self._runplan_ziel_text(_hz), _hz)
-        _iz = _zl_cb.findData(int(self.settings.get("bau_runplan_ziel_std", 0) or 0))
+        _iz = _zl_cb.findData(int(self._runplan_ziel_jetzt().get("std", 0) or 0))
         _zl_cb.setCurrentIndex(max(0, _iz))
         _zl_cb.currentIndexChanged.connect(
             lambda *_a, _c=_zl_cb: self._runplan_ziel_alle_gewaehlt(_c.currentData()))
@@ -4422,10 +4448,20 @@ class BauplanFenster:
         bp_tab_row.addWidget(bp_tab_status, 1)
         bp_tab_v.addLayout(bp_tab_row)
         bp_tab_tbl = QTableWidget()
-        bp_tab_tbl.setColumnCount(7)
+        # ACHTE SPALTE "ME / TE" (emm561, Nutzer-Wunsch): mit welcher
+        # Blaupausen-Forschung der Plan je Zeile rechnet, Quelle im Tooltip.
+        # HINTEN angehaengt: Spalte 6 (Status-Pille) haengt an vielen Stellen
+        # an ihrer Nummer.
+        bp_tab_tbl.setColumnCount(8)
         bp_tab_tbl.setHorizontalHeaderLabels(
             ["Blueprint", _txt("Stage"), _txt("Total runs"), _txt("Max runs/job"),
-             _txt("Rec. copies"), _txt("Owned (BPO/BPC)"), _txt("Status")])
+             _txt("Rec. copies"), _txt("Owned (BPO/BPC)"), _txt("Status"),
+             _txt("ME / TE")])
+        # SICHTBAR NEBEN "STAGE" (emm561): die Spalte ist logisch die achte
+        # (siehe oben), steht aber dort, wo man sie liest - nicht hinter der
+        # breiten Status-Pille am rechten Rand. Nur die ANZEIGE wandert;
+        # jede Stelle, die mit Spaltennummern arbeitet, bleibt gueltig.
+        bp_tab_tbl.horizontalHeader().moveSection(7, 2)
         # Spalten-Tooltips statt Kopfzeilen-Absatz: die Erklaerung steht dort,
         # wo die Zahl steht, und nur wenn man sie braucht.
         for _c, _tip in enumerate([
@@ -4438,7 +4474,11 @@ class BauplanFenster:
                      "unlimited runs, capped at your free job slots."),
                 _txt("Live per ESI: own BPOs (unlimited) and BPCs (limited runs, "
                      "checked against the need)."),
-                _txt("Is what you own enough for this plan?")]):
+                _txt("Is what you own enough for this plan?"),
+                _txt("Material / time efficiency (%) of the blueprint the plan "
+                     "calculates with \u2013 hover a cell to see where it comes "
+                     "from. Rig and structure bonuses come on top and are not "
+                     "included here.")]):
             _hi = bp_tab_tbl.horizontalHeaderItem(_c)
             if _hi is not None:
                 _hi.setToolTip(_tip)
@@ -4803,6 +4843,11 @@ class BauplanFenster:
             # Die Rechnung selbst steht in `_einkauf_jetzt`; hier wird nur
             # noch ihre Funktion benutzt.
             _rest_kaufmenge = _ej["rest_kaufmenge"]
+            # DIE PROBE, ob die Rest-Rechnung ueberhaupt laeuft - steht in
+            # `_einkauf_jetzt`, wird hier nur gelesen. Sie muss VOR `_menge`
+            # stehen: `_menge` fragt sie, und die Liste `_items` ruft `_menge`
+            # gleich darunter auf.
+            _rest_da = bool(_ej["rest_da"])
 
             def _menge(r):
                 # OHNE HAKEN: der VOLLE Bedarf, aber OHNE die Stufen, die der
@@ -4811,7 +4856,12 @@ class BauplanFenster:
                 # `total = missing + used + built` - `built` ist die
                 # Eigenproduktion. Ohne diesen Abzug kaufte die Liste die
                 # Zwischenstufe UND ihre Rohstoffe, also doppelt.
-                if _rest_modus:
+                # `_rest_da` MUSS mitgefragt werden (emm556): laeuft die
+                # Rest-Rechnung nicht, ist `_rest_fehlt` leer und
+                # `_rest_kaufmenge` liefert 0 fuer alles - die Liste bliebe
+                # leer und behauptete "schon alles gedeckt", statt auf die
+                # Vollmenge zurueckzufallen.
+                if _rest_modus and _rest_da:
                     return _rest_kaufmenge(r)
                 # Durch Reprocessing gedeckte Minerale werden wie Gebautes
                 # NICHT gekauft - das Erz steht als eigene Zeile drin.
@@ -4858,15 +4908,22 @@ class BauplanFenster:
             # zusaetzlich als "war gedeckt" markiert, damit man den
             # Unterschied zu "hatte ich nie" sieht.
             # Die PROBE, ob die Rest-Rechnung laeuft, steckt in
-            # `_einkauf_jetzt` - dort entsteht auch die Menge selbst.
-            _rest_da = bool(_ej["rest_da"])
+            # `_einkauf_jetzt` - dort entsteht auch die Menge selbst; sie
+            # steht oben als `_rest_da`, noch vor `_menge`.
             _cqty = {int(r["tid"]): {"need": int(r.get("total", 0) or 0),
-                                     # Ohne Rest-Rechnung bleibt die
-                                     # Plan-Menge stehen - lieber zu viel
-                                     # anbieten als eine Luecke verschweigen.
-                                     "missing": (_rest_kaufmenge(r)
-                                                 if _rest_da
-                                                 else int(r.get("missing", 0) or 0)),
+                                     # GENAU DIE MENGE, DIE DIE LISTE WAEHLT
+                                     # (emm556). Vorher stand hier eine
+                                     # ZWEITE Rechnung: sie fragte `_rest_da`
+                                     # statt `_rest_modus` und lief damit
+                                     # ohne Haken durch `_rest_kaufmenge` -
+                                     # das liefert ohne Rest-Modus 0, also
+                                     # Zeilen mit Menge 0 und ein "es gibt
+                                     # keine missing Items", obwohl `_menge`
+                                     # dieselben Zeilen mit voller Menge in
+                                     # die Liste gesetzt hatte. Jetzt kann
+                                     # das nicht mehr auseinanderlaufen: es
+                                     # IST dieselbe Funktion.
+                                     "missing": _menge(r),
                                      # built: fuer die Kopier-Modus-Ampel
                                      # ("gedeckt - wird gebaut" statt eines
                                      # irrefuehrenden "es fehlen X").
@@ -9694,6 +9751,9 @@ class BauplanFenster:
                           # _on_sched_check), hier nur der Stand beim Speichern.
                           "checked_runplan": list(getattr(self, "_bd_runplan_checked",
                                                           set()) or []),
+                          # ZIELZEIT JE PLAN (emm563) - sie war global.
+                          "runplan_ziel": self.runplan_ziel_aus_plan(
+                              {"runplan_ziel": self._runplan_ziel_jetzt()}),
                           # Zeitstempel je Haken - Grundlage fuer die
                           # mitlaufende Reservierung (s. _sched_save_now).
                           "checked_runplan_ts": {

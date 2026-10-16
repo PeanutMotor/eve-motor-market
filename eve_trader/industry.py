@@ -1167,6 +1167,19 @@ _RIG_EFFECT_DOMAINS = [
     ("Charge", "ammo"),
     ("Drone", "drone"),
     ("Fighter", "drone"),
+    # REAKTIONEN BEWUSST PAUSCHAL (emm559, nach einem zurueckgenommenen
+    # Versuch): die SDE nennt als Effekte nur rigReactionBio/Comp/Hyb, also
+    # lag es nahe, Intermediate Materials und Molecular-Forged Materials vom
+    # Rig-Bonus auszunehmen. GEGEN DIESE ABLEITUNG STEHT EINE MESSUNG, und
+    # die Messung gewinnt: am 15.10.2026 zeigte das Industry-Fenster des
+    # Nutzers fuer Sulfuric Acid (Intermediate Materials, 23 Runs, R&R Yard
+    # mit Standup L-Set Reactor Efficiency I) 2'250 statt 2'300 Eingang und
+    # 113 statt 115 Fuel Blocks - der Rig wirkt dort also sehr wohl. Die
+    # Effektnamen bilden die Reaktionsarten offenbar nicht so ab, wie ihre
+    # Namen vermuten lassen. Wer das hier wieder einschraenken will, braucht
+    # ZUERST ein Industry-Fenster, das eine Intermediate-Reaktion OHNE
+    # Abzug zeigt - und eine Erklaerung, warum dieselbe Reaktion am selben
+    # Ort einmal 2'300 und einmal 2'250 verlangt hat.
     ("Reaction", "reaction"),
     ("Reactor", "reaction"),
 ]
@@ -5917,7 +5930,20 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
                     # statt 11 (Nutzer: "obwohl man bis auf 3 Tage+
                     # hochschrauben koennte"). 1e-9: sonst macht ein
                     # Rundungsrest aus genau passenden Runs einen Run weniger.
-                    _je = max(1, int(math.floor(_T_st / _sek_je_run(j) + 1e-9)))
+                    # "SO LANGE WIE MOEGLICH" IST UNENDLICH (emm562, Nutzer-
+                    # Absturz 16.10.2026 auf Discord: "OverflowError: cannot
+                    # convert float infinity to integer" beim Oeffnen JEDES
+                    # Plans - die Zielzeit gilt fuer alle Plaene, und aendern
+                    # laesst sie sich nur im Runplaner eines offenen Plans).
+                    # `_runplan_ziel_sekunden` liefert bewusst float("inf");
+                    # inf / t ist inf, und int(floor(inf)) wirft. Unendlich
+                    # Zeit heisst: EINE Kopie faehrt alle Runs - genau das
+                    # meint die Einstellung ("so wenige Jobs wie moeglich").
+                    # 1.1.2 stuerzt genauso (gemessen am Backup-Quelltext).
+                    if math.isinf(_T_st):
+                        _je = max(1, int(j["runs"]))
+                    else:
+                        _je = max(1, int(math.floor(_T_st / _sek_je_run(j) + 1e-9)))
                     _noetig = max(1, int(math.ceil(int(j["runs"]) / _je)))
                     if _noetig < _s0:
                         budget[_tid_st] = _noetig

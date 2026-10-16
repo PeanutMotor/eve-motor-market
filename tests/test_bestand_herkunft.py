@@ -513,8 +513,12 @@ check("aa9 config-TE-Default auf 20 korrigiert",
 for _dead in ("_bp_me_status", "_bd_bp_owned_me", "calc_me_map",
               "ME: Rechnung / deine BP"):
     check(f"aa10 restlos entfernt: {_dead}", _dead not in _src_txt)
-check("aa10 Blueprints-Tabelle wieder 7 Spalten",
-      "bp_tab_tbl.setColumnCount(7)" in _src_txt)
+# Seit emm561 ACHT Spalten: die ME/TE-Spalte ist ein NEUER Nutzer-Wunsch
+# (START_SITZUNG_24, Punkt 2) und nicht die zurueckgebaute Divergenz-
+# Spalte - sie zeigt den WIRKSAMEN Wert aus den Rechen-Funktionen, keinen
+# Vergleich "Rechnung gegen deine BP" (die Namen oben bleiben verboten).
+check("aa10 Blueprints-Tabelle 8 Spalten (ME/TE seit emm561)",
+      "bp_tab_tbl.setColumnCount(8)" in _src_txt)
 # (b) Kopfleiste: nur noch Hauptaktion + Zustand sichtbar, Rest im Menue.
 for _moved in ("ctrl.addWidget(refz_btn)", "ctrl.addWidget(esi_all_btn)",
                "ctrl.addWidget(optimizer_btn)", "ctrl.addWidget(ladder_btn)"):
@@ -2701,6 +2705,16 @@ eq("aa65 Composite-Reaktion ohne Reaktor-Rig bleibt bei 0",
 # Vanadium Hafnite (INTERMEDIATE) und Tungsten Carbide (COMPOSITE) zeigen
 # BEIDE 98+98 statt 100+100 Eingang und laufen exakt gleich lang. Der
 # generische Reactor-Rig wirkt also auf beide Reaktionsarten gleich.
+#
+# NOCH EINMAL BESTAETIGT (emm559, 15.10.2026) - und zwar gegen eine
+# scheinbar bessere Quelle: die SDE nennt als Rig-Effekte nur
+# rigReactionBio/Comp/Hyb, woraus folgen wuerde, dass Intermediate
+# Materials leer ausgehen. Genau das wurde probeweise eingebaut und durch
+# ein frisches Industry-Fenster widerlegt: Sulfuric Acid (Intermediate
+# Materials), 23 Runs, R&R Yard -> 2'250 statt 2'300 Eingang und 113 statt
+# 115 Fuel Blocks. Der Rig wirkt dort also. LEHRE: Effektnamen sind eine
+# Ableitung, das Industry-Fenster ist die Messung - und die Messung
+# gewinnt (Regel 1).
 eq("aa65 Intermediate-Reaktion bekommt den Reaktor-Rig (Nutzer-Messung)",
    round(_rig65(_self65(None), _R65,
                 {"reaction", "reaction_intermediate"}, reaction=True), 3),
@@ -13796,9 +13810,33 @@ check("aa275 die Fehlmenge wird zurueckgegeben, nicht verschluckt",
 # def-Zeile mit, sodass eine zurueckgedrehte Stelle gruen blieb.
 # Sitzung 17: ohne Haken zieht `_menge` jetzt die Eigenproduktion ab
 # (aa304) - die Rechnung ist damit zweizeilig, die Zusage bleibt.
-check("aa275 die Liste UND die Mengen-Uebergabe nutzen dieselbe Rechnung",
-      "if _rest_modus:\n                    return _rest_kaufmenge(r)" in _bf275
-      and '"missing": (_rest_kaufmenge(r)' in _bf275)
+#
+# emm556 - DIESE PRUEFUNG HAT GENAU DEN FEHLER DURCHGELASSEN, den sie
+# verhindern sollte, und das ist die eigentliche Lehre: sie verglich zwei
+# TEXTE, nicht zwei RECHNUNGEN. `_menge` fragte `_rest_modus` (will der
+# Nutzer den Rest?), die Mengen-Uebergabe fragte `_rest_da` (laeuft die
+# Rechnung ueberhaupt?). Mit Haken AUS sagt die erste "Vollkauf", die
+# zweite "Restbedarf" - und weil `_rest_fehlt` ohne Rest-Modus LEER
+# bleibt, kam dort 0 heraus: der Dialog zeigte Zeilen mit Menge 0 und
+# meldete "es gibt keine missing Items" (Nutzer, 15.10.2026). Beide
+# Texte standen die ganze Zeit da, gruen.
+# Jetzt RUFT die Uebergabe die Listen-Rechnung AUF - auseinanderlaufen
+# koennen sie nicht mehr, egal wie die Rechnung spaeter aussieht.
+check("aa275 die Mengen-Uebergabe RUFT die Listen-Rechnung auf",
+      '"missing": _menge(r),' in _bf275)
+# Und die Listen-Rechnung fragt BEIDES: den Haken UND ob die Rechnung
+# laeuft. Nur `_rest_modus` reichte nicht - scheitert die Rest-Rechnung,
+# ist `_rest_fehlt` leer, und die Liste behauptete "alles gedeckt",
+# statt auf die Vollmenge zurueckzufallen (Regel 3).
+check("aa275 die Listen-Rechnung fragt Haken UND Probe",
+      "if _rest_modus and _rest_da:\n                    return _rest_kaufmenge(r)"
+      in _bf275)
+# DIESELBE ENTSCHEIDUNG, EINE STELLE: `_einkauf_jetzt` (Frachtzeile,
+# Posten) trifft sie fuer sich - und mit demselben Dreisatz.
+check("aa275 `_einkauf_jetzt` entscheidet nach derselben Regel",
+      "if _rest_modus and _rest_da:\n                return int(_rest_kaufmenge(r) or 0)"
+      in _bf275
+      and '"kaufmenge": _kaufmenge' in _bf275)
 check("aa275 und NICHT mehr aus owned/built der Planzeile",
       "_need - _bes - _built_anteil" not in _bf275)
 
@@ -20042,11 +20080,29 @@ check("aa403 der Planer nimmt die Zielzeit ueberhaupt an",
 _bt403 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
 check("aa403 der Runplaner reicht die Zielzeit an den Planer weiter",
       "stage_ziel=self._runplan_ziel_sekunden()," in _bt403)
-check("aa403 die Zielzeit wird gespeichert, nicht je Fenster neu erfunden",
-      '"bau_runplan_ziel": {},' in open("eve_trader/config.py",
-                                        encoding="utf-8").read()
-      and '"bau_runplan_ziel_std": 0,' in open("eve_trader/config.py",
-                                               encoding="utf-8").read())
+# SEIT emm563 GEHOERT DIE ZIELZEIT ZUM PLAN (sie war global - wer sie in
+# einem Plan auf "so lange wie moeglich" stellte, hatte sie in allen, auch
+# in jedem neuen). Gespeichert im Plan-Eintrag, geladen beim Oeffnen; die
+# alten Programm-Schluessel rechnen nichts mehr und werden entfernt.
+_cfg403 = open("eve_trader/config.py", encoding="utf-8").read()
+check("aa403 die Zielzeit wird MIT DEM PLAN gespeichert und geladen",
+      '"runplan_ziel": self.runplan_ziel_aus_plan(' in open(
+          "eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+      and "self._bd_runplan_ziel = self.runplan_ziel_aus_plan(p)" in open(
+          "eve_trader/ui/main_window.py", encoding="utf-8").read())
+check("aa403 ... die alten Programm-Schluessel rechnen nichts mehr (Regel 7a)",
+      '"bau_runplan_ziel": {},' not in _cfg403
+      and 'data.pop("bau_runplan_ziel", None)' in _cfg403
+      and 'data.pop("bau_runplan_ziel_std", None)' in _cfg403
+      and not any('settings.get("bau_runplan_ziel' in open(_f403, encoding="utf-8").read()
+                  for _f403 in ("eve_trader/ui/mw_bauplan_tabs.py",
+                                "eve_trader/ui/mw_bauplan_fenster.py",
+                                "eve_trader/ui/main_window.py",
+                                "eve_trader/ui/mw_multi_bauplan.py")))
+_mig403 = __import__("eve_trader.config", fromlist=["_nach_migrationen"])._nach_migrationen(
+    {"bau_runplan_ziel": {"reaction_2": -1}, "bau_runplan_ziel_std": -1})
+check("aa403 ... und die Migration entfernt sie aus alten Einstellungen",
+      "bau_runplan_ziel" not in _mig403 and "bau_runplan_ziel_std" not in _mig403)
 check("aa403 jede der sechs Stufen ist einstellbar",
       '_RUNPLAN_STUFEN = ("fuel", "unrefined", "reaction_1", "reaction_2",' in _bt403)
 check("aa403 der Regler geht bis zu einer Woche",
@@ -20108,7 +20164,7 @@ check("aa403 ... und eine Aenderung rechnet sofort neu",
 check("aa403 eine fertige Stufe traegt keinen Regler mehr",
       "tbl.removeItemWidget(stage_item, 2)" in _bt403)
 check("aa403 die Vorgabe oben nimmt die Ausnahmen der Stufen zurueck",
-      'self.settings["bau_runplan_ziel"] = {}' in _bt403)
+      '        _z["stufen"] = {}\n        self._runplan_ziel_setzen(None, _h)' in _bt403)
 for _t403 in ("Target per stage:", "as fast as possible", "{n} h", "{n} d",
               "as long as it takes"):
     check(f"aa403 DE vorhanden: {_t403}", bool(_de392.get(_t403)))
@@ -25435,11 +25491,11 @@ check("aa427 ... der Optimierer holt die Enden-Namen aus _bd_names_ref",
 # Veroeffentlichung lassen wir immer einen Test laufen, um eine fehlerfreie
 # Veroeffentlichung zu gewaehrleisten"). Die Veroeffentlichung bricht bei
 # Rot ab, BEVOR committet wird; eigener Starter per Doppelklick. CRLF.
-_rel426b = open("release/veroeffentliche_1.1.3.bat", "rb").read()
+_rel426b = open("release/veroeffentliche_1.1.4.bat", "rb").read()
 _rel426 = _rel426b.replace(b"\r\n", b"\n")      # Logik unabhaengig vom Zeilenende
 _p426 = _rel426.find(b"python pruefe.py < nul\n")
 _f426 = _rel426.find(b"if errorlevel 1 (\n  echo ROT: pruefe.py", _p426)
-check("aa426 veroeffentliche_1.1.3.bat prueft ZUERST und bricht bei Rot ab",
+check("aa426 veroeffentliche_1.1.4.bat prueft ZUERST und bricht bei Rot ab",
       0 < _p426 < _f426 < _rel426.find(b"git commit")
       and 0 < _rel426.find(b"  goto ende\n)\necho gruen", _f426))
 check("aa426 ... und hat Windows-Zeilenenden (CRLF)",
@@ -26017,7 +26073,7 @@ try:
     eq("aa530 jede .bat mit Python setzt PYTHONIOENCODING=utf-8", _py530, [])
     # Sein konkreter Fall: die Sicherung schreibt robocopy-Ausgabe in den
     # Bericht - genau die Datei, die sich nicht hochladen liess.
-    _sic530 = open("werkzeuge/sichere_1.1.3.bat", encoding="ascii").read()
+    _sic530 = open("werkzeuge/sichere_1.1.4.bat", encoding="ascii").read()
     check("aa530 die Sicherung setzt chcp VOR dem ersten Bericht-Schreiben",
           0 <= _sic530.find("chcp 65001") < _sic530.find("bericht"))
 except Exception as _e530:                               # pragma: no cover
@@ -26805,9 +26861,14 @@ try:
           "esi.assets_age_seconds(cid)" in _tb545
           and '"asset_alter": (max(_asset_alter) if _asset_alter else None)'
           in _tb545)
+    # Seit emm560 steht Text und 5-Minuten-Schwelle an EINER Stelle
+    # (`bestand_alter_text`, gemeinsam mit dem Bauplan-Kopf) - hier wird
+    # geprueft, dass Stock locations durch sie geht; die Zahl selbst
+    # rechnet aa560 nach.
     check("aa545 ... und zeigt es in der Kopfzeile, erst ab 5 Minuten",
-          'stock data {n} min old (ESI caches ~1 h)' in _tb545
-          and "float(_alt_s) >= 300" in _tb545)
+          '_alt_txt = self.bestand_alter_text(res.get("asset_alter"))' in _tb545
+          and "        if _alt_txt:\n            teile.append(_alt_txt)" in _tb545
+          and "float(_alt_s) >= 300" not in _tb545)
     _kat545 = __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
     check("aa545 deutscher Eintrag mit demselben Platzhalter",
           "{n}" in (_kat545.get("stock data {n} min old (ESI caches ~1 h)") or ""))
@@ -28159,6 +28220,213 @@ try:
           'os.environ.get("EMM_B_ZEIT") == "1"' in _b557)
 except Exception as _e557:                               # pragma: no cover
     _fail.append(f"aa557 Tempo der b-Suite: {type(_e557).__name__}: {_e557}")
+
+# ---------------------------------------------------------------- (aa558)
+# DIE NAMENSSPALTE WAR ABGESCHNITTEN (emm558, Nutzer-Screenshot des
+# "Already on hand"-Dialogs: "ausserdem ist jeweils die Namens Collumn
+# abgeschnitten"). Neun Spalten in 900 px: Spalte 0 (Item/Charakter)
+# steht auf Stretch, bekommt also NUR den Rest - und eine lange
+# Statuszeile zog ihre eigene Spalte so weit auf, dass vom Namen ein paar
+# Buchstaben blieben. Der Name ist die einzige Spalte, die man nicht
+# erraten kann; Zahlen kann man zur Not nachrechnen.
+try:
+    _ccf558 = _fn_src("_cart_conflict_filter") or ""
+    # 1. Die acht Zahlenspalten bekommen einen Deckel - ueber EINE Stelle,
+    #    nicht an jeder Aufrufstelle neu.
+    check("aa558 es gibt den Spalten-Deckel",
+          "_SPALTE_MAX_CC = 150" in _ccf558
+          and "def _spalten_eng(*cols):" in _ccf558
+          and "min(tree.columnWidth(_c_cc), _SPALTE_MAX_CC)" in _ccf558)
+    # 2. BEIDE Stellen, die Spalten nachmessen, gehen durch ihn. Die
+    #    Puffer-Anzeige misst 5/6/7 bei jeder Aenderung neu - ohne Deckel
+    #    waere die Spalte nach dem ersten Puffer-Klick wieder breit und der
+    #    Fehler zurueck.
+    check("aa558 beide Mess-Stellen gehen durch den Deckel",
+          "_spalten_eng(5, 6, 7)" in _ccf558
+          and "_spalten_eng(*range(1, 9))" in _ccf558
+          and "tree.resizeColumnToContents(_c)" not in _ccf558)
+    # 3. Der Dialog ist breiter - aber nie breiter als der Bildschirm.
+    check("aa558 breiterer Dialog, auf den Bildschirm begrenzt",
+          "_breite_cc = 1150" in _ccf558
+          and "_scr_cc.availableGeometry().width() - 60" in _ccf558
+          and "dlg.resize(_breite_cc, 620)" in _ccf558)
+    check("aa558 die Mindestbreite bleibt stehen",
+          "dlg.setMinimumWidth(820)" in _ccf558)
+    # 4. Spalte 0 dehnt sich weiter - sonst laege der gewonnene Platz nicht
+    #    beim Namen, sondern am rechten Rand.
+    check("aa558 die Namensspalte dehnt sich weiter",
+          "tree.header().setSectionResizeMode(0, QHeaderView.Stretch)" in _ccf558)
+except Exception as _e558:                               # pragma: no cover
+    _fail.append(f"aa558 Namensspalte: {type(_e558).__name__}: {_e558}")
+
+# ---------------------------------------------------------------- (aa560)
+# DER BAUPLAN-KOPF NENNT DAS ALTER DER DATEN, NICHT NUR DEN ABRUF (emm560,
+# Nutzer 15.10.2026: Material gekauft, der Plan sah es nicht, die Zeile
+# sagte "last checked 21:13 (just now)" - es sah nach einem Rechenfehler
+# aus und kostete eine Dreiviertelstunde). "(just now)" heisst nur "MoMa
+# hat gefragt"; CCP cacht /assets/ rund eine Stunde.
+#
+# Diese Pruefung RECHNET NACH (feste Uhr, echte Funktion), statt Texte zu
+# vergleichen - der Weg ueber das echte Fenster steht in b208.
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _H560
+    _j560 = 1_800_000_000.0
+    _info560 = {"checked_at": _j560 - 10, "changed_at": _j560 - 900,
+                "erstaufzeichnung": False}
+    # 1. Die Schwelle: unter 5 Minuten nichts, ab 5 Minuten die Minuten.
+    check("aa560 unbekanntes Alter -> kein Zusatz",
+          _H560.bestand_alter_text(None) == "")
+    check("aa560 Schwelle ist EINE Zahl: 300 s",
+          _H560.ESI_ALTER_ZEIGEN_AB_S == 300)
+    check("aa560 299 s -> noch kein Zusatz",
+          _H560.bestand_alter_text(299) == "")
+    check("aa560 300 s -> '5 min old'",
+          "5 min old" in _H560.bestand_alter_text(300))
+    check("aa560 3'119 s -> '51 min old', abgerundet auf ganze Minuten",
+          "51 min old" in _H560.bestand_alter_text(3119))
+    # 2. Der Kopf: Abruf "just now" UND Daten 51 min alt - beides steht da.
+    _k560 = _H560.bestand_stand_text(_info560, jetzt=_j560,
+                                     daten_ts=_j560 - 3060)
+    check("aa560 Kopf nennt den Abruf weiter ('just now')",
+          "(just now)" in _k560 and "last checked" in _k560)
+    check("aa560 ... UND das Alter der Daten ('51 min old')",
+          "stock data 51 min old (ESI caches ~1 h)" in _k560)
+    check("aa560 ... die letzte Aenderung bleibt stehen",
+          "last detected change" in _k560)
+    # 3. Gegenproben: ohne Datenstand / frische Daten -> Kopf wie bisher.
+    _o560 = _H560.bestand_stand_text(_info560, jetzt=_j560)
+    check("aa560 ohne Datenstand: Kopf unveraendert, kein Zusatz",
+          "stock data" not in _o560 and "last checked" in _o560)
+    check("aa560 Daten 1 min alt: kein Zusatz",
+          "stock data" not in _H560.bestand_stand_text(
+              _info560, jetzt=_j560, daten_ts=_j560 - 60))
+    # 4. Auch die Erstaufzeichnung bekommt das Alter - und "noch nie
+    #    abgerufen" bekommt es NICHT (dort gibt es keinen Bestand).
+    check("aa560 Erstaufzeichnung bekommt das Alter auch",
+          "stock data 20 min old" in _H560.bestand_stand_text(
+              dict(_info560, erstaufzeichnung=True), jetzt=_j560,
+              daten_ts=_j560 - 1200))
+    check("aa560 'no fetch yet' bekommt kein Alter",
+          "stock data" not in _H560.bestand_stand_text(
+              {}, jetzt=_j560, daten_ts=_j560 - 3060))
+    # 5. Unsinnige Eingaben werfen nicht - die Zeile darf den Bauplan nie
+    #    aufhalten.
+    check("aa560 kaputter Datenstand wirft nicht",
+          "stock data" not in _H560.bestand_stand_text(
+              _info560, jetzt=_j560, daten_ts="kaputt"))
+    # 6. Die Verdrahtung: der Kopf liest den Stand, den adone() setzt - und
+    #    adone() setzt ihn VOR dem Neubeschriften.
+    _uk560 = _fn_src("_bd_update_esi_stand") or ""
+    check("aa560 _bd_update_esi_stand reicht den ESI-Datenstand durch",
+          'daten_ts=getattr(self, "_bd_esi_stock_ts", None)' in _uk560)
+    _bf560 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+    _a560 = _bf560.find("self._bd_esi_stock_ts = _now - float(age)")
+    _b560 = _bf560.find("self._bd_update_esi_stand(_stand)")
+    check("aa560 adone setzt den Datenstand VOR dem Neubeschriften",
+          0 <= _a560 < _b560)
+except Exception as _e560:                               # pragma: no cover
+    _fail.append(f"aa560 Bestandsalter im Bauplan: {type(_e560).__name__}: {_e560}")
+
+# ---------------------------------------------------------------- (aa561)
+# ME/TE IM BLUEPRINTS-REITER (emm561). Die Spalte darf NIE eine eigene
+# Regel haben: sie fragt dieselben Funktionen wie die Rechnung. Dafuer
+# wurden die drei Inline-Regeln (Bauteil-ME, Endprodukt-ME, Blaupausen-TE)
+# in je eine Funktion gezogen, die Rechnung UND Anzeige rufen. Diese
+# Pruefungen halten die Verdrahtung fest; dass die Zahlen stimmen, rechnet
+# b209 am echten Fenster gegen die Rechnung nach.
+try:
+    _cm561 = _fn_src("_bau_category_me_map") or ""
+    check("aa561 Bauteil-ME der Rechnung kommt aus _bau_bp_me_kat",
+          "out[tid] = self._bau_bp_me_kat(tid, key, use_dialog_me)[0]" in _cm561
+          and "_bd_esi_me_te_for_item" not in _cm561)
+    _mm561 = _fn_src("_bau_me_maps") or ""
+    check("aa561 Endprodukt-ME der Rechnung kommt aus _bau_bp_me_ende",
+          "base = self._bau_bp_me_ende(tid, use_dialog_me)" in _mm561)
+    _tf561 = _fn_src("_bau_category_te_factor") or ""
+    check("aa561 Blaupausen-TE der Rechnung kommt aus _bau_bp_te_basis",
+          "te = self._bau_bp_te_basis(" in _tf561
+          and "_bd_esi_me_te_for_item" not in _tf561
+          and "bau_te_component" not in _tf561)
+    _fo561 = _fn_src("_bd_bp_forschung") or ""
+    check("aa561 die Anzeige fragt dieselben vier Funktionen",
+          all(x in _fo561 for x in (
+              "industry._invention_me_pct(bp_id, recipes, _opts)",
+              "self._bau_bp_me_ende(tid)",
+              "self._bau_bp_me_kat(tid, key",
+              "self._bau_bp_te_basis(")))
+    check("aa561 ... und hat KEINE eigene Zahl (keine Einstellung gelesen)",
+          "settings.get(" not in _fo561 and "_bd_me_component" not in _fo561)
+    _tb561 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+    _mw561 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    check("aa561 beide Fuell-Wege reichen type_id durch (Endprodukt wie in "
+          "der Rechnung)",
+          "recipes, bp_tbl,\n" in _tb561 and "type_id=type_id)" in _tb561
+          and "self._fill_blueprint_tab(jobs, sched_chars, recipes, tbl,\n"
+              "                                     type_id=type_id)" in _mw561)
+    # Formatstelle - reine Funktion, mit festen Eingaben nachgerechnet.
+    from eve_trader.ui.main_window import MainWindow as _MW561
+    _bt561 = _MW561.bp_forschung_text
+    check("aa561 unbekannt -> '?' statt einer erfundenen Zahl",
+          _bt561(None) == ("?", ""))
+    check("aa561 Reaktion -> Strich",
+          _bt561({"me_q": "reaction", "te_q": "reaction"})[0] == "\u2013")
+    _z561, _t561 = _bt561({"me": 7.0, "te": 14, "me_q": "esi",
+                           "te_q": "esi", "n": 2})
+    check("aa561 ESI: '7 / 14', Tooltip nennt 'worst of 2' in EINER Zeile",
+          _z561 == "7 / 14" and "worst of 2" in _t561 and "\n" not in _t561)
+    _z561b, _t561b = _bt561({"me": 2, "te": 20, "me_q": "invented",
+                             "te_q": "manual", "n": 0})
+    check("aa561 verschiedene Quellen -> zwei Zeilen, je mit ihrer Quelle",
+          _z561b == "2 / 20" and _t561b.count("\n") == 1
+          and "invented" in _t561b and "manual" in _t561b)
+    check("aa561 Kommazahl bleibt sichtbar (keine stille Rundung)",
+          _bt561({"me": 2.5, "te": 4, "me_q": "end", "te_q": "end"})[0]
+          == "2.5 / 4")
+except Exception as _e561:                               # pragma: no cover
+    _fail.append(f"aa561 ME/TE im Blueprints-Reiter: {type(_e561).__name__}: {_e561}")
+
+# ---------------------------------------------------------------- (aa564)
+# DIE PRUEFUNG REPARIERT DIE ZEILENENDEN SELBST (emm564, Nutzer 16.10.2026:
+# "ich finde das eh nie" - fix_crlf.py lag ausserhalb des Projekts). Am
+# echten `reparieren` in einem Wegwerf-Ordner nachgerechnet.
+try:
+    import importlib.util as _ilu564, tempfile as _tf564
+    _sp564 = _ilu564.spec_from_file_location("zeilenenden564",
+                                             "werkzeuge/zeilenenden.py")
+    _ze564 = _ilu564.module_from_spec(_sp564); _sp564.loader.exec_module(_ze564)
+    _w564 = _tf564.mkdtemp(prefix="aa564-")
+    os.makedirs(os.path.join(_w564, "werkzeuge"))
+    os.makedirs(os.path.join(_w564, "_archiv"))
+    _schreib564 = lambda p, b: open(os.path.join(_w564, p), "wb").write(b)  # noqa: E731
+    _schreib564("werkzeuge/lf.bat", b"@echo off\ncall :a\n:a\necho x\n")
+    _schreib564("werkzeuge/gut.bat", b"@echo off\r\necho x\r\n")
+    _schreib564("werkzeuge/gemischt.bat", b"@echo off\r\necho x\n")
+    _schreib564("_archiv/alt.bat", b"@echo off\necho x\n")
+    _schreib564("werkzeuge/text.txt", b"a\nb\n")
+    _rep564 = sorted(_ze564.reparieren(_w564))
+    _lies564 = lambda p: open(os.path.join(_w564, p), "rb").read()  # noqa: E731
+    eq("aa564 genau die zwei LF-.bat werden repariert",
+       [os.path.basename(x) for x in _rep564], ["gemischt.bat", "lf.bat"])
+    eq("aa564 ... danach CRLF, Inhalt sonst gleich",
+       _lies564("werkzeuge/lf.bat"), b"@echo off\r\ncall :a\r\n:a\r\necho x\r\n")
+    eq("aa564 ... vorhandenes CRLF wird nicht verdoppelt",
+       _lies564("werkzeuge/gemischt.bat"), b"@echo off\r\necho x\r\n")
+    eq("aa564 eine richtige .bat bleibt unberuehrt",
+       _lies564("werkzeuge/gut.bat"), b"@echo off\r\necho x\r\n")
+    _schreib564("wurzel.bat", b"@echo off\necho x\n")
+    _ze564.reparieren(_w564)
+    check("aa564 _archiv, die Wurzel (build.bat/run.bat) und andere "
+          "Dateitypen bleiben, wie sie sind",
+          _lies564("_archiv/alt.bat") == b"@echo off\necho x\n"
+          and _lies564("wurzel.bat") == b"@echo off\necho x\n"
+          and _lies564("werkzeuge/text.txt") == b"a\nb\n")
+    eq("aa564 ein zweiter Lauf findet nichts mehr", _ze564.reparieren(_w564), [])
+    _pr564 = open("pruefe.py", encoding="utf-8").read()
+    _a564 = _pr564.find("_rep = _ze.reparieren(\".\")")
+    check("aa564 pruefe.py repariert VOR der ersten Suite",
+          0 < _a564 < _pr564.find('ergebnis["Bestand-Herkunft (aa)"] = lauf('))
+except Exception as _e564:                               # pragma: no cover
+    _fail.append(f"aa564 Zeilenenden: {type(_e564).__name__}: {_e564}")
 
 print(f"(aa) Bestand-Herkunft: {_ok}/{_ok + len(_fail)} gruen")
 for f in _fail:

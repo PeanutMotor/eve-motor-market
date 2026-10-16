@@ -2111,11 +2111,11 @@ class BauplanTabs:
         # "hat ESI evtl. noch nicht getrackt? ich habe es seit ca. 10
         # Minuten"). Die Uhrzeit oben ist der ABRUF; CCP cacht /assets/
         # rund eine Stunde. Was in dieser Zeit dazukam, fehlt hier noch.
-        _alt_s = res.get("asset_alter")
-        if _alt_s is not None and float(_alt_s) >= 300:
-            _min = int(float(_alt_s) // 60)
-            teile.append(t("stock data {n} min old (ESI caches ~1 h)")
-                         .format(n=_min))
+        # Formatstelle und Schwelle (5 min) seit emm560 an EINER Stelle,
+        # gemeinsam mit dem Bauplan-Kopf: `bestand_alter_text`.
+        _alt_txt = self.bestand_alter_text(res.get("asset_alter"))
+        if _alt_txt:
+            teile.append(_alt_txt)
         # WARNUNGEN ZUERST (emm476): die Statuszeile wird rechts
         # abgeschnitten - was wichtig ist, steht vorn.
         # NIE STILL (emm475): ein Job, dessen Material im Spiel schon weg
@@ -6406,16 +6406,64 @@ class BauplanTabs:
         elif _erl[_k] <= 0:
             _ets.pop(_k, None)
 
+    # ZIELZEIT GEHOERT ZUM PLAN (emm563, Nutzer 16.10.2026: "standardmaessig
+    # beim Erstellen eines Bauplanes ist die Runplaner-Zeit immer auf 'so
+    # schnell wie moeglich' gestellt? sollte so" - und: "lieber im 1.1.4
+    # Patch schon drin"). Bis 1.1.3 stand sie GLOBAL in den Einstellungen
+    # (`bau_runplan_ziel`/`_std`): wer sie in EINEM Plan auf "so lange wie
+    # moeglich" stellte, hatte sie in ALLEN, auch in jedem neuen - genau so
+    # kam Spaceballs 2 an den Absturz aus emm562, und er kam danach in
+    # keinen Plan mehr hinein, um sie zurueckzustellen. Jetzt:
+    # `_bd_runplan_ziel` = {"std": Stunden, "stufen": {stage: Stunden}} am
+    # OFFENEN Plan; ein neuer Plan startet bei 0 (so schnell wie moeglich),
+    # ein gespeicherter bringt seinen Wert mit (`runplan_ziel`), ein ALTER
+    # gespeicherter Plan ohne Eintrag startet ebenfalls bei 0 - die alte
+    # globale Einstellung rechnet nichts mehr (Regel 7a).
+    _RUNPLAN_ZIEL_NEU = {"std": 0, "stufen": {}}
+
+    @classmethod
+    def runplan_ziel_aus_plan(cls, p):
+        """Zielzeit eines gespeicherten Plans, bereinigt - fehlt sie (Plan
+        aus 1.1.3 oder aelter) oder ist sie kaputt: die Vorgabe eines neuen
+        Plans."""
+        _z = (p or {}).get("runplan_ziel")
+        if not isinstance(_z, dict):
+            return {"std": 0, "stufen": {}}
+        try:
+            _std = int(_z.get("std", 0) or 0)
+        except (TypeError, ValueError):
+            _std = 0
+        _st = {}
+        for _k, _v in ((_z.get("stufen") or {}) if isinstance(
+                _z.get("stufen"), dict) else {}).items():
+            try:
+                if int(_v or 0) != 0:
+                    _st[str(_k)] = int(_v)
+            except (TypeError, ValueError):
+                continue
+        return {"std": _std, "stufen": _st}
+
+    def _runplan_ziel_jetzt(self):
+        """Die Zielzeit des OFFENEN Plans (nie None)."""
+        _z = getattr(self, "_bd_runplan_ziel", None)
+        if not isinstance(_z, dict):
+            _z = {"std": 0, "stufen": {}}
+            self._bd_runplan_ziel = _z
+        _z.setdefault("std", 0)
+        _z.setdefault("stufen", {})
+        return _z
+
     def _runplan_ziel_stunden(self, stage):
         """Zielzeit DIESER Stufe in Stunden - 0 = so schnell wie moeglich."""
-        _z = (self.settings.get("bau_runplan_ziel") or {})
+        _zp = self._runplan_ziel_jetzt()
+        _z = _zp.get("stufen") or {}
         try:
             _v = int(_z.get(str(stage), 0) or 0)
         except (TypeError, ValueError):
             _v = 0
         if _v == 0:
             try:
-                _v = int(self.settings.get("bau_runplan_ziel_std", 0) or 0)
+                _v = int(_zp.get("std", 0) or 0)
             except (TypeError, ValueError):
                 _v = 0
         return _v if _v >= 0 else -1
@@ -6440,21 +6488,32 @@ class BauplanTabs:
         return _out
 
     def _runplan_ziel_setzen(self, stage, stunden):
-        """Zielzeit einer Stufe merken (stage=None -> Vorgabe fuer alle)."""
+        """Zielzeit einer Stufe merken (stage=None -> Vorgabe fuer alle) -
+        am OFFENEN Plan (emm563). Ist er gespeichert, sofort auch in seinem
+        Eintrag (wie die Runplaner-Haken), sonst beim Speichern."""
+        _z = self._runplan_ziel_jetzt()
         if stage is None:
-            self.settings["bau_runplan_ziel_std"] = int(stunden or 0)
+            _z["std"] = int(stunden or 0)
         else:
-            _z = dict(self.settings.get("bau_runplan_ziel") or {})
+            _st = dict(_z.get("stufen") or {})
             if int(stunden or 0) != 0:
-                _z[str(stage)] = int(stunden)
+                _st[str(stage)] = int(stunden)
             else:
-                _z.pop(str(stage), None)
-            self.settings["bau_runplan_ziel"] = _z
+                _st.pop(str(stage), None)
+            _z["stufen"] = _st
+        _pid = getattr(self, "_bd_open_plan_id", None)
+        if _pid is None:
+            return
         try:
-            from .. import config as _cfgz
-            _cfgz.save_settings(self.settings)
-        except Exception:
-            pass
+            for _p in (self.settings.get("bau_saved_plans") or []):
+                if _p.get("id") == _pid:
+                    _p["runplan_ziel"] = {"std": int(_z.get("std", 0) or 0),
+                                          "stufen": dict(_z.get("stufen") or {})}
+                    from .. import config as _cfgz
+                    _cfgz.save_settings(self.settings)
+                    break
+        except Exception as _zs:
+            self._log_exception("Runplaner: Zielzeit speichern", str(_zs))
 
     # DIE ZWEI FELDER: Tage und Stunden (Nutzer 24.09.2026: "es springt von
     # 23 h auf 1 T 1 h automatisch [...] vielleicht sollten wir den Regler
@@ -6713,10 +6772,10 @@ class BauplanTabs:
         ihrem alten Regler stehen - zwei Aussagen ueber dieselbe Sache.
         """
         _h = int(stunden or 0)
-        if (_h == int(self.settings.get("bau_runplan_ziel_std", 0) or 0)
-                and not (self.settings.get("bau_runplan_ziel") or {})):
+        _z = self._runplan_ziel_jetzt()
+        if _h == int(_z.get("std", 0) or 0) and not (_z.get("stufen") or {}):
             return
-        self.settings["bau_runplan_ziel"] = {}
+        _z["stufen"] = {}
         self._runplan_ziel_setzen(None, _h)
         _fn = getattr(self, "_bd_full_rebuild", None)
         if _fn is not None:
@@ -7705,7 +7764,8 @@ class BauplanTabs:
                                                        else None)})
                 (_n_missing, _n_low, _n_missing_by_stage,
                  _n_low_by_stage) = self._fill_blueprint_tab(_bp_jobs, sched_chars,
-                                                             recipes, bp_tbl)
+                                                             recipes, bp_tbl,
+                                                             type_id=type_id)
             except Exception:
                 # NICHT MEHR STUMM SCHLUCKEN. Genau dieses except hat den
                 # Blueprints-Tab kaputt aussehen lassen, ohne dass irgendwo

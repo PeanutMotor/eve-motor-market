@@ -7030,34 +7030,59 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             cat = info[0] if info else None
             meta = info[2] if info else None
             key = self._category_key(tid, groups.get(tid, ""), False, cat, meta)
-            # use_dialog_me=False: NUR die gespeicherten Einstellungen, keine
-            # `_bd_*`-Eingaben des zuletzt geoeffneten Bauplan-Dialogs. Der
-            # Scanner muss das so aufrufen - sonst faerbt eine dort einmal
-            # getippte ME still auf JEDEN gescannten Kandidaten ab, und der
-            # Scan haette wieder eine andere Wahrheit als die Einstellungen.
-            def _me_of(attr, skey):
-                if use_dialog_me:
-                    return getattr(self, attr, self.settings.get(skey, 10))
-                return self.settings.get(skey, 10)
-            # ECHTES ME DER EIGENEN BLAUPAUSE SCHLAEGT DIE KATEGORIE-ANNAHME
-            # (Sitzung 16). Nur wenn die Kategorie auf ESI steht UND fuer
-            # dieses Bauteil wirklich eine Blaupause im Cache liegt - sonst
-            # faellt die Rechnung stillschweigend auf ME 0 und kauft absurd
-            # viel Material ein.
-            if self._bd_esi_me_aktiv(key):
-                _esi = self._bd_esi_me_te_for_item(tid)
-                if _esi is not None and _esi[0] is not None:
-                    out[tid] = _esi[0]
-                    continue
-            if key == "t1_hulls":
-                out[tid] = _me_of("_bd_me_t1hull", "bau_me_t1hull")
-            elif key == "fuel_blocks":
-                out[tid] = _me_of("_bd_me_fuel", "bau_me_fuel")
-            elif key == "tools":
-                out[tid] = _me_of("_bd_me_tools", "bau_me_tools")
-            else:
-                out[tid] = _me_of("_bd_me_component", "bau_me_component")
+            # EINE Stelle fuer "welche Blaupausen-ME gilt" (emm561): dieselbe
+            # Funktion fragt der Blueprints-Reiter fuer seine ME/TE-Spalte -
+            # die Anzeige kann damit nie etwas anderes sagen als die Rechnung.
+            out[tid] = self._bau_bp_me_kat(tid, key, use_dialog_me)[0]
         return out
+
+    def _bau_bp_me_kat(self, tid, key, use_dialog_me=True):
+        """(ME %, Quelle) der Blaupause EINES Bauteils (Komponente/Huelle/
+        Fuel Block/Tool) - genau das, was `_bau_category_me_map` rechnet
+        (seit emm561 ruft sie diese Funktion). Quelle: "esi" (eigene
+        Blaupause, schlechteste Kopie), "esi_fehlt" (ESI an, aber keine
+        eigene Blaupause gefunden -> Drehfeld), "manual" (Kategorie steht
+        auf Handeingabe -> Drehfeld)."""
+        # use_dialog_me=False: NUR die gespeicherten Einstellungen, keine
+        # `_bd_*`-Eingaben des zuletzt geoeffneten Bauplan-Dialogs. Der
+        # Scanner muss das so aufrufen - sonst faerbt eine dort einmal
+        # getippte ME still auf JEDEN gescannten Kandidaten ab, und der
+        # Scan haette wieder eine andere Wahrheit als die Einstellungen.
+        def _me_of(attr, skey):
+            if use_dialog_me:
+                return getattr(self, attr, self.settings.get(skey, 10))
+            return self.settings.get(skey, 10)
+        # ECHTES ME DER EIGENEN BLAUPAUSE SCHLAEGT DIE KATEGORIE-ANNAHME
+        # (Sitzung 16). Nur wenn die Kategorie auf ESI steht UND fuer
+        # dieses Bauteil wirklich eine Blaupause im Cache liegt - sonst
+        # faellt die Rechnung stillschweigend auf ME 0 und kauft absurd
+        # viel Material ein.
+        if self._bd_esi_me_aktiv(key):
+            _esi = self._bd_esi_me_te_for_item(tid)
+            if _esi is not None and _esi[0] is not None:
+                return _esi[0], "esi"
+            quelle = "esi_fehlt"
+        else:
+            quelle = "manual"
+        if key == "t1_hulls":
+            return _me_of("_bd_me_t1hull", "bau_me_t1hull"), quelle
+        if key == "fuel_blocks":
+            return _me_of("_bd_me_fuel", "bau_me_fuel"), quelle
+        if key == "tools":
+            return _me_of("_bd_me_tools", "bau_me_tools"), quelle
+        return _me_of("_bd_me_component", "bau_me_component"), quelle
+
+    def _bau_bp_me_ende(self, tid, use_dialog_me=True):
+        """Blaupausen-ME (%) eines ENDPRODUKTS - die Eingabe oben im Dialog,
+        beim Buendel die des Einzelplans (`_bd_me_je_ende`). Genau der Wert,
+        den `_bau_me_maps` als Basis nimmt (seit emm561 ruft sie diese
+        Funktion; vorher stand die Regel dort inline)."""
+        bp_me = float(self._bd_me if (use_dialog_me and
+                                      getattr(self, "_bd_me", None) is not None)
+                      else self.settings.get("bau_me", 10))
+        _je = (getattr(self, "_bd_me_je_ende", None) or {}) if use_dialog_me else {}
+        _bme = _je.get(tid)
+        return float(_bme) if _bme is not None else bp_me
 
     def _bd_esi_me_te_for_item(self, type_id):
         """ME/TE aus den ECHTEN Blaupausen des Nutzers fuer EIN Bauteil -
@@ -7661,6 +7686,59 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         dv = industry.decryptor_fuer_bp(bp_id, opts)
         return industry.invention_outcome(base_runs, base_prob, dv)["te_pct"]
 
+    def _bau_bp_te_basis(self, tid, ist_ende, key_fn, te_attrs=None,
+                         recipes=None, opts=None):
+        """(TE %, Quelle) der Blaupause EINES gefertigten Items - genau das,
+        was `_bau_category_te_factor` als Basis nimmt (seit emm561 ruft sie
+        diese Funktion; vorher stand die Regel dort inline). Reaktionen
+        fragen hier nicht: sie haben keine Forschungs-TE.
+
+        Reihenfolge wie bisher: Invention (4 % + Decryptor) -> Endprodukt
+        (Eingabe oben / Einzelplan im Buendel) -> eigene Blaupause per ESI
+        -> Drehfeld der Kategorie. `key_fn` liefert den Kategorie-Schluessel
+        erst, wenn er gebraucht wird (er kostet einen Gruppen-Nachschlag).
+        Quelle: "invented", "end", "esi", "esi_fehlt", "manual"."""
+        _inv_te = self._bau_item_invention_te_pct(tid, recipes=recipes, opts=opts)
+        if _inv_te is not None:
+            return _inv_te, "invented"
+        if ist_ende:
+            # Buendel (1.0.9): jedes Ende hat die TE seines Einzelplans
+            # (`_bd_te_je_ende`); der Einzelplan nimmt die Eingabe oben.
+            _je = ((te_attrs or {}).get("_bd_te_je_ende") if te_attrs is not None
+                   else getattr(self, "_bd_te_je_ende", None)) or {}
+            te = _je.get(tid)
+            if te is None:
+                te = (te_attrs or {}).get("_bd_te") if te_attrs is not None \
+                    else getattr(self, "_bd_te", None)
+            if te is None:
+                te = self.settings.get("bau_te", 0)
+            return te, "end"
+        key = key_fn()
+        _ta = te_attrs if te_attrs is not None else None
+        # ECHTES TE DER EIGENEN BLAUPAUSE ZUERST (Sitzung 16) -
+        # dieselbe Quelle und dieselbe Regel wie beim ME, sonst
+        # rechnete das Werkzeug mit dem echten Materialbedarf, aber
+        # der Zeit eines voll ausgeforschten BPOs.
+        _aktiv = self._bd_esi_me_aktiv(key)
+        _esi_te = self._bd_esi_me_te_for_item(tid) if _aktiv else None
+        if _esi_te is not None and _esi_te[1] is not None:
+            return _esi_te[1], "esi"
+        quelle = "esi_fehlt" if _aktiv else "manual"
+        if key == "t1_hulls":
+            te = (_ta.get("_bd_te_t1hull") if _ta is not None else
+                  getattr(self, "_bd_te_t1hull", self.settings.get("bau_te_t1hull", 20)))
+        elif key == "fuel_blocks":
+            te = (_ta.get("_bd_te_fuel") if _ta is not None else
+                  getattr(self, "_bd_te_fuel", self.settings.get("bau_te_fuel", 20)))
+        elif key == "tools":
+            te = (_ta.get("_bd_te_tools") if _ta is not None else
+                  getattr(self, "_bd_te_tools", self.settings.get("bau_te_tools", 20)))
+        else:
+            te = (_ta.get("_bd_te_component") if _ta is not None else
+                  getattr(self, "_bd_te_component",
+                          self.settings.get("bau_te_component", 20)))
+        return te, quelle
+
     def _bau_category_te_factor(self, tid, groups, reaction_products, type_id,
                                 mfg_struct=None, react_struct=None,
                                 te_attrs=None, recipes=None, opts=None):
@@ -7701,44 +7779,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             role_pct = self._STRUCT_ROLE_TIME.get(
                 (react_struct or {}).get("type", ""), {}).get("react", 0.0)
         else:
-            _inv_te = self._bau_item_invention_te_pct(tid, recipes=recipes, opts=opts)
-            if _inv_te is not None:
-                te = _inv_te
-            elif industry.ist_ende(tid, type_id, recipes):
-                # Buendel (1.0.9): jedes Ende hat die TE seines Einzelplans
-                # (`_bd_te_je_ende`); der Einzelplan nimmt die Eingabe oben.
-                _je = ((te_attrs or {}).get("_bd_te_je_ende") if te_attrs is not None
-                       else getattr(self, "_bd_te_je_ende", None)) or {}
-                te = _je.get(tid)
-                if te is None:
-                    te = (te_attrs or {}).get("_bd_te") if te_attrs is not None \
-                        else getattr(self, "_bd_te", None)
-                if te is None:
-                    te = self.settings.get("bau_te", 0)
-            else:
-                key = self._category_key(tid, groups.get(tid, ""), False, cat, meta)
-                _ta = te_attrs if te_attrs is not None else None
-                # ECHTES TE DER EIGENEN BLAUPAUSE ZUERST (Sitzung 16) -
-                # dieselbe Quelle und dieselbe Regel wie beim ME, sonst
-                # rechnete das Werkzeug mit dem echten Materialbedarf, aber
-                # der Zeit eines voll ausgeforschten BPOs.
-                _esi_te = (self._bd_esi_me_te_for_item(tid)
-                           if self._bd_esi_me_aktiv(key) else None)
-                if _esi_te is not None and _esi_te[1] is not None:
-                    te = _esi_te[1]
-                elif key == "t1_hulls":
-                    te = (_ta.get("_bd_te_t1hull") if _ta is not None else
-                         getattr(self, "_bd_te_t1hull", self.settings.get("bau_te_t1hull", 20)))
-                elif key == "fuel_blocks":
-                    te = (_ta.get("_bd_te_fuel") if _ta is not None else
-                         getattr(self, "_bd_te_fuel", self.settings.get("bau_te_fuel", 20)))
-                elif key == "tools":
-                    te = (_ta.get("_bd_te_tools") if _ta is not None else
-                         getattr(self, "_bd_te_tools", self.settings.get("bau_te_tools", 20)))
-                else:
-                    te = (_ta.get("_bd_te_component") if _ta is not None else
-                         getattr(self, "_bd_te_component",
-                                self.settings.get("bau_te_component", 20)))
+            # EINE Stelle fuer "welche Blaupausen-TE gilt" (emm561) - der
+            # Blueprints-Reiter zeigt mit derselben Funktion, was hier rechnet.
+            te = self._bau_bp_te_basis(
+                tid, industry.ist_ende(tid, type_id, recipes),
+                lambda: self._category_key(tid, groups.get(tid, ""), False,
+                                           cat, meta),
+                te_attrs=te_attrs, recipes=recipes, opts=opts)[0]
             base_factor = 1 - float(te or 0) / 100.0
             # KORRIGIERT (Ingame-Beleg Crystalline Carbonide Armor Plate, 6658 Runs):
             # Der Manufacturing-Rig-ZEITbonus WIRKT auf die Job-Zeit, wenn die
@@ -9508,6 +9555,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         also auf BEIDE Reaktionsarten. Die alte Ausnahme liess Intermediate-
         Reaktionen 2 % zu viel Material einplanen (harmlos in der Richtung -
         Material blieb uebrig - aber falsch).
+        BESTAETIGT (emm559, 15.10.2026): ein Versuch, die Einschraenkung
+        anhand der SDE-Effektnamen (rigReactionBio/Comp/Hyb) wieder
+        einzufuehren, wurde durch ein frisches Industry-Fenster widerlegt -
+        Sulfuric Acid (Intermediate) verlangte dort 2'250 statt 2'300 und
+        113 statt 115 Fuel Blocks, bekam den Rig-Bonus also sehr wohl.
         HINWEIS: EVE kennt daneben spezialisierte Reaktions-Rigs (Composite/
         Hybrid/Biochemical Reactor Efficiency). Sobald eines davon in den
         Katalog kommt, braucht ES eine Domaenen-Einschraenkung - der
@@ -9755,7 +9807,6 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # seines Einzelplans mit (`_bd_me_je_ende`, Schritt 4); fehlt der
         # Eintrag, gilt die Eingabe oben wie beim Einzelplan.
         _enden = self._bd_enden(type_id, _rec9) if type_id is not None else set()
-        _me_je_ende = (getattr(self, "_bd_me_je_ende", None) or {}) if use_dialog_me else {}
         for tid in ids:
             is_reac = tid in (reaction_products or set())
             stufe = self._bau_stufe_fuer_item(tid, reaction_products,
@@ -9774,8 +9825,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             else:
                 rm = self._bau_rig_me_for_item(s_used, doms)
                 if tid in _enden:
-                    _bme = _me_je_ende.get(tid)
-                    base = float(_bme) if _bme is not None else bp_me
+                    base = self._bau_bp_me_ende(tid, use_dialog_me)
                 else:
                     base = cat_me_map.get(tid, bp_me)
                 me_map[tid] = (1 - (1 - base / 100.0) * (1 - rm / 100.0) *
@@ -10313,6 +10363,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self._bd_ladder_result = None
                 self._bd_ladder_pending = False
                 self._bd_open_plan_id = None    # neuer Plan -> keine Auto-Speicherung
+                # NEUER PLAN = "SO SCHNELL WIE MOEGLICH" (emm563): die
+                # Runplaner-Zielzeit gehoert zum Plan, nicht zum Programm.
+                # Hier und nur hier: `fresh=True` erzwingt diesen Zweig
+                # (`_bd_bp_type = None` oben), ein zweiter Ruecksetzer dort
+                # war doppelt - die Rotprobe meldete ihn als BLIND.
+                self._bd_runplan_ziel = {"std": 0, "stufen": {}}
                 self._bd_frozen = None          # neuer Plan -> nicht eingefroren
                 # Verkaufscharakter: bester (guenstigste Gesamtgebuehr).
                 # Standard-Verkaufsort = der Hub oben (emm437, Discord elglebo:
@@ -11031,7 +11087,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         try:
             if stand is None:
                 stand = store.asset_snapshot_info()
-            lbl.setText(self.bestand_stand_text(stand))
+            # DATENALTER MIT (emm560): `_bd_esi_stock_ts` ist der Stand, bis
+            # zu dem ESI den Bestand gesehen hat - nicht der Abruf. Ohne ihn
+            # sagte die Zeile "just now", waehrend die Daten 50 min alt waren.
+            lbl.setText(self.bestand_stand_text(
+                stand, daten_ts=getattr(self, "_bd_esi_stock_ts", None)))
         except Exception as _st_err:
             # Die Anzeige darf den Bauplan NIE aufhalten - lieber leer als tot.
             self._log_exception("Bestands-Zeitstempel", str(_st_err))
@@ -16327,6 +16387,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self._bd_open_plan_id = pid   # für Runplaner-Häkchen-Auto-Speicherung
         self._bd_runplan_delivered_sicher = {}   # neuer Plan -> keine alte Karte
         self._bd_runplan_checked = set(p.get("checked_runplan", []) or [])
+        # ZIELZEIT DES PLANS (emm563) - ein Plan aus 1.1.3 oder aelter hat
+        # keine und startet bei "so schnell wie moeglich".
+        self._bd_runplan_ziel = self.runplan_ziel_aus_plan(p)
         # Zeitstempel je Haken zurueckholen - ohne sie faengt die
         # mitlaufende Reservierung bei jedem Oeffnen wieder bei null an.
         self._bd_runplan_ts = {str(_k): float(_v) for _k, _v in
@@ -18336,7 +18399,99 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                "multibuy window.").format(n=len(_liste)), theme.GREEN)
         return len(_liste)
 
-    def _fill_blueprint_tab(self, jobs, sched_chars, recipes, tbl):
+    def _bd_bp_forschung(self, tid, bp_id, activity, key, recipes, type_id=None,
+                         ist_ende=False):
+        """ME/TE, MIT DENEN DER PLAN FUER DIESE BLAUPAUSE RECHNET - und woher
+        sie kommen (emm561, Nutzer-Wunsch: "je Komponente sichtbar machen,
+        welchen - naemlich den schlechtesten - eigenen Blueprint MoMa zum
+        Rechnen nimmt").
+
+        KEINE EIGENE REGEL (8a/Regel 9): jede Zahl kommt aus GENAU der
+        Funktion, die auch die Rechnung fragt - `industry._invention_me_pct`
+        (Invention), `_bau_bp_me_ende` (Endprodukt), `_bau_bp_me_kat`
+        (Bauteile) fuer die ME, `_bau_bp_te_basis` fuer die TE. Was hier
+        steht, ist also der WIRKSAME Wert, nicht der eigene Blueprint, wenn
+        die Kategorie auf Handeingabe steht.
+
+        Rig- und Strukturboni sind NICHT enthalten - sie kommen in der
+        Rechnung obendrauf und haengen am Bauort, nicht an der Blaupause.
+
+        Rueckgabe {"me", "te", "me_q", "te_q", "n"}: me/te in %, None bei
+        Reaktionen (nicht erforschbar); me_q/te_q die Quelle ("invented",
+        "end", "esi", "esi_fehlt", "manual", "reaction"); n = Zahl der
+        eigenen Blaupausen dieses Typs im Cache."""
+        _n = sum(1 for _b in (getattr(self, "_bd_owned_bp_cache", None) or [])
+                 if _b.get("type_id") == bp_id)
+        if activity == industry.REACTION:
+            return {"me": None, "te": None, "me_q": "reaction",
+                    "te_q": "reaction", "n": _n}
+        _opts = getattr(self, "_bd_opts", None) or {}
+        # ENDPRODUKT WIE IN DER RECHNUNG: die ME fragt `_bd_enden` (wie
+        # `_bau_me_maps`), die TE `industry.ist_ende` (wie
+        # `_bau_category_te_factor`). Ohne type_id (Alt-Aufrufer) zaehlt die
+        # Markierung des Jobs.
+        if type_id is not None:
+            _ende_me = tid in (self._bd_enden(type_id, recipes) or ())
+            _ende_te = industry.ist_ende(tid, type_id, recipes)
+        else:
+            _ende_me = _ende_te = bool(ist_ende)
+        _inv_me = industry._invention_me_pct(bp_id, recipes, _opts)
+        if _inv_me is not None:
+            me, me_q = _inv_me, "invented"
+        elif _ende_me:
+            me, me_q = self._bau_bp_me_ende(tid), "end"
+        else:
+            me, me_q = self._bau_bp_me_kat(tid, key or "t1_components")
+        te, te_q = self._bau_bp_te_basis(
+            tid, _ende_te, lambda: key or "t1_components",
+            recipes=recipes, opts=_opts)
+        return {"me": me, "te": te, "me_q": me_q, "te_q": te_q, "n": _n}
+
+    @staticmethod
+    def bp_forschung_text(f):
+        """(Zelltext, Tooltip) der ME/TE-Spalte - EINE Formatstelle (emm561)."""
+        if not f:
+            return "?", ""
+        if f.get("me_q") == "reaction":
+            return "\u2013", t("Reactions cannot be researched \u2013 no ME/TE.")
+
+        def _z(v):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return "?"
+            return str(int(v)) if v == int(v) else f"{v:g}"
+
+        def _q(q):
+            if q == "esi":
+                return t("your own blueprint per ESI \u2013 the worst of {n} "
+                         "(the plan assumes the worst one goes into the "
+                         "job)").format(n=f.get("n", 0))
+            if q == "esi_fehlt":
+                return t("no own blueprint found \u2013 value from the card "
+                         "\u201eOther blueprints (ME/TE)\u201c")
+            if q == "manual":
+                return t("category set to manual \u2013 value from the card "
+                         "\u201eOther blueprints (ME/TE)\u201c")
+            if q == "end":
+                return t("end product \u2013 the blueprint ME/TE at the top "
+                         "of this plan")
+            if q == "invented":
+                return t("invented T2 copy \u2013 2 % ME / 4 % TE plus "
+                         "decryptor")
+            return "?"
+        _me, _te = _z(f.get("me")), _z(f.get("te"))
+        zelle = f"{_me} / {_te}"
+        if f.get("me_q") == f.get("te_q"):
+            tip = t("ME {me} % / TE {te} %: {quelle}").format(
+                me=_me, te=_te, quelle=_q(f.get("me_q")))
+        else:
+            tip = (t("ME {v} %: {quelle}").format(v=_me, quelle=_q(f.get("me_q")))
+                   + "\n" + t("TE {v} %: {quelle}").format(
+                       v=_te, quelle=_q(f.get("te_q"))))
+        return zelle, tip
+
+    def _fill_blueprint_tab(self, jobs, sched_chars, recipes, tbl, type_id=None):
         """Füllt den 'Blueprints'-Tab: pro benötigtem Blueprint (Zwischenmaterial
         bis Endprodukt) die empfohlene Kopienzahl für minimale Wellenzahl
         (industry.recommended_bp_copies, gedeckelt auf die tatsächlich für diese
@@ -18538,7 +18693,21 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 _erfindbar and activity == industry.MANUFACTURING
                 and _opts_bp.get("invention")
                 and bp_id not in (_opts_bp.get("inv_manual_override") or {}))
+            # ME/TE, MIT DENEN DER PLAN RECHNET (emm561) - aus denselben
+            # Funktionen wie die Rechnung, nie nachgebaut. Scheitert die
+            # Abfrage (unvollstaendige Rezeptdaten), steht "?" da statt
+            # einer erfundenen Zahl.
+            try:
+                _fo561 = self._bd_bp_forschung(
+                    j.get("tid"), bp_id, activity,
+                    (_kbp if activity != industry.REACTION
+                     and not j.get("is_end") else None),
+                    recipes, type_id=type_id, ist_ende=bool(j.get("is_end")))
+            except Exception as _fe561:
+                self._log_exception("Blueprints-Tab: ME/TE", str(_fe561))
+                _fo561 = None
             rows.append({"basis": _basis_bp, "invented": _erfunden,
+                         "forschung": _fo561,
                          "inventable": _erfindbar,
                          "name": self._bp_name_fuer(_basis_bp, activity),
                          "stage": stage,
@@ -18696,10 +18865,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         _weg509 += _q509
                     elif _art509 == "unknown":
                         _unb509 += _q509
+            _fz561, _ft561 = self.bp_forschung_text(r.get("forschung"))
             cells = [
                 r["name"], self._kategorie_anzeige(r["stage"]), f"{r['runs']:,}".replace(",", "'"),
                 (f"{r['max_runs']:,}".replace(",", "'") if r["max_runs"] else "\u2013"),
-                str(r["copies"]), have_txt, status_txt,
+                str(r["copies"]), have_txt, status_txt, _fz561,
             ]
             for col, text in enumerate(cells):
                 it = QTableWidgetItem(text)
@@ -18717,6 +18887,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     # Item (selbst gefangen vor dem Testlauf).
                     it.setData(Qt.UserRole + 8, r.get("basis") or r.get("name"))
                     it.setData(Qt.UserRole + 7, r.get("stage"))
+                if col == 7 and _ft561:
+                    it.setToolTip(_ft561)
                 if col == 1 and r.get("inv_quelle"):
                     it.setToolTip(t(
                         "T1 original for the invention of the T2 copy - it also "
@@ -18865,12 +19037,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # geschlossen, ist tbl ein totes C++-Objekt und jeder Zugriff ein
         # RuntimeError-Absturz.
         def _icons_nach(jobs=jobs, sched_chars=sched_chars,
-                        recipes=recipes, tbl=tbl):
+                        recipes=recipes, tbl=tbl, type_id=type_id):
             try:
                 tbl.rowCount()
             except RuntimeError:
                 return
-            self._fill_blueprint_tab(jobs, sched_chars, recipes, tbl)
+            self._fill_blueprint_tab(jobs, sched_chars, recipes, tbl,
+                                     type_id=type_id)
         self._icon_prefetch_pending(_icons_nach)
         # WICHTIG: eindeutiger Schlüssel PRO Dialog-Instanz (nicht die feste
         # Zeichenkette "bp_tab"), sonst wird die Spaltenbreite nur beim
@@ -21950,7 +22123,24 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         non_conflict = [(t, n) for t, n in items if int(t) not in cids]
         dlg = MinimizableDialog(self._tool_parent())
         dlg.setWindowTitle(_txt("Already on hand \u2013 what do you have where?"))
-        dlg.setMinimumWidth(820); dlg.resize(900, 620)
+        dlg.setMinimumWidth(820)
+        # BREITER ALS DIE ALTEN 900 px (emm558, Nutzer-Screenshot: "ausserdem
+        # ist jeweils die Namens Collumn abgeschnitten"). Neun Spalten, davon
+        # acht mit Zahlen - in 900 px blieb fuer die gedehnte Namensspalte
+        # kaum etwas uebrig, und der Name ist die einzige Spalte, die man
+        # NICHT erraten kann. Auf den verfuegbaren Bildschirm begrenzt: ein
+        # 1150 px breites Fenster auf einem 1024er Laptop waere keine
+        # Verbesserung, sondern ein halb sichtbarer Dialog.
+        _breite_cc = 1150
+        try:
+            from PySide6.QtWidgets import QApplication as _QApp_cc
+            _scr_cc = dlg.screen() or _QApp_cc.primaryScreen()
+            if _scr_cc is not None:
+                _breite_cc = max(820, min(_breite_cc,
+                                          _scr_cc.availableGeometry().width() - 60))
+        except Exception:
+            pass
+        dlg.resize(_breite_cc, 620)
         v = QVBoxLayout(dlg); v.setContentsMargins(16, 14, 16, 14); v.setSpacing(9)
         _n_cov = sum(1 for r in rows if r["status"] == "covered")
         _n_part = sum(1 for r in rows if r["status"] == "partial")
@@ -22029,6 +22219,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         tree.setRootIsDecorated(True)
         tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         v.addWidget(tree, 1)
+
+        # SO BREIT WIE NOETIG, ABER NICHT BREITER (emm558). Spalte 0 dehnt
+        # sich, bekommt also genau das, was die acht Zahlenspalten uebrig
+        # lassen - eine einzige lange Statuszeile ("covered - will be
+        # built") zog ihre Spalte weit auf und drueckte den Namen auf ein
+        # paar Buchstaben. Der Deckel kostet nichts: der volle Text steht
+        # ohnehin im Tooltip, und ziehen kann man die Spalte weiterhin.
+        _SPALTE_MAX_CC = 150
+
+        def _spalten_eng(*cols):
+            for _c_cc in cols:
+                tree.resizeColumnToContents(_c_cc)
+                tree.setColumnWidth(_c_cc,
+                                    min(tree.columnWidth(_c_cc), _SPALTE_MAX_CC))
 
         _cols = {"covered": theme.GREEN, "partial": theme.AMBER,
                  "none": theme.RED, "unknown": theme.MUTED}
@@ -22334,12 +22538,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     if _v else _txt(
                         "No packaged volume known – counts as 0 m³ "
                         "for the freight."))
-            for _c in (5, 6, 7):
-                tree.resizeColumnToContents(_c)
+            _spalten_eng(5, 6, 7)
             _vol_zeigen()
         _puffer_zeigen()
-        for _c in range(1, 9):
-            tree.resizeColumnToContents(_c)
+        _spalten_eng(*range(1, 9))
         v.addWidget(_vol_lbl)
         # Haken aendern die Wagen-Liste - dann aendert sich auch ihr
         # Volumen. Nur die Fuss-Zeile neu schreiben, nie die Spalten:
