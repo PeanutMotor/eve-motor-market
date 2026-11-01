@@ -157,10 +157,11 @@ def szenario(zeigen=True):
         _bestandsabruf(welt)
         z["2"] = _zustand(welt)
         # 2b. Ein zweiter X-Job laeuft OHNE Klick (X brauchen alle drei):
-        # die Prioritaet gibt ihn beim Oeffnen gleich #1 mit Platz (B).
-        # emm430: 6 statt 10 Runs - mit 10 haetten B UND C genau so viele
-        # offen (echte Mehrdeutigkeit -> Frage, s. aa491); hier soll die
-        # Prioritaet greifen.
+        # SEIT emm792 (Audit 31.10.2026) ist auch das MEHRDEUTIG - der
+        # 6-Run-Job passt in B UND C, die Prioritaet vergibt ihn nicht
+        # mehr still an #1 (der falsche Plan gaebe unverbrauchte Zutaten
+        # frei); er bleibt als offene Frage am Fenster stehen. Bis emm792
+        # griff hier die Rang-Regel (Job ging still an B).
         welt["jobs"].append({"job_id": 503, "product_type_id": X, "runs": 6,
                              "activity_id": 11, "status": "active",
                              "start_date": _iso(t0 + 300), "completed_date": None})

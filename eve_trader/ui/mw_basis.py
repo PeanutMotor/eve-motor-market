@@ -422,6 +422,176 @@ class KartenSortierer(QObject):
         return raus
 
 
+class RasterSortierer(KartenSortierer):
+    """Dasselbe Ziehen, aber in SPALTEN statt in einer Liste (emm775).
+
+    Nutzer 30.10.2026: "Eigentlich könnten wir die karten auch selber
+    anordnen wie wir es schon in my blueprints machen. Einfach einen
+    button einfügen ''Arrangement'' ... Bis maximal 5 Rows und die
+    tiefe darf natürlich quasi unendlich laufen."
+
+    ERBT ALLES, WAS SCHON DA IST (Regel 9): Hover-Hervorhebung, den
+    Schutz der Knoepfe auf der Karte (`_ist_bedienelement`), das
+    Mitscrollen am Rand, die drei Zustaende. Ueberschrieben wird nur,
+    WOHIN eine Karte beim Ziehen wandert - denn hier gibt es nicht
+    eine Reihenfolge, sondern Spalten mit je eigener Reihenfolge.
+
+    Gearbeitet wird auf dem `KartenRaster` selbst (es kennt seine
+    Spalten), nicht auf einem QVBoxLayout. `beim_ablegen` bekommt
+    deshalb eine LISTE VON LISTEN: je Spalte die Schluessel.
+    """
+
+    def __init__(self, raster, scrollbereich, schluessel_von, beim_ablegen,
+                 akzent=None, flaeche=None, parent=None):
+        super().__init__(raster.layout(), scrollbereich, schluessel_von,
+                         beim_ablegen, akzent, flaeche, parent)
+        self._raster = raster
+
+    def ueberwache(self, widget):
+        """Wie in der Basis, ABER OHNE den Objektnamen zu ueberschreiben
+        (emm776).
+
+        Nutzer 31.10.2026 mit Bildschirmfoto: "die karten sind weg" -
+        sie waren nicht weg, sie hatten ihren RAHMEN verloren. Die
+        Basis setzt `setObjectName("SortierKarte")`, damit ihr
+        Hervorhebungs-CSS nur die Karte trifft. Die Job-Karten heissen
+        aber "Card", und genau an diesem Namen haengt im globalen
+        Stylesheet ihr Rahmen samt Flaeche - umbenannt sahen sie nackt
+        aus. Hier wird der vorhandene Name GEMERKT und spaeter als
+        Selektor benutzt; ein Widget-Stylesheet mit `#Card{...}` gilt
+        ohnehin nur fuer dieses eine Widget, Kinder heissen anders.
+        """
+        widget.installEventFilter(self)
+        widget.setAttribute(Qt.WA_Hover, True)
+        if not widget.objectName():
+            widget.setObjectName(self.OBJEKTNAME)
+        for kind in widget.findChildren(QWidget):
+            kind.installEventFilter(self)
+
+    def _zeige(self, widget, zustand):
+        """Drei Zustaende wie in der Basis, aber auf dem EIGENEN
+        Objektnamen der Karte - und im Ruhezustand gar kein eigenes
+        Stylesheet, damit wieder das globale `#Card` greift (sonst
+        bliebe ein transparenter Rahmen statt des echten)."""
+        if widget is None:
+            return
+        try:
+            if zustand == "ruhe":
+                widget.setStyleSheet("")
+                return
+            _n = widget.objectName() or self.OBJEKTNAME
+            if zustand == "zieht":
+                widget.setStyleSheet(
+                    "#" + _n + "{border:1px solid " + self._akzent
+                    + "; border-radius:8px; background:" + self._flaeche + ";}")
+            else:
+                widget.setStyleSheet(
+                    "#" + _n + "{border:1px solid " + self._akzent
+                    + "; border-radius:8px;}")
+        except Exception:
+            pass
+
+    def _karte_zu(self, obj):
+        """Wie in der Basis, aber gegen die Karten des Rasters geprueft -
+        `layout().indexOf` taugt hier nicht, weil im Gitter auch leere
+        Zellen und Platzhalter liegen koennen."""
+        w = obj if isinstance(obj, QWidget) else None
+        _karten = set(getattr(self._raster, "_karten", None) or ())
+        while w is not None:
+            if w in _karten:
+                return w
+            w = w.parentWidget()
+        return None
+
+    def _ist_bedienelement(self, obj):
+        w = obj if isinstance(obj, QWidget) else None
+        _karten = set(getattr(self._raster, "_karten", None) or ())
+        while w is not None:
+            if isinstance(w, (QAbstractButton, QAbstractSpinBox, QComboBox,
+                              QLineEdit)):
+                return True
+            if w in _karten:
+                return False        # bei der Karte angekommen
+            w = w.parentWidget()
+        return False
+
+    def alles_zuruecksetzen(self):
+        for _w in (getattr(self._raster, "_karten", None) or []):
+            try:
+                _w.setStyleSheet("")
+            except Exception:
+                pass
+        self._unter_maus = None
+
+    def _einsortieren(self, global_pos):
+        """Die gegriffene Karte in die Spalte und an die Stelle setzen,
+        ueber der die Maus steht.
+
+        SPALTE nach der X-Mitte der vorhandenen Spalten, PLATZ in der
+        Spalte nach der Y-Mitte ihrer Karten - dieselbe Logik wie in der
+        Basis, nur zweidimensional. Eine leer gewordene Spalte faellt
+        weg; so kann man eine Spalte aufloesen, indem man ihre letzte
+        Karte woanders hinzieht."""
+        gruppen = [list(g) for g in (getattr(self._raster, "_gruppen", None)
+                                     or [])]
+        if not gruppen:
+            return
+        pos = self._raster.mapFromGlobal(global_pos)
+        # Aus welcher Spalte kommt die Karte, und wo steht sie dort?
+        alt_s = alt_i = None
+        for _si, _g in enumerate(gruppen):
+            if self._widget in _g:
+                alt_s, alt_i = _si, _g.index(self._widget)
+                break
+        if alt_s is None:
+            return
+        # ZIEL-SPALTE: die, deren Mitte dem Mauszeiger am naechsten ist.
+        # OHNE isVisible()-Filter: die Lage im Layout steht auch fuer
+        # ein noch nicht gezeigtes Widget fest, und eine weggescrollte
+        # Karte waere sonst "unsichtbar" und ihre Spalte landete bei
+        # x=0 - dann zoege jede Karte in die erste Spalte. Gefunden hat
+        # das der Zieh-Test b775, nicht das Auge.
+        mitten = []
+        for _g in gruppen:
+            _xs = [k.x() + k.width() / 2 for k in _g]
+            mitten.append(sum(_xs) / len(_xs) if _xs else 0.0)
+        neu_s = min(range(len(gruppen)), key=lambda i: abs(mitten[i] - pos.x()))
+        # ZIEL-PLATZ in dieser Spalte nach der Y-Mitte.
+        ziel = gruppen[neu_s]
+        neu_i = len(ziel)
+        for _i, k in enumerate(ziel):
+            if k is self._widget:
+                continue
+            if pos.y() < k.y() + k.height() / 2:
+                neu_i = _i
+                break
+        if neu_s == alt_s:
+            if neu_i > alt_i:
+                neu_i -= 1
+            if neu_i == alt_i:
+                return
+        gruppen[alt_s].pop(alt_i)
+        gruppen[neu_s].insert(min(neu_i, len(gruppen[neu_s])), self._widget)
+        # KEIN eigenes Leerfiltern hier: `ordne_gruppen` wirft leere
+        # Spalten ohnehin weg. Ein zweiter Filter waere eine Leiche -
+        # er liesse sich nicht einmal mehr pruefen (eine Rotprobe, die
+        # ihn entfernte, blieb gruen, weil der andere greift).
+        self._raster.ordne_gruppen(gruppen)
+
+    def reihenfolge(self):
+        """[[Schluessel, ...], ...] - je Spalte eine Liste."""
+        raus = []
+        for _g in (getattr(self._raster, "_gruppen", None) or []):
+            _sp = []
+            for _w in _g:
+                _k = self._key(_w)
+                if _k is not None:
+                    _sp.append(_k)
+            if _sp:
+                raus.append(_sp)
+        return raus
+
+
 # MAUSRAD GEHOERT DER BILDLAUFLEISTE (Nutzer 26.09.2026, Invention-Reiter:
 # "wenn man scrollen will und mit der Maus per Zufall auf einem Decryptor-
 # Dropdown ist, scrollt das Dropdown und dann faengt der Plan automatisch an
@@ -718,6 +888,89 @@ class IskMillionSpin(QDoubleSpinBox):
         return (QValidator.Acceptable, text, pos)
 
 
+class IskKompaktEdit(QLineEdit):
+    """ISK-Eingabefeld fuer ein Zielbudget (emm613): man tippt die Zahl VOLL
+    AUSGESCHRIEBEN ein (z.B. "5000000000"), beim Verlassen des Feldes
+    wechselt die Anzeige auf die Kurzform ("5B"; 20000000 -> "20m") - Nutzer
+    woertlich: "eine Eingabe moeglichkeit fuer wieviel ISK ich etwa
+    einkaufen moechte, dass ich da zbsp 5B eingeben kann ausgeschrieben in
+    Zahlen also 5000000000 ISK und dann wechselt die Anzeige auf '5B' zur
+    besseren Uebersicht. bei 20000000 sollte es zu 20m werden".
+    Anders als `IskMillionSpin`: hier wird die VOLLE ISK-Zahl getippt, nicht
+    eine in Millionen gedachte Kurzzahl. Kuerzel (k/m/b, Gross-/Kleinschreibung
+    egal) werden beim Tippen ebenfalls akzeptiert, damit "5b" genauso
+    funktioniert wie "5000000000". Beim Reinklicken (Fokus) erscheint wieder
+    die volle Zahl, sonst muesste man die Kurzform erst loeschen, um z.B. aus
+    "5B" ein "5,5B" zu machen."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._wert = 0.0
+        self.editingFinished.connect(self._kompakt_anzeigen)
+
+    def value(self):
+        return self._wert
+
+    def value_aktuell(self):
+        """Wie `value()`, liest aber zuerst den GERADE im Feld stehenden
+        Text neu ein (emm615, Nutzer: "habe 20B als max isk angegeben und
+        wenn ich suggested quantity druecke aendert sich nichts"). URSACHE:
+        das Feld steckt als `QWidgetAction` im Tools-Menue; ein Klick direkt
+        vom Textfeld auf eine ANDERE Menue-Aktion (hier "Suggested
+        quantity") loest `editingFinished` nicht zuverlaessig VOR dem
+        Klick-Handler der anderen Aktion aus - `value()` las dadurch noch
+        `self._wert = 0.0` (nie uebernommen), die Budget-Deckelung blieb
+        also unbemerkt aus, selbst mit eingetipptem Betrag. Aufrufer, die
+        den Wert fuer eine AKTION brauchen (statt nur anzuzeigen), rufen ab
+        jetzt diese Methode statt `value()` - sie verhaelt sich wie ein
+        erzwungenes `editingFinished` direkt vor dem Lesen."""
+        self._kompakt_anzeigen()
+        return self._wert
+
+    def setValue(self, n):
+        self._wert = max(0.0, float(n or 0))
+        self._kompakt_anzeigen()
+
+    def _kompakt_anzeigen(self):
+        self._wert = self._parse(self.text())
+        self.setText(self._text_aus(self._wert) if self._wert > 0 else "")
+
+    def focusInEvent(self, ev):
+        if self._wert > 0:
+            self.setText(f"{self._wert:.0f}")
+        super().focusInEvent(ev)
+
+    @staticmethod
+    def _parse(text):
+        s = (text or "").strip().replace("'", "").replace(" ", "")
+        if not s:
+            return 0.0
+        suf = s[-1].lower()
+        mult = 1.0
+        if suf in ("k", "m", "b"):
+            mult = {"k": 1e3, "m": 1e6, "b": 1e9}[suf]
+            s = s[:-1]
+        s = s.replace(",", ".")
+        try:
+            return max(0.0, float(s) * mult)
+        except ValueError:
+            return 0.0
+
+    @staticmethod
+    def _text_aus(v):
+        av = abs(v)
+        if av >= 1e9:
+            s = f"{v / 1e9:.2f}".rstrip("0").rstrip(".")
+            return f"{s}B"
+        if av >= 1e6:
+            s = f"{v / 1e6:.2f}".rstrip("0").rstrip(".")
+            return f"{s}m"
+        if av >= 1e3:
+            s = f"{v / 1e3:.2f}".rstrip("0").rstrip(".")
+            return f"{s}k"
+        return f"{v:.0f}"
+
+
 class IskGroupedSpin(QSpinBox):
     """Plain-ISK integer spin box with apostrophe thousand separators
     (50000 -> '50'000'), so it stays readable without switching to M/B."""
@@ -890,8 +1143,15 @@ class MinimizableDialog(QDialog):
     # will, setzt `enter_ohne_knopf = True` (der Bauplan tut es); das Feld
     # selbst hat den Wert dann schon uebernommen.
     enter_ohne_knopf = False
+    # ESC ZUERST AN DEN FOKUS-MODUS (emm578): gibt `esc_vorher()` True
+    # zurueck, hat das Fenster die Taste verbraucht und schliesst NICHT.
+    esc_vorher = None
 
     def keyPressEvent(self, event):
+        if (event.key() == Qt.Key_Escape and callable(self.esc_vorher)
+                and self.esc_vorher()):
+            event.accept()
+            return
         if (self.enter_ohne_knopf
                 and event.key() in (Qt.Key_Return, Qt.Key_Enter)):
             event.accept()

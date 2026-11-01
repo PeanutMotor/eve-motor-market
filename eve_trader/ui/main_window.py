@@ -12,13 +12,13 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QTabWidget, QToolBar, QVBoxLayout, QWidget,
 )
 
-from .. import (auth, config, esi, hubs, industry, ladezeit, market, reprocess,
-                scanner, store, tokens)
+from .. import (auth, config, esi, funfact, hubs, industry, ladezeit, market,
+                reprocess, scanner, store, tokens)
 from ..sprache import t
 from ..workers import Worker
 from . import theme
 from . import icons
-from .mw_basis import (KEIN_DECRYPTOR, IskGroupedSpin, IskMillionSpin,
+from .mw_basis import (KEIN_DECRYPTOR, IskGroupedSpin, IskKompaktEdit, IskMillionSpin,
                        KartenSortierer, MinimizableDialog, NumericItem,
                        dec_anzeige, isk, kontext_menue, kopier_menue,
                        ohne_mausrad, tab_icon, zerstoert, ZahlVorneSpin)
@@ -466,6 +466,149 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             return _pct, t("solid"), theme.CYAN
         return _pct, t("tight"), theme.MUTED
 
+    # DAYTRADE-BEWERTUNG (emm812, Bauplan-Kur fuer Daytrade). Der Balken
+    # zeigt DIESELBE kombinierte Qualitaet, nach der die Liste seit emm600
+    # sowieso gereiht wird (_deal_quality) - keine zweite Wahrheit
+    # (Arbeitsregel 9), nur sichtbar gemacht. Die Schwellen sind
+    # Ermessenswerte und stehen deshalb sichtbar beieinander, wie bei
+    # BAU_MARGE_GUT (der Nutzer muss sie beim Nachjustieren finden koennen).
+    DEAL_Q_GUT = 0.30         # ab hier "lohnt sich klar"
+    DEAL_Q_OK = 0.12          # ab hier "solide"
+    DEAL_TRADE_SCHWACH = 35.0  # Handelbarkeit darunter: zu schwer handelbar
+    DEAL_BR_SCHWACH = 0.55    # Buy-Reach darunter: Kauforder fuellt selten
+    DEAL_UEBER_NORMAL = 20.0  # % ueber Normal darueber: riskanter Einstieg
+
+    def _deal_bewertung(self, d, mode):
+        """(Balken-%, Text, Farbe) fuer eine Daytrade-Trefferzeile.
+
+        Reihenfolge ist Absicht (wie in _bau_bewertung): ein Vorbehalt
+        schlaegt eine gute Zahl. Wer eine schwache Handelbarkeit oder einen
+        hochgeschossenen Preis hat, soll NICHT "lohnt sich klar" lesen.
+        Die Texte sind dieselben Katalog-Eintraege wie im Bau-Scanner bzw.
+        der Trichter-Diagnose - EIN Vokabular im ganzen Programm.
+        """
+        q = self._deal_quality(d, mode)
+        _pct = int(max(0, min(100, round(q / self.DEAL_Q_GUT * 100))))
+        _ts = float(d.get("trade_score", 0) or 0)
+        # Bauen-Modus kennt keine Handelbarkeit (_DEAL_COLS: 17 fehlt) -
+        # dort darf der fehlende Wert nicht als Vorbehalt durchgehen.
+        if mode != "build" and _ts < self.DEAL_TRADE_SCHWACH:
+            return _pct, t("too hard to trade"), theme.AMBER
+        if mode == "flip" and (d.get("buy_reach", 0.0) or 0.0) < self.DEAL_BR_SCHWACH:
+            return _pct, t("buy side rarely fills"), theme.AMBER
+        if mode == "flip" and (d.get("over_norm_pct", 0.0) or 0.0) > self.DEAL_UEBER_NORMAL:
+            return _pct, t("too far above normal price"), theme.AMBER
+        if q >= self.DEAL_Q_GUT:
+            return _pct, t("clearly worth it"), theme.GREEN
+        if q >= self.DEAL_Q_OK:
+            return _pct, t("solid"), theme.CYAN
+        return _pct, t("tight"), theme.MUTED
+
+    # SWING-BEWERTUNG (emm814). Nutzer: "beim swing zaehlt vorallem das
+    # handelsvolumen und der below normal preis" und "zusaetzlich sollte
+    # der Trend nicht noch weiter fallend sein". Beides steckt bereits in
+    # _swing_quality (Volumen als Wiederverkaufs-Faktor, Rabatt als
+    # under_norm, Trend ueber recovery_factor) - der Balken macht DIESE
+    # Qualitaet sichtbar statt eine zweite Formel zu bauen (Regel 9), und
+    # der fallende Trend ist als Vorbehalt herausgehoben, der jede gute
+    # Zahl schlaegt. Schwellen sichtbar, Ermessenswerte wie BAU_MARGE_GUT.
+    SWING_Q_GUT = 0.45        # ab hier "lohnt sich klar"
+    SWING_Q_OK = 0.20         # ab hier "solide"
+
+    def _swing_bewertung(self, d):
+        """(Balken-%, Text, Farbe) fuer eine Swing-Trefferzeile.
+
+        Reihenfolge ist Absicht (wie _bau_bewertung/_deal_bewertung):
+        Vorbehalt schlaegt gute Zahl - ein noch fallendes Messer und ein
+        Dump-Verdacht duerfen nie "lohnt sich klar" lesen.
+        """
+        q = self._swing_quality(d)
+        _pct = int(max(0, min(100, round(q / self.SWING_Q_GUT * 100))))
+        if d.get("trend") == "falling":
+            return _pct, t("still falling"), theme.AMBER
+        if d.get("dump_risk"):
+            return _pct, t("suspected dump (volume spike)"), theme.AMBER
+        if q >= self.SWING_Q_GUT:
+            return _pct, t("clearly worth it"), theme.GREEN
+        if q >= self.SWING_Q_OK:
+            return _pct, t("solid"), theme.CYAN
+        return _pct, t("tight"), theme.MUTED
+
+    # REGIONAL-BEWERTUNG (emm815). Nutzer: "die Margin ist hier wieder
+    # ausschlaggebend" + "das Volumen am Verkaufshub" (das am Einkaufshub
+    # hat er selbst als irrelevant verworfen: bei sell-to-sell nimmt man
+    # an der Quelle nur, was in der Order liegt). Der Balken misst
+    # deshalb die MARGE (wie _bau_bewertung die Bau-Marge), davor stehen
+    # die Vorbehalte. Schwellen sichtbar beieinander, Ermessenswerte.
+    RG_MARGE_GUT = 30.0       # ab hier "lohnt sich klar"
+    RG_MARGE_OK = 12.0        # ab hier "solide"
+    RG_VOL_DUENN = 10.0       # Stueck/Tag am Ziel darunter: zu duenn
+    # Ab welchem Vielfachen des am ZIEL tatsaechlich bezahlten
+    # Durchschnittspreises die dortige Sell-Order unglaubwuerdig wird.
+    # 2.5x ist bewusst grosszuegig: echte Preisunterschiede zwischen
+    # Hubs liegen bei Faktor 1.1-2, eine Fantasie-Order dagegen beim
+    # Hundertfachen (Nutzer-Screenshot: "EMP S" 149'800 statt ~200 ISK).
+    RG_ZIEL_UNREAL = 2.5
+    # Breite der Route-Felder (emm816, Nutzer: "reichen wenn sie 1/3 so
+    # breit sind wie jetzt"). Sichtbare Zahl an EINER Stelle - sie
+    # entscheidet mit, ob die Kopfzeile ins Fenster passt.
+    RG_FELD_BREIT = 230
+    # Die AUFGEKLAPPTE Liste darf breiter sein als das Feld
+    # (emm817, Nutzer: "etwa doppelt so breit? aber nur wenn man
+    # sie ausklappt") - Obergrenze, die Messung entscheidet darunter.
+    RG_POPUP_BREIT = 460
+
+    def _arb_bewertung(self, d):
+        """(Balken-%, Text, Farbe) fuer eine Regional-Trefferzeile.
+
+        Reihenfolge ist Absicht (wie _bau_bewertung): ein Vorbehalt
+        schlaegt eine gute Zahl. Die absurden Margen aus Fantasie-Orders
+        AM ZIEL (Nutzer-Screenshot: 413316 %) lesen damit nicht mehr
+        "lohnt sich klar", sondern nennen ihren Mangel.
+        UNBEKANNT IST NICHT NULL: was diese Runde nicht geholt wurde
+        (None), gilt als unbekannt - nicht als "wird nicht gehandelt".
+        Das waere eine Behauptung ohne Beleg (Arbeitsregel 1).
+        """
+        _m = float(d.get("margin", 0) or 0)
+        _pct = int(max(0, min(100, round(_m / max(1.0, self.RG_MARGE_GUT) * 100))))
+        _tv = d.get("target_vol")
+        _ueber = self.arb_ziel_ueber(d)
+        if _ueber is not None and _ueber >= self.RG_ZIEL_UNREAL:
+            return _pct, t("destination price unrealistic"), theme.AMBER
+        if _tv is not None and _tv < self.RG_VOL_DUENN:
+            return _pct, t("destination hardly traded"), theme.AMBER
+        if d.get("leerer_markt"):
+            return _pct, t("destination price estimated"), theme.AMBER
+        if _tv is None:
+            return _pct, t("demand unknown"), theme.AMBER
+        if _m >= self.RG_MARGE_GUT:
+            return _pct, t("clearly worth it"), theme.GREEN
+        if _m >= self.RG_MARGE_OK:
+            return _pct, t("solid"), theme.CYAN
+        return _pct, t("tight"), theme.MUTED
+
+    @staticmethod
+    def arb_ziel_ueber(d):
+        """Vielfaches: Rechenpreis am Ziel geteilt durch den dort
+        tatsaechlich bezahlten Ø-Preis (30 Tage Historie). None, wenn
+        eines von beidem fehlt - EINE Stelle fuer die Rechnung, Zelle
+        und Bewertung lesen dieselbe (Arbeitsregel 9).
+
+        BEI GESCHAETZTEM ZIELPREIS (leerer Markt) ist der Rechenpreis
+        SELBST der Historien-Schnitt - das Verhaeltnis waere per
+        Konstruktion 1.0 und damit eine Scheinaussage. Deshalb None;
+        diese Zeilen tragen ihren eigenen Vorbehalt.
+        """
+        if d.get("leerer_markt") or d.get("sell_geschaetzt"):
+            return None
+        _avg = d.get("target_avg")
+        if not _avg or _avg <= 0:
+            return None
+        _preis = d.get("target_sell") or 0
+        if _preis <= 0:
+            return None
+        return _preis / _avg
+
     def __init__(self):
         super().__init__()
         # Kennzahl -> (Label, Auge). MUSS vor dem ersten `kpi_card` stehen:
@@ -577,6 +720,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _lzm("MainWindow: hold tab")
         self._build_build_tab()
         _lzm("MainWindow: build tab")
+        if config.PI_AKTIV:                 # emm803: PI eingelagert
+            self._build_pi_tab()
+            _lzm("MainWindow: pi tab")
         self._build_region_tab()
         _lzm("MainWindow: region tab")
         self._build_firesales_tab()
@@ -1469,7 +1615,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         "profit": "trend_up", "transactions": "clock", "market": "search",
         "characters": "star", "settings": "menu", "orders": "arrow_right",
         "deals": "target", "swing": "trend_up", "build": "factory",
-        "region": "package", "firesales": "coins",
+        "region": "package", "firesales": "coins", "pi": "globe",
     }
 
     def _build_shell(self):
@@ -1484,9 +1630,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # verschieben sich alle folgenden Tabs um eins (beim ersten Wurf
         # fehlte der Eintrag: kein Firesales-Knopf, Shopping zeigte
         # Firesales).
-        keys = ["portfolio", "deals", "swing", "build", "region", "firesales",
-                "shopping", "sell", "orders", "profit", "transactions",
-                "market", "characters", "settings"]
+        # "pi" kam in emm801 dazu und ist seit emm803 EINGELAGERT
+        # (config.PI_AKTIV): der Eintrag kommt nur in die Liste, wenn der
+        # Reiter auch gebaut wurde - HIER UND im _build_*_tab()-Aufruf an
+        # derselben Stelle (nach build), sonst verschieben sich alle
+        # folgenden Tabs um eins (dieselbe Falle wie bei "firesales").
+        keys = ["portfolio", "deals", "swing", "build", "region",
+                "firesales", "shopping", "sell", "orders", "profit",
+                "transactions", "market", "characters", "settings"]
+        if config.PI_AKTIV:
+            keys.insert(keys.index("build") + 1, "pi")
         self._tab_widget = {k: self.tabs.widget(i) for i, k in enumerate(keys)}
         # SPRACHUMSCHALTUNG (Sitzung 12): der Quelltext ist ENGLISCH, die
         # Anzeige laeuft durch t(). Fehlt ein deutscher Eintrag, erscheint
@@ -1499,12 +1652,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                   "settings": t("Settings"), "deals": t("Daytrade"),
                   "swing": t("Swing Trade"), "build": t("Industry"),
                   "region": t("Regional Trading"),
-                  "firesales": t("Firesales")}
+                  "firesales": t("Firesales"), "pi": t("PI")}
         self._tab_labels = labels
         self._common_keys = ["portfolio", "profit", "shopping", "sell", "orders",
                              "transactions",
                              "market", "characters", "settings"]
         self._paid_keys = ["deals", "swing", "region", "firesales", "build"]
+        if config.PI_AKTIV:                     # emm803: PI eingelagert
+            self._paid_keys.append("pi")
         self._nav_buttons = {}
 
         # left sidebar – common tools, always free
@@ -1580,6 +1735,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                        "keep working while it runs."))
         self.tutorial_btn.clicked.connect(self._tutorial_fragen)
         sv.addWidget(self.tutorial_btn)
+        # VIDEOS (emm572): direkt unter dem Tutorial - beides ist Anleitung.
+        # Discord bleibt direkt ueber Spenden (b63). Lambda: Muster D.
+        self.youtube_btn = QPushButton(t("Videos"))
+        self.youtube_btn.setIcon(icons.icon("play"))
+        self.youtube_btn.setObjectName("NavGhost")
+        self.youtube_btn.setCursor(Qt.PointingHandCursor)
+        self.youtube_btn.setToolTip(t("Video tutorials on YouTube, in order. "
+                                      "Opens in your browser."))
+        self.youtube_btn.clicked.connect(lambda: self._open_youtube())
+        sv.addWidget(self.youtube_btn)
         self.discord_btn = QPushButton(t("Discord"))
         self.discord_btn.setIcon(icons.icon("chat"))
         self.discord_btn.setObjectName("NavGhost")
@@ -1594,6 +1759,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         howto.setToolTip(t("If the tool helps you: donations go to my corporation in game."))
         howto.clicked.connect(self._show_donation_info)
         sv.addWidget(howto)
+        # FUNFACT (emm570, Nutzer 16.10.2026: "ja nenne den button doch auch
+        # gleich Funfact") - unter Discord/Spenden (b63: Discord bleibt direkt ueber Spenden), damit er in JEDEM
+        # Reiter da ist. Lambda: `clicked` schickt sein checked-Bool mit
+        # (lint_order Muster D).
+        self.funfact_btn = QPushButton(t("Funfact"))
+        self.funfact_btn.setIcon(icons.icon("trophy"))
+        self.funfact_btn.setObjectName("NavGhost")
+        self.funfact_btn.setCursor(Qt.PointingHandCursor)
+        self.funfact_btn.setToolTip(t("What you have built and traded with Eve "
+                                      "MoMa - with a text to share on Discord."))
+        self.funfact_btn.clicked.connect(lambda: self._funfact_zeigen())
+        sv.addWidget(self.funfact_btn)
 
         # top bar – paid tabs + credits tag on the right
         topbar = QFrame(); topbar.setObjectName("TopBar")
@@ -1845,14 +2022,34 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
     def _auftauen_bestaetigen(self):
         """Kurze Warnung vor dem Auftauen (Nutzer, Sitzung 17). Vorgabe ist
-        EINGEFROREN LASSEN - auftauen ist die Ausnahme."""
+        EINGEFROREN LASSEN - auftauen ist die Ausnahme.
+
+        SEIT emm798 (Audit 31.10.2026, M3) nennt die Warnung auch den
+        FORTSCHRITT, der verfaellt: `belegte_runs_seit` zaehlt nur Jobs
+        seit dem Einfrier-Zeitpunkt - ein spaeteres Neu-Einfrieren setzt
+        die Uhr zurueck, der frische Schnappschuss plant das volle Soll
+        erneut (Endprodukte zaehlen nie gegen den Bestand), und die
+        Einkaufsliste waechst entsprechend. Das stand nirgends."""
         _box = QMessageBox(self)
         _box.setIcon(QMessageBox.Warning)
         _box.setWindowTitle(t("Unfreeze plan?"))
-        _box.setText(t(
+        _fort798 = 0
+        try:
+            _fort798 = sum(int(_v or 0) for _v in (getattr(
+                self, "_bd_runplan_delivered_sicher", None) or {}).values())
+        except Exception:
+            _fort798 = 0
+        _text798 = t(
             "The plan is recalculated with today's prices and stock. Build/buy "
             "decisions and the run planner order can change \u2013 material you "
-            "already bought may then no longer fit the plan.\n\nUnfreeze?"))
+            "already bought may then no longer fit the plan.")
+        if _fort798 > 0:
+            _text798 += "\n\n" + t(
+                "\u26a0 ESI has credited {n} runs of progress since the "
+                "freeze. Unfreezing + refreezing resets this clock: the plan "
+                "plans the FULL quantity again and the shopping list grows "
+                "accordingly.").format(n=f"{_fort798:,}".replace(",", "'"))
+        _box.setText(_text798 + "\n\n" + t("Unfreeze?"))
         _ja = _box.addButton(t("Unfreeze"), QMessageBox.DestructiveRole)
         _nein = _box.addButton(t("Keep frozen"), QMessageBox.RejectRole)
         _box.setDefaultButton(_nein)
@@ -1898,6 +2095,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _box.setText(t("What would you like to see first?"))
         _tr = _box.addButton(t("Trading"), QMessageBox.AcceptRole)
         _in = _box.addButton(t("Industry"), QMessageBox.AcceptRole)
+        # emm572: die Video-Tutorials als dritter Weg in derselben Frage.
+        _vid = _box.addButton(t("Videos (YouTube)"), QMessageBox.ActionRole)
         _box.addButton(t("Cancel"), QMessageBox.RejectRole)
         _box.exec()
         _k = _box.clickedButton()
@@ -1905,6 +2104,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._tutorial_start("trading")
         elif _k is _in:
             self._tutorial_start("industry")
+        elif _k is _vid:
+            self._open_youtube()
 
     def _tutorial_start(self, zweig):
         from .tutorial import TutorialFenster
@@ -1954,11 +2155,337 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 t("You can start the tour again any time with the button on "
                   "the bottom left."))
 
+    def _open_youtube(self):
+        """Oeffnet die Tutorial-Playlist im Browser (emm572)."""
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(config.YOUTUBE_URL))
+
     def _open_discord(self):
         """Oeffnet den Community-Server im Browser (Sitzung 17)."""
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
         QDesktopServices.openUrl(QUrl(config.DISCORD_URL))
+
+    # ------------------------------------------------------------------
+    # FUNFACT (emm570). Rechnung rein in eve_trader/funfact.py; hier nur
+    # Speichern, Abrufen und das kleine Fenster.
+    # ------------------------------------------------------------------
+    def _funfact_erfassen(self, plan, quelle):
+        """Einen FERTIGEN Plan in die Statistik (settings["funfact"]).
+        Gibt True zurueck, wenn sich etwas geaendert hat - Speichern macht
+        der Aufrufer (er speichert ohnehin)."""
+        import time as _t_ff
+        stand = self.settings.get("funfact")
+        if not isinstance(stand, dict):
+            stand = funfact.leer()
+            self.settings["funfact"] = stand
+        mit = funfact.buendel_quellen(self.settings.get("bau_saved_plans") or [])
+        neu = funfact.erfassen(stand, plan, quelle, _t_ff.time(), mit)
+        if neu:
+            # BAU-GEWINN (emm573): dieselbe Zahl wie die Gewinn-Uebersicht -
+            # beim Buendel die Summe seiner Enden ("<id>:<tid>"). Fehlt sie,
+            # schaetzt das Funfact-Fenster nach.
+            pid = (plan or {}).get("id")
+            werte = getattr(self, "_plan_sum_werte", None) or {}
+            g = werte.get(pid)
+            if g is None:
+                _vs = [v for k, v in werte.items()
+                       if isinstance(k, str) and k.startswith(f"{pid}:")]
+                g = sum(_vs) if _vs else None
+            if g is not None:
+                funfact.gewinn_setzen(stand, {pid: g})
+        return neu
+
+    def _funfact_entfernen(self, pid):
+        """"Reopen" nimmt einen von Hand abgeschlossenen Plan wieder heraus."""
+        stand = self.settings.get("funfact")
+        if not isinstance(stand, dict):
+            return False
+        return funfact.entfernen(stand, pid)
+
+    @staticmethod
+    def _orders_mitspeichern(client_id, cid):
+        """Eigene Orders dauerhaft speichern (emm570): erst die Historie,
+        dann die offenen - der juengere Stand gewinnt. Zusatzinfo fuer den
+        Funfact: darf den Transaktions-Abruf nie scheitern lassen."""
+        try:
+            store.save_orders(cid, esi.fetch_order_history(client_id, cid))
+        except Exception:
+            pass
+        try:
+            store.save_orders(cid, esi.fetch_character_orders(client_id, cid))
+        except Exception:
+            pass
+
+    def _funfact_daten(self):
+        """Alles, was das Fenster zeigt - EIN Weg fuer Fenster und
+        Discord-Text. Laeuft im Hintergrund (liest die ganze Ledger-DB)."""
+        import datetime as _dt_ff
+        stand = self.settings.get("funfact") or funfact.leer()
+        tids = set()
+        for e in (stand.get("plaene") or {}).values():
+            for t9, _q in (e.get("enden") or []):
+                try:
+                    tids.add(int(t9))
+                except (TypeError, ValueError):
+                    pass
+        try:
+            katmap = industry.item_category_map()
+        except Exception:
+            katmap = {}
+        try:
+            gruppen = industry.group_names(tids) if tids else {}
+        except Exception:
+            gruppen = {}
+        gebaut = funfact.gebaut(stand, katmap, gruppen)
+        seit_bau = None
+        if stand.get("seit"):
+            try:
+                seit_bau = _dt_ff.datetime.fromtimestamp(
+                    float(stand["seit"])).date().isoformat()
+            except (TypeError, ValueError, OSError):
+                seit_bau = None
+        try:
+            # GLEICHE RECHNUNG wie der Profits-Tab bei "All characters"
+            # (emm575, Nutzer 17.10.2026: "der Trade profit stimmt nicht
+            # mit dem im Mainmenu") - alle Charaktere, Handels-Paar, Fracht.
+            _txs_ff = store.get_transactions()
+            _fs, _fv, _fo = self._gewinn_fracht(_txs_ff)
+            trades = funfact.trades_auswerten(
+                _txs_ff, store.get_orders(),
+                store.order_abdeckung(funfact.ORDER_HISTORIE_TAGE),
+                self.settings.get("sales_tax_pct", 0) / 100.0,
+                self.settings.get("broker_fee_pct", 0) / 100.0,
+                paar=self._handels_charaktere(),
+                fracht_satz=_fs, volumen=_fv, ohne=_fo)
+        except Exception:
+            import traceback as _tb_ff
+            self._log_exception("funfact trades", _tb_ff.format_exc())
+            trades = None
+        # BAU-GEWINN (emm573, Nutzer 17.10.2026: "der Build profit vom
+        # industry waere in Funfacts auch gerne gesehen"). Fehlende Werte
+        # schaetzt DIESELBE Rechnung wie die Gewinn-Uebersicht
+        # (_bau_saved_plan_quick_estimate) - nur fuer Plaene, die noch da
+        # sind (gespeichert oder im Archiv). Gemerkt wird erst im
+        # UI-Faden (_fuellen), hier wird nichts an settings geschrieben.
+        gewinn_neu = {}
+        offen = set(funfact.gewinn_offen(stand))
+        if offen:
+            try:
+                plaene = list(self.settings.get("bau_saved_plans") or [])
+                try:
+                    import json as _json_ff
+                    with open(config.bauplan_archiv_path(), encoding="utf-8") as _f:
+                        _arch = _json_ff.load(_f)
+                    plaene += [p for p in (_arch if isinstance(_arch, list) else [])
+                               if isinstance(p, dict)]
+                except Exception:
+                    pass
+                snapshot = store.get_snapshot() if industry.sde_ready() else None
+                if snapshot:
+                    pm = {s["type_id"]: s["sell_min"] for s in snapshot
+                          if s["sell_min"] > 0}
+                    try:
+                        adj = esi.adjusted_prices() or {}
+                    except Exception:
+                        adj = {}
+                    adj = adj or dict(pm)
+                    recipes = industry.recipes_cached()
+                    for p in plaene:
+                        if str(p.get("id")) not in offen:
+                            continue
+                        try:
+                            est = self._bau_saved_plan_quick_estimate(p, recipes, pm, adj)
+                        except Exception:
+                            est = None
+                        if est and est.get("profit") is not None:
+                            gewinn_neu[str(p.get("id"))] = est["profit"]
+            except Exception:
+                import traceback as _tb_ff2
+                self._log_exception("funfact build profit", _tb_ff2.format_exc())
+        import copy as _cp_ff
+        _st2 = _cp_ff.deepcopy(stand)
+        funfact.gewinn_setzen(_st2, gewinn_neu)
+        bau_gewinn = funfact.bau_gewinn(_st2)
+        return {"built": gebaut, "seit_bau": seit_bau, "trades": trades,
+                "bau_gewinn": bau_gewinn, "gewinn_neu": gewinn_neu}
+
+    def _funfact_discord(self, d):
+        """Text fuer "Copy for Discord" aus genau den Fenster-Daten."""
+        tr = d.get("trades") or None
+        return funfact.discord_text(d.get("built") or {}, tr,
+                                    d.get("seit_bau") or "?",
+                                    (tr or {}).get("seit") or "?")
+
+    def _funfact_zeigen(self):
+        """Das kleine Funfact-Fenster: Kacheln "Built" und "Trades",
+        "seit"-Datum, Knopf "Copy for Discord" (Nutzer 16.10.2026)."""
+        from PySide6.QtWidgets import QApplication
+        from .mw_basis import zerstoert
+        dlg = QDialog(self)
+        dlg.setWindowTitle(t("Funfact"))
+        dlg.setMinimumWidth(560)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(10)
+        kopf = QLabel(t("What you have built and traded with Eve MoMa"))
+        kopf.setStyleSheet(f"font-size:{theme.FS_KPI}; font-weight:800; color:{theme.TEXT};")
+        lay.addWidget(kopf)
+
+        def _abschnitt(titel, spalten=3):
+            lbl = QLabel(titel)
+            lbl.setStyleSheet(f"color:{theme.AMBER}; font-weight:800; "
+                              "letter-spacing:1px; margin-top:6px;")
+            lay.addWidget(lbl)
+            box = QWidget()
+            g = QGridLayout(box)
+            g.setContentsMargins(0, 0, 0, 0)
+            g.setHorizontalSpacing(8); g.setVerticalSpacing(8)
+            # gleich breite Spalten - keine Kachel steht verloren (emm575)
+            for _sp in range(spalten):
+                g.setColumnStretch(_sp, 1)
+            g._spalten = spalten
+            lay.addWidget(box)
+            return lbl, g
+
+        bau_lbl, bau_g = _abschnitt(t("BUILT"))
+        tr_lbl, tr_g = _abschnitt(t("TRADES"))
+        # GEWINN als eigener Abschnitt unten (emm575, Nutzer: "koennte
+        # schoener aufgelistet sein"): Bau- und Handelsgewinn nebeneinander.
+        gew_lbl, gew_g = _abschnitt(t("PROFIT"), spalten=2)
+        gew_lbl.hide()
+        hinweis = QLabel(t("Loading …"))
+        hinweis.setWordWrap(True)
+        hinweis.setStyleSheet(f"color:{theme.MUTED};")
+        lay.addWidget(hinweis)
+        knoepfe = QHBoxLayout()
+        # Knopf heisst nur "Copy" (emm574, Nutzer 17.10.2026), der Zweck
+        # steht im Tooltip.
+        kopie = QPushButton(t("Copy"))
+        kopie.setToolTip(t("Copy for Discord"))
+        kopie.setIcon(icons.icon("chat"))
+        kopie.setStyleSheet(theme.amber_rahmen_knopf())
+        kopie.setEnabled(False)
+        zu = QPushButton(t("Close"))
+        zu.clicked.connect(lambda: dlg.accept())
+        knoepfe.addStretch(1)
+        knoepfe.addWidget(kopie)
+        knoepfe.addWidget(zu)
+        lay.addLayout(knoepfe)
+        dlg._funfact_daten = None
+        dlg._funfact_kacheln = {}
+
+        def _kachel(g, i, zahl, name, farbe=None, tip=None):
+            f = QFrame()
+            f.setStyleSheet(f"QFrame{{background:{theme.PANEL}; border:1px solid "
+                            f"{theme.BORDER}; border-radius:8px;}} QLabel{{border:none;}}")
+            v = QVBoxLayout(f)
+            v.setContentsMargins(12, 8, 12, 8); v.setSpacing(2)
+            z = QLabel(zahl)
+            z.setStyleSheet(f"font-family:{theme.MONO}; font-size:{theme.FS_KPI}; "
+                            f"font-weight:800; color:{farbe or theme.TEXT};")
+            n = QLabel(name)
+            n.setStyleSheet(f"color:{theme.MUTED};")
+            v.addWidget(z); v.addWidget(n)
+            if tip:
+                f.setToolTip(tip)
+            _n = getattr(g, "_spalten", 3)
+            g.addWidget(f, i // _n, i % _n)
+            dlg._funfact_kacheln[name] = z
+            return f
+
+        def _fuellen(d):
+            if zerstoert(dlg) or zerstoert(hinweis):
+                return
+            dlg._funfact_daten = d
+            gebaut = d.get("built") or {}
+            bau_lbl.setText(t("BUILT") + ("  ·  " + t("since {seit}").format(
+                seit=d["seit_bau"]) if d.get("seit_bau") else ""))
+            for i, k in enumerate(gebaut):
+                _kachel(bau_g, i, funfact._zahl(gebaut[k]),
+                        t(funfact.KACHEL_NAMEN[k]))
+            # BAU-GEWINN als eigene Kachel (emm573), gruen bei Gewinn.
+            _bg = d.get("bau_gewinn") or (0.0, 0, 0)
+            _gi = 0
+            if _bg[1]:
+                gew_lbl.show()
+                _kachel(gew_g, _gi, isk(_bg[0]), t("Build profit"),
+                        self._profit_farbe(_bg[0]),
+                        t("Estimated profit of your completed build plans, "
+                          "as in the profit overview ({n} plan(s) without "
+                          "an estimate).").format(n=_bg[2]))
+                _gi += 1
+            if d.get("gewinn_neu"):
+                _st_ff = self.settings.get("funfact")
+                if isinstance(_st_ff, dict) and funfact.gewinn_setzen(
+                        _st_ff, d["gewinn_neu"]):
+                    config.save_settings_async(self.settings)
+            if not gebaut:
+                leer = QLabel(t("Nothing completed yet - mark a build plan as "
+                                "done, or let ESI see it finished."))
+                leer.setWordWrap(True)
+                leer.setStyleSheet(f"color:{theme.MUTED};")
+                bau_g.addWidget(leer, 0, 0, 1, 3)
+            tr = d.get("trades")
+            if tr:
+                tr_lbl.setText(t("TRADES") + "  ·  " + t("All characters")
+                               + "  ·  " + t("since {seit}").format(
+                                   seit=tr.get("seit") or "?"))
+                # Die Erklaerung steht nur noch im Tooltip (emm573, Nutzer:
+                # "die info weg").
+                if tr.get("geschaetzt"):
+                    _tip = t(
+                        "Daytrade = bought through your own buy order, swing = "
+                        "bought from sell orders. {n} sale(s) have no order data "
+                        "from that time and are estimated by holding time "
+                        "(under 24 h = daytrade).").format(
+                            n=funfact._zahl(tr["geschaetzt"]))
+                else:
+                    _tip = t(
+                        "Daytrade = bought through your own buy order, swing = "
+                        "bought from sell orders.")
+                _kachel(tr_g, 0, funfact._zahl(tr["day"]), t("Daytrades"), tip=_tip)
+                _kachel(tr_g, 1, funfact._zahl(tr["swing"]), t("Swingtrades"), tip=_tip)
+                _kachel(tr_g, 2, funfact._zahl(tr.get("gesamt") or 0),
+                        t("Total trades"))
+                gew_lbl.show()
+                _kachel(gew_g, _gi, isk(tr["netto"]), t("Trade profit"),
+                        self._profit_farbe(tr["netto"]),
+                        t("Same number as the Profits tab with \"All characters\" "
+                          "and period \"All\"."))
+                hinweis.setText("")
+                hinweis.hide()
+            else:
+                leer = QLabel(t("No sales recorded yet."))
+                leer.setStyleSheet(f"color:{theme.MUTED};")
+                tr_g.addWidget(leer, 0, 0, 1, 3)
+                hinweis.setText("")
+                hinweis.hide()
+            kopie.setEnabled(bool(gebaut or tr))
+
+        def _kopieren():
+            d = dlg._funfact_daten
+            if not d:
+                return
+            QApplication.clipboard().setText(self._funfact_discord(d))
+            self._flash_tip(t("Copied - paste it into Discord."))
+        kopie.clicked.connect(lambda: _kopieren())
+        dlg._funfact_fuellen = _fuellen
+        self._funfact_dlg = dlg
+        self._run(Worker(self._funfact_daten), _fuellen, overlay=False)
+        dlg.show()
+        return dlg
+
+    @staticmethod
+    def _profit_farbe(wert):
+        """Gewinne gruen, Verluste rot (emm573, Nutzer: "die Profite gerne
+        in Gruen") - ein Verlust in Gruen waere eine Zahl mit falschem Namen."""
+        try:
+            w = float(wert)
+        except (TypeError, ValueError):
+            return None
+        return theme.GREEN if w > 0 else (theme.RED if w < 0 else None)
 
     def _show_donation_info(self):
         """Spenden-Hinweis (Nutzer-Entscheidung, Sitzung 8: Abo verworfen,
@@ -3153,6 +3680,44 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         label.setText = _set
         label.setVisible(bool(label.text().strip()))
 
+    @staticmethod
+    def popup_breiter(combo, max_px):
+        """Die AUFGEKLAPPTE Liste einer QComboBox darf breiter sein als
+        das zugeklappte Feld (emm817, Nutzer: "kannst du die Dropdowns
+        breiter werden lassen? etwa doppelt so breit? aber nur wenn man
+        sie ausklappt?").
+
+        Qt macht die Auswahlliste von sich aus genau so breit wie das
+        Feld - bei schmalen Feldern stehen dort dann "Odebeinn V…tion
+        Factory" und "PR-8CA III …istic Support", also genau die Stelle
+        abgeschnitten, an der sich die Eintraege unterscheiden.
+
+        DIE BREITE WIRD GEMESSEN, NICHT GERATEN: der laengste Eintrag
+        entscheidet, gedeckelt auf `max_px`. Kurze Listen bleiben damit
+        schmal, lange werden nur so breit wie noetig.
+
+        AM MODELL AUFGEHAENGT, NICHT AN DEN FUELL-STELLEN: Hubs,
+        Strukturen, Presets und Charaktere werden an einem halben
+        Dutzend Stellen (und zur Laufzeit erneut) in diese Felder
+        geschrieben. Jede davon einzeln zu erweitern waere genau die
+        Falle, die wir schon mehrfach hatten - `rowsInserted` und
+        `modelReset` decken ALLE ab, auch kuenftige.
+        """
+        def _neu(*_a):
+            _fm = combo.view().fontMetrics()
+            _br = 0
+            for _i in range(combo.count()):
+                _br = max(_br, _fm.horizontalAdvance(combo.itemText(_i)))
+            # Platz fuer Symbol, Innenabstand und Rollbalken - sonst
+            # schneidet die Liste trotz Messung das letzte Zeichen ab.
+            _br += 70
+            combo.view().setMinimumWidth(min(max_px, _br))
+        _neu()
+        _mod = combo.model()
+        _mod.rowsInserted.connect(_neu)
+        _mod.modelReset.connect(_neu)
+        return _neu
+
     def _spalten_knopf(self, table, standard, spalten, tooltip=""):
         """Ein "Columns"-Knopf fuer eine Tabelle: Vorgabe anwenden, Rest per
         Haken zuschaltbar.
@@ -3198,6 +3763,110 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             acts[idx] = act
         btn.setMenu(menu)
         return btn, acts
+
+    def _filter_mehrfach_knopf(self, alle_label, tooltip=""):
+        """Checkbox-Mehrfachauswahl-Dropdown fuer Kategorie-/Meta-Filter
+        (emm611, Nutzer: "damit es zusaetzlich kathegorie und meta
+        Dropdowns gibt... standardmaessig alle Kathegorien auf ON sind als
+        angehackt und bei bedarf kann man gewisse abhacken").
+
+        Anders als _spalten_knopf (feste Spaltenliste beim Aufbau) muss die
+        Optionsliste hier zur LAUFZEIT neu befuellt werden koennen - die
+        SDE-Kategorienamen kommen erst nach "Load recipes", manchmal auch
+        erst nachtraeglich. Deshalb kein `spalten`-Parameter beim Aufbau,
+        sondern eine `refresh(optionen)`-Funktion, die das Menue neu
+        aufbaut; bereits angehakte/abgehakte Eintraege behalten ihren
+        Status, neue starten angehakt (= Vorgabe "alle an").
+
+        EINTRAEGE SIND QCheckBox IN EINER QWidgetAction (emm612, Nutzer:
+        "bei einem linksklick nicht direkt das dropdown schliesst, somit
+        koennte man mehrere sachen selectieren oder abwaehlen"): eine
+        normale checkbare QAction schliesst das QMenu bei JEDEM Klick -
+        bei 38 Kategorien waere jede Mehrfachauswahl ein Oeffnen-Klicken-
+        Schliessen-Wiederoeffnen pro Eintrag. Ein Klick auf eine QCheckBox,
+        die ALS WIDGET in der QWidgetAction sitzt, geht dagegen an die
+        Checkbox selbst, nicht an das Menue - das Menue bleibt offen.
+        RECHTSKLICK -> "Nur dieses" (emm612, Nutzer: "rechtsklick -> only
+        this"): hakt NUR den angeklickten Eintrag an, alle anderen aus -
+        schnelles Isolieren einer einzelnen Kategorie/Meta-Klasse, ohne
+        jede andere Zeile einzeln abzuhaken. Dazu "Check all"/"Uncheck
+        all" im selben Kontextmenue (naheliegende Ergaenzung, kostet
+        nichts Zusaetzliches).
+
+        Rueckgabe: (Knopf, refresh_fn, get_selected_fn). get_selected_fn()
+        liefert None (alle an = kein Filter aktiv) oder die Menge der
+        angehakten Schluessel."""
+        from PySide6.QtWidgets import QMenu as _QMenuF, QWidgetAction as _QWAF
+        btn = QPushButton(alle_label)
+        btn.setIcon(icons.icon("columns"))
+        if tooltip:
+            btn.setToolTip(tooltip)
+        menu = _QMenuF(btn)
+        menu.setToolTipsVisible(True)
+        btn.setMenu(menu)
+        acts = {}   # key -> QCheckBox
+
+        def _label_aktualisieren():
+            if not acts:
+                btn.setText(alle_label)
+                return
+            an = sum(1 for a in acts.values() if a.isChecked())
+            gesamt = len(acts)
+            btn.setText(alle_label if an == gesamt
+                        else f"{alle_label} ({an}/{gesamt})")
+
+        def _alle_setzen(an):
+            for cb in acts.values():
+                cb.blockSignals(True)
+                cb.setChecked(an)
+                cb.blockSignals(False)
+            _label_aktualisieren()
+
+        def _nur_dieses(gewaehlter_key):
+            for k, cb in acts.items():
+                cb.blockSignals(True)
+                cb.setChecked(k == gewaehlter_key)
+                cb.blockSignals(False)
+            _label_aktualisieren()
+
+        def _kontext_menu(key, cb, pos):
+            km = _QMenuF(cb)
+            nur = km.addAction(t("Only this"))
+            nur.triggered.connect(lambda: _nur_dieses(key))
+            km.addSeparator()
+            alle = km.addAction(t("Check all"))
+            alle.triggered.connect(lambda: _alle_setzen(True))
+            keine = km.addAction(t("Uncheck all"))
+            keine.triggered.connect(lambda: _alle_setzen(False))
+            km.exec(cb.mapToGlobal(pos))
+
+        def refresh(optionen):
+            alt_status = {k: a.isChecked() for k, a in acts.items()}
+            menu.clear()
+            acts.clear()
+            for eintrag in optionen:
+                key, label = eintrag[0], eintrag[1]
+                hinweis = eintrag[2] if len(eintrag) > 2 else ""
+                cb = QCheckBox(label, menu)
+                cb.setChecked(alt_status.get(key, True))
+                if hinweis:
+                    cb.setToolTip(hinweis)
+                cb.toggled.connect(_label_aktualisieren)
+                cb.setContextMenuPolicy(Qt.CustomContextMenu)
+                cb.customContextMenuRequested.connect(
+                    lambda pos, k=key, c=cb: _kontext_menu(k, c, pos))
+                wa = _QWAF(menu)
+                wa.setDefaultWidget(cb)
+                menu.addAction(wa)
+                acts[key] = cb
+            _label_aktualisieren()
+
+        def get_selected():
+            if not acts or all(a.isChecked() for a in acts.values()):
+                return None
+            return {k for k, a in acts.items() if a.isChecked()}
+
+        return btn, refresh, get_selected
 
     def _assemble_top_and_table(self, root, boxes_widget, table_widget, ladder_key,
                                 box_ratio=60, top_height=None, spalten_btn=None):
@@ -3279,6 +3948,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     def _build_deals_tab(self):
         w = QWidget()
         outer = QHBoxLayout(w); outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
+        # BAUPLAN-KUR, ZWEITER ANLAUF (emm813, Nutzer mit Screenshot: "So
+        # sehe ich nicht die ganze Itemliste, wir muessen strategy karte
+        # und finefilter oben ansetzen aber vielleicht nebeneinander,
+        # damit hoehe gespart wird so viel wie moeglich"): die rechte
+        # 560-px-Spalte aus emm812 hat der Liste sichtbar Spalten
+        # abgeschnitten. Jetzt: STRATEGIE und FEINFILTER oben NEBEN-
+        # einander als flache Kopfzeile, die Liste darunter in voller
+        # Breite UND voller Resthoehe (der alte 60/40-Split mit dem im
+        # Daytrade unsichtbaren Order-Tiefe-Kasten bleibt weg).
         content = QWidget()
         root = QVBoxLayout(content)
         root.setContentsMargins(14, 8, 14, 8)
@@ -3383,6 +4061,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         symbol=(p or {}).get("sym"))
         self.d_preset.currentIndexChanged.connect(self._apply_preset)
 
+        # WIEDER NEBENEINANDER (emm813, Nutzer: "hoehe gespart so viel wie
+        # moeglich"): die Karte sitzt jetzt in der halben Kopfbreite oben -
+        # da haben zwei Combos nebeneinander Platz, und die Karte bleibt
+        # zwei Zeilen flach statt vier.
         sg.addWidget(mlab, 1, 0); sg.addWidget(plab, 1, 1)
         sg.addWidget(self.d_mode, 2, 0); sg.addWidget(self.d_preset, 2, 1)
         # DAUERHINWEIS ENTFERNT (Nutzer-Wunsch Sitzung 12: "ich hasse
@@ -3417,6 +4099,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 ("Abyssal", {"mg": {15}}), ("Premium", {"mg": {17}}),
                 ("Limited", {"mg": {19}})]:
             self.d_meta.addItem(label, spec)
+        # SELBES SYMBOL WIE DIE MEHRFACHAUSWAHL-DROPDOWNS (emm612, Nutzer:
+        # "dropdowns in Daytrade haben das Icon nicht vorne dran und
+        # deswegen erkennt man sie schlechter"): Daytrades Category/Meta
+        # sind eine normale QComboBox (Einzelauswahl, bleibt so - s.
+        # emm611), zeigt aber sonst nur den Text der aktuellen Auswahl. Das
+        # Icon wird auf JEDEN Eintrag gesetzt, damit es unabhaengig von der
+        # gewaehlten Zeile immer sichtbar bleibt (wie bei den Knoepfen in
+        # Swing Trade/Regional Trading).
+        for _i612 in range(self.d_meta.count()):
+            self.d_meta.setItemIcon(_i612, icons.icon("columns"))
         self._reload_categories()
         self.d_cat.currentIndexChanged.connect(self._preset_to_custom)
         self.d_meta.currentIndexChanged.connect(self._preset_to_custom)
@@ -3609,12 +4301,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._deal_row_w[key] = (lab, wdg)
             self._install_tip(wdg, lab)
         d_filter_card = self._collapsible(t("FINE FILTERS (OPTIONAL)"), ctl, expanded=False)
-        # Boxen (STRATEGIE + FEINFILTER) in einen Container -> kommen links in den
-        # oberen Split (Kategorie/Meta sitzen im Feinfilter).
-        from PySide6.QtWidgets import QWidget as _QW, QVBoxLayout as _QVB
-        d_boxes = _QW(); _dbl = _QVB(d_boxes)
-        _dbl.setContentsMargins(0, 0, 0, 0); _dbl.setSpacing(6)
-        _dbl.addWidget(d_strat_card); _dbl.addWidget(d_filter_card)
+        # KOPFZEILE: beide Karten NEBENEINANDER (emm813) - Strategie offen,
+        # Feinfilter zugeklappt. AlignTop, damit die zugeklappte Karte die
+        # offene nicht in die Hoehe zieht; Referenzen an self fuer b813.
+        self._d_strat_card = d_strat_card
+        self._d_filter_card = d_filter_card
+        _kopf813 = QWidget()
+        _kh813 = QHBoxLayout(_kopf813)
+        _kh813.setContentsMargins(0, 0, 0, 0)
+        _kh813.setSpacing(8)
+        _kh813.addWidget(d_strat_card, 1, Qt.AlignTop)
+        _kh813.addWidget(d_filter_card, 1, Qt.AlignTop)
+        root.addWidget(_kopf813, 0)
         self.d_mode.currentIndexChanged.connect(lambda _: self._reload_deal_presets())
         self.d_mode.currentIndexChanged.connect(lambda _: self._apply_deal_filters())
         self.d_mode.currentIndexChanged.connect(
@@ -3631,12 +4329,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.deal_status = QLabel("")
         self.deal_status.setObjectName("Muted")
         self.deal_status.setWordWrap(True)
-        # Status über den Boxen: initial leer (versteckt), zeigt nach dem Scan die
-        # Treffer-Info.
+        # Status UEBER DER LISTE links (emm812, vorher ueber den Boxen):
+        # initial leer (versteckt), nach dem Scan die kurze Treffer-Zeile
+        # mit der vollen Diagnose im Tooltip.
         self._auto_hide_when_empty(self.deal_status)
-        _dbl.insertWidget(0, self.deal_status)
+        root.addWidget(self.deal_status)
 
-        self.deals_table = QTableWidget(0, 19)
+        # SPALTE 19 "Rating" (emm812): der Bewertungs-Balken des Bau-Scanners
+        # fuer die Daytrade-Liste - EIN Blick statt Marge+Volumen+Tradability
+        # im Kopf verrechnen. Gleicher Kopftext-Schluessel wie im Scanner.
+        self.deals_table = QTableWidget(0, 20)
         self.deals_table.setShowGrid(False)
         self.deals_table.setIconSize(QSize(32, 32))
         self.deals_table.setHorizontalHeaderLabels(
@@ -3645,11 +4347,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
              t("Margin %"), t("Ø daily vol"), t("Volat. %"), t("Days of stock"),
              t("Profit/day"), t("Trend"), t("Target price"), t("Exp. profit %"),
              t("Competitors"), t("Sellable/day"), t("Tradability"),
-             t("Capital eff. %/day")])
+             t("Capital eff. %/day"), t("Rating")])
         hdr = self.deals_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, 19):
+        for col in range(1, 20):
             hdr.setSectionResizeMode(col, QHeaderView.Interactive)
+        # Balken braucht Platz fuer seinen Text - Autosize misst nur die
+        # (leere) Zelle darunter, deshalb hier eine feste Startbreite.
+        self.deals_table.setColumnWidth(19, 150)
         self._make_columns_friendly(self.deals_table)
         self.deals_table.verticalHeader().setVisible(False)
         self.deals_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -3690,6 +4395,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 "the tied-up capital. Shows how hard your ISK works \u2013 2 %/day on "
                 "tied-up capital beats a larger absolute profit that ties up ten "
                 "times the ISK.",
+            19: "Rating: the same combined quality the list is ranked by \u2013 "
+                "expected profit, weighted by tradability, competition and "
+                "buy-side fill. A caveat (hard to trade, buy order rarely "
+                "fills, far above normal) beats a good number.",
         })
         # SPALTEN-VORGABE DAYTRADE (Nutzer, Sitzung 16): "Dropdown ersetzt
         # die Modus-Logik - immer dieselben 6 Spalten, egal welcher Modus."
@@ -3730,13 +4439,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             (11, t("Profit/day")), (12, t("Trend")), (13, t("Target price")),
             (14, t("Exp. profit %")), (15, t("Competitors")),
             (16, t("Sellable/day")), (17, t("Tradability")),
-            (18, t("Capital eff. %/day"))]
+            (18, t("Capital eff. %/day")), (19, t("Rating"))]
         # SPALTEN-VORGABE DAYTRADE (Nutzer, Sitzung 16, zweite Runde):
         # "mache diese Columns standard eingeschaltet bei Daytrade und auch
         # in dieser Reihenfolge von links nach rechts."
         #
         # SICHTBAR: Item, Now (buy), Now (sell), Margin %, Ø daily vol,
-        # Days of stock, Prozentzahl des Modus, Tradability.
+        # Prozentzahl des Modus, Tradability.
         # REIHENFOLGE ist NICHT die Spalten-Reihenfolge der Tabelle - er hat
         # sie per Drag verschoben. Der Header merkt sich das NICHT (der
         # Deals-Header wird nirgends gespeichert), deshalb wird die
@@ -3747,7 +4456,21 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Modus. Er arbeitet im Flip ("Recommended - best all-round flips"),
         # deshalb ist das seine bewusste Wahl - und der Hinweis steht in
         # jedem Menue-Eintrag ("Only meaningful in: ...").
-        _DAY_STD = [0, 1, 2, 7, 8, 10, 4, 17]
+        #
+        # emm590 (Nutzer, Screenshot der Ergebnistabelle): "Days Of Stock
+        # kann man gegen handelsvolumen austauschen" / "ah handelsvolumen
+        # ist schon drin dann kann Days Of Stock raus. zu viel
+        # informatonsüberfluss für anfänger" - Spalte 10 raus aus der
+        # STANDARD-Ansicht (Ø daily vol (8) deckt denselben Bedarf ab,
+        # "% Above Normal" (Spalte 4) bleibt AUSDRUECKLICH drin, der Nutzer
+        # nannte sie "sehr wichtig"). Die Spalte selbst bleibt im Code und
+        # im "Columns"-Menue waehlbar (Loeschen war nicht verlangt, nur
+        # weniger Rauschen in der Vorgabe) - nur Swing/Regional haben diese
+        # Spalte ohnehin nicht (_SWING_STD/_REG_STD geprueft).
+        # + 19 (Rating, emm812): der Bewertungs-Balken gehoert in die
+        # Vorgabe - er ist der Grund, warum man die Zahlen daneben nicht
+        # mehr im Kopf verrechnen muss. Ganz rechts, wie im Bau-Scanner.
+        _DAY_STD = [0, 1, 2, 7, 8, 4, 17, 19]
         self._deals_spalten_btn, self._deals_col_acts = self._spalten_knopf(
             self.deals_table, set(_DAY_STD),
             [(i, lb, _hinweis(i)) for i, lb in _d_labels],
@@ -3760,9 +4483,22 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _ist = _dhdr.visualIndex(_log)
             if _ist != _ziel:
                 _dhdr.moveSection(_ist, _ziel)
-        self._assemble_top_and_table(root, d_boxes, self.deals_table, "day",
-                                     box_ratio=60,
-                                     spalten_btn=self._deals_spalten_btn)
+        # LISTE LINKS IN VOLLER HOEHE (emm812): kein oberer Split mehr -
+        # der Spalten-Knopf bleibt rechtsbuendig direkt ueber der Liste
+        # (er gehoert zur Liste, nicht zu den Einstell-Karten).
+        from PySide6.QtWidgets import QHBoxLayout as _QHB812
+        _sprow812 = _QHB812()
+        _sprow812.setContentsMargins(0, 0, 0, 0)
+        _sprow812.addStretch()
+        _sprow812.addWidget(self._deals_spalten_btn)
+        root.addLayout(_sprow812, 0)
+        root.addWidget(self.deals_table, 1)
+        # Der Order-Tiefe-Kasten wird WEITER gebaut (er erzeugt sel/spin/
+        # addb fuer den Einkaufswagen in der Rail - ein Dutzend Stellen
+        # schreibt in diesen Kontext), bleibt im Daytrade aber unsichtbar
+        # (Buy-Seite, s. _build_ladder_panel). Unsichtbar kostet er im
+        # Layout keine Hoehe.
+        self._build_ladder_panel(root, "day")
         self.deals_table.itemSelectionChanged.connect(
             lambda: self._ladder_select("day", self.deals_table))
 
@@ -4757,8 +5493,44 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Messwert aus dem Swing-Umbau: 4'000 analysierte Items in 5,8 s
             # statt 1'320 in 2,5 s - pro Item sogar guenstiger.
             "max_items": 600,          # Fallback, falls die Toepfe wegfallen
-            "max_cached_items": 6000,
-            "max_new_history": 350,
+            "max_cached_items": 20000,
+            # emm603 (Nutzer: "ESI begrenzt System, klingt fuer mich auch wie
+            # ein Deckel, auch den soweit oeffnen wie es moeglich ist"): ESI
+            # kennt KEIN hartes Limit auf die ANZAHL erfolgreicher Abrufe -
+            # nur ein Fehlerbudget (X-Esi-Error-Limit-Remain), das bei echten
+            # Fehlern/Timeouts sinkt. enrich() oben hat dafuer laengst eine
+            # eigene Sicherung: nach 5 RateLimited-Treffern schaltet
+            # _state["stop_fetch"] global ab, unabhaengig von dieser Zahl
+            # (s. "except esi.RateLimited" weiter unten). Dieser Wert ist
+            # also kein Schutz vor einer ESI-Sperre, sondern nur die Grenze,
+            # wie viele NEUE Historien EIN Scan versucht, bevor der
+            # eingebaute Schutz greifen wuerde - 350 -> 1000 angehoben,
+            # max_cached_items gleich mit (das Verhaeltnis gecacht:neu blieb
+            # unveraendert gut, die Marktgrundgesamtheit liegt bei ~13'000
+            # Items, der alte 6000er-Deckel schnitt davon spuerbar etwas ab).
+            "max_new_history": 1000,
+            # emm587: Marge-Artefakt-Sperre (Nutzer-Fund: 123 %/260 % Marge bei
+            # trade_score 25-35 - Einzeltrades, keine echten Chancen). Ab
+            # max_roi_for_trust % Marge zusaetzlich min_trade_above_trust
+            # Tradability verlangen.
+            # emm589 (Nutzer-Screenshot: Remote Sensing 260 % Marge, Tradability
+            # nur 31): GEMESSEN an 9 echten Items (live ESI, Region The Forge) -
+            # die Marge dieser Faelle haengt an EINER einzelnen Order weit ausserhalb
+            # des normalen Handelsbands (z. B. Remote Sensing Buy 100'100 bei
+            # normal ~300'000), die scanner.find_deals bereits ueber
+            # `two_sided` erkennt und abwertet (trade_score sackt von 97 auf 31-34).
+            # Nur 15 verlangte bisher so wenig, dass genau diese Ghost-Order-Faelle
+            # durchrutschten. Gemessene Verteilung: vier klare Ghost-Order-Faelle
+            # bei 31-43 (Remote Sensing, Heavy Energy Nosferatu I, Caldari
+            # Battleship, Interplanetary Consolidation, 5MN Microwarpdrive I -
+            # SELBST bei 458 Einheiten/Tag Volumen), zwei echte, nur maessig
+            # liquide Treffer bei 54 (Medium Core Defense Capacitor Safeguard II,
+            # Executioner), ein klar echter bei 86 (Shadow Serpentis Thermal
+            # Energized Membrane, Marge 90,6 % bei normalem Spread). 45 liegt in
+            # der Luecke zwischen 43 und 54 - trennt die Ghost-Order-Faelle ab,
+            # ohne die beiden echten, nur maessig liquiden Treffer zu verlieren.
+            "max_roi_for_trust": 50,
+            "min_trade_above_trust": 45,
         }
         self.deals_btn.setEnabled(False)
         self.deal_status.setText(
@@ -4768,18 +5540,55 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         scan_region = store.get_scan_region()
         self._sync_fees_to_hub(scan_region)   # broker fee for THIS hub's standings
 
-        def job(progress=None, should_cancel=None):
+        def job(progress=None, should_cancel=None, status=None):
             _diag = {}
-            deals = scanner.find_deals(snapshot, self.settings, days, mode, filters,
-                                       progress=progress, region=scan_region,
-                                       should_cancel=should_cancel, flip_rank=flip_rank,
-                                       diag=_diag)
+            # emm587: Auto-Nachscan (Nutzer-Vorgabe: < 25 Treffer ist zu wenig,
+            # "so viele wie moeglich"). Jeder weitere Durchlauf holt - ueber
+            # dasselbe max_new_history-Budget - automatisch den NAECHSTEN noch
+            # ungecachten Batch (die vorige Runde ist beim naechsten Aufruf
+            # schon im Gratis-Topf, s. store.fresh_history_type_ids). Harter
+            # Deckel bei 3 Runden gesamt als ESI-Schutz, nicht "unendlich".
+            # emm588 (Nutzer: "nicht die selben Items doppelt und dreifach
+            # gescannt, sondern eben andere"): seen_ids sammelt, was JEDE
+            # Runde analysiert hat (scanner.find_deals liefert das ueber
+            # diag["analyzed_ids"]) und schliesst es fuer die naechste Runde
+            # per exclude_type_ids aus - sonst waere die "weitere Runde" nur
+            # dieselbe Top-Liquiditaets-Stichprobe erneut gewesen. Treffer
+            # werden ueber die Runden gesammelt (nicht ersetzt), sonst
+            # wuerden Runde-1-Treffer verschwinden, sobald Runde 2 ihre
+            # Items ausschliesst.
+            deals = []
+            seen_ids = set()
+            for _runde in range(3):
+                if should_cancel and should_cancel():
+                    break
+                if _runde and status:
+                    status(t("Too few hits ({n}) – extra round {r}/3 …")
+                           .format(n=len(deals), r=_runde + 1))
+                if seen_ids:
+                    filters["exclude_type_ids"] = seen_ids
+                runde_deals = scanner.find_deals(
+                    snapshot, self.settings, days, mode, filters,
+                    progress=progress, region=scan_region,
+                    should_cancel=should_cancel, flip_rank=flip_rank,
+                    diag=_diag)
+                _neu_analysiert = _diag.get("analyzed_ids") or set()
+                seen_ids |= _neu_analysiert
+                _vorhanden = {d["type_id"] for d in deals}
+                deals += [d for d in runde_deals if d["type_id"] not in _vorhanden]
+                if len(deals) >= 25 or not _neu_analysiert:
+                    # >=25: genug Treffer. leer: der Markt ist erschoepft -
+                    # eine weitere Runde haette ohnehin keine Items mehr uebrig.
+                    break
+            deals.sort(key=lambda r: r["score"], reverse=True)
+            deals = deals[:filters.get("max_items", 400)]
             if should_cancel and should_cancel():
-                return [], _diag
+                return deals, _diag
             esi.resolve_names([d["type_id"] for d in deals])
             return deals, _diag
 
-        w = Worker(job, with_progress=True, with_cancel=True)
+        w = Worker(job, with_progress=True, with_cancel=True, with_status=True)
+        w.status.connect(lambda s: self.deal_status.setText(s))
         w.progress.connect(
             lambda d, tot: self.deal_status.setText(t("Analysing \u2026 {d}/{n}").format(d=d, n=tot)))
 
@@ -4803,10 +5612,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # 0 Item,1 Buy,2 Sell,3 ØFenster,4 Dev,5 Bau,6 Profit,7 ROI,8 Vol,
         # 9 Volat,10 DoS,11 Gewinn/Tag,12 Trend,13 Zielpreis,14 Erw.Gewinn%,
         # 15 Konkurrenz,16 Einnehmbar/Tag,17 Handelbarkeit,18 Kapital-Eff.
-        "flip":  {0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18},
-        "under": {0, 2, 3, 4, 12, 13, 14, 8, 9, 10, 15, 17},
-        "drop":  {0, 2, 3, 4, 8, 9, 10, 15, 17},
-        "build": {0, 2, 4, 5, 6, 8, 9, 10, 11},
+        # 19 (Rating, emm812) traegt in JEDEM Modus: der Balken zeigt die
+        # kombinierte Qualitaet, nach der die Liste im jeweiligen Modus
+        # sowieso gereiht wird (_deal_quality kennt alle vier Modi).
+        "flip":  {0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19},
+        "under": {0, 2, 3, 4, 12, 13, 14, 8, 9, 10, 15, 17, 19},
+        "drop":  {0, 2, 3, 4, 8, 9, 10, 15, 17, 19},
+        "build": {0, 2, 4, 5, 6, 8, 9, 10, 11, 19},
     }
     # ENGLISCH als Schluessel, t() beim Anzeigen (Sitzung 16) - der
     # Klassenrumpf laeuft vor der Sprachwahl (aa236).
@@ -4832,98 +5644,175 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                           "build": "Min build margin %", "flip": "Min margin %"}
 
     # ready-made filter sets, grouped by Flip sub-mode ("rank")
+    # emm596 (Nutzer, 18.10.2026): "Daytrade lieber 20 Tage" - nachdem
+    # geklaert war, dass "% Above normal" (und Trend/Volatilitaet) im
+    # Flip-Modus 1:1 aus diesem `window` kommen (trend_stats(hist, days),
+    # scanner.py) und Swing Trade separat mit 90 Tagen laeuft (nicht
+    # verwechselbar, beide Pfade sind unabhaengig). `window: 28 -> 20` bei
+    # ALLEN Daytrade-Presets mit bisher 28 Tagen (12 Stueck) - die drei
+    # "Aktiv am PC"-Presets liefen schon vorher mit 14 Tagen und bleiben
+    # unveraendert, die sind absichtlich noch kuerzer fuer die schnellere
+    # Strategie.
     _DEAL_PRESETS = [
         (_CUSTOM_KEY, None),
         # Empfohlen (rank: spanne) — kuratierte Allrounder. Volumen-/
         # Tiefen-Bänder je Preisklasse: billig braucht Masse, teuer nicht.
         ("Recommended · all prices",
-         {"rank": "spanne", "window": 28, "vol": 40, "roi": 6, "profit": 0,
+         {"rank": "spanne", "window": 20, "vol": 40, "roi": 12, "profit": 0,
           "profitday": 300_000, "buyratio": 25, "maxcomp": 0, "trade": 40,
           "twosided": 30, "bestdepth": 3, "maxover": 35, "minqty": 3, "dos": 10,
           "pmin": 0, "pmax": 0,
           "sym": "star",
           "tip": "Best all-round flips: provably BOTH sides served daily, real depth at the best price, short cycles. Competition is not filtered hard - weak deals slide down the ranking."}),
-        ("Recommended · cheap only (up to 300k)",
-         {"rank": "spanne", "window": 28, "vol": 300, "roi": 8, "profit": 0,
-          "profitday": 500_000, "buyratio": 25, "maxcomp": 0, "trade": 45,
-          "twosided": 35, "bestdepth": 25, "maxover": 35, "minqty": 20, "dos": 8,
-          "pmin": 0, "pmax": 300_000,
-          "sym": "coins",
-          "tip": "Cheap bulk goods only pay off with VOLUME: ≥300 units/day, ≥25 at the best price, ≥20 units/day realistic for you."}),
+        # emm604 (Nutzer: "Presets oder modes die keinen echten Mehrwert
+        # bieten, bitte entfernen. wir wollen MoMa nicht ueberfluten mit
+        # unnoetigen Unuebersichtlichkeiten"): "cheap only (up to 300k)" hier
+        # live gegen den echten Markt (Jita, 18.10.2026) GEMESSEN - nur 6
+        # Treffer, waehrend "Bulk commodities" (naechster Preis-Nachbar, auch
+        # auf Masse ausgelegt) mit denselben Marktdaten 27 brachte. Entfernt
+        # statt nur dokumentiert, siehe MEMORY.md/CLAUDE.md emm604.
         ("Recommended · mid range (300k–20M)",
-         {"rank": "spanne", "window": 28, "vol": 30, "roi": 6, "profit": 30_000,
+         {"rank": "spanne", "window": 20, "vol": 30, "roi": 12, "profit": 30_000,
           "profitday": 400_000, "buyratio": 25, "maxcomp": 0, "trade": 40,
           "twosided": 30, "bestdepth": 5, "maxover": 35, "minqty": 3, "dos": 10,
           "pmin": 300_000, "pmax": 20_000_000,
           "sym": "package",
           "tip": "Modules/ammo/small ships: solid profit per unit, traded on both sides daily."}),
         ("Recommended · expensive (from 20M)",
-         {"rank": "spanne", "window": 28, "vol": 4, "roi": 5, "profit": 800_000,
+         {"rank": "spanne", "window": 20, "vol": 4, "roi": 12, "profit": 800_000,
           "profitday": 800_000, "buyratio": 30, "maxcomp": 0, "trade": 25,
           "twosided": 20, "bestdepth": 1, "maxover": 35, "minqty": 1, "dos": 15,
           "pmin": 20_000_000, "pmax": 0,
           "sym": "target",
           "tip": "Ships & expensive items: few units are enough, but fat profit per flip. Two-sidedness requirement deliberately milder."}),
+        # emm591: eigenes Preset fuer Munition/Masse-Commodities (Nutzer:
+        # "faction munition beispielsweise laesst sich in der regel gut und
+        # mit hohem volumen handeln" - wurde bisher NIE gezeigt). GEMESSEN
+        # an 6 echten Items (live ESI, Jita): die normale 12-%-ROI-Schwelle
+        # ist fuer diese Klasse unerreichbar - Konkurrenz druekt den Spread
+        # auf 0,5-2,3 % (teils sogar negativ nach Steuer+Gebuehr), waehrend
+        # das TAGESVOLUMEN so riesig ist, dass selbst 2,3 % Marge Millionen
+        # ISK/Tag bringen (Caldari Navy Antimatter Charge S: 2,3 % ROI, aber
+        # 32,6 Mio. ISK/Tag bei 927k Stk./Tag). roi:2/profitday:2_000_000
+        # trennt genau dort - der gemessene 0,5-%-/1,3-Mio.-Fall faellt noch
+        # raus, der 2,3-%-/32,6-Mio.-Fall kommt durch. bestdepth:50 haelt
+        # echte Exoten (die nur zufaellig mal viel Volumen an einem Tag
+        # haben) draussen - diese Klasse handelt sich nur mit WIRKLICHER
+        # Masse.
+        # emm593 (Nutzer, echter Scan-Trichter: "9 hits ... 1'384 below
+        # volume"): vol:50_000 war der mit Abstand groesste Verlustposten
+        # (1'384 von 2063 Kandidaten, 67 %) - weit vor "schwer handelbar"
+        # (266) und "nicht beidseitig" (369) zusammen. profitday:2_000_000
+        # ist die eigentliche Qualitaetsschranke (das ABSOLUTE Tagesgewinn-
+        # Kriterium) - ein zusaetzlicher 50'000er-Volumen-Floor obendrauf
+        # war unnoetig scharf. vol: 50_000 -> 10_000 (ein Fuenftel).
+        # emm594 (Nutzer, zweite Scan-Runde nach emm593 - gleicher
+        # Trichter, nur neu verteilt): "below volume" fiel wie erwartet
+        # (1'384 -> 1'136), aber "schwer handelbar"/"nicht beidseitig"
+        # STIEGEN dafuer (266->309, 369->569) - die neu zugelassenen
+        # 10k-50k-Items haengen jetzt an trade:35/twosided:20 fest, Treffer
+        # unveraendert bei 9. Diese zwei sind mit 878 zusammen jetzt der
+        # klar groesste Block. trade/twosided auf das Niveau der
+        # laxesten bestehenden Presets gesenkt ("Little time · hardly any
+        # competition": trade:25/twosided:15) und wegen der expliziten
+        # "Masse gleicht duenne Marge aus"-Philosophie dieses Presets noch
+        # einen Schritt weiter: trade:35->20, twosided:20->12. Der IMMER
+        # aktive Floor aus emm592 (_MIN_TRADE_SCORE_ALWAYS=5.0) bleibt der
+        # harte Boden gegen echten Ausschuss - 20/12 liegen klar darueber.
+        ("Bulk commodities · thin margin, huge volume",
+         {"rank": "spanne", "window": 20, "vol": 10_000, "roi": 2, "profit": 0,
+          "profitday": 2_000_000, "buyratio": 30, "maxcomp": 0, "trade": 20,
+          "twosided": 12, "bestdepth": 50, "maxover": 35, "minqty": 500, "dos": 6,
+          "pmin": 0, "pmax": 50_000,
+          "sym": "package",
+          "tip": "Faction ammo & bulk commodities: often only 1-3 % margin (fierce competition), but at huge daily volume that's still real ISK/day. Thin spreads leave little room for error - the usual 12 % margin floor doesn't apply here."}),
         # ⚡ Aktiv am PC (rank: stunden) — mehrfach pro Stunde flippen
+        # emm599 (Nutzer: "alle filter alle presets alle Modis, wir haben
+        # gesagt wir brauchen mindestens jeweils 20 verschiedene Items ...
+        # bitte Loese dieses Problem selbstaendig, mache Tests, denke nach,
+        # pruefe"): per computer-use live gegen den echten, laufenden
+        # Client (Jita) gemessen - alle 3 "Active at the PC"-Presets lagen
+        # WEIT unter 20 Treffern (3, 1, 5). Trichter-Diagnose aller drei
+        # zeigt denselben Taeter: "below volume" (= vol-Schwelle) ist mit
+        # grossem Abstand der dominante Ausschlussgrund, "not traded on
+        # both sides daily" (= twosided) der zweitgroesste - "too hard to
+        # trade" (trade) faellt kaum ins Gewicht:
+        #   many quick flips      (vol:150/twosided:45): below volume
+        #     10'678 vs. twosided 2'659 vs. trade 162 (ueber alle
+        #     Nachscan-Runden kumuliert)
+        #   maximum turnover cheap (vol:800/twosided:50): below volume
+        #     2'231 vs. twosided 1'617 vs. trade 60
+        #   mid range              (vol:60/twosided:40): below volume
+        #     4'580 vs. twosided 628 vs. trade 128
+        # ERSTER Versuch (vol/twosided/trade je auf das Niveau anderer
+        # funktionierender Allrounder-Presets gesenkt, ~30-40/20-30/40-45)
+        # brachte nur 11/2/8 Treffer - IMMER NOCH zu wenig. Zweite Live-
+        # Messrunde direkt ueber die "Fine filters"-Felder der UI (sofortige
+        # Neufilterung desselben bereits gecachten, breiten Kandidaten-Pools,
+        # kein Re-Scan noetig) zeigte: trade_score haengt INTERN von
+        # two_sided ab (trade_score = roh_score * two_sided, scanner.py) -
+        # twosided allein senken verschiebt Items nur von "not traded both
+        # sides" nach "too hard to trade", OHNE neue Treffer zu bringen.
+        # Erst trade UND twosided GEMEINSAM (deutlich) gesenkt loeste das:
+        #   many quick flips:       vol:20/trade:20/twosided:15 -> 30 Treffer
+        #   maximum turnover cheap: vol:80/trade:15/twosided:12 -> 29 Treffer
+        #   mid range:              vol:6/trade:12/twosided:10 -> 32 Treffer
+        # dos/bestdepth/maxover bewusst NICHT angefasst - das sind die
+        # namensgebenden Merkmale dieses Presets ("nur Items, die taeglich
+        # BEIDE Seiten bedienen, max. X Tage Bestand, strikte Spike-Sperre"),
+        # kein Zufallsnebeneffekt.
         ("⚡ Active at the PC · many quick flips",
-         {"rank": "stunden", "window": 14, "vol": 150, "roi": 4, "profit": 0,
-          "profitday": 300_000, "buyratio": 30, "maxcomp": 0, "trade": 55,
-          "twosided": 45, "bestdepth": 10, "maxover": 25, "minqty": 10, "dos": 5,
+         {"rank": "stunden", "window": 14, "vol": 20, "roi": 12, "profit": 0,
+          "profitday": 300_000, "buyratio": 30, "maxcomp": 0, "trade": 20,
+          "twosided": 15, "bestdepth": 10, "maxover": 25, "minqty": 10, "dos": 5,
           "pmin": 0, "pmax": 0,
-          "tip": "For active hub trading: only items that fill both sides almost EVERY day (≥45 %), max. 5 days of stock, strict spike cap (25 %)."}),
-        ("⚡ Active at the PC · maximum turnover (cheap)",
-         {"rank": "stunden", "window": 14, "vol": 800, "roi": 4, "profit": 0,
-          "profitday": 400_000, "buyratio": 30, "maxcomp": 0, "trade": 60,
-          "twosided": 50, "bestdepth": 40, "maxover": 25, "minqty": 40, "dos": 4,
-          "pmin": 0, "pmax": 500_000,
-          "tip": "Ammo & consumables under continuous fire: ≥800/day, ≥40 at the best price - here pure frequency counts."}),
+          "tip": "For active hub trading: only items that fill both sides almost EVERY day (≥15 %), max. 5 days of stock, strict spike cap (25 %)."}),
+        # emm604 (Nutzer, "keinen echten Mehrwert ... entfernen"): "maximum
+        # turnover (cheap)" live gemessen (Jita, 18.10.2026) - nur 9 Treffer,
+        # klar hinter "many quick flips" (35) desselben Modus zurueck.
+        # Entfernt, siehe MEMORY.md/CLAUDE.md emm604.
         ("⚡ Active at the PC · mid range",
-         {"rank": "stunden", "window": 14, "vol": 60, "roi": 5, "profit": 0,
-          "profitday": 350_000, "buyratio": 30, "maxcomp": 0, "trade": 50,
-          "twosided": 40, "bestdepth": 5, "maxover": 25, "minqty": 5, "dos": 6,
+         {"rank": "stunden", "window": 14, "vol": 6, "roi": 12, "profit": 0,
+          "profitday": 350_000, "buyratio": 30, "maxcomp": 0, "trade": 12,
+          "twosided": 10, "bestdepth": 5, "maxover": 25, "minqty": 5, "dos": 6,
           "pmin": 300_000, "pmax": 20_000_000,
           "tip": "Quick turnover without penny goods: modules/rigs with daily two-sided trading."}),
         # 🌙 Wenig Zeit (rank: konkurrenz) — Order hinlegen, selten updaten
         ("Little time · hardly any competition",
-         {"rank": "konkurrenz", "window": 28, "vol": 20, "roi": 8, "profit": 0,
+         {"rank": "konkurrenz", "window": 20, "vol": 20, "roi": 12, "profit": 0,
           "profitday": 150_000, "buyratio": 25, "maxcomp": 8, "trade": 25,
           "twosided": 15, "bestdepth": 2, "maxover": 40, "minqty": 1, "dos": 20,
           "pmin": 0, "pmax": 0,
           "tip": "Max. 8 rivals: your order stays in front for a long time without constant 0.01-ISKing. In return, milder two-sidedness requirement."}),
-        ("Little time · solid margin",
-         {"rank": "konkurrenz", "window": 28, "vol": 40, "roi": 10, "profit": 0,
-          "profitday": 250_000, "buyratio": 25, "maxcomp": 15, "trade": 30,
-          "twosided": 20, "bestdepth": 3, "maxover": 40, "minqty": 2, "dos": 15,
-          "pmin": 0, "pmax": 0,
-          "tip": "A little more competition allowed, in return ≥10 % margin as a buffer for the rare readjustment."}),
+        # emm604 (Nutzer, "keinen echten Mehrwert ... entfernen"): "solid
+        # margin" live gemessen (Jita, 18.10.2026) - nur 4 Treffer, praktisch
+        # tot. Entfernt, siehe MEMORY.md/CLAUDE.md emm604.
         ("Little time · expensive single items",
-         {"rank": "konkurrenz", "window": 28, "vol": 3, "roi": 8, "profit": 1_000_000,
+         {"rank": "konkurrenz", "window": 20, "vol": 3, "roi": 12, "profit": 1_000_000,
           "profitday": 300_000, "buyratio": 30, "maxcomp": 10, "trade": 20,
           "twosided": 15, "bestdepth": 1, "maxover": 40, "minqty": 1, "dos": 25,
           "pmin": 20_000_000, "pmax": 0,
           "tip": "Patience goods: 1 fill can save the week (≥1M per unit). Long days of stock are fine here."}),
         # 🔍 Geheimtipps (rank: nische) — übersehene Dauerläufer
         ("Hidden gems · overlooked mid range",
-         {"rank": "nische", "window": 28, "vol": 15, "roi": 10, "profit": 0,
+         {"rank": "nische", "window": 20, "vol": 15, "roi": 12, "profit": 0,
           "profitday": 200_000, "buyratio": 25, "maxcomp": 12, "trade": 30,
           "twosided": 25, "bestdepth": 2, "maxover": 35, "minqty": 2, "dos": 15,
           "pmin": 500_000, "pmax": 50_000_000,
           "tip": "Mid volume off the mass hit lists: enough trading for fills, too inconspicuous for the 0.01-ISKers."}),
-        ("Hidden gems · higher margin",
-         {"rank": "nische", "window": 28, "vol": 10, "roi": 15, "profit": 0,
-          "profitday": 250_000, "buyratio": 25, "maxcomp": 10, "trade": 30,
-          "twosided": 25, "bestdepth": 2, "maxover": 35, "minqty": 1, "dos": 15,
-          "pmin": 0, "pmax": 0,
-          "tip": "≥15 % margin with little competition - thin trading, but provably two-sided daily."}),
+        # emm604 (Nutzer, "keinen echten Mehrwert ... entfernen"): "higher
+        # margin" live gemessen (Jita, 18.10.2026) - nur 6 Treffer, klar
+        # hinter "overlooked mid range" (18) desselben Modus zurueck.
+        # Entfernt, siehe MEMORY.md/CLAUDE.md emm604.
         # 💎 Viel Kapital (rank: kapital)
         ("Lots of capital · efficiently tied up",
-         {"rank": "kapital", "window": 28, "vol": 20, "roi": 5, "profit": 200_000,
+         {"rank": "kapital", "window": 20, "vol": 20, "roi": 12, "profit": 200_000,
           "profitday": 800_000, "buyratio": 30, "maxcomp": 0, "trade": 35,
           "twosided": 35, "bestdepth": 2, "maxover": 35, "minqty": 2, "dos": 12,
           "pmin": 5_000_000, "pmax": 0,
           "tip": "Ranks by profit per tied-up ISK: short cycles and two-sided trading so your capital never sits idle."}),
         ("Lots of capital · big single trades",
-         {"rank": "kapital", "window": 28, "vol": 4, "roi": 5, "profit": 2_000_000,
+         {"rank": "kapital", "window": 20, "vol": 4, "roi": 12, "profit": 2_000_000,
           "profitday": 1_500_000, "buyratio": 30, "maxcomp": 0, "trade": 25,
           "twosided": 20, "bestdepth": 1, "maxover": 35, "minqty": 1, "dos": 20,
           "pmin": 50_000_000, "pmax": 0,
@@ -4941,8 +5830,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             g.removeWidget(lab); g.removeWidget(wdg)
             lab.setVisible(False); wdg.setVisible(False)
         order = [k for (k, _l, _w) in self._deal_rows if k in vis]
-        # always lay the visible filters out in exactly two rows
-        cols = max(1, (len(order) + 1) // 2)
+        # FESTE 4 JE REIHE (emm812/813): die Feinfilter-Karte teilt sich
+        # die Kopfzeile mit der Strategie-Karte (halbe Fensterbreite) -
+        # das alte "genau zwei Reihen" ergab ~9 Spalten nebeneinander und
+        # haette jedes Feld unter seine Mindestbreite gequetscht. 4 x
+        # 90-180 px traegt auch bei schmalem Fenster (Scanner-Messung).
+        cols = 4
         for i, key in enumerate(order):
             lab, wdg = self._deal_row_w[key]
             wdg.setMaximumWidth(180); wdg.setMinimumWidth(90)
@@ -4977,22 +5870,22 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.d_cat.addItem(name, cid)
         if not opts:
             self.d_cat.addItem(t("(load recipes first)"), None)
+        # Icon auch hier bei jedem Neuaufbau (emm612, s. Kommentar bei
+        # d_meta weiter oben - d_cat wird zur Laufzeit neu befuellt, das
+        # Icon muss deshalb bei jedem (Re-)Fuellen erneut gesetzt werden).
+        for _i612 in range(self.d_cat.count()):
+            self.d_cat.setItemIcon(_i612, icons.icon("columns"))
         idx = self.d_cat.findData(cur) if cur is not None else 0
         self.d_cat.setCurrentIndex(idx if idx >= 0 else 0)
         self.d_cat.blockSignals(False)
         # mirror into the Bauen tab's category dropdown
-        if hasattr(self, "b_cat"):
-            bcur = self.b_cat.currentData() if self.b_cat.count() else None
-            self.b_cat.blockSignals(True)
-            self.b_cat.clear()
-            self.b_cat.addItem(t("All categories"), None)
-            for cid, name in opts:
-                self.b_cat.addItem(name, cid)
-            if not opts:
-                self.b_cat.addItem(t("(load recipes first)"), None)
-            bidx = self.b_cat.findData(bcur) if bcur is not None else 0
-            self.b_cat.setCurrentIndex(bidx if bidx >= 0 else 0)
-            self.b_cat.blockSignals(False)
+        # emm704: Der Scanner-Kategoriefilter ist jetzt eine Checkbox-
+        # Mehrfachauswahl (`_filter_mehrfach_knopf`) statt eines QComboBox.
+        # `refresh` behaelt bereits angehakte/abgehakte Eintraege bei und
+        # startet neue angehakt - das frueher noetige Merken/Wiederfinden
+        # des Einzelwerts (`findData`) entfaellt dadurch komplett.
+        if hasattr(self, "_b_cat_refresh"):
+            self._b_cat_refresh(list(opts))
         # mirror into "Meine Blueprints" dropdown
         if hasattr(self, "bp_myb_cat"):
             # RIGS ALS EIGENE KATEGORIE (Nutzer 29.09.2026): in der SDE stehen
@@ -5002,14 +5895,26 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._bp_kat_opts = list(opts)
             self._bp_myb_cat_fuellen()
             self._apply_bp_filter()
+        # KATEGORIE-MEHRFACHFILTER (emm611): Swing Trade + Regional Trading
+        # brauchen ALLE Markt-Kategorien (nicht nur baubare) - eigene Liste.
+        _markt_opts = industry.market_category_options()
+        if hasattr(self, "_h_cat_refresh"):
+            self._h_cat_refresh(_markt_opts)
+        if hasattr(self, "_rg_cat_refresh"):
+            self._rg_cat_refresh(_markt_opts)
 
     def _bp_myb_cat_fuellen(self):
         """Kategorie-Dropdown in My Blueprints fuellen: nur Kategorien, die in
         DEINER Tabelle vorkommen (Nutzer 30.09.2026: "unnoetige Kategorien
         ... Asteroid, Celestial, Commodity"); vor dem Laden und mit "Show
         missing" alle baubaren (`industry.bp_kategorien_zeigen`)."""
-        cb = getattr(self, "bp_myb_cat", None)
-        if cb is None:
+        # emm705: fuellt jetzt den Checkbox-Knopf statt eines QComboBox.
+        # Die AUSWAHL-Logik hier drunter (welche Kategorien ueberhaupt
+        # angeboten werden - nur die deiner Tabelle, mit "Show missing"
+        # alle baubaren) bleibt Zeile fuer Zeile dieselbe; nur das Fuellen
+        # am Ende geht an `refresh` statt an `addItem`.
+        _refresh = getattr(self, "_bp_myb_cat_refresh", None)
+        if _refresh is None:
             return
         opts = list(getattr(self, "_bp_kat_opts", None) or [])
         zeilen = None
@@ -5023,20 +5928,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if _it is None or _it.data(Qt.UserRole + 10):
                     continue
                 zeilen.append((_it.data(Qt.UserRole + 4), _it.data(Qt.UserRole + 6)))
-        mcur = cb.currentData() if cb.count() else None
-        cb.blockSignals(True)
-        try:
-            cb.clear()
-            cb.addItem(t("All categories"), None)
-            for cid, name in industry.bp_kategorien_zeigen(
-                    opts, zeilen, getattr(self, "_bp_rig_gruppen", None), t("Rigs")):
-                cb.addItem(name, cid)
-            if not opts:
-                cb.addItem(t("(load recipes first)"), None)
-            midx = cb.findData(mcur) if mcur is not None else 0
-            cb.setCurrentIndex(midx if midx >= 0 else 0)
-        finally:
-            cb.blockSignals(False)
+        # emm705: `refresh` behaelt bereits gesetzte Haken bei und laesst
+        # neue Eintraege angehakt starten - das frueher noetige Merken und
+        # Wiederfinden des Einzelwerts (`mcur`/`findData`) entfaellt damit.
+        _refresh(list(industry.bp_kategorien_zeigen(
+            opts, zeilen, getattr(self, "_bp_rig_gruppen", None), t("Rigs"))))
 
     def _entry_factor(self, d):
         """Dämpfung für hochgeschossene/steigende Preise – man will TIEF einsteigen.
@@ -5652,12 +6548,25 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                          "an estimate without your system/rigs.)")
             else:
                 note = t("  (here you buy to hold \u2013 profit only on recovery.)")
-        self.deal_status.setText(
+        # KURZE ZEILE, VOLLE DIAGNOSE IM TOOLTIP (emm812, Bauplan-Kur -
+        # dasselbe Muster wie build_status im Scanner): der Trichter bleibt
+        # vollstaendig erhalten, nur nicht mehr als Textwand ueber der
+        # Liste. AUSNAHME: KEIN Treffer - dann ist der Grund die eigentliche
+        # Antwort und muss sichtbar sein, nicht im Tooltip (Arbeitsregel 6).
+        _voll812 = (
             t("{n} hits ({label}). ").format(n=len(deals), label=label)
             + self._deal_diag_text()
             + t("Double-click = history · multi-select (Ctrl/Shift) + "
                 "right-click = whole selection into the shopping list.")
             + note)
+        if deals:
+            self.deal_status.setText(
+                t("{n} hits ({label}). ").format(n=len(deals), label=label).strip()
+                + "  \u24d8")
+        else:
+            self.deal_status.setText(_voll812)
+        self.deal_status.setToolTip(_voll812)
+        self._wrap_tooltips(self.deal_status)
         # SPALTEN HAENGEN SEIT SITZUNG 16 AM COLUMNS-KNOPF, NICHT MEHR AM
         # MODUS (Nutzer: "Dropdown ersetzt die Modus-Logik"). Die Schleife,
         # die hier frueher je Modus aus- und einblendete, MUSSTE weg: sie
@@ -5670,19 +6579,34 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # jedem Modus die Entscheidungszahl, nur unter anderem Namen.
         self.deals_table.horizontalHeaderItem(4).setText(t(self._DEV_LABEL[mode]))
 
-        # Top-15 = the 15 best by a COMBINED quality (expected profit × tradability
-        # × low competition), not just the first rows of one sorted column. When
-        # active, these are floated to the top and highlighted.
+        # emm600 (Nutzer: "es soll dem nutzer so einfach wie moeglich gemacht
+        # werden er soll nichts selber einstellen muessen um gute profitable
+        # handelbare trades zu finden"): die Tabelle sortierte BISHER nur dann
+        # nach der kombinierten Qualitaet (Gewinn x Handelbarkeit x wenig
+        # Konkurrenz), wenn der Nutzer den "Top 15"-Schalter manuell aktiviert
+        # hatte - ansonsten lief sie einfach in der Reihenfolge, die
+        # scanner.find_deals() intern zurueckgab, und wurde unten (nicht
+        # highlight-Zweig) zusaetzlich zwangsweise nach EINER Einzelspalte
+        # (ROI/under_pct/...) sortiert, die Tradability ueberhaupt nicht
+        # kennt. Ergebnis: schwach handelbare Items landeten trotzdem oben,
+        # obwohl ein Score existiert, der genau das verhindern wuerde (Nutzer-
+        # Beobachtung: "ich sehe sehr oft eine schwache tradability"). JETZT:
+        # die kombinierte Qualitaet ist IMMER die Grundreihenfolge - der
+        # "Top 15"-Schalter steuert nur noch Stern + Tönung (visuelle
+        # Hervorhebung), nicht mehr OB ueberhaupt sinnvoll sortiert wird.
         highlight = getattr(self, "_deal_highlight", False)
         ranked = sorted(deals, key=lambda d: self._deal_quality(d, mode), reverse=True)
         top_ids = {d["type_id"] for d in ranked[:15]}
-        if highlight:
-            deals = ranked
+        deals = ranked
         tint = QColor(theme.AMBER); tint.setAlpha(28)
 
         self.deals_table.setSortingEnabled(False)
         self.deals_table.setRowCount(len(deals))
         green = QColor(theme.GREEN); red = QColor(theme.RED)
+        # AN self, nicht nur lokal (emm812): _deal_apply_bars() laeuft auch
+        # nach jedem Sortieren wieder und braucht die Daten dann noch -
+        # dieselbe Mechanik wie _bau_bar_rows im Scanner.
+        self._deal_bar_rows = {}   # type_id -> (%, Text, Farbe, Tooltip)
         for i, d in enumerate(deals):
             dos = d["dos"]
             dos_txt = "∞" if dos >= 9000 else f"{dos:.1f}"
@@ -5700,6 +6624,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             trend = d.get("trend", "—")
             trend_txt = {"falling": t("\u2193 falling"), "sideways": t("\u2192 sideways"),
                          "rising": t("\u2191 rising")}.get(trend, "\u2014")
+            # BEWERTUNG VOR DEN ZELLEN (emm812): der Balken-Prozentwert ist
+            # der Sortierwert von Spalte 19, und die Farbstufe steuert unten
+            # die Daempfung der Gewinn-Zellen - EINE Regel fuer beides.
+            _pct812, _btxt812, _bcol812 = self._deal_bewertung(d, mode)
             # (text, sort_value) per column
             cells = [
                 (names.get(d["type_id"], f"#{d['type_id']}"), None),
@@ -5724,6 +6652,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 (isk(d.get("capture_day", 0), suffix=False), d.get("capture_day", 0)),
                 (self._trade_badge(d.get("trade_score", 0)), d.get("trade_score", 0)),
                 (f"{d.get('cap_eff', 0):.1f} %", d.get("cap_eff", 0)),
+                ("", _pct812),        # 19: Balken haengt als Zell-Widget darueber
             ]
             comp = d.get("competitors", 0)
             ts = d.get("trade_score", 0)
@@ -5747,6 +6676,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                      "historically yields daily (throwaway-order suspicion) - the "
                      "rating uses the realistic profit.")
                    if d.get("spread_capped") else ""))
+            # Balken-Daten je type_id merken (emm812): _deal_apply_bars()
+            # ordnet sie nach JEDEM Sortieren neu zu - ueber die ID aus
+            # Spalte 0, NIE ueber den Zeilenindex (Materialien-Tab-Falle).
+            self._deal_bar_rows[d["type_id"]] = (
+                _pct812, _btxt812, _bcol812,
+                t("Rating: the same combined quality the list is ranked by – "
+                  "expected profit, weighted by tradability, competition and "
+                  "buy-side fill. A caveat (hard to trade, buy order rarely "
+                  "fills, far above normal) beats a good number.")
+                + "\n\n" + _tw_tip)
             for j, (text, val) in enumerate(cells):
                 it = NumericItem(text, val) if j >= 1 else QTableWidgetItem(text)
                 if j == 0:
@@ -5772,18 +6711,42 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         it.setForeground(QColor(theme.CYAN if d["under_pct"] > 0
                                                 else theme.MUTED))
                 if j in (6, 7, 11):
-                    it.setForeground(green if d["profit_unit"] > 0 else red)
+                    # ZAHLEN ENTFLIMMERN (emm812, wie im Bau-Scanner): vorher
+                    # war JEDE Zeile gruen oder rot - wenn alles leuchtet,
+                    # bedeutet die Farbe nichts mehr. Verlust bleibt rot
+                    # (Warnung bleibt Warnung), gruen nur noch, wenn die
+                    # Bewertung "lohnt sich klar" sagt (DIESELBE Regel wie
+                    # der Balken, Arbeitsregel 9), alles dazwischen gedaempft.
+                    if d["profit_unit"] <= 0:
+                        it.setForeground(red)
+                    elif _bcol812 == theme.GREEN:
+                        it.setForeground(green)
+                    else:
+                        it.setForeground(QColor(theme.MUTED))
                 if j == 12:
                     tc = {"falling": theme.RED, "sideways": theme.GREEN,
                           "rising": theme.AMBER}.get(trend, theme.MUTED)
                     it.setForeground(QColor(tc))
                 if j == 14:
-                    it.setForeground(green if d.get("exp_pct", 0) > 0 else red)
+                    # dito emm812: rot nur bei Verlust, gruen nur beim
+                    # Gruen-Tier der Bewertung, sonst gedaempft.
+                    if d.get("exp_pct", 0) <= 0:
+                        it.setForeground(red)
+                    elif _bcol812 == theme.GREEN:
+                        it.setForeground(green)
+                    else:
+                        it.setForeground(QColor(theme.MUTED))
                 if j == 15:   # competition: few = good, many = tough
                     it.setForeground(QColor(theme.GREEN if comp <= 8 else
                                             theme.AMBER if comp <= 30 else theme.RED))
                 if j == 16:
-                    it.setForeground(green if d.get("capture_day", 0) > 0 else red)
+                    # dito emm812.
+                    if d.get("capture_day", 0) <= 0:
+                        it.setForeground(red)
+                    elif _bcol812 == theme.GREEN:
+                        it.setForeground(green)
+                    else:
+                        it.setForeground(QColor(theme.MUTED))
                 if j == 17:   # tradability: high = you get filled on both sides
                     it.setForeground(QColor(theme.GREEN if ts >= 60 else
                                             theme.AMBER if ts >= 35 else theme.RED))
@@ -5810,11 +6773,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     cell = self.deals_table.item(i, j)
                     if cell:
                         cell.setBackground(tint)
-            profitable = ((mode == "build" and d["under_pct"] > 0) or
-                          (mode != "build" and d["under_pct"] > 0) or
-                          (mode == "flip" and d["profit_unit"] > 0 and
-                           d["roi"] >= self.settings["target_margin"]))
-            if profitable:
+            # NAME NUR NOCH BEIM GRUEN-TIER GRUEN (emm812): vorher faerbte
+            # "profitable" fast jeden Namen - auf dem Screenshot des Nutzers
+            # leuchtete die halbe Liste. Gruen heisst jetzt ueberall
+            # dasselbe: die Bewertung sagt "lohnt sich klar" (EINE Regel,
+            # Arbeitsregel 9). Ob eine Zeile profitabel ist, zeigen die
+            # Gewinn-Spalten weiter selbst (Verlust = rot).
+            if _bcol812 == theme.GREEN:
                 self.deals_table.item(i, 0).setForeground(green)
         # remember the starred set; when the pin is on, native click-sort is off
         # and a header click sorts only the starred items (kept on top)
@@ -5827,10 +6792,40 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # block — that was the bug where the ★ items no longer floated up.
         self.deals_table.setSortingEnabled(not highlight)
         if not highlight:
-            sort_col = {"flip": 16, "under": 14, "drop": 4, "build": 11}.get(mode, 6)
-            self.deals_table.sortByColumn(sort_col, Qt.DescendingOrder)
+            # emm600: frueher wurde hier zwangsweise nach EINER Einzelspalte
+            # (ROI/under_pct/dev/avg) sortiert - das hat die gerade oben
+            # berechnete, kombinierte Qualitaets-Reihenfolge (ranked) sofort
+            # wieder zerstoert. sortByColumn(-1, ...) setzt den Sortier-
+            # Indikator auf "keine Spalte", sodass die Tabelle in der
+            # Einfuege-Reihenfolge (= ranked, kombinierte Qualitaet) bleibt -
+            # der Nutzer kann trotzdem jederzeit selbst auf einen Spalten-
+            # Kopf klicken, wenn er explizit anders sortieren will.
+            self.deals_table.sortByColumn(-1, Qt.AscendingOrder)
+        # BALKEN NACH DEM SORTIEREN ANHAENGEN (emm812): Qt sortiert die
+        # ITEMS um, laesst Zell-Widgets aber am alten Zeilenindex stehen -
+        # danach stuende der Balken einer FREMDEN Zeile daneben. Dieselbe
+        # Falle und dieselbe Loesung wie im Bau-Scanner (_bau_apply_bars):
+        # nach JEDEM Sortieren neu anhaengen, Zuordnung per type_id.
+        self._deal_apply_bars()
+        _hdr812 = self.deals_table.horizontalHeader()
+        # NUR die EIGENE alte Verbindung loesen - disconnect() ohne Argument
+        # wuerde auch Qts interne Sortier-Verbindung trennen (Scanner-Lehre).
+        _alt812 = getattr(self, "_deal_bars_sort_slot", None)
+        if _alt812 is not None:
+            try:
+                _hdr812.sortIndicatorChanged.disconnect(_alt812)
+            except (TypeError, RuntimeError):
+                pass
+        self._deal_bars_sort_slot = (lambda *_a: self._deal_apply_bars())
+        _hdr812.sortIndicatorChanged.connect(self._deal_bars_sort_slot)
         self._autosize_once(self.deals_table, "deals")
         self._icon_prefetch_pending(self._rerender_deals)
+
+    def _deal_apply_bars(self):
+        """Bewertungs-Balken der Daytrade-Liste (Kern: _haenge_balken,
+        derselbe wie im Bau-Scanner). Spalte 19 (emm812)."""
+        self._haenge_balken(self.deals_table,
+                            getattr(self, "_deal_bar_rows", None) or {}, 19)
 
     def _deal_to_chart(self, row, _col):
         item = self.deals_table.item(row, 0)
@@ -6104,7 +7099,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         stitle = QLabel(t("Strategy – what you are looking for"))
         stitle.setStyleSheet(f"color:{theme.CYAN}; font-size:13px; font-weight:700; "
                              f"letter-spacing:1px;")
-        sg.addWidget(stitle, 0, 0, 1, 2)
+        sg.addWidget(stitle, 0, 0, 1, 3)
         mlab = QLabel(t("Strategy"))
         mlab.setStyleSheet(f"color:{theme.TEXT}; font-size:15px; font-weight:600;")
         self.h_mode = QComboBox()
@@ -6226,6 +7221,24 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
               "top of „min exp. profit %“. Kills penny items that look "
               "great in percent but yield only a few ISK (the „25 ISK“ "
               "trap). 0 = off."))
+        # KATEGORIE/META-MEHRFACHFILTER (emm611, Nutzer: "kathegorie und meta
+        # Dropdowns ... damit ich zbsp nur Materialien mineralien ORes usw
+        # suchen will", "direkt für alle bauen" -> auch Swing Trade).
+        self.h_cat_btn, self._h_cat_refresh, self._h_cat_selected = self._filter_mehrfach_knopf(
+            t("All categories"), tooltip=t(
+                "Filter by item category (Ships/Modules/Rigs/Drones/… – "
+                "all checked = no filter). Needs „Load recipes“ once."))
+        self.h_meta_btn, self._h_meta_refresh, self._h_meta_selected = self._filter_mehrfach_knopf(
+            t("All meta"), tooltip=t(
+                "Filter by meta class (Tech I/II/III, Faction, Officer, "
+                "Deadspace, Storyline, …) – all checked = no filter."))
+        # t() je Name: "Other (Abyssal/...)" hat einen Katalogeintrag,
+        # die Eigennamen (Tech I, Faction, ...) gibt t() unveraendert
+        # zurueck (emm696).
+        self._h_meta_refresh([(_mk696, t(_mn696)) for _mk696, _mn696
+                              in industry.meta_bucket_optionen()])
+        self.h_cat_btn.menu().aboutToHide.connect(self._hold_preset_to_custom)
+        self.h_meta_btn.menu().aboutToHide.connect(self._hold_preset_to_custom)
         hcontrols = [
             (t("Window"), self.h_window), (t("Min below normal %"), self.h_below),
             (t("Max below normal %"), self.h_maxbelow),
@@ -6235,43 +7248,63 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             (t("Min sellable/day (0=∞)"), self.h_exitqty),
             (t("Max days of stock (0=∞)"), self.h_dos),
             (t("Price from"), self.h_pmin), (t("Price to (0=∞)"), self.h_pmax),
+            (t("Category"), self.h_cat_btn), (t("Meta"), self.h_meta_btn),
         ]
         for i, (label, wdg) in enumerate(hcontrols):
             wdg.setMaximumWidth(180); wdg.setMinimumWidth(90)
             lab = QLabel(label); lab.setObjectName("Muted")
-            r = (i // 6) * 2                       # 6 pro Reihe → max. 2 Reihen
-            g.addWidget(lab, r, i % 6)
-            g.addWidget(wdg, r + 1, i % 6)
+            # FESTE 4 JE REIHE (emm814, wie Daytrade): die Karte teilt
+            # sich die Kopfzeile mit der Strategie (halbe Breite) - 6 je
+            # Reihe wuerde die Felder unter ihre Mindestbreite quetschen.
+            r = (i // 4) * 2
+            g.addWidget(lab, r, i % 4)
+            g.addWidget(wdg, r + 1, i % 4)
             self._install_tip(wdg, lab)
             if hasattr(wdg, "valueChanged"):
                 wdg.valueChanged.connect(self._hold_preset_to_custom)
             elif hasattr(wdg, "currentIndexChanged"):
                 wdg.currentIndexChanged.connect(self._hold_preset_to_custom)
-        g.setColumnStretch(6, 1)
+        g.setColumnStretch(4, 1)
         h_filter_card = self._collapsible(t("FINE FILTERS (OPTIONAL)"), ctl, expanded=False)
-        # Boxen (STRATEGIE + FEINFILTER) in einen Container -> links in den oberen Split.
-        from PySide6.QtWidgets import QWidget as _QW, QVBoxLayout as _QVB
-        h_boxes = _QW(); _hbl = _QVB(h_boxes)
-        _hbl.setContentsMargins(0, 0, 0, 0); _hbl.setSpacing(6)
+        # BAUPLAN-KUR (emm814, dasselbe Muster wie Daytrade emm813):
+        # STRATEGIE und FEINFILTER nebeneinander als flache Kopfzeile,
+        # AlignTop (die zugeklappte Karte zieht die offene nicht hoch).
+        # Der alte obere 60/40-Split samt 486-px-Hoehe entfaellt - die
+        # Order-Tiefe, die dort rechts sass, ist auf Nutzer-Entscheid
+        # ("ja unsichtbar machen") versteckt, s. _build_ladder_panel.
+        self._h_strat_card = h_strat_card
+        self._h_filter_card = h_filter_card
+        _kopf814 = QWidget()
+        _kh814 = QHBoxLayout(_kopf814)
+        _kh814.setContentsMargins(0, 0, 0, 0)
+        _kh814.setSpacing(8)
+        _kh814.addWidget(h_strat_card, 1, Qt.AlignTop)
+        _kh814.addWidget(h_filter_card, 1, Qt.AlignTop)
+        root.addWidget(_kopf814, 0)
 
         self.hold_status = QLabel("")
         self.hold_status.setObjectName("Muted"); self.hold_status.setWordWrap(True)
         self._auto_hide_when_empty(self.hold_status)
-        _hbl.addWidget(self.hold_status)
-        _hbl.addWidget(h_strat_card); _hbl.addWidget(h_filter_card)
+        root.addWidget(self.hold_status)
 
-        self.hold_table = QTableWidget(0, 11)
+        # SPALTE 12 "Rating" (emm814): der Bewertungs-Balken wie im
+        # Bau-Scanner/Daytrade - gespeist aus _swing_quality (Volumen +
+        # below normal + Trend-Sicherheit), fallender Trend als Vorbehalt.
+        self.hold_table = QTableWidget(0, 13)
         self.hold_table.setShowGrid(False)
         self.hold_table.setIconSize(QSize(32, 32))
         self.hold_table.setHorizontalHeaderLabels(
             [t("Item"), t("Now (sell)"), t("Target price"),
              t("below normal %"), t("Trend"), t("Exp. profit/unit"),
              t("Exp. profit %"), t("Sell side %"), t("Ø daily vol"),
-             t("Recovery"), t("~Hold time")])
+             t("Recovery"), t("~Hold time"), t("vs 1Y low"), t("Rating")])
         hdr = self.hold_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, 11):
+        for col in range(1, 13):
             hdr.setSectionResizeMode(col, QHeaderView.Interactive)
+        # Balken braucht Platz fuer seinen Text - Autosize misst nur die
+        # (leere) Zelle darunter, deshalb eine feste Startbreite.
+        self.hold_table.setColumnWidth(12, 150)
         self.hold_table.horizontalHeaderItem(2).setToolTip(
             t("Target price = normal level the price is expected to recover to (for "
               "\u201eBelow build cost\u201c: the build cost). This is where you sell."))
@@ -6284,6 +7317,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
               "upward pace). \u201e?\u201c = only a weak/sideways drift, so especially "
               "uncertain. Falling items show \u201e\u2014\u201c (no recovery pace). Just a hint, no "
               "guarantee."))
+        self.hold_table.horizontalHeaderItem(11).setToolTip(
+            t("How far the current sell price is above the REAL 365-day low (the "
+              "daily low, not the window average) - 0 % = right at the yearly low. "
+              "Green \u2264 15 %, amber \u2264 50 %, red above that. Display is capped at "
+              "\u201e+500 %+\u201c (a single distorted history low can otherwise blow the raw "
+              "number up absurdly) - sorting still uses the real value. Already nudges "
+              "the ranking a little (all presets), independent of \u201ebelow normal %\u201c. "
+              "Items stuck WITHIN 15 % of this low for 2+ months straight are filtered "
+              "out entirely (falling knife, not a fresh dip) - see the funnel line above "
+              "if the list looks short. \u201e\u2013\u201c = not enough 1-year history yet."))
         self._make_columns_friendly(self.hold_table)
         self.hold_table.verticalHeader().setVisible(False)
         self.hold_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -6307,6 +7350,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                "sell order fills well; low = almost everything trades at buy "
                "orders, your sell order sits).",
             8: "Average units traded per day.",
+            11: "How far above the real 365-day low (not the window average) "
+                "the current price sits. 0 % = at the yearly low.",
+            12: "Rating: the same combined quality the list is ranked by – "
+                "discount and expected recovery profit, weighted by trend "
+                "safety, reliability and resale volume. A caveat (still "
+                "falling, suspected dump) beats a good number.",
         })
         # SPALTEN-VORGABE SWING (Nutzer, Sitzung 16, zweite Runde: "dann lass
         # den Swingtrade so aussehen"): Item · Now (sell) · Trend ·
@@ -6316,23 +7365,36 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # nirgends gespeichert wird und sonst beim Neustart verloren waere.
         # "~Hold time" ist bewusst RAUS (war vorher Vorgabe): er hat sie in
         # seiner Anordnung nicht dabei.
-        _SWING_STD = [0, 1, 4, 8, 3, 6]
+        # + 12 (Rating, emm814): der Bewertungs-Balken gehoert in die
+        # Vorgabe - ganz rechts, wie im Bau-Scanner und Daytrade.
+        _SWING_STD = [0, 1, 4, 8, 3, 6, 12]
         self._hold_spalten_btn, self._hold_col_acts = self._spalten_knopf(
             self.hold_table, set(_SWING_STD),
             [(1, t("Now (sell)")), (2, t("Target price")),
              (3, t("below normal %")), (4, t("Trend")),
              (5, t("Exp. profit/unit")), (6, t("Exp. profit %")),
              (7, t("Sell side %")), (8, t("Ø daily vol")),
-             (9, t("Recovery")), (10, t("~Hold time"))],
+             (9, t("Recovery")), (10, t("~Hold time")),
+             (11, t("vs 1Y low")), (12, t("Rating"))],
             t("Which columns are visible - the rest can be switched on."))
         _shdr = self.hold_table.horizontalHeader()
         for _ziel, _log in enumerate(_SWING_STD):
             _ist = _shdr.visualIndex(_log)
             if _ist != _ziel:
                 _shdr.moveSection(_ist, _ziel)
-        self._assemble_top_and_table(root, h_boxes, self.hold_table, "swing",
-                                     box_ratio=60,
-                                     spalten_btn=self._hold_spalten_btn)
+        # LISTE IN VOLLER BREITE UND HOEHE (emm814): Spalten-Knopf
+        # rechtsbuendig direkt ueber der Liste, dann die Tabelle; der
+        # unsichtbare Order-Tiefe-Kasten haengt dahinter im Vertikal-
+        # Strang (er baut weiter sel/spin/addb fuer den Einkaufswagen -
+        # ein Dutzend Stellen schreibt in diesen Kontext).
+        from PySide6.QtWidgets import QHBoxLayout as _QHB814
+        _sprow814 = _QHB814()
+        _sprow814.setContentsMargins(0, 0, 0, 0)
+        _sprow814.addStretch()
+        _sprow814.addWidget(self._hold_spalten_btn)
+        root.addLayout(_sprow814, 0)
+        root.addWidget(self.hold_table, 1)
+        self._build_ladder_panel(root, "swing")
         self.hold_table.itemSelectionChanged.connect(
             lambda: self._ladder_select("swing", self.hold_table))
 
@@ -6707,25 +7769,27 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _best = max(_best, _w)
         return _best
 
-    def _bau_te_factor(self):
+    def _bau_te_factor(self, override=None):
         """Fertigungs-Zeitfaktor OHNE Skills: Endprodukt-TE aus dem offenen
         Bauplan-Dialog (_bd_te, sonst globale Vorgabe) MAL dem eingebauten
         Struktur-Rollen-Zeitbonus (Raitaru −15 %, Azbel −20 %, Sotiyo −30 %). Die
         Skill-Zeit kommt PRO CHARAKTER im Runplaner (schedule_build) – deshalb hier
-        keine Skills, sonst würden sie doppelt zählen."""
+        keine Skills, sonst würden sie doppelt zählen.
+        `override` (emm720): Pro-Plan-Struktur-Wahl, nur vom Bauplan gereicht."""
         bp_te = getattr(self, "_bd_te", None)
         if bp_te is None:
             bp_te = self.settings.get("bau_te", 0)
         te_factor = max(0.02, (1 - float(bp_te or 0) / 100.0))
-        return te_factor * self._bau_role_time_factor_mfg()
+        return te_factor * self._bau_role_time_factor_mfg(override=override)
 
-    def _bau_te_factor_reaction(self):
+    def _bau_te_factor_reaction(self, override=None):
         """Reaktions-Zeitfaktor (0..1, kleiner = schneller) OHNE Skills (die kommen
         pro Char im Runplaner). Kombiniert den eingebauten Struktur-Rollen-Bonus
         (z.B. Tatara −25 % Reaktionszeit) mit dem Reactor-Rig-Zeitbonus – beides
         wurde vorher ignoriert (Faktor 1.0), weshalb Reaktionszeiten deutlich zu
-        lang berechnet wurden. In EVE wirken die Boni multiplikativ."""
-        react = self._struct_for_activity("reaction")
+        lang berechnet wurden. In EVE wirken die Boni multiplikativ.
+        `override` (emm720): Pro-Plan-Struktur-Wahl, nur vom Bauplan gereicht."""
+        react = self._struct_for_activity("reaction", override=override)
         if not react:
             return 1.0
         role_pct = self._STRUCT_ROLE_TIME.get(
@@ -6734,10 +7798,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         factor = (1.0 - role_pct / 100.0) * (1.0 - float(rig_pct or 0.0) / 100.0)
         return max(0.05, factor)
 
-    def _bau_role_time_factor_mfg(self):
+    def _bau_role_time_factor_mfg(self, override=None):
         """Fertigungs-Zeitfaktor aus dem Struktur-Rollen-Bonus (Sotiyo −30 %,
-        Azbel −20 %). Multiplikativ mit dem TE-Rig, das _bau_te_factor() liefert."""
-        mfg = self._struct_for_activity("manufacturing")
+        Azbel −20 %). Multiplikativ mit dem TE-Rig, das _bau_te_factor() liefert.
+        `override` (emm720): Pro-Plan-Struktur-Wahl, nur vom Bauplan gereicht."""
+        mfg = self._struct_for_activity("manufacturing", override=override)
         if not mfg:
             return 1.0
         role_pct = self._STRUCT_ROLE_TIME.get(
@@ -7309,6 +8374,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # sind, als etwas Falsches behaupten.
         fehler = []
         corp_info = []
+        fehler_bekannt = []     # Teilmenge von fehler: dezent zeigen (emm808)
         # BLAUPAUSEN IN LAUFENDEN JOBS GETRENNT MERKEN (emm507, Nutzer:
         # "Was ich allerdings habe ist Prophecy und Magnate Blueprint
         # Originale, diese sind jetzt aber im Kopiervorgang ingame" - der
@@ -7365,27 +8431,94 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # emm516 schrieb ihm eine ROTE Zeile, obwohl nichts fehlt).
                 # ECHTER FEHLSCHLAG (403/420, Token ohne Corp-Scope): der
                 # Besitz ist unvollstaendig -> `fehler`, Zeilen amber, keine
-                # Kaufliste. STRUKTURELL (kein Director in der Corp, kein
-                # Hangar angekreuzt): Eve MoMa schaut dort gar nicht nach -
-                # das ist keine Luecke im Besitz, sondern eine Lage. Sie
-                # steht dezent da (`_bd_bp_corp_info`), nie rot.
-                for _ft516 in (_cres516.get("failed") or []):
-                    fehler.append(str(_ft516))
-                for _rl516 in (_cres516.get("relink") or []):
-                    fehler.append(t("Corp hangar via {name} (re-link needed)")
-                                  .format(name=_rl516))
-                for _or516 in (_cres516.get("ohne_rolle") or []):
-                    corp_info.append(t("Corp hangar {name} (no Director role)")
-                                     .format(name=_or516))
-                if _cres516.get("keine_division"):
-                    corp_info.append(t("Corp hangar (no hangar division ticked)"))
+                # Kaufliste. STRUKTURELL (kein Hangar angekreuzt): Eve MoMa
+                # schaut dort gar nicht nach - das ist keine Luecke im
+                # Besitz, sondern eine Lage. Sie steht dezent da
+                # (`_bd_bp_corp_info`), nie rot.
+                # WELCHE LAGE WELCHE IST, ENTSCHEIDET EINE STELLE (emm743,
+                # Regel 9): `corp_bp_luecken` - dieselbe Funktion benutzt
+                # der Bestands-Worker. Dort steht auch, warum die fehlende
+                # Director-Rolle bei ANGEKREUZTEM Hangar seit emm743 als
+                # Luecke zaehlt und nicht mehr als Lage.
+                from .mw_helpers import corp_bp_luecken as _cbl743
+                _lk743, _lg743, _bk808 = _cbl743(_cres516)
+                fehler.extend(_lk743)
+                corp_info.extend(_lg743)
+                fehler_bekannt.extend(_bk808)
             except Exception as _cbe:
                 fehler.append(t("Corp"))
                 self._log_exception("Corp: Blaupausen (Bauplan)", str(_cbe))
         self._bd_bp_im_job = im_job
+        # BLAUPAUSEN IN EINEM OFFENEN VERTRAG (emm777). Dieselbe Lage wie
+        # emm507 ("im Kopiervorgang ingame"), nur ein anderer Grund: die
+        # Blaupause GEHOERT ihm, sie liegt nur gerade in einem Vertrag
+        # und steht deshalb in KEINER /blueprints/-Antwort - genau der
+        # Abend des 28.10., an dem acht Blaupausen rot als "completely
+        # missing" standen (emm745). Seit emm760 weiss Eve MoMa davon;
+        # der Blueprints-Reiter wusste es noch nicht.
+        # DERSELBE ABRUF-WEG wie in Stock locations (Regel 9): Scope
+        # vorab aus dem Token geprueft, nur Vertraege EIGENER Aussteller
+        # (was ein Fremder anbietet, gehoert ihm erst nach der Annahme).
+        _vbp777 = {}
+        _vfehl777 = []
+        try:
+            from .. import vertraege as _vt777
+            if client_id and chars:
+                _listen777 = []
+                for c in chars:
+                    _cid777 = int(c["character_id"])
+                    try:
+                        _sc777 = esi.granted_scopes(client_id, _cid777) or set()
+                    except Exception:
+                        _sc777 = set()
+                    if config.CONTRACTS_SCOPE not in _sc777:
+                        continue
+                    try:
+                        _listen777.append(esi.fetch_character_contracts(
+                            client_id, _cid777) or [])
+                    except Exception as _ve777:
+                        _vfehl777.append(str(c.get("character_name")
+                                             or _cid777))
+                        self._log_exception(
+                            "Blaupausen: Vertraege", str(_ve777))
+                _eig777 = [int(c["character_id"]) for c in chars]
+                _offen777 = {k: v for k, v
+                             in _vt777.offene_vertraege(_listen777).items()
+                             if _vt777.beteiligte(v, _eig777) == "aussteller"}
+                for _vid777, _v777 in sorted(_offen777.items()):
+                    try:
+                        _items777 = esi.fetch_character_contract_items(
+                            client_id, int(_v777.get("issuer_id") or 0),
+                            _vid777)
+                    except Exception as _ie777:
+                        _vfehl777.append("#%d" % _vid777)
+                        self._log_exception(
+                            "Blaupausen: Vertragsposten", str(_ie777))
+                        continue
+                    for _tid777, _n777 in _vt777.posten_aus_items(
+                            _items777).items():
+                        _vbp777[int(_tid777)] = (_vbp777.get(int(_tid777), 0)
+                                                 + int(_n777))
+        except Exception as _vg777:
+            self._log_exception("Blaupausen: Vertraege gesamt", str(_vg777))
+        self._bd_bp_im_vertrag = _vbp777
+        self._bd_bp_vertrag_fehler = _vfehl777
+        # EIN GESCHEITERTER VERTRAGSABRUF IST KEIN "LIEGT IN KEINEM VERTRAG"
+        # (emm777, dieselbe Fehlerklasse wie emm479/emm476): schlaegt der
+        # Abruf fehl, WEISS Eve MoMa nicht, ob die Blaupause gerade in einem
+        # Vertrag liegt - sie stuende dann wieder rot als "completely
+        # missing" da und wanderte in die Kaufliste. Deshalb geht der
+        # Fehlschlag in DIESELBE Liste wie der Blaupausen- und der
+        # Corp-Fehlschlag (Regel 9): amber "ownership not loaded", keine
+        # Kaufliste. Ein FEHLENDER Scope ist kein Fehlschlag, sondern eine
+        # Lage - der steht weiter oben als `continue` und landet hier nicht.
+        fehler.extend(_vfehl777)
         # EINE Stelle sagt, ob der Besitz vollstaendig ist (Regel 9) - gelesen
         # vom Blueprints-Reiter, nie aus einer zweiten Ableitung.
         self._bd_bp_fehler = fehler
+        # Teilmenge davon, die der Reiter DEZENT zeigt statt rot (emm808:
+        # fehlende Director-Rolle ist ein bekannter Dauerzustand).
+        self._bd_bp_fehler_bekannt = fehler_bekannt
         # Lage, kein Fehlschlag (emm517) - der Reiter zeigt sie dezent.
         self._bd_bp_corp_info = corp_info
         # merken=False (Build from stock, emm436): frischer Abruf OHNE den
@@ -7592,8 +8725,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         for t, bp_id in target_ids:
             bp_to_tid.setdefault(bp_id, []).append(t)
         target_bp_ids = set(bp_to_tid)
+        # emm633: component/reaction zaehlen AUCH im_job (Deckel soll nicht
+        # schwanken, nur je Job-Start/-Ende); "end" bleibt frei-only.
+        match_pool = owned_bp
+        if stage in ("component", "reaction"):
+            _ij633 = getattr(self, "_bd_bp_im_job", None) or {}
+            if _ij633:
+                match_pool = list(owned_bp) + [b for _l in _ij633.values()
+                                                for b in _l]
         all_matches = {bp_id: [] for bp_id in target_bp_ids}
-        for b in owned_bp:
+        for b in match_pool:
             bid = b.get("type_id")
             if bid in target_bp_ids:
                 all_matches[bid].append(b)
@@ -7868,7 +9009,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         for _akey, _lab in self._STRUCT_ACTIVITIES:
             if _akey in stufen:
                 continue                 # Plan hat fuer diese Stufe entschieden
-            _s = self._struct_for_activity(_akey)
+            # emm720: dieser Rueckfall fragt fuer DIESEN Plan - also gilt
+            # auch hier seine eigene Struktur-Wahl (Invention-Override).
+            _s = self._struct_for_activity(
+                _akey, override=getattr(self, "_bd_struct_override", None))
             if _s and id(_s) not in seen:
                 seen.add(id(_s))
                 out.append(_s)
@@ -9365,7 +10509,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         return {"strukturen": strukturen, "rig_ec": rig_ec, "basis": basis,
                 "stufe": lambda t0: self._bau_stufe_fuer_item(t0, rp, sm, None)}
 
-    def _bau_jobcost_opts(self):
+    def _bau_jobcost_opts(self, override=None):
         """Parameter der Job-Kosten-Formel. Index, Steuer und Rollenbonus
         kommen aus der Struktur, die fuer die JEWEILIGE Aktivitaet gewaehlt
         wurde (Fertigung/Reaktion koennen verschiedene sein); Rueckfall sind
@@ -9373,7 +10517,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         Frueher kam alles aus der "Standard-Struktur" - und die ist, wenn
         nichts fest zugewiesen ist, einfach die ERSTE der Liste. Beim Nutzer
         war das eine Struktur ohne EVE-Verknuepfung, wodurch weder ihre
-        Steuer noch der System-Index je ankamen."""
+        Steuer noch der System-Index je ankamen.
+
+        `override` (emm720): Pro-Plan-Struktur-Wahl des offenen Bauplans -
+        NUR der Bauplan-Rechenweg reicht sie herein. My Blueprints und der
+        Bau-Scan rufen ohne und rechnen weiter mit dem Structures-Tab."""
         idx_mfg = float(self.settings.get("bau_mfg_index", 0.0))
         # PUNKT D: bei JEDEM Lauf leeren - sonst behauptet die Warnzeile eine
         # Leihgabe, die aus einer frueheren Rechnung stammt.
@@ -9454,7 +10602,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                Index\" unterscheiden kann statt beides gleich zu nennen.
             """
             _key = "reaction" if _act == "reaction" else "manufacturing"
-            _zug = self._struct_for_activity(_act)
+            _zug = self._struct_for_activity(_act, override=override)
             if _zug is not None:
                 _sid = _sys_id_of(_zug)
                 _ci = ((cache or {}).get(int(_sid), {}) or {}) if _sid else {}
@@ -9481,7 +10629,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             return _v
 
         def _ftax_of(_act):
-            _st = self._struct_for_activity(_act)
+            _st = self._struct_for_activity(_act, override=override)
             if _st and _st.get("facility_tax") is not None:
                 return float(_st.get("facility_tax") or 0.0)
             return ftax
@@ -9492,7 +10640,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # aus. Damit kommen Rigs, ME, TE, Steuer UND Job-Bonus aus DERSELBEN
         # Struktur - vorher waren es zwei verschiedene Quellen.
         def _rbonus_of(_act):
-            _st = self._struct_for_activity(_act)
+            _st = self._struct_for_activity(_act, override=override)
             _typ = ((_st or {}).get("type") or "").lower()
             return self._STRUCT_ROLE_JOBCOST.get(_typ, 0.0) / 100.0
         return {
@@ -9610,7 +10758,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         return best * secmult
 
     def _bau_best_struct(self, activity, ids, groups, reaction_products,
-                         stage_map=None, endprodukt=None, diag=True):
+                         stage_map=None, endprodukt=None, diag=True,
+                         override=None):
         """Struktur für eine Bau-STUFE. Explizit zugewiesen → respektieren.
         Sonst „Auto": die Struktur mit dem größten ME-Gesamtnutzen für GENAU
         die Bauteile dieser Stufe (nicht nach pauschalem Prozent) - NUR unter
@@ -9641,6 +10790,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Auch hier gilt: unmoegliche Zuweisung schlaegt NICHTS (Sitzung 19).
             if _fest is not None and not self._struct_kann(_fest, activity):
                 _fest = None
+        # PRO-PLAN-OVERRIDE SCHLAEGT DIE GLOBALE ZUWEISUNG (emm720). Kommt
+        # nur aus den Bauplan-Aufrufern (_bau_me_maps mit use_dialog_me bzw.
+        # die Karten-Schaetzung mit dem Plan-eigenen Override); Scanner und
+        # My Blueprints rufen ohne - deren Wahl bleibt unberuehrt.
+        _fest_plan = False
+        _ov = self._bd_override_struct(override, activity)
+        if _ov is not None:
+            _fest = _ov
+            _fest_plan = True
         fit_key = self._STUFE_FIT.get(activity, activity)
         structs = [s for s in structs if fit_key in
                   self._STRUCT_TYPE_FIT.get(s.get("type", ""), (set(), ""))[0]]
@@ -9696,7 +10854,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if not hasattr(self, "_bd_struct_diag"):
                 self._bd_struct_diag = {}
             self._bd_struct_choice[activity] = (
-                ([(t("{name} (fixed assignment)").format(
+                ([(t("{name} (this plan)" if _fest_plan
+                     else "{name} (fixed assignment)").format(
                        name=_fest.get('name', '?')),
                    round(benefit(_fest), 2))] if _fest is not None else [])
                 + [(x.get("name", "?"), round(benefit(x), 2))
@@ -9745,7 +10904,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     }
 
     def _bau_me_maps(self, ids, groups, reaction_products, cat_me_map=None,
-                     type_id=None, use_dialog_me=True, recipes=None):
+                     type_id=None, use_dialog_me=True, recipes=None,
+                     override=None):
         """Pro Item die effektive ME% (Kategorie-Basis-ME + passender Struktur-Rig).
         Endprodukt (type_id) nutzt weiterhin die Blueprint-ME-Eingabe oben im
         Dialog; alle anderen Items ihre Kategorie-Basis aus cat_me_map (Komponenten/
@@ -9796,7 +10956,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             st_map[_stufe] = self._bau_best_struct(
                 _stufe, ids, groups, reaction_products,
                 stage_map=stage_map,
-                endprodukt=self._bd_enden(type_id, _rec9) if type_id is not None else None
+                endprodukt=self._bd_enden(type_id, _rec9) if type_id is not None else None,
+                override=override           # emm720: Pro-Plan-Wahl gewinnt
             ) if structs else None
         ec_me = {k: (self._STRUCT_ROLE_ME.get((v or {}).get("type", ""), 0.0)
                      if v else 0.0)
@@ -9838,6 +10999,168 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         used["manufacturing"] = st_map.get("components")
         used["reaction"] = st_map.get("reaction_2") or st_map.get("reaction_1")
         return me_map, me_map_reaction, rig_me_map, used, ec_me_map
+
+    def _bau_struct_opts_anwenden(self, ids, groups, recipes, type_id, opts,
+                                  cat_me_map, override=None):
+        """Der struktur-abhaengige Teil der Plan-Optionen, IN EINER Methode
+        (emm720). Stand vorher inline im Oeffnen-Job von open_build_detail;
+        herausgeloest, damit der Pro-Plan-Struktur-Override (Dropdowns in
+        der Bauplan-Seitenleiste) im OFFENEN Dialog ueber exakt denselben
+        Rechenweg angewendet werden kann statt ueber eine zweite, driftende
+        Ableitung (Regel 9 - genau daran ist der Falcon gescheitert).
+
+        Setzt in `opts`: me_map/me_map_reaction/me/me_reaction/rig_me_map/
+        ec_me_map, te_factor, cost_rig_mfg/system_index_mfg,
+        cost_rig_reaction/system_index_reaction, sci_index_invention/
+        sci_index_copying, jobcost_by_tid, te_by_tid - und ohne Strukturen
+        nur me_map=cat_me_map (unveraendertes Verhalten).
+        Spiegelt wie bisher nach self: _bd_rig_me_map, _bd_struct_used,
+        _bd_mfg_struct, _bd_react_struct, _bd_stage_structs."""
+        struct_on = bool(self.settings.get("bau_structures"))
+        me_bp = getattr(self, "_bd_me", None)
+        if me_bp is None:
+            me_bp = int(self.settings.get("bau_me", 10))
+        self._bd_rig_me_map = {}
+        self._bd_struct_used = {}
+        self._bd_mfg_struct = None
+        self._bd_react_struct = None
+        if not struct_on:
+            opts["me_map"] = cat_me_map        # Kategorie-ME auch ohne Struktur
+            return
+        me_map, me_map_reaction, rig_me_map, used, ec_me_map = self._bau_me_maps(
+            list(ids), groups, recipes.reaction_products, cat_me_map,
+            type_id, recipes=recipes, override=override)
+        opts["me_map"] = me_map
+        opts["me_map_reaction"] = me_map_reaction
+        opts["me"] = me_bp                     # Fallback: nur Blueprint-ME
+        opts["me_reaction"] = 0
+        self._bd_rig_me_map = rig_me_map
+        opts["rig_me_map"] = rig_me_map
+        opts["ec_me_map"] = ec_me_map          # EC-Rollenbonus fuer invented Items
+        # TE / System-Index / Cost-Rig aus den gewählten Strukturen.
+        # getattr statt Direktzugriff: der Oeffnen-Job laedt _bau_cost_idx
+        # eine Zeile vor dem alten Inline-Block; der Dialog-Handler
+        # (_bd_struct_override_anwenden) kommt NACH dem Oeffnen, da liegt er
+        # laengst - aber eine Methode verlaesst sich nicht auf die
+        # Aufruf-Reihenfolge ihrer Nachbarn.
+        cidx = getattr(self, "_bau_cost_idx", None) or {}
+        mfg_s = used.get("manufacturing"); rea_s = used.get("reaction")
+        self._bd_mfg_struct = mfg_s     # für Kategorie-TE pro Item im Runplaner
+        self._bd_react_struct = rea_s
+        # JE STUFE die wirklich gewaehlte Struktur merken. _bd_mfg_struct
+        # ist die KOMPONENTEN-Struktur (used["manufacturing"] =
+        # st_map["components"]) - wer sie fuer "1. Treibstoff" oder
+        # "5. Endprodukt" anzeigt, schreibt dort einen falschen Namen
+        # hin. Genau daran hing die Simurgh-Frage: der Runplaner zeigte
+        # dreimal "Dockside", obwohl fuers Endprodukt intern eine
+        # andere Struktur gewaehlt sein kann.
+        self._bd_stage_structs = {
+            k: used.get(k) for k in
+            ("components", "endproduct", "reaction_1", "reaction_2")}
+
+        def _sys_idx(s, act):
+            sid = (s or {}).get("system_id")
+            return float((cidx.get(int(sid), {}) or {}).get(act, 0.0) or 0.0) \
+                if sid else 0.0
+        if mfg_s:
+            opts["te_factor"] = self._bau_struct_te_factor(mfg_s)
+            opts["cost_rig_mfg"] = self._struct_cost_rig_pct(mfg_s)
+            opts["system_index_mfg"] = _sys_idx(mfg_s, "manufacturing")
+        if rea_s:
+            opts["cost_rig_reaction"] = self._struct_cost_rig_pct(rea_s)
+            opts["system_index_reaction"] = _sys_idx(rea_s, "reaction")
+        if mfg_s:
+            # Science-Indizes aus dem System der Fertigungs-Struktur
+            # (v1, s. industry.science_job_fee) - Invention und
+            # Kopieren haben im selben System EIGENE Indizes.
+            opts["sci_index_invention"] = _sys_idx(mfg_s, "invention")
+            opts["sci_index_copying"] = _sys_idx(mfg_s, "copying")
+        # JE-ITEM-WERTE an die Rechnung durchreichen (Sitzung 9,
+        # Simurgh): te_factor/system_index/cost_rig/role_bonus/
+        # facility_tax oben sind je AKTIVITAET pauschal und stammen
+        # auf der Fertigungsseite aus mfg_s - also aus der
+        # KOMPONENTEN-Struktur. Wird das Endprodukt in einer anderen
+        # Struktur gebaut, waren Zeit und Jobkosten dort falsch.
+        # Die MATERIAL-Rechnung war nie betroffen (rig_me_map lief
+        # schon je Item ueber die richtige Stufen-Struktur).
+        try:
+            _sm9 = industry.reaction_stage_map(recipes)
+        except Exception:
+            _sm9 = {}
+        _jc_by_tid = {}
+        _te_by_tid = {}
+        for _t9 in ids:
+            _s9 = self._bau_struct_fuer_item(
+                _t9, recipes.reaction_products, _sm9, type_id)
+            if not _s9:
+                continue
+            _is_re9 = _t9 in recipes.reaction_products
+            _act9 = "reaction" if _is_re9 else "manufacturing"
+            _typ9 = (_s9.get("type") or "").lower()
+            _jc_by_tid[_t9] = {
+                "system_index": _sys_idx(_s9, _act9),
+                "cost_rig": self._struct_cost_rig_pct(_s9),
+                "role_bonus": self._STRUCT_ROLE_JOBCOST.get(
+                    _typ9, 0.0) / 100.0,
+                "facility_tax": float(
+                    _s9.get("facility_tax")
+                    if _s9.get("facility_tax") is not None
+                    else self.settings.get("bau_facility_tax", 0.25)
+                ) / 100.0,
+            }
+            _te_by_tid[_t9] = self._bau_category_te_factor(
+                _t9, groups, recipes.reaction_products, type_id,
+                mfg_struct=_s9, react_struct=_s9, recipes=recipes,
+                opts=opts)
+        opts["jobcost_by_tid"] = _jc_by_tid
+        opts["te_by_tid"] = _te_by_tid
+        assigned = self.settings.get("bau_activity_struct", {}) or {}
+        # Zweites Element = "fest gewaehlt?" - seit emm720 auch wahr, wenn
+        # der PLAN die Stufe selbst festlegt (Override), nicht nur bei der
+        # globalen Zuweisung aus dem Structures-Tab.
+        _ov = override or {}
+        self._bd_struct_used = {
+            "manufacturing": ((mfg_s or {}).get("name"),
+                              bool(assigned.get("manufacturing"))
+                              or bool(_ov.get("components"))),
+            "reaction": ((rea_s or {}).get("name"),
+                         bool(assigned.get("reaction"))
+                         or bool(_ov.get("reaction_1")
+                                 or _ov.get("reaction_2"))),
+        }
+
+    def _bd_struct_override_anwenden(self):
+        """Wendet den Pro-Plan-Struktur-Override auf die GECACHTEN
+        Plan-Optionen des OFFENEN Dialogs an (emm720) - derselbe Rechenweg
+        wie beim Oeffnen (_bau_struct_opts_anwenden plus die pauschalen
+        Jobkosten-/TE-Vorgaben), nur auf self._bd_opts, damit rebuild()
+        sofort mit den neuen Strukturen rechnet statt erst beim naechsten
+        Oeffnen. False, wenn noch kein Plan-Kontext da ist (Dialog gerade
+        im Aufbau) - dann kommt der Override beim regulaeren Rechenlauf an.
+        """
+        recipes = getattr(self, "_bd_recipes", None)
+        opts = getattr(self, "_bd_opts", None)
+        if recipes is None or opts is None:
+            return False
+        type_id = getattr(self, "_bd_type", None)
+        ids = list(getattr(self, "_bd_me_ids", None)
+                   or getattr(self, "_bd_all_ids", None) or [])
+        groups = getattr(self, "_bd_groups", None) or {}
+        ov = getattr(self, "_bd_struct_override", None) or None
+        # Pauschal-Vorgaben wie im Oeffnen-Job (dort VOR dem Struktur-Block
+        # gesetzt; der Block ueberschreibt sie, wo Strukturen gewaehlt sind).
+        opts.update(self._bau_jobcost_opts(override=ov))
+        opts["te_factor"] = self._bau_te_factor(override=ov)
+        opts["te_factor_reaction"] = self._bau_te_factor_reaction(override=ov)
+        cat_me_map = self._bau_category_me_map(
+            ids, groups, recipes.reaction_products, type_id, recipes=recipes)
+        self._bau_struct_opts_anwenden(ids, groups, recipes, type_id, opts,
+                                       cat_me_map, override=ov)
+        # Plan- und Baum-Cache verwerfen: deren Fingerabdruck haengt an den
+        # opts, aber sicher ist sicher - die Wahl des Nutzers MUSS rechnen.
+        self._bd_plan_cache = None
+        self._bd_tree_cache = None
+        return True
 
     def _combo_select(self, combo, data):
         for i in range(combo.count()):
@@ -10226,6 +11549,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if ladezeit.AN:
             ladezeit.ui_start(f"open build plan: {name}")
             self._ladezeit_warten()
+        # SPERRE ZUERST (emm742, s. _bauplan_sperre_meldung): unten werden
+        # die geteilten _bd_*-Felder zurueckgesetzt bzw. umgestellt - das
+        # darf nicht passieren, solange ein Fenster offen ist. Legitimes
+        # Neu-Oeffnen (Reset, Buendel-Umbau) schliesst seinen Dialog vorher,
+        # dann ist hier nichts mehr offen.
+        if self._bauplan_sperre_meldung():
+            return
         if not industry.sde_ready():
             self.build_status.setText(t("Run \u201eLoad recipes\u201c first."))
             return
@@ -10253,6 +11583,19 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._bd_manual_meta_pending = None
             # erzwingt unten den Zuruecksetz-Zweig, auch bei GLEICHEM Item
             self._bd_bp_type = None
+            # HERKUNFT DES PLANS (emm716, Nutzer 25.10.2026: "wenn ich
+            # Vagabond ueber 'new Buildplan' oeffne ... ist standard direkt
+            # own bpc angehackt - das sollte nicht sein ... Ein frischer
+            # neuer Plan halt"). Der Auto-Haken (emm712) darf NUR greifen,
+            # wenn der Plan per Rechtsklick aus My Blueprints auf eine
+            # EIGENE Kopie geoeffnet wurde - dort ist "ich besitze die BPC"
+            # die ausdrueckliche Ausgangslage. Sidebar/Scanner oeffnen
+            # dagegen einen neutralen Plan: Invention offen, Standardwerte.
+            # `_bp_menu` legt die Marke als Pending ab; hier wird sie fuer
+            # die Lebensdauer DIESES Plans uebernommen und verbraucht.
+            self._bd_obpc_quelle_mybp = bool(
+                getattr(self, "_bd_obpc_quelle_mybp_pending", False))
+            self._bd_obpc_quelle_mybp_pending = False
         # Blaupausen-Einstellungen sind pro Bauplan → bei Item-Wechsel zurücksetzen
         # (bei „Neu berechnen“ desselben Items bleiben sie erhalten). Ein neuer
         # Bauplan (anderes Item, kein geladener gespeicherter Plan) startet IMMER
@@ -10322,6 +11665,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self._bd_dec_bestaetigt = set()  # neuer Plan -> Decryptor-Warnung scharf
                 self._bd_manual_attempts = {}   # neuer Plan -> keine alte manuelle Versuchszahl
                 self._bd_own_bpc = False        # neuer Plan -> Invention-Tab wieder aktiv
+                # emm712: neuer Plan -> die Haken-Automatik darf wieder
+                # EINMAL greifen (sie setzt den Merker danach selbst).
+                self._bd_own_bpc_auto = False
                 self._bd_own_bpc_runs = 0       # neuer Plan -> Runs/BPC-Feld zurückgesetzt
                 self._bd_invention_char = 0     # neuer Plan -> wieder "Bester automatisch"
                 self._bd_inv_split = {}         # neuer Plan -> Invention-Regler ganz links (emm328)
@@ -10329,6 +11675,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # zeigten Science-Block und Gesamtzeile beim naechsten Plan
                 # (ohne eigenen Invention-Tab-Aufbau) die alten Blaupausen.
                 self._bd_invention_needs = {}
+                # emm637: dieselbe Regel - was der VORIGE Plan als
+                # "Invention erledigt" wusste, gilt hier nicht.
+                self._bd_inv_gedeckt = set()
                 self._bd_end_bpc_esi = None      # neuer Plan -> ESI-Blaupausen-Ladestand weg
                 self._bd_me_manuell = False      # neuer Plan -> ME/TE wieder aus ESI vorbelegen
                 # NEUER PLAN = STANDARDEINSTELLUNG (Nutzer, Sitzung 20).
@@ -10369,6 +11718,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # (`_bd_bp_type = None` oben), ein zweiter Ruecksetzer dort
                 # war doppelt - die Rotprobe meldete ihn als BLIND.
                 self._bd_runplan_ziel = {"std": 0, "stufen": {}}
+                # emm720: ein neuer Plan folgt dem Structures-Tab - keine
+                # geerbte Pro-Plan-Struktur-Wahl des vorigen Plans.
+                self._bd_struct_override = {}
+                # emm722: ... und keine geerbten Kauf-Hubs, Hub-Frachten
+                # oder Hub-Orderbuecher.
+                self._bd_buy_hub_a = None
+                self._bd_buy_hub_b = None
+                self._bd_buy_hub_c = None
+                self._bd_buy_hub_fracht = {}
+                self._bd_buy_hub_seite = {}
+                self._bd_multi_hub_an = False
+                self._bd_mh_stand = {}
                 self._bd_frozen = None          # neuer Plan -> nicht eingefroren
                 # Verkaufscharakter: bester (guenstigste Gesamtgebuehr).
                 # Standard-Verkaufsort = der Hub oben (emm437, Discord elglebo:
@@ -10566,9 +11927,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         opts["inv_confidence"] = self._bd_inv_confidence()
         opts["inv_skill_modifier"] = self._resolve_inv_skill_modifiers()
         opts["inv_owned_runs"] = self._resolve_inv_owned_runs()
-        opts.update(self._bau_jobcost_opts())
-        opts["te_factor"] = self._bau_te_factor()            # Zeit: BP-TE × Rig
-        opts["te_factor_reaction"] = self._bau_te_factor_reaction()
+        # emm720: die Pro-Plan-Struktur-Wahl des (ggf. geladenen) Plans gilt
+        # auch fuer die pauschalen Jobkosten-/TE-Vorgaben - der Dialog ist
+        # der EINZIGE Aufrufer, der sie hereinreicht (Scanner/My Blueprints
+        # rufen ohne, s. _bd_override_struct).
+        _ov720 = getattr(self, "_bd_struct_override", None) or None
+        opts.update(self._bau_jobcost_opts(override=_ov720))
+        opts["te_factor"] = self._bau_te_factor(override=_ov720)   # Zeit: BP-TE × Rig
+        opts["te_factor_reaction"] = self._bau_te_factor_reaction(override=_ov720)
         self.build_status.setText(t("Calculating build plan for {name} \u2026").format(name=name))
 
         def job():
@@ -10630,12 +11996,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # Wochen später sieht: "damals für X gekauft -> heute für Y
                 # verkaufbar = Gewinn Z". (JSON macht aus Dict-Keys Strings ->
                 # beim Lesen zurück auf int.)
-                _live_sell = pm.get(type_id)
-                pm = {int(k): v for k, v in (_frozen.get("prices") or {}).items()}
-                if _enden_mb:
-                    _live_sell = self._multi_buendel_verkauf(pm, _enden_mb)
-                if _live_sell and _live_sell > 0:
-                    pm[type_id] = _live_sell
+                # SEIT emm761 in EINER Stelle (_frozen_verkaufs_pm): beim
+                # BUENDEL wurde der "live"-Verkauf hier NACH dem Ersetzen der
+                # Tabelle summiert - also aus den EINGEFRORENEN Preisen. Das
+                # Fenster lag damit 197,9M ueber der Karte (sein "ghost
+                # betrag", 29.10.2026); jetzt bleiben auch die ENDEN live.
+                pm = self._frozen_verkaufs_pm(
+                    pm, _frozen.get("prices") or {}, type_id, _enden_mb)
                 _fadj = {int(k): v for k, v in (_frozen.get("adjusted") or {}).items()}
                 if _fadj:
                     adj = _fadj
@@ -10793,105 +12160,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if _u_neu:
                     ids |= _u_neu
                     groups.update(industry.group_names(list(_u_neu)))
-            # Kategorie-spezifische Rig-ME pro Item + Auto-Strukturwahl (nur mit Strukturen)
-            self._bd_rig_me_map = {}
-            self._bd_struct_used = {}
-            self._bd_mfg_struct = None
-            self._bd_react_struct = None
-            if struct_on:
-                me_map, me_map_reaction, rig_me_map, used, ec_me_map = self._bau_me_maps(
-                    list(ids), groups, recipes.reaction_products, cat_me_map,
-                    type_id, recipes=recipes)
-                opts["me_map"] = me_map
-                opts["me_map_reaction"] = me_map_reaction
-                opts["me"] = me_bp                     # Fallback: nur Blueprint-ME
-                opts["me_reaction"] = 0
-                self._bd_rig_me_map = rig_me_map
-                opts["rig_me_map"] = rig_me_map
-                opts["ec_me_map"] = ec_me_map          # EC-Rollenbonus fuer invented Items
-                # TE / System-Index / Cost-Rig aus den gewählten Strukturen
-                cidx = self._bau_cost_idx or {}
-                mfg_s = used.get("manufacturing"); rea_s = used.get("reaction")
-                self._bd_mfg_struct = mfg_s     # für Kategorie-TE pro Item im Runplaner
-                self._bd_react_struct = rea_s
-                # JE STUFE die wirklich gewaehlte Struktur merken. _bd_mfg_struct
-                # ist die KOMPONENTEN-Struktur (used["manufacturing"] =
-                # st_map["components"]) - wer sie fuer "1. Treibstoff" oder
-                # "5. Endprodukt" anzeigt, schreibt dort einen falschen Namen
-                # hin. Genau daran hing die Simurgh-Frage: der Runplaner zeigte
-                # dreimal "Dockside", obwohl fuers Endprodukt intern eine
-                # andere Struktur gewaehlt sein kann.
-                self._bd_stage_structs = {
-                    k: used.get(k) for k in
-                    ("components", "endproduct", "reaction_1", "reaction_2")}
-
-                def _sys_idx(s, act):
-                    sid = (s or {}).get("system_id")
-                    return float((cidx.get(int(sid), {}) or {}).get(act, 0.0) or 0.0) \
-                        if sid else 0.0
-                if mfg_s:
-                    opts["te_factor"] = self._bau_struct_te_factor(mfg_s)
-                    opts["cost_rig_mfg"] = self._struct_cost_rig_pct(mfg_s)
-                    opts["system_index_mfg"] = _sys_idx(mfg_s, "manufacturing")
-                if rea_s:
-                    opts["cost_rig_reaction"] = self._struct_cost_rig_pct(rea_s)
-                    opts["system_index_reaction"] = _sys_idx(rea_s, "reaction")
-                if mfg_s:
-                    # Science-Indizes aus dem System der Fertigungs-Struktur
-                    # (v1, s. industry.science_job_fee) - Invention und
-                    # Kopieren haben im selben System EIGENE Indizes.
-                    opts["sci_index_invention"] = _sys_idx(mfg_s, "invention")
-                    opts["sci_index_copying"] = _sys_idx(mfg_s, "copying")
-                # JE-ITEM-WERTE an die Rechnung durchreichen (Sitzung 9,
-                # Simurgh): te_factor/system_index/cost_rig/role_bonus/
-                # facility_tax oben sind je AKTIVITAET pauschal und stammen
-                # auf der Fertigungsseite aus mfg_s - also aus der
-                # KOMPONENTEN-Struktur. Wird das Endprodukt in einer anderen
-                # Struktur gebaut, waren Zeit und Jobkosten dort falsch.
-                # Die MATERIAL-Rechnung war nie betroffen (rig_me_map lief
-                # schon je Item ueber die richtige Stufen-Struktur).
-                try:
-                    _sm9 = industry.reaction_stage_map(recipes)
-                except Exception:
-                    _sm9 = {}
-                _jc_by_tid = {}
-                _te_by_tid = {}
-                for _t9 in ids:
-                    _s9 = self._bau_struct_fuer_item(
-                        _t9, recipes.reaction_products, _sm9, type_id)
-                    if not _s9:
-                        continue
-                    _is_re9 = _t9 in recipes.reaction_products
-                    _act9 = "reaction" if _is_re9 else "manufacturing"
-                    _typ9 = (_s9.get("type") or "").lower()
-                    _jc_by_tid[_t9] = {
-                        "system_index": _sys_idx(_s9, _act9),
-                        "cost_rig": self._struct_cost_rig_pct(_s9),
-                        "role_bonus": self._STRUCT_ROLE_JOBCOST.get(
-                            _typ9, 0.0) / 100.0,
-                        "facility_tax": float(
-                            _s9.get("facility_tax")
-                            if _s9.get("facility_tax") is not None
-                            else self.settings.get("bau_facility_tax", 0.25)
-                        ) / 100.0,
-                    }
-                    _te_by_tid[_t9] = self._bau_category_te_factor(
-                        _t9, groups, recipes.reaction_products, type_id,
-                        mfg_struct=_s9, react_struct=_s9, recipes=recipes,
-                        opts=opts)
-                opts["jobcost_by_tid"] = _jc_by_tid
-                opts["te_by_tid"] = _te_by_tid
-                assigned = self.settings.get("bau_activity_struct", {}) or {}
-                self._bd_struct_used = {
-                    "manufacturing": ((mfg_s or {}).get("name"),
-                                      bool(assigned.get("manufacturing"))),
-                    "reaction": ((rea_s or {}).get("name"),
-                                 bool(assigned.get("reaction"))),
-                }
-                tree = industry.build_tree(type_id, pm.get, recipes, opts)  # Baum m. me_map
-            else:
-                opts["me_map"] = cat_me_map            # NEU: Kategorie-ME auch ohne Struktur
-                tree = industry.build_tree(type_id, pm.get, recipes, opts)
+            # Kategorie-spezifische Rig-ME pro Item + Auto-Strukturwahl (nur
+            # mit Strukturen). Der ganze struktur-abhaengige Options-Block
+            # steht seit emm720 in EINER Methode (_bau_struct_opts_anwenden),
+            # damit der Pro-Plan-Struktur-Override im OFFENEN Dialog ueber
+            # exakt denselben Rechenweg angewendet werden kann (Regel 9) -
+            # vorher stand er nur hier inline und ein Dropdown-Wechsel haette
+            # eine zweite, driftende Ableitung gebraucht.
+            self._bd_me_ids = set(ids)       # emm720: Kontext fuer den Dialog
+            self._bau_struct_opts_anwenden(
+                list(ids), groups, recipes, type_id, opts, cat_me_map,
+                override=(getattr(self, "_bd_struct_override", None) or None))
+            tree = industry.build_tree(type_id, pm.get, recipes, opts)  # Baum m. me_map
             # EINGEFROREN = auch der PLAN ist eingefroren (Nutzer-Spez):
             # Entscheidungen, Mengen und Runplaner kommen aus dem Schnappschuss
             # vom Einfrier-Zeitpunkt - production_plan wird NICHT aufgerufen
@@ -10936,6 +12216,21 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 _d = plan.get(_k) or {}
                 if isinstance(_d, dict):
                     ids |= {int(x) for x in _d}
+            # BUILD_MATS NACHZIEHEN (emm700, Nutzer-Screenshot 25.10.2026:
+            # Materialien-Tab zeigte "#11530" etc. unter "Components"/
+            # "Composite Reactions"). `build_mats[tid]` ist eine Liste
+            # (zutat_id, menge_je_run) PRO gebautem Item (tid selbst steht
+            # schon ueber build_runs im Set) - die ZUTAT-IDs darin sind die
+            # Zwischenprodukt-Reaktanten, die weder im tiefenbegrenzten Baum
+            # noch in den PLAN_QTY_KEYS auftauchen, wenn sie vollstaendig aus
+            # eigenem Bau gedeckt sind (also nie in buy/stock_used stehen).
+            for _tid_bm, _zutaten_bm in (plan.get("build_mats") or {}).items():
+                try:
+                    ids.add(int(_tid_bm))
+                    for _m_bm, _q_bm in (_zutaten_bm or ()):
+                        ids.add(int(_m_bm))
+                except (TypeError, ValueError):
+                    continue
             # Kandidaten-Erze VOR der Namensaufloesung dazu: `kandidaten()`
             # erkennt komprimierte Erze am Namen.
             if opts.get("reprocess"):
@@ -10983,9 +12278,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
                         def _ladder_orderbook_fn(mtid):
                             try:
-                                ob = self._hub_orders(int(mtid), _l_region,
-                                                      _l_station, _l_struct)
-                                return ob.get("sell", [])
+                                # emm722: dieselbe Kauf-Leiter wie "Neu
+                                # berechnen" - Multi-Hub-bewusst (Regel 9).
+                                return self._bd_kauf_leiter(
+                                    int(mtid), _l_region, _l_station,
+                                    _l_struct)
                             except Exception:
                                 return []
                         ladder_rows = industry.ladder_cost_curve(
@@ -11023,6 +12320,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                    "sell_is_contract": sell_is_contract, "plan": plan}
 
         def done(res):
+            # ZUERST DAS LADE-SCHLOSS AUF (emm746) - sonst sperrt sich
+            # dieser Lauf im eigenen `_show_build_detail` selbst aus.
+            self._bd_lade_frei()
             self.build_status.setText("")
             if not res["tree"]:
                 QMessageBox.information(self, t("Build plan"),
@@ -11032,8 +12332,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._show_build_detail(type_id, name, res)
 
         def fail(msg):
+            self._bd_lade_frei()                      # emm746
             self.build_status.setText(t("Build plan error: ") + msg)
-        self._run(Worker(job), done, fail_cb=fail,
+        # LADE-SCHLOSS ZU, BEVOR DER WORKER LAEUFT (emm746). Ab hier
+        # schreibt `job()` aus einem eigenen Faden in die geteilten
+        # _bd_*-Felder - ein zweiter Oeffnen-Vorgang darf jetzt nicht mehr
+        # starten. Begruendung und Nachweis in `_bd_lade_zu`.
+        _w746 = Worker(job)
+        self._bd_lade_zu(name, _w746)
+        self._run(_w746, done, fail_cb=fail,
                   label=t("Build plan {name} \u2026").format(name=name))
 
     def _bd_ladder_ctx(self, qty):
@@ -11192,6 +12499,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             return ("?", -1e18) if hat_produkt else ("–", -1e18)
         return (f"{wert:+,.0f} %".replace(",", "'"), float(wert))
 
+    @staticmethod
+    def _vs_low_zelle(vs_low_pct):
+        """(Text, Sortierwert) fuer die 'vs 1Y low'-Spalte (emm606/emm608).
+        None = keine 365-Tage-Historie verfuegbar - ans Ende sortiert statt
+        bei 0, damit es nicht wie 'am Jahrestief' aussieht. emm608 (Nutzer:
+        "0 % aber auch 1,6mio %" - ein verrutschter Einzel-Tiefstwert in der
+        History laesst (sell-low)/low sonst explodieren): Anzeige ab 500 %
+        gedeckelt mit "+", der echte Wert bleibt aber der Sortierwert, damit
+        "weit vom Tief" trotzdem korrekt ganz hinten einsortiert."""
+        if vs_low_pct is None:
+            return ("–", 1e18)
+        if vs_low_pct <= 0:
+            return ("0 %", 0.0)
+        capped = min(vs_low_pct, 500.0)
+        suffix = "+" if vs_low_pct > 500.0 else ""
+        return (f"+{capped:.0f} %{suffix}", float(vs_low_pct))
+
     def _item_volumes_with_esi_fix(self, type_ids):
         """Volumen-Map (type_id -> m³) für eine Einkaufsliste, mit ESI-Korrektur
         für Schiffe/Strukturen ohne gepacktes Volumen in der lokalen SDE (manche
@@ -11248,9 +12572,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     _QMB.Yes | _QMB.Cancel, _QMB.Yes) != _QMB.Yes:
                 return
         _cart_qty = {}
+        # KEIN ZWEITER BESTANDSABZUG (emm796, Audit 31.10.2026, M10):
+        # `plan["buy"]` ist bereits NETTO nach Bestandsdeckung
+        # (production_plan verbraucht opts["stock"] VOR der
+        # Kauf-Entscheidung) - hier zusaetzlich `_bd_opts["stock"]` als
+        # plan_stock durchzureichen zog denselben Bestand ein zweites Mal
+        # ab: Bedarf 100, Hangar 30 -> buy=70, Dialog-missing=40, Wagen
+        # bekam 40 statt 70. Derzeit ohne Aufrufer (b5d verankert die
+        # Entfernung des Knopfs), aber gepflegt - bei Wiederanschluss
+        # waere der Unterkauf sofort da.
         keep = {_tid for _tid, _n in self._cart_conflict_filter(
             items, needed=buy, qty_out=_cart_qty, show_all=True,
-            plan_stock=(getattr(self, "_bd_opts", None) or {}).get("stock"))}
+            plan_stock=None)}
         cart = self._cart_ids()
         added = 0
         for tid, qty in buy.items():
@@ -11570,7 +12903,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # STOCK LOCATIONS (emm458, Nutzer: "wo die Materialien der Bauplaene
         # rumliegen, bei welchem Charakter was liegt").
         rv.addSpacing(2)
-        b_lager = page_btn(t("Stock locations (Beta)"), 6, icon="map")
+        b_lager = page_btn(t("Stock locations"), 6, icon="map")
 
         header(t("SETUP"), theme.VIOLET)
         b_struct = page_btn(t("Structures"), 3, icon="factory")
@@ -11943,6 +13276,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     .format(name=_lbl),
                     _QMB.Yes | _QMB.No, _QMB.Yes) != _QMB.Yes:
                 return
+            self._funfact_entfernen(pid)    # emm570: Reopen nimmt ihn heraus
             _plan["done_manual"] = False
             _plan.pop("done_ts", None)
             # Was DIESES Buendel beim Abschliessen mit abgeschlossen hat,
@@ -11972,6 +13306,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _plan["done_ts"] = _t_done.time()   # emm388: ab hier zaehlen die 30
                                             # Tage bis zum Archiv
         _plan["reserve"] = False          # Schloss auf, s. Docstring
+        self._funfact_erfassen(_plan, "done")   # emm570: Funfact-Statistik
         # MITGLIEDER EINES BUENDELS SCHLIESSEN MIT (Nutzer-Screenshot
         # 28.09.2026: Multiplan 1 auf "Done" -> Ametat II, Flycatcher und
         # Stork standen ploetzlich als #3/#4/#5 mit Warnung da). Ein
@@ -13765,7 +15100,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Plan-Payload) - keine zweite Ableitung.
         def _fees9():
             try:
-                _cid9 = self._best_sell_char(
+                # emm759: ZUERST der im Plan gewaehlte Verkaufscharakter -
+                # das Fenster rechnet mit ihm ("via: ..."), die Karte nahm
+                # bisher den "besten" und lag bei anderem Satz daneben.
+                _cid9 = int(p.get("sell_char_id") or 0) or self._best_sell_char(
                     self.settings.get("char_fees") or {})
                 _hub9 = p.get("sell_hub") or "jita"
                 _t9, _b9, _q9 = self._fees_for_hub(
@@ -13790,13 +15128,25 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if _tc9 > 0:
                 _tax9, _brk9, _fq9 = _fees9()
                 _net9 = sell * qty * (1 - _tax9 - _brk9)
-                _extra9 = float(self.settings.get("bau_extra_cost", 0) or 0)
+                # emm759 (Nutzer 29.10.2026, T1 Battlecruisers: Karte 932M,
+                # Fenster 769M): die Karte las die Zusatzkosten GLOBAL und
+                # zog die eigenen Fahrten (Own trip, im Fenster -360M) NIE
+                # ab. Jetzt beides aus dem PLAN - `extra_cost` wird seit
+                # emm757 bei der Eingabe nachgefuehrt, `own_trip_cost`
+                # schreibt das Fenster bei jeder Gewinn-Rechnung hinein.
+                # Alt-Plaene ohne die Felder: extra faellt auf die globale
+                # Einstellung zurueck (bisheriges Verhalten), Fahrten 0.
+                _extra9 = float(p.get(
+                    "extra_cost",
+                    self.settings.get("bau_extra_cost", 0) or 0) or 0)
+                _trip9 = float(p.get("own_trip_cost", 0) or 0)
                 return {"cost": _tc9, "sell": _net9,
                         "frozen_ts": _frz_ts,
                         "fee_pct": (_tax9 + _brk9) * 100.0,
                         "fee_quelle": _fq9,
                         "extra": _extra9,
-                        "profit": _net9 - _tc9 - _extra9,
+                        "own_trip": _trip9,
+                        "profit": _net9 - _tc9 - _extra9 - _trip9,
                         # AUCH EINGEFROREN: der Plan-Schnappschuss traegt
                         # die Exporte fuer buendel_kosten_je_ende - ohne ihn
                         # zeigten die Enden eines eingefrorenen Buendels
@@ -13926,7 +15276,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 list(ids), groups, recipes.reaction_products, type_id, recipes=recipes)
             _me_map, _me_map_reaction, _rig_me_map, _used_struct, _ec_me_map = self._bau_me_maps(
                 list(ids), groups, recipes.reaction_products, _cat_me_map,
-                type_id, recipes=recipes)
+                type_id, recipes=recipes,
+                # emm720: die Karte schaetzt DIESEN gespeicherten Plan - also
+                # mit SEINER Struktur-Wahl, sonst weicht sie vom Dialog ab.
+                override=(p.get("struct_override") or None))
             opts["me_map"] = _me_map
             opts["me_map_reaction"] = _me_map_reaction
             # Rig-ME und EC-Rollenbonus fuer den invented-Pfad - wie im
@@ -13953,15 +15306,22 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Baukosten je Stueck), die Kartenschaetzung hier tat es NICHT -
             # also standen zwei Gewinne nebeneinander, die verschiedene Dinge
             # meinten (Nutzer: Karte +243'625'775, Dialog +202'407'783 beim
-            # selben Plan). DIESELBE Quelle wie im Dialog, `bau_extra_cost` aus
-            # den Einstellungen - keine zweite Ableitung (Arbeitsregeln 9/10).
-            _extra = float(self.settings.get("bau_extra_cost", 0) or 0)
+            # selben Plan). emm759: ZUERST die Werte des PLANS (seit emm757
+            # bei der Eingabe nachgefuehrt), die globale Einstellung bleibt
+            # Rueckfall fuer Alt-Plaene; die eigenen Fahrten
+            # (`own_trip_cost`, vom Fenster nachgefuehrt) zieht die Karte
+            # jetzt ebenfalls ab - wie der Dialog.
+            _extra = float(p.get(
+                "extra_cost",
+                self.settings.get("bau_extra_cost", 0) or 0) or 0)
+            _trip = float(p.get("own_trip_cost", 0) or 0)
             return {"cost": total_cost, "sell": net_sell_total,
                     "frozen_ts": _frz_ts,
                     "fee_pct": (_tax + _brk) * 100.0,
                     "fee_quelle": _fq,
                     "extra": _extra,
-                    "profit": net_sell_total - total_cost - _extra,
+                    "own_trip": _trip,
+                    "profit": net_sell_total - total_cost - _extra - _trip,
                     # DER PLAN SELBST (Multi-Bauplan): daraus rechnet der
                     # Multi Buildplaner die Kosten je Endprodukt - dieselbe
                     # Rechnung, keine zweite (Arbeitsregel 9).
@@ -14286,6 +15646,24 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             return out
 
         def done(res):
+            # FUNFACT (emm570): ein Plan, den ESI als vollstaendig gebaut
+            # meldet, kommt in die Statistik - dieselbe Schwelle wie der
+            # gruene Balken unten (beim Buendel ist `built` je Ende auf
+            # seine Menge gedeckelt, emm497). Einmal eingetragen, bleibt er.
+            _ff_neu = False
+            for _pid_ff, _inf_ff in (res or {}).items():
+                if (not _inf_ff or _inf_ff.get("done_manual")
+                        or not _inf_ff.get("qty")):
+                    continue
+                if int(_inf_ff.get("built") or 0) < int(_inf_ff["qty"]):
+                    continue
+                for _p_ff in (self.settings.get("bau_saved_plans") or []):
+                    if str(_p_ff.get("id")) == str(_pid_ff):
+                        if self._funfact_erfassen(_p_ff, "esi"):
+                            _ff_neu = True
+                        break
+            if _ff_neu:
+                config.save_settings_async(self.settings)
             # Fortschrittsbalken IMMER bedienen - auch fuer teilfertige
             # Plaene ("60/100 gebaut").
             for pid, bar in list(getattr(self, "_plan_progress", {}).items()):
@@ -14948,9 +16326,21 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         cat_lbl = QLabel(t("Category:"))
         cat_lbl.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
         frow2.addWidget(cat_lbl)
-        self.bp_myb_cat = QComboBox(); self.bp_myb_cat.setMinimumWidth(160)
-        self.bp_myb_cat.addItem(t("All categories"), None)
-        self.bp_myb_cat.currentIndexChanged.connect(self._apply_bp_filter)
+        # KATEGORIE-MEHRFACHAUSWAHL (emm705, Nutzer 25.10.2026:
+        # "mehrfachauswahl waere gut") - zweite Haelfte von PUNKT A, mit
+        # EIGENER, vom Scanner UNABHAENGIGER Liste (so wollte es die
+        # Spezifikation: "zwei unabhaengige Fragen"). Derselbe Baustein wie
+        # dort (`_filter_mehrfach_knopf`, emm611). Die Filterung laeuft
+        # weiter ueber die PRODUKT-Kategorie (UserRole+4 kommt aus
+        # `catmap.get(product_id)`), nicht ueber die Kategorie des
+        # Blaupausen-Items - diese Falle war in der Notiz vermerkt und ist
+        # hier schon seit jeher richtig geloest, s. Zeile ~16185.
+        self.bp_myb_cat, self._bp_myb_cat_refresh, self._bp_myb_cat_selected = \
+            self._filter_mehrfach_knopf(
+                t("All categories"), tooltip=t(
+                    "Filter by item category - all checked = no filter."))
+        self.bp_myb_cat.setMinimumWidth(160)
+        self.bp_myb_cat.menu().aboutToHide.connect(self._apply_bp_filter)
         frow2.addWidget(self.bp_myb_cat)
         # GRUPPEN-DROPDOWN ENTFERNT (Nutzer, Sitzung 16: "der Dropdown Alle
         # Gruppen kann komplett weg, die Kategorie-Dropdown reicht voellig").
@@ -15536,6 +16926,19 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Blaupausen-Namen bzw. "#id" zurueck.
             tids += [int(e["product_id"]) for e in profit_by_bp.values()
                      if isinstance(e, dict) and e.get("product_id")]
+            # DAS T1-URSPRUNGSBLUEPRINT EINER ERFINDBAREN ZEILE MIT (emm631,
+            # Discord "Robust" 18.10.2026: "bei manchen BPCs fehlt der Name
+            # im Invent-Tooltip"). `_inventable_rows_from` setzt
+            # "_inventable_from" auf das type_id des T1-Blueprints, aus dem
+            # erfunden wird - normalerweise eine eigene Zeile und damit
+            # schon oben in `tids`. Taucht sie aus irgendeinem Grund NICHT
+            # (mehr) in `rows` auf (z.B. Dedupe/Filter zwischen dem Holen
+            # der T1-Zeilen und hier), bleibt `names.get(inv_from)` leer und
+            # der Tooltip zeigt nur "#12345" statt des echten Namens. Hier
+            # ausdruecklich NOCH EINMAL sammeln - kostet nichts (ESI/SDE-
+            # Namen sind gecacht, ein doppeltes ID in `tids` ist harmlos).
+            tids += [int(b["_inventable_from"]) for b in rows
+                     if b.get("_inventable_from")]
             names = {}
             try:
                 names = esi.resolve_names(tids) if tids else {}
@@ -16031,7 +17434,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 "reaction": self.bp_cb_react.isChecked()}
         any_cat_on = any(show.values())
         only_profit = self.bp_cb_profit.isChecked()
-        want_cat = self.bp_myb_cat.currentData() if hasattr(self, "bp_myb_cat") else None
+        # emm705: MENGE angehakter Kategorien (None = alle an = kein Filter).
+        want_cat = (self._bp_myb_cat_selected()
+                    if hasattr(self, "_bp_myb_cat_selected") else None)
         want_group = self.bp_myb_group.currentData() if hasattr(self, "bp_myb_group") else None
         want_meta = self.bp_myb_tech.currentData() if hasattr(self, "bp_myb_tech") else None
         want_race = (self.bp_myb_race.currentData()
@@ -16079,7 +17484,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if visible and not ((is_bpo_row and show_bpo)
                                     or (not is_bpo_row and show_bpc)):
                     visible = False
-            if visible and not industry.bp_kategorie_passt(
+            # emm705: Mengen- statt Einzelvergleich. `kategorie_passt_mehrfach`
+            # ist die Mengen-Schwester von `bp_kategorie_passt` und behandelt
+            # Rigs nach derselben RIGS_KAT-Regel - die Rig-Sonderbehandlung
+            # (Nutzer 29.09.2026) bleibt damit unveraendert erhalten.
+            if visible and not industry.kategorie_passt_mehrfach(
                     want_cat, cell.data(Qt.UserRole + 4),
                     cell.data(Qt.UserRole + 6),
                     getattr(self, "_bp_rig_gruppen", None)):
@@ -16171,8 +17580,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if not info:
                     continue
                 cat_id, group_id, meta = info
-                if not industry.bp_kategorie_passt(want_cat, cat_id, group_id,
-                                                   _rig_ids):
+                # emm705: Mengenvariante, s. _apply_bp_filter - `want_cat`
+                # ist hier dieselbe Menge, die der sichtbare Filter nutzt.
+                if not industry.kategorie_passt_mehrfach(want_cat, cat_id,
+                                                         group_id, _rig_ids):
                     continue
                 if want_group is not None and group_id != want_group:
                     continue
@@ -16314,6 +17725,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             except Exception:
                 pass
             try:
+                # HERKUNFTS-MARKE (emm716): nur der Rechtsklick in My
+                # Blueprints auf eine BESESSENE Zeile (UserRole+10 markiert
+                # die "fehlt"-Zeilen) darf den Own-BPC-Auto-Haken (emm712)
+                # scharf schalten. `open_build_detail` verbraucht die Marke
+                # im fresh-Block; Sidebar/Scanner setzen sie nie und
+                # bekommen so den neutralen frischen Plan (Nutzer
+                # 25.10.2026: "Ein frischer neuer Plan halt").
+                self._bd_obpc_quelle_mybp_pending = (
+                    not bool(cell.data(Qt.UserRole + 10)))
                 self.open_build_detail(int(product_id), product_name, fresh=True)
             except Exception as e:
                 QMessageBox.information(self, t("Build plan"),
@@ -16325,6 +17745,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 pass
 
     def _open_saved_plan(self, pid):
+        # SPERRE ZUERST (emm742): _open_saved_plan_zustand unten stellt die
+        # GETEILTEN _bd_*-Felder um - bei offenem Fenster zerstoerte das
+        # dessen Daten, obwohl der Oeffnen-Callback spaeter abbrach.
+        if self._bauplan_sperre_meldung():
+            return
         plans = self.settings.get("bau_saved_plans", []) or []
         p = next((x for x in plans if x["id"] == pid), None)
         if not p:
@@ -16457,6 +17882,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # VORHER offenen Plans duerfen nie in diesen Plan durchsickern -
         # der Invention-Tab-Aufbau fuellt das Dict fuer den neuen Plan.
         self._bd_invention_needs = {}
+        self._bd_inv_gedeckt = set()        # emm637, s. oben
         self._bd_prefer_owned = bool(p.get("prefer_build_if_owned", False))
         # Immer automatisch prüfen (nicht mehr nur, wenn beim letzten Speichern
         # gerade angehakt war) - "wenn ich den Bauplan öffne, sollte ESI das
@@ -16467,6 +17893,35 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self._bd_frozen_pending = p.get("frozen") or {}
         self._bd_sell_hub = p.get("sell_hub") or "jita"
         self._bd_hub_sell_price = p.get("sell_hub_price")
+        # emm619 (Multi-Hub-Einkauf PRO BAUPLAN, Punkt B aus OFFENE_PUNKTE.md):
+        # leer = wie bisher nur am gescannten Hub einkaufen. Gesetzt (A und/
+        # oder B) = fuer jedes Material der jeweils guenstigere der beiden
+        # Hubs inkl. hub-eigener Fracht - s. _bd_buy_hub_wahl()/_bd_split_kauf().
+        self._bd_buy_hub_a = p.get("buy_hub_a") or None
+        self._bd_buy_hub_b = p.get("buy_hub_b") or None
+        self._bd_buy_hub_c = p.get("buy_hub_c") or None
+        # emm722: hub-eigene Fracht je Kauf-Hub gehoert zum Plan; der
+        # Hub-Scan selbst (Orderbuecher) wird NICHT gespeichert - Preise
+        # veralten, der Knopf holt sie frisch.
+        self._bd_buy_hub_fracht = {
+            str(_k): float(_v) for _k, _v in
+            (p.get("buy_hub_fracht") or {}).items() if _v}
+        # emm733 ("Wie kaufen?"): je Hub Sell- oder Buy-Orders; gespeichert
+        # werden nur Abweichungen vom Standard "sell".
+        self._bd_buy_hub_seite = {
+            str(_k): "buy" for _k, _v in
+            (p.get("buy_hub_seite") or {}).items() if _v == "buy"}
+        # Schalter: Plaene von vor dem Schalter gelten als AN, wenn sie
+        # einen Kauf-Hub gesetzt hatten - deren Wahl war die Aktivierung.
+        self._bd_multi_hub_an = bool(p.get(
+            "multi_hub_an", bool(p.get("buy_hub_a"))))
+        self._bd_mh_stand = {}
+        # emm720: die Pro-Plan-Struktur-Wahl gehoert zum Plan. Fehlt das Feld
+        # (Plan von vor diesem Feature), gilt der Structures-Tab wie bisher.
+        # Nur echte Eintraege uebernehmen - leere Werte waeren totes Gewicht.
+        self._bd_struct_override = {
+            str(_k): _v for _k, _v in (p.get("struct_override") or {}).items()
+            if _v}
         _sc = p.get("sell_char_id")
         self._bd_sell_char = int(_sc) if _sc else None
         self._bd_manual_pending = p.get("manual_stock") or {}
@@ -16759,9 +18214,24 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # NUR industrie-relevante Rigs. Aktivität aus dem Namen; alles andere
                 # (Kampf: E-War/Neut/Targeting/Missile/Multiplexing; Moon Drilling)
                 # fliegt raus.
+                # emm595 (Discord-Bugreport "Robust", 18.10.2026: Athanor zeigt im
+                # Rig-Dropdown nur Reaktionen, keine Reprocessing-Rigs - nur die
+                # Tatara hat welche): GEMESSEN in der eigenen SDE-DB (sde_kompakt.db,
+                # Tabelle rigs), nicht geraten (Regel 5). Die L/XL-Reprocessing-Rigs
+                # heissen wirklich "...Reprocessing Monitor..." (Name enthaelt
+                # "reprocessing", daher bisher zufaellig erkannt -> Tatara/Sotiyo
+                # gingen). Die M-Reprocessing-Rigs (fuer den Athanor!) heissen aber
+                # "Standup M-Set Asteroid/Moon/Ice Ore Grading Processor I/II" - OHNE
+                # das Wort "reprocessing" im Namen. Sie fielen bisher komplett durch
+                # alle elif-Zweige bis zum "else: continue" und flogen aus dem
+                # GESAMTEN Katalog raus, nicht nur aus der Athanor-Liste. Die SDE
+                # fuehrt sie aber eindeutig unter group_name "Structure Resource Rig
+                # M - Asteroid/Moon/Ice Ore Reprocessing" - das GROUP-Feld ist hier
+                # die verlaessliche Quelle, nicht der Item-Name.
+                low_group = (r.get("group") or "").lower()
                 if "reactor" in low:
                     grp = "react"
-                elif "reprocessing" in low:
+                elif "reprocessing" in low or "reprocessing" in low_group:
                     grp = "react"            # Reprocessing-Rigs sitzen auf denselben
                                              # Refinery-Strukturen (Athanor/Tatara)
                 elif "invention" in low:
@@ -16957,7 +18427,45 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 raus.append((_akey, _s.get("name", "?")))
         return raus
 
-    def _struct_for_activity(self, activity):
+    def _bd_override_struct(self, override, activity):
+        """Struktur aus einem PRO-PLAN-Override fuer eine Stufe (emm720,
+        Nutzer 25.10.2026: "kann man einbauen, dass man Bauplan unabhaengig
+        von der Standard Struktur wahl die man im Structure Tab festlegt,
+        trotzdem einen Bauplan auf andere Bau-Strukturen zwingen kann?").
+
+        `override` = {stufe: struct_id} mit den Schluesseln aus
+        _STRUCT_ACTIVITIES (reaction_1/reaction_2/components/endproduct/
+        invention) - das ist `self._bd_struct_override` des OFFENEN Plans
+        bzw. `plan["struct_override"]` eines gespeicherten. Der Override
+        wird ueberall als PARAMETER durchgereicht, nie als self-Zustand
+        gelesen (sonst risse er den Scanner mit, der dieselben
+        Aufloesungs-Funktionen benutzt - OFFENE_PUNKTE.md, Stolperstelle).
+
+        None, wenn kein Override fuer die Stufe gesetzt ist, die Struktur
+        nicht mehr in den Settings existiert oder sie die Stufe laut EVE
+        nicht kann (_struct_kann; dieselbe Sitzung-19-Regel wie bei der
+        festen Zuweisung) - dann gilt der Structures-Tab wie bisher, und
+        die Karte im Dialog zeigt den Hinweis (nicht still weiterrechnen).
+
+        Grobe Alt-Schluessel werden aufgeloest wie `used` in _bau_me_maps
+        (eine Wahrheit, Regel 9): manufacturing=components,
+        reaction=reaction_2 sonst reaction_1."""
+        if not override:
+            return None
+        sid = override.get(activity)
+        if not sid and activity == "manufacturing":
+            sid = override.get("components")
+        if not sid and activity == "reaction":
+            sid = override.get("reaction_2") or override.get("reaction_1")
+        if not sid:
+            return None
+        s = next((x for x in (self.settings.get("bau_structures") or [])
+                  if x.get("id") == sid), None)
+        if s is not None and self._struct_kann(s, activity):
+            return s
+        return None
+
+    def _struct_for_activity(self, activity, override=None):
         """Struktur für eine Aktivität: zugewiesene, sonst (Auto) die mit bestem
         Bonus - NUR unter Strukturen, die diese Aktivität laut EVE überhaupt
         unterstützen. Refineries (Athanor/Tatara) können AUSSCHLIESSLICH
@@ -16965,10 +18473,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _STRUCT_TYPE_FIT). Vorher wurde das ignoriert: die Auto-Wahl hat für
         JEDE Aktivität außer Reaktion pauschal den besten ME-Rig-Wert genommen
         - dadurch konnte z.B. eine Refinery für Invention vorgeschlagen werden,
-        obwohl dort technisch gar nicht invented werden kann."""
+        obwohl dort technisch gar nicht invented werden kann.
+
+        `override` (emm720): Pro-Plan-Struktur-Wahl - schlaegt die globale
+        Zuweisung. NUR die Bauplan-Aufrufer reichen ihn herein; Scanner und
+        My Blueprints rufen ohne (s. _bd_override_struct, warum Parameter)."""
         structs = self.settings.get("bau_structures", []) or []
         if not structs:
             return None
+        _ov = self._bd_override_struct(override, activity)
+        if _ov is not None:
+            return _ov
         _amap = self.settings.get("bau_activity_struct", {}) or {}
         sid = _amap.get(activity)
         if not sid:
@@ -17046,7 +18561,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     if k in _reihenfolge else 99)
         fehlt = []
         for _st in stufen:
-            if self._struct_for_activity(_st) is None:
+            # emm720: "fehlt DIESEM Plan eine Struktur?" - seine eigene
+            # Struktur-Wahl zaehlt mit (sie kann eine Stufe abdecken, die
+            # global keine Zuweisung hat).
+            if self._struct_for_activity(
+                    _st,
+                    override=getattr(self, "_bd_struct_override", None)) is None:
                 fehlt.append((_st, _st.startswith("reaction")))
         return fehlt
 
@@ -17136,6 +18656,331 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._flash_tip(t("\u26a0 Sale price at the chosen hub not loadable: ")
                             + str(msg)[:80])
         self._run(Worker(job), done, fail_cb=fail)
+
+    def _bd_buy_hub_locs(self):
+        """Die konfigurierten KAUF-Hubs des offenen Plans, aufgeloest
+        (emm722, Multi-Hub-Einkauf Teil 2a). Rueckgabe: Liste von
+        (key_str, loc) - key_str ist der stabile Schluessel fuer
+        Orderbuecher und Fracht-Karte ("jita" bzw. "struct:<id>"), loc
+        beschreibt den Abruf-Weg. Leer, wenn Hub A nicht gesetzt ist
+        (= Standardverhalten, nur am gescannten Hub einkaufen) oder eine
+        gewaehlte Struktur nicht mehr bekannt ist.
+
+        `buy_hub_a/b` tragen NPC-Schluessel ("jita") oder ("struct", id) -
+        nach einem Speichern/Laden wird das Tupel zur JSON-Liste, deshalb
+        beide Formen annehmen."""
+        _an = bool(getattr(self, "_bd_multi_hub_an", False))
+        _a = getattr(self, "_bd_buy_hub_a", None)
+        # Schalter AUS = SOLO-HUB-MODUS (emm732, Nutzer 26.10.2026: "es
+        # kann ja sein das ich solo hub will aber halt in Dodixie
+        # einkafen moechte .. so hat man je 2 moeglichkeiten"): nur
+        # "Buy from" (Hub A) zaehlt - gewaehlt heisst "dort einkaufen",
+        # leer heisst gescannter Hub wie immer. B/C gelten nur mit
+        # Haken (vorher schaltete der Schalter ALLES ab, und Hub A war
+        # ohne ihn gar nicht bedienbar).
+        _b = getattr(self, "_bd_buy_hub_b", None) if _an else None
+        _c = getattr(self, "_bd_buy_hub_c", None) if _an else None
+        if not _a and not _b and not _c:
+            return []          # gar kein Hub gewaehlt = wie bisher
+        if not _an and not _a:
+            return []          # Solo-Modus ohne Hub A = wie bisher
+        if not _a:
+            # Hub A steht auf "(scanned hub only)", aber B/C sind gewaehlt
+            # (emm729, Nutzer 26.10.2026, Screenshot: "multi hub macht
+            # nix" - die alte emm619-Regel "ohne Hub A ist Multi-Hub aus"
+            # schaltete trotz gewaehlter Zusatz-Hubs ALLES ab). Der
+            # GESCANNTE Hub macht dann implizit als erster Hub mit - er
+            # MUSS in die Landepreis-Abwaegung, sonst wuerden Positionen
+            # mit Orders an B/C dorthin gelegt, selbst wenn der gescannte
+            # Hub billiger ist. Seine Fracht traegt das A-Feld (emm731).
+            _a = self._bd_aktiver_hub_wahl()
+        out = []
+        for _k in (_a, _b, _c):
+            if not _k:
+                continue
+            if isinstance(_k, (tuple, list)) and len(_k) == 2 \
+                    and _k[0] == "struct":
+                try:
+                    _sid = int(_k[1])
+                except (TypeError, ValueError):
+                    continue
+                _st = next((f for f in self._market_structures()
+                            if int(f.get("structure_id") or 0) == _sid), None)
+                if _st is None:
+                    continue   # Struktur nicht mehr verlinkt -> Hub faellt weg
+                out.append((f"struct:{_sid}",
+                            {"kind": "structure", "structure": _st,
+                             "label": str(_st.get("name") or _sid)}))
+            else:
+                for _key, _lbl, _rid, _stid in hubs.NPC_HUBS:
+                    if _key == _k:
+                        out.append((str(_key),
+                                    {"kind": "hub", "region_id": _rid,
+                                     "station_id": _stid, "label": _lbl}))
+                        break
+        seen, uniq = set(), []
+        for _k, _l in out:
+            if _k in seen:
+                continue       # A == B doppelt gewaehlt -> einmal reicht
+            seen.add(_k)
+            uniq.append((_k, _l))
+        return uniq
+
+    def _bd_aktiver_hub_wahl(self):
+        """Die Hub-WAHL des GERADE AKTIVEN Hubs, in derselben Form wie
+        buy_hub_a/b/c ("jita" bzw. ("struct", <id>)) - oder None, wenn er
+        sich keiner bekannten Form zuordnen laesst. EINE Quelle (Regel 9)
+        fuer den impliziten Hub A (emm729, _bd_buy_hub_locs) und fuer
+        dessen Frachtfeld (emm731, Nutzer 26.10.2026: "Frachtkosten
+        greifen nur wenn Buy From extra gewaehlt wird und nicht ueber den
+        Global Hub" - die 445 im A-Feld verpufften bei "(scanned hub
+        only)", weil das Feld keinen Hub-Schluessel hatte)."""
+        _rid, _stid, _struct = self._active_hub()
+        if _struct is not None:
+            try:
+                return ("struct", int(_struct.get("structure_id") or 0))
+            except (TypeError, ValueError):
+                return None
+        for _key, _lbl, _r, _s in hubs.NPC_HUBS:
+            if _s == _stid:
+                return str(_key)
+        return None
+
+    def _bd_hub_seite(self, key):
+        """"sell" oder "buy" fuer einen Kauf-Hub (emm733, Nutzer: "From
+        Buy orders: oder From Sell Orders ... Sell orders sind dabei immer
+        standard angehackt"). Gespeichert werden nur Abweichungen."""
+        return ("buy" if (getattr(self, "_bd_buy_hub_seite", None) or {})
+                .get(str(key)) == "buy" else "sell")
+
+    def _bd_multihub_books(self):
+        """{hub_key: {tid: [(preis, menge), ...]}} des letzten Hub-Scans
+        dieses Fensters - oder {}, wenn noch nicht gescannt (dann rechnet
+        der Plan wie bisher mit dem gescannten Hub, und die Karte sagt es).
+
+        NUR die Buecher der AKTUELL gewaehlten Hubs (emm725). Vorher kam
+        das rohe Scan-Ergebnis zurueck: wer nach dem Scan einen Hub
+        wechselte (4-HWWF -> Dodixie), rechnete still mit dem Buch des
+        ABGEWAEHLTEN Hubs weiter - Preise, Frachtanteile und der Split der
+        Kopier-Knoepfe ordneten Positionen einem Hub zu, den es im Plan
+        gar nicht mehr gab (der neue Hub hatte kein Buch und sein
+        Kopier-Knopf fand "nichts", die Zwischenablage behielt die alte
+        Liste - Nutzer-Fund 25.10.2026, identische 4-HWWF/Dodixie-Listen).
+        Diese EINE Stelle filtert fuer ALLE Leser (Preisfunktion,
+        emm724-Frachtanteile, Karte, Kopier-Knoepfe - Regel 9)."""
+        _stand = getattr(self, "_bd_mh_stand", None) or {}
+        books = _stand.get("books") or {}
+        if not books:
+            return {}
+        _keys = {str(_k) for _k, _l in self._bd_buy_hub_locs()}
+        # SEITEN-WECHSEL NACH DEM SCAN (emm733): ein Buch ist je Hub fuer
+        # GENAU EINE Orderseite gebaut (Sell-Leiter oder beste Buy-Order
+        # inkl. Brokergebuehr). Wer danach die Seite umschaltet, bekommt
+        # das alte Buch NICHT mehr - der Hub gilt als ungescannt (Karte
+        # warnt, Knopf blinkt, Kopier-Knopf kopiert nichts), bis neu
+        # gescannt ist. Gleiche eine Stelle wie der Hub-Wechsel-Filter.
+        _seiten = _stand.get("seiten") or {}
+        return {_k: _v for _k, _v in books.items()
+                if str(_k) in _keys
+                and (_seiten.get(str(_k)) or "sell")
+                == self._bd_hub_seite(_k)}
+
+    def _bd_multihub_scan(self, fertig=None):
+        """Beide Kauf-Hubs auf AKTUELLEN Preisstand bringen (emm722,
+        Nutzer-Punkt 3: "Hubs muessen beide auf aktuellen Preis stand
+        gescannt weren koennen"). KEIN kompletter Markt-Scan: je Hub nur
+        die Items DIESES Plans - NPC-Hub per esi.fetch_type_orders (ein
+        Request je Item, parallel), Spielerstruktur ueber das ohnehin
+        gecachte Struktur-Orderbuch (_structure_books). Ergebnis mit
+        voller PREISLEITER je Item (Nutzer-Punkt 2: Markttiefe), abgelegt
+        in `_bd_mh_stand` {books, fehler, ts, tids}; `fertig()` danach
+        (die Karte laesst dann rebuild() mit den neuen Preisen rechnen).
+        False, wenn kein Kauf-Hub konfiguriert ist."""
+        locs = self._bd_buy_hub_locs()
+        if not locs:
+            return False
+        _plan = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
+        tids = {int(_t) for _t in (_plan.get("buy") or {})}
+        # ERFINDUNGSMATERIAL MITSCANNEN (emm730, Nutzer-Listen 26.10.2026:
+        # beide Datacores fehlten in BEIDEN Hub-Listen, obwohl es an Jita
+        # immer Datacore-Orders gibt). Datacores/Decryptoren stehen
+        # bewusst NICHT in plan["buy"], sondern in inv_buy/inv_stock_used
+        # (Sitzung 17, eigene Felder gegen Doppelzaehlung) - und sie sind
+        # auch kein Rezept-Material (_bd_me_ids). Ohne diese Zeilen wurden
+        # sie nie gescannt und fielen IMMER auf den gescannten Hub
+        # zurueck, egal wie oft man scannt.
+        for _f730 in ("inv_buy", "inv_stock_used"):
+            try:
+                tids |= {int(_t) for _t in (_plan.get(_f730) or {})}
+            except (TypeError, ValueError):
+                continue
+        # ALLE bepreisbaren Plan-Items, nicht nur die heutige Kaufliste -
+        # sonst koennte ein guenstigerer zweiter Hub nie eine
+        # Bauen-oder-Kaufen-Entscheidung kippen (das Tool saehe den Preis
+        # des Zwischenprodukts dort gar nicht).
+        tids |= {int(_t) for _t in (getattr(self, "_bd_me_ids", None) or ())}
+        # Erze (Reprocessing Weg B, Nutzer-Punkt 1): die Compressed-Ore-
+        # Logik vergleicht Erz gegen Minerale ueber DIESELBE Preisfunktion
+        # - dafuer brauchen die Erze einen Eintrag in beiden Buechern.
+        try:
+            if (getattr(self, "_bd_opts", None) or {}).get("reprocess"):
+                tids |= {int(_t) for _t in self._reprocess_erz_ids(
+                    (getattr(self, "_bd_pricemap", None) or {}).get)}
+        except Exception as _mh_erz_err:
+            self._log_exception("Multi-Hub: Erz-Kandidaten", str(_mh_erz_err))
+        tids = sorted(tids)
+        if not tids:
+            return False
+        # "WIE KAUFEN?" JE HUB (emm733, Nutzer 26.10.2026: "From By
+        # orders: oder From Sell Orders ... man kann fuer jeden Hub
+        # waehlen"; Preis-Modell per Rueckfrage entschieden: "beste Buy
+        # order plus broker gebuehren"). Die Seite und die Brokergebuehr
+        # werden BEIM SCAN eingefroren und stehen im Stand ("seiten"/
+        # "gebuehr") - ein Seiten-Wechsel danach macht das Buch unguetig
+        # (Filter in _bd_multihub_books). Buy-Seite: EIN Leiter-Eintrag
+        # "beste Buy-Order x (1+Broker)" mit praktisch unbegrenzter
+        # Menge - eine eigene Kauforder hat keine Markttiefe, man wird
+        # ueber die Zeit gefuellt (Fuellzeit/Konkurrenz modelliert das
+        # bewusst nicht; dafuer ist die Gebuehr ehrlich drin).
+        _seiten733 = {str(_k7): self._bd_hub_seite(_k7)
+                      for _k7, _l7 in locs}
+        _geb733 = {}
+        for _k7, _l7 in locs:
+            if _seiten733.get(str(_k7)) != "buy":
+                continue
+            try:
+                _tx7, _br7, _q7 = self._fees_for_hub(
+                    self.settings, getattr(self, "_bd_sell_char", None),
+                    str(_k7) if _l7.get("kind") == "hub" else None)
+                _geb733[str(_k7)] = float(_br7 or 0.0)
+            except Exception:
+                _geb733[str(_k7)] = 0.0
+
+        def job(progress=None):
+            import concurrent.futures as _cf
+            import time as _t
+            books, fehler, no_ans = {}, {}, {}
+
+            def _buy_eintrag(_orders, _geb):
+                # beste (hoechste) Buy-Order; fetch_type_orders/
+                # _structure_books liefern die Buy-Seite absteigend.
+                for _p7, _m7 in (_orders or []):
+                    try:
+                        _p7f = float(_p7)
+                    except (TypeError, ValueError):
+                        continue
+                    if _p7f > 0:
+                        return [(_p7f * (1.0 + _geb), 10 ** 12)]
+                return []
+            for _key, _loc in locs:
+                _seite_h = _seiten733.get(str(_key), "sell")
+                _geb_h = float(_geb733.get(str(_key), 0.0) or 0.0)
+                try:
+                    if _loc["kind"] == "structure":
+                        # ZWINGEND FRISCH (emm727, Nutzer: "alles muss
+                        # garantiert da und aktuell Sein"): max_age=0
+                        # statt des 5-Minuten-Caches. Schlaegt der Abruf
+                        # fehl, faellt _structure_agg auf den alten Stand
+                        # zurueck - erkennbar am ALTEN Zeitstempel, und
+                        # das steht dann SICHTBAR als Fehler auf der Karte
+                        # statt stillschweigend alter Preise.
+                        _t0_727 = _t.time()
+                        _bl = self._structure_books(_loc["structure"],
+                                                    tids, max_age=0)
+                        _sid727 = int(_loc["structure"].get(
+                            "structure_id") or 0)
+                        _c727 = (getattr(self, "_struct_cache", None)
+                                 or {}).get(_sid727)
+                        if not _c727 or _c727[0] < _t0_727:
+                            fehler[_key] = t(
+                                "structure order book could not be "
+                                "refreshed – prices may be stale")
+                        if _seite_h == "buy":
+                            books[_key] = {
+                                int(_t2): _buy_eintrag(
+                                    (_b or {}).get("buy"), _geb_h)
+                                for _t2, _b in (_bl or {}).items()
+                                if _buy_eintrag((_b or {}).get("buy"),
+                                                _geb_h)}
+                        else:
+                            books[_key] = {
+                                int(_t2): list((_b or {}).get("sell") or [])
+                                for _t2, _b in (_bl or {}).items()
+                                if (_b or {}).get("sell")}
+                    else:
+                        def _one(_t2, _loc=_loc):
+                            # Zwei Versuche mit kurzer Pause (emm725): bei
+                            # vielen parallelen Abfragen faellt ESI gern
+                            # blockweise aus (Fehlerlimit/Timeout). Vorher
+                            # wurde ein Fehler still zu "keine Orders" -
+                            # genau so "verschwanden" beim Nutzer Pyerite
+                            # und Compressed Veldspar aus den Hub-Listen
+                            # (kein Jita-Orderbuch fuer Pyerite ist
+                            # unmoeglich). None heisst jetzt KEINE ANTWORT
+                            # und wird gezaehlt, [] heisst wirklich keine
+                            # Orders.
+                            for _vers in (1, 2):
+                                try:
+                                    _ob = esi.fetch_type_orders(
+                                        int(_t2),
+                                        station=_loc["station_id"],
+                                        region=_loc["region_id"])
+                                    if _seite_h == "buy":
+                                        return int(_t2), _buy_eintrag(
+                                            (_ob or {}).get("buy"),
+                                            _geb_h)
+                                    return int(_t2), list(
+                                        (_ob or {}).get("sell") or [])
+                                except Exception:
+                                    if _vers == 1:
+                                        _t.sleep(1.5)
+                            return int(_t2), None
+                        _out = {}
+                        _ohne_h = 0
+                        with _cf.ThreadPoolExecutor(max_workers=8) as _ex:
+                            for _t2, _s in _ex.map(_one, tids):
+                                if _s is None:
+                                    # Ein einzelnes Item ohne Antwort
+                                    # reisst nicht den ganzen Hub - es
+                                    # faellt auf den gescannten Hub
+                                    # zurueck (multihub_pfn), steht aber
+                                    # SICHTBAR auf der Karte.
+                                    _ohne_h += 1
+                                elif _s:
+                                    _out[_t2] = _s
+                        books[_key] = _out
+                        if _ohne_h:
+                            no_ans[_key] = _ohne_h
+                except Exception as _e_mh:
+                    # Hub nicht erreichbar/kein Zugriff: der ANDERE Hub
+                    # rechnet weiter, der Ausfall steht SICHTBAR auf der
+                    # Karte (OFFENE_PUNKTE Punkt B: "nicht stillschweigend
+                    # falsch rechnen").
+                    fehler[_key] = str(_e_mh)[:160]
+            return {"books": books, "fehler": fehler, "no_answer": no_ans,
+                    "seiten": _seiten733, "gebuehr": _geb733,
+                    "ts": _t.time(), "tids": list(tids)}
+
+        def done(res):
+            self._bd_mh_stand = res or {}
+            self._bd_plan_cache = None     # neue Preise -> Plan muss neu
+            if fertig is not None:
+                try:
+                    fertig()
+                except Exception as _f_err:
+                    self._log_exception("Multi-Hub: fertig()", str(_f_err))
+
+        def fail(msg):
+            self._bd_mh_stand = {"books": {}, "fehler": {"*": str(msg)[:160]},
+                                 "ts": None, "tids": []}
+            if fertig is not None:
+                try:
+                    fertig()
+                except Exception:
+                    pass
+        self._run(Worker(job), done, fail_cb=fail,
+                  label=t("Scanning buy hubs …"), overlay=False)
+        return True
 
     @classmethod
     def _fees_for_hub(cls, settings, cid, hub_key):
@@ -18536,7 +20381,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # BLAUPAUSEN IN LAUFENDEN JOBS (emm507): sie existieren, sind nur
         # gerade nicht greifbar - "completely missing" waere gelogen und
         # schickte den Nutzer einkaufen, was er besitzt.
-        im_job = getattr(self, "_bd_bp_im_job", None) or {}
+        im_job = self._bd_bp_im_job_wirksam()
+        # BLAUPAUSEN IN EINEM OFFENEN VERTRAG (emm777): EINE Quelle fuer
+        # Anzeige UND Kaufliste - gefuellt in `_bd_fetch_all_owned_blueprints`.
+        _vertrag777 = getattr(self, "_bd_bp_im_vertrag", None) or {}
         # BESITZ-TOOLTIP (emm507, Nutzer: "Da wird angezeigt ich haette Die
         # Blueprint! ich habe sie aber nicht"): die Spalte "Besitze" sagt
         # jetzt WER die Blaupause hat (Charakter/Corp, BPO oder Kopie) -
@@ -18583,6 +20431,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 _loc = int(_loc) if _loc else None
             except (TypeError, ValueError):
                 _loc = None
+            # CONTAINER ZUR STATION AUFLOESEN (emm807, Nutzer: "steht bei
+            # allen Location unknown" - seine Blaupausen liegen in
+            # Containern an der Bau-Struktur). Die Wurzel-Karte kommt aus
+            # den Asset-Abrufen des Plans (esi.container_wurzeln); eine
+            # location_id, die dort als Item haengt, wird zur Station/
+            # Struktur darunter. Ohne Treffer bleibt alles wie bisher.
+            if _loc is not None:
+                try:
+                    _loc = int((getattr(self, "_bd_bp_orte", None)
+                                or {}).get(_loc, _loc))
+                except (TypeError, ValueError):
+                    pass
             if _loc is None or _loc in _bau_orte507:
                 return ("onsite", None)
             if _loc in _orte507:
@@ -18750,6 +20610,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         # de_scan4: an
         rows.sort(key=lambda r: (_stage_order.get(r["stage"], 9),
                                  r["name"].lower()))
+        # INVENTION, DIE SCHON ERLEDIGT IST (emm637, Nutzer 23.10.2026:
+        # "einmal will die einkaufsliste sogar ein Decryptor kaufen obwohl
+        # ich alle BPC T2 erforscht habe und sie auch besitze! es gibt also
+        # nichts mehr zu machen mit decryptoren").
+        # GEMESSEN an seinem Buendel "Gallente 1": `own_bpc` steht auf
+        # False, der eingefrorene Plan traegt deshalb 117,6 Mio ISK
+        # Invention-Kosten und `inv_buy = {Parity Decryptor: 2}` - waehrend
+        # dieser Reiter fuer ALLE fuenf Endprodukte "enough (via BPC)"
+        # meldet. Der Reiter WEISS es also; nur der Einkauf erfuhr es nie.
+        # Genau dieselbe Bedingung wie die Statuszeile unten - keine zweite
+        # Ableitung (Regel 9). Ohne geladenen Besitz (`have is None`)
+        # bleibt die Menge leer: Nichtwissen darf keinen Bedarf verstecken.
+        self._bd_inv_gedeckt = {
+            int(_rg["bp_id"]) for _rg in rows
+            if _rg.get("invented") and _rg.get("have") is not None
+            and ((_rg.get("have") or 0) > 0
+                 or int(_rg.get("bpc_runs") or 0) >= int(_rg.get("runs") or 0))}
         # "BUY MISSING BLUEPRINTS" (Nutzer 26.09.2026): was komplett fehlt
         # (weder Original noch Kopie), EIN Original je Blaupause - Kopien fuer
         # parallele Jobs zieht man selbst daraus. T2-Kopien (erfindbar) sind
@@ -18766,7 +20643,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             and not (r.get("have") or 0) and not (r.get("bpc_runs") or 0)
             # IM JOB = BESESSEN (emm507): eine Blaupause im Kopier-/
             # Forschungsjob gehoert ihm - sie zu kaufen waere doppelt.
-            and not im_job.get(r.get("bp_id"))])
+            and not im_job.get(r.get("bp_id"))
+            # IM OFFENEN VERTRAG = AUCH BESESSEN (emm777): sie gehoert ihm,
+            # sie liegt nur gerade im Vertrag. Ohne diese Zeile stuende die
+            # Blaupause amber da ("yours, free again once it is accepted")
+            # und WANDERTE TROTZDEM in "Buy Missing Blueprints" - genau der
+            # doppelte Kauf, den emm507 fuer Jobs schon verhindert.
+            and not _vertrag777.get(r.get("bp_id"))])
         tbl.setRowCount(len(rows))
         n_missing = 0
         n_low = 0
@@ -18785,16 +20668,40 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             elif have > 0:
                 # BPO vorhanden -> unbegrenzt nutzbar, wie bisher gegen die
                 # empfohlene Kopienzahl vergleichen.
-                have_txt = str(have)
-                if have < r["copies"]:
-                    status_txt = t("too few \u2013 get {n} more").format(n=r['copies'] - have)
-                    status_col = theme.AMBER
-                    n_low += 1
-                    n_low_by_stage[r["stage"]] = n_low_by_stage.get(r["stage"], 0) + 1
-                else:
-                    status_txt = t("enough \u2713")
-                    status_col = theme.GREEN
-            elif bpc_runs > 0:
+                # EIN ORIGINAL GENUEGT (emm581, Nutzer 17.10.2026: "das ist ein
+                # ganz normaler ablauf die meisten nutzer besitzen nur 1 Original
+                # Blueprint" / "die graue warnung auch raus"). Ein BPO hat
+                # unbegrenzte Runs - mehr Originale machen nur schneller
+                # (parallele Jobs), das ist selbstverstaendlich und kein
+                # Engpass. Keine Warnung, kein Hinweis; zaehlt nie als "zu wenig".
+                # FREI + IM JOB GETRENNT ZEIGEN (emm693, Nutzer 25.10.2026:
+                # "Tungsten Carbide Reaction Formula zeigt blueprints tab
+                # dass ich 9 Stueck habe, der Runplaner verplant hier aber
+                # 15 Stueck, kann das stimmen?"). Es stimmte: er besitzt 15,
+                # 13 davon steckten in Bauschleifen. Die Spalte zeigte nur
+                # die FREIEN (Entscheid 26.09.2026: eine Blaupause im Job
+                # ist nicht greifbar), der Runplaner zaehlt fuer component/
+                # reaction ABSICHTLICH auch die belegten mit (emm633, der
+                # Deckel soll nicht je Job-Start schwanken). Beide Zahlen
+                # richtig, der Unterschied unsichtbar - und eine bewusste
+                # Regel, die er nicht sehen kann, ist fuer ihn nicht von
+                # einem Fehler zu unterscheiden (Merksatz emm677). Der
+                # Besitz-Tooltip listete die Job-Blaupausen laengst, nur
+                # die Spalte verschwieg sie.
+                _njob693 = sum(int((_b or {}).get("quantity", 1) or 1)
+                               for _b in (im_job.get(r["bp_id"]) or []))
+                have_txt = (str(have) if not _njob693 else
+                            t("{n} + {m} in job").format(n=have, m=_njob693))
+                status_txt = t("enough \u2713")
+                status_col = theme.GREEN
+            # ORIGINAL IM JOB SCHLAEGT DIE KOPIEN (emm582, gemessen in seinem
+            # blaupausen_bericht: Catalyst-BPO "IM JOB" plus zwei 2-Run-
+            # Kopien - der Reiter zeigte "4 Runs (BPC), too few", weil der
+            # Kopien-Zweig vorher kam). Ein Original im Job gehoert ihm und
+            # hat unbegrenzte Runs -> der Im-Job-Zweig unten.
+            elif bpc_runs > 0 and not any(
+                    (_b582 or {}).get("is_bpo")
+                    for _b582 in (im_job.get(r["bp_id"]) or [])):
                 # KEINE BPO, aber eigene BPC(s) mit begrenzten Runs - zählt
                 # trotzdem, sonst zeigt die Tabelle fälschlich "fehlt komplett"
                 # für Items, die man tatsächlich (teilweise) bauen kann.
@@ -18825,6 +20732,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     "in a job right now ({act}) \u2013 yours, free again "
                     "when it finishes").format(
                     act=_akt507.get(_a507, t("Research")))
+                status_col = theme.AMBER
+            elif _vertrag777.get(r["bp_id"]):
+                # IN EINEM OFFENEN VERTRAG (emm777, Lage vom 28.10.2026:
+                # acht Blaupausen standen rot als "completely missing",
+                # weil er sie per Vertrag zu einem anderen Charakter
+                # geschoben hatte - sie stehen dann in KEINER
+                # /blueprints/-Antwort). Sie gehoeren ihm, sie sind nur
+                # gerade nicht greifbar: AMBER wie bei emm507 (Job),
+                # nicht rot, und sie zaehlt nicht als fehlend.
+                _nv777 = int(_vertrag777.get(r["bp_id"], 0) or 0)
+                have_txt = t("{n} in contract").format(n=_nv777)
+                status_txt = t(
+                    "in an open contract \u2013 yours, free again once it "
+                    "is accepted or cancelled")
                 status_col = theme.AMBER
             elif _bp_fehler:
                 # NICHT ROT, wenn die Zaehlung unvollstaendig ist (emm479):
@@ -18878,7 +20799,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if col == 6:
                     it.setForeground(QColor(status_col))
                 if col == 0:
-                    _bic = self._table_icon(r.get("tid") or r.get("bp_id"))
+                    # EMM702: BLAUPAUSEN-ICON STATT PRODUKT-ICON (Nutzer
+                    # 25.10.2026: "sind es ja eigentlich keine Bilder von
+                    # Blueprints oder Reaction formulas, sondern die Icons
+                    # zeigen das fertige Produkt"). Vorher stand hier
+                    # `r.get("tid")` ZUERST - die Produkt-typeID, kind="icon"
+                    # (Standardwert) - genau das fertige Produkt, nicht die
+                    # Blaupause/Reaction-Formel selbst. Jetzt wie an den
+                    # anderen Blaupausen-Icon-Stellen dieser Codebasis
+                    # (mw_bauplan_tabs.py Zeile ~4304/4494, main_window.py
+                    # Zeile ~16995): `bp_id` (die eigene typeID der
+                    # Blaupause/Formel, inkl. T2-Kopien - dieselbe Bild-
+                    # Kategorie bei CCP) mit kind="bp".
+                    _bic = self._table_icon(r.get("bp_id") or r.get("tid"),
+                                            kind="bp")
                     if _bic:
                         it.setIcon(_bic)
                     # Fuers Kontextmenue SORT-SICHER am Item ablegen: die
@@ -19385,7 +21319,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 "Load the blueprints first (that also loads the "
                   "category/tech data)."))
             return
-        cat_id = self.b_cat.currentData()
+        # emm704: MENGE angehakter Kategorien (None = alle an = kein Filter)
+        # statt einer einzelnen Kategorie-ID.
+        cat_sel = self._b_cat_selected() if hasattr(self, "_b_cat_selected") else None
         _TECH_KEY_TO_SET = {"all": None, "t1": {0, 1}, "t2": {2}, "t3": {14}}
         tech_set = _TECH_KEY_TO_SET.get(self.b_tech.currentData())
         race_id = self.b_race.currentData() if hasattr(self, "b_race") else None
@@ -19508,7 +21444,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Deadspace(6)/Storyline(3) and unknown(0) are excluded → no LP fantasy.
             if meta not in self._BUILDABLE_META:
                 return False
-            if cat_id is not None and c_id != cat_id:
+            # emm704: Mengen- statt Einzelvergleich. Die Semantik bleibt
+            # Zeichen fuer Zeichen dieselbe wie vorher (`c_id != cat_id`),
+            # nur gegen MEHRERE erlaubte Kategorien statt gegen eine.
+            if cat_sel is not None and c_id not in cat_sel:
                 return False
             # OHNE explizite Kategorie-Wahl ("Alle Kategorien"): nur Schiffe/
             # Module/Munition/Drohnen - das ist gemeint, wenn jemand "T1/T2-
@@ -19518,7 +21457,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # fertiges Item) mit rein, nur weil sie zufällig auch Tech II
             # eingestuft sind. Wer die explizit sehen will, wählt die
             # Kategorie oben gezielt aus (dann greift dieser Filter nicht).
-            elif cat_id is None and c_id not in self._SELLABLE_CATEGORIES:
+            elif cat_sel is None and c_id not in self._SELLABLE_CATEGORIES:
                 return False
             if tech_set is not None and meta not in tech_set:
                 return False
@@ -19569,7 +21508,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "min_profit_isk": 0,
             "price_min": self.b_pmin.value(),
             "price_max": self.b_pmax.value(),
-            "max_items": 400,
+            # emm603 (Nutzer: "mehr gescannte Items in allen Tabs"): hier ist
+            # die Baukosten-Rechnung (rekursive Stueckliste) der teure Teil,
+            # nicht ESI - moderat statt drastisch angehoben, damit ein Scan
+            # nicht spuerbar laenger dauert.
+            "max_items": 800,
             # Ohne das Flag wirft find_deals Reaktionsprodukte raus
             # (is_manufactured deckt nur MANUFACTURING ab) - sie landeten
             # sonst im Trichter unter "nicht baubar".
@@ -21051,9 +22994,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
 
 
-    def _reservierungen_anwenden(self, stock):
+    def _reservierungen_anwenden(self, stock, anzeige=True):
         """Reservierungen ANDERER Plaene vom Bestand abziehen - an EINER
         Stelle fuer jeden Weg, der `opts["stock"]` setzt.
+
+        `anzeige=False` (emm636): nur rechnen, die Anzeigefelder NICHT
+        ueberschreiben. Gebraucht von `_bd_echter_bestand()`, das denselben
+        Abzug auf einer ZWEITEN Grundlage (roher Live-Stand statt
+        Einfrier-Merge) braucht - die Seitenleiste soll dabei weiter den
+        Abzug zeigen, der auf den ANGEZEIGTEN Bestand gewirkt hat.
 
         HERAUSGEZOGEN (Sitzung 20, Pruefung der Reservierungslogik): der
         eingefrorene Plan bekam seinen Bestand in `open_build_detail` OHNE
@@ -21087,7 +23036,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # zaehlen (#1 haelt sie, #3 "schuetzt" sie auch).
         if str(getattr(self, "_bd_open_plan_id", None)) in self.plan_rang(self.settings):
             _eigen = {}
+        # UEBERSUBSKRIPTION SICHTBAR MACHEN (emm793, Audit 31.10.2026):
+        # uebersteigt eigener+fremder Anspruch den Bestand (Ueberbau,
+        # Verkauf reservierter Ware, Fortschritts-Reset), sieht JEDER Plan
+        # seinen Anspruch gedeckt und niemand kauft die Luecke nach - die
+        # faire Aufteilung kann nicht wissen, wessen Einheiten fehlen.
+        # Ehrlich geht nur: die Luecke beziffern und ANZEIGEN.
+        _konflikt793 = {}
+        for _t793 in set(_res_map or {}) | set(_eigen or {}):
+            _ueber793 = (int((_res_map or {}).get(_t793, 0) or 0)
+                         + int((_eigen or {}).get(_t793, 0) or 0)
+                         - int(stock.get(_t793, 0) or 0))
+            if _ueber793 > 0 and stock.get(_t793, 0):
+                _konflikt793[int(_t793)] = _ueber793
+        self._bd_reserved_konflikt = _konflikt793
         _applied = self.bestand_nach_reservierungen(stock, _res_map, _eigen)
+        if not anzeige:
+            return                     # emm636: nur der Abzug, keine Anzeige
         self._bd_reserved_applied = _applied
         self._bd_reserved_plans = _res_plans
         # emm525: WER haelt wie viel, je Item - dieselbe Auswahl wie oben
@@ -21106,6 +23071,68 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             max(0, int(_q) - _applied.get(_t, 0))
             for _t, _q in (_res_map or {}).items())
 
+    def _bd_echter_bestand(self):
+        """Der Bestand, der WIRKLICH da ist - Grundlage der Fehlbedarfs-
+        Pruefung (emm636).
+
+        NUTZER 23.10.2026: "mir fehlt ploetzlich immer wieder irgendwelches
+        material, obwohl ich fuer jeden Plan alles einkaufe, dann einfriere,
+        dann reserviere ... wir haben das immer und immer wieder."
+
+        GEMESSEN an seinen echten Daten (Bericht `pruefe_bestand_luecke`,
+        23.10.2026 21:56): Gallente 1 rechnete mit 22'686 Platinum, ESI sah
+        4'192. Minmatar 1 rechnete mit 31'587 Platinum, 32'089 Tungsten -
+        real lagen 4'192 bzw. 13'018 da. Luecken von bis zu 27'395 Stueck.
+
+        WOHER DIE LUECKE KOMMT: ein EINGEFRORENER Plan rechnet je Item mit
+        max(Einfrier-Bestand, live) (`_merge_frozen_stock`). Das ist fuer
+        die ANZEIGE und die Einkaufsliste bewusst so - was dieser Plan
+        selbst verbraucht hat, soll die Liste nicht wieder aufreissen
+        ("gekauft ist gekauft"). Derselbe max-Merge macht aber BLIND dafuer,
+        dass Material seit dem Einfrieren wirklich VERSCHWUNDEN ist (ein
+        anderer Plan hat es genommen, verkauft, ein falsch geklickter Job).
+
+        UND GENAU DIESE ZAHL BEKAM BISHER DIE FEHLBEDARFS-PRUEFUNG:
+        `_fehlbedarf_jetzt` reichte `_bd_opts["stock"]` weiter - den
+        gemergten Stand. `fehlbedarf_vorschau` sagt in ihrem eigenen Kopf,
+        dass sie den ROHEN Ist-Bestand braucht ("live_stock = aktuelles
+        Lager + Pipeline, NICHT der max-Merge"). Der Melder, der genau
+        diesen Verlust finden soll, rechnete also gegen die Zahl, die ihn
+        versteckt - und meldete "alles gedeckt". Im Spiel fehlte es dann.
+
+        WAS HIER DRIN IST: roher Live-Stand (Lager + Pipeline) plus
+        Einfuegung, MIT dem Abzug der Reservierungen anderer Plaene (der
+        muss bleiben - Material, das ein anderer Plan haelt, ist fuer
+        diesen nicht verfuegbar; Sitzung 12, sonst meldet der Reiter
+        "gedeckt", waehrend die Einkaufsliste kauft). OHNE den
+        Einfrier-Merge.
+
+        Nicht eingefroren: dort gibt es gar keinen Merge, der angezeigte
+        Bestand IST der Live-Stand - dann unveraendert dieselbe Quelle wie
+        bisher.
+        """
+        if not getattr(self, "_bd_frozen", None):
+            return ((getattr(self, "_bd_opts", None) or {}).get("stock")
+                    or getattr(self, "_bd_live_stock", None) or {})
+        _base = getattr(self, "_bd_live_stock", None)
+        if not _base:
+            # Noch kein Assets-Abruf in diesem Fenster: lieber der bisherige
+            # (gemergte) Stand als gar keiner - eine leere Liste wuerde JEDES
+            # Material als fehlend melden (Regel 3).
+            return ((getattr(self, "_bd_opts", None) or {}).get("stock") or {})
+        # `_bd_live_stock` ist `agg` aus dem Abruf: Lager UND Pipeline schon
+        # zusammen - die Pipeline darf deshalb hier NICHT ein zweites Mal
+        # dazu (sonst zaehlt der Output laufender Jobs doppelt).
+        _stock, _src = self._resolve_stock_sources(
+            dict(_base), {},
+            getattr(self, "_bd_manual_stock", None) or {},
+            manual_ts=getattr(self, "_bd_manual_ts", None),
+            esi_ts=getattr(self, "_bd_esi_stock_ts", None),
+            manual_permanent=bool(getattr(self, "_bd_manual_perm", False)),
+            manual_only=bool(getattr(self, "_bd_manual_only", False)))
+        self._reservierungen_anwenden(_stock, anzeige=False)
+        return _stock
+
     def _bd_bestand_mitnehmen(self):
         """Lager-Bausteine des OFFENEN, nicht eingefrorenen Bauplan-Fensters
         fuer das Fenster, das gleich an seiner Stelle neu oeffnet (Ende
@@ -21123,6 +23150,49 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         return {"base": dict(_base or {}), "virt": dict(_virt),
                 "ts": getattr(self, "_bd_esi_stock_ts", None)}
 
+    def _fremde_pipeline_umstritten(self):
+        """{tid: Einheiten} der FREMDEN Pipeline auf UMSTRITTENEN Items
+        (emm799, Audit 31.10.2026, M8).
+
+        Die emm721-Regel ("fremder Bau deckt nicht") galt nur in
+        `_fehlbedarf_jetzt` - die PLANRECHNUNG selbst bekam die Pipeline
+        aller Plaene ungefiltert als Bestand (`_virtual_stock` zaehlt
+        jobs_by_char komplett): Plan B stufte ein Item als "stock covers"
+        ein, weil Plan A es gerade baute - Runplaner sagte "nothing to
+        do", die Fehlt-Zeile verlangte gleichzeitig den Kauf. EINE
+        Stelle (Regel 9) fuer beide Leser; dieselben Zutaten wie der
+        emm721-Block: plan-gefilterte Karte -> eigene job_ids zaehlen,
+        ungefiltert -> auf umstrittenen Items gelten alle als fremd."""
+        _umst = self._umstrittene_items(
+            self.settings, getattr(self, "_bd_open_plan_id", None))
+        if not _umst:
+            return {}
+        _gef = self._jobs_karte_plan_gefiltert()
+        _eigene = set()
+        if _gef:
+            for _js in (getattr(self, "_bd_active_jobs_map", None) or {}).values():
+                for _j in (_js or []):
+                    try:
+                        _eigene.add(int(_j.get("job_id")))
+                    except (TypeError, ValueError):
+                        pass
+        recipes = getattr(self, "_bd_recipes", None)
+        out = {}
+        for _t, _js in (getattr(self, "_bd_active_jobs_alle", None)
+                        or getattr(self, "_bd_active_jobs_map", None)
+                        or {}).items():
+            if int(_t) not in _umst:
+                continue
+            _fr = sum(int(_j.get("runs") or 0) for _j in (_js or [])
+                      if not (_gef and int(_j.get("job_id") or 0) in _eigene))
+            if _fr <= 0:
+                continue
+            _bp = (recipes.product_to_bp.get(int(_t))
+                   if recipes is not None else None)
+            _oq = int(_bp[2]) if _bp else 1
+            out[int(_t)] = _fr * _oq
+        return out
+
     def _recompute_bd_stock(self):
         """Effektiven Bauplan-Bestand + Herkunft aus den gemerkten Bausteinen
         neu bilden - ohne ESI-Abruf. Damit wirkt jede Änderung am Clipboard-
@@ -21136,6 +23206,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             esi_ts=getattr(self, "_bd_esi_stock_ts", None),
             manual_permanent=bool(getattr(self, "_bd_manual_perm", False)),
             manual_only=bool(getattr(self, "_bd_manual_only", False)))
+        # FREMDE PIPELINE AUF UMSTRITTENEN ITEMS RAUS (emm799, M8): was ein
+        # ANDERER Plan gerade baut, deckt diesen Plan nicht - dieselbe
+        # emm721-Regel, die der Fehlbedarf laengst anwendet, jetzt auch
+        # VOR der Kauf/Bau-Entscheidung der Planrechnung.
+        try:
+            for _t799, _u799 in (self._fremde_pipeline_umstritten() or {}).items():
+                if _t799 in stock:
+                    stock[_t799] = max(0, int(stock[_t799] or 0) - int(_u799))
+                    if stock[_t799] <= 0:
+                        stock.pop(_t799, None)
+        except Exception as _e799:
+            self._log_exception("Fremde Pipeline abziehen", str(_e799))
         # RESERVIERUNGEN ANDERER PLAENE ABZIEHEN - an dieser EINEN Stelle,
         # damit es fuer ESI-, Pipeline- UND Clipboard-Bestand gleichermassen
         # gilt (Arbeitsregel 9). Sichtbar gemacht wird der Abzug ueber
@@ -21259,6 +23341,38 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
          {"sym": "coins", "window": 180, "below": 12, "maxbelow": 50, "exp": 12, "expisk": 150_000,
           "vol": 5, "exitqty": 1, "sellfill": 0, "dos": 0, "pmin": 5_000_000, "pmax": 0,
           "tip": "From 5M per unit, ≥150k expected profit per unit - few positions, patience needed."}),
+        ("Capitals & structures · yearly low",
+         # emm605 (Nutzer: Athanor/Paladin per Hand gehandelt, "solche Sachen
+         # lassen sich nicht auffinden" - 2-Monats-Halteposition anhand des
+         # Jahrestiefs). Eigenes Preset statt "Expensive chunks" nur
+         # aufgebohrt: 1 Jahr Fenster (window:365, deckt sich mit dem
+         # Ingame-Preis-Chart), pmin auf 300M (echte Capitals/Structures
+         # statt 5M-Teure), vol/exitqty sehr locker (diese Dinger handeln
+         # von Natur aus selten - ein Exit-Tempo-Gate wuerde sie wieder
+         # rausfiltern), dafuer expisk hoch genug (20M), damit die absolute
+         # ISK-Bremse pro Einheit trotzdem steht. Startwerte, live kalibriert
+         # gegen den echten Markt (siehe MEMORY.md/CLAUDE.md emm605).
+         {"sym": "trophy", "window": 365, "below": 8, "maxbelow": 60, "exp": 5, "expisk": 20_000_000,
+          "vol": 1, "exitqty": 0, "sellfill": 0, "dos": 0, "pmin": 300_000_000, "pmax": 0,
+          "tip": "From 300M per unit, 1-year baseline: hunts capitals/structures trading near their yearly low. Rare trades, long patience, no resale-speed gate."}),
+        ("Bargain Radar · nearest to 1Y low (all prices)",
+         # emm607 (Nutzer, zu den Verbesserungsideen: "Bargain-Radar ja geile
+         # Idee!"). Bewusst der LOOSESTE Preset ueberhaupt - quer durch JEDE
+         # Preisklasse (pmin/pmax:0, anders als "Expensive chunks"/"Capitals
+         # & structures"), keine below/exp/expisk/exitqty-Schwellen (alle auf
+         # 0 bzw. so milde wie der Trichter zulaesst), nur vol:1 als
+         # minimaler Daseins-Nachweis (0 Tagesvolumen = kein echtes Orderbuch).
+         # Der Witz ist NICHT dieses Preset selbst zu sortieren (der
+         # vorhandene exp_pct-Score bleibt die Grundordnung) - sondern dass
+         # die emm606-Spalte "vs 1Y low" bereits anklickbar/sortierbar ist:
+         # einmal auf die Spaltenueberschrift klicken, aufsteigend sortiert,
+         # und ganz oben stehen die Items, die GENAU JETZT am naechsten an
+         # ihrem echten 365-Tage-Tief sind - unabhaengig von Preisklasse,
+         # Liquiditaet oder Marge. Kein neuer Tab, keine neue Logik noetig -
+         # nur ein Preset, das der bestehenden Spalte Platz macht.
+         {"sym": "satellite", "window": 365, "below": 0, "maxbelow": 95, "exp": 0, "expisk": 0,
+          "vol": 1, "exitqty": 0, "sellfill": 0, "dos": 0, "pmin": 0, "pmax": 0,
+          "tip": "The loosest preset of all - every price class, almost no gates. Click the „vs 1Y low“ column header to sort by distance from the real 365-day low."}),
     ]
 
     def _hold_preset_to_custom(self, *args):
@@ -21288,6 +23402,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.h_dos.setValue(p.get("dos", 0))
             self.h_pmin.setValue(p.get("pmin", 0))
             self.h_pmax.setValue(p.get("pmax", 0))
+            # emm610 (Nutzer, nach dem Live-Test von emm609: "VS 1Y Low
+            # sollte standardmaessig eingeschalet sein in Bargain Radar").
+            # "sym": "satellite" ist eindeutig nur beim Bargain-Radar-Preset
+            # gesetzt (keine Verwechslungsgefahr ueber Uebersetzungen wie
+            # bei einem Label-Vergleich). Andere Presets/Custom bleiben
+            # unangetastet - wer die Spalte dort manuell an- oder
+            # ausgeschaltet hat, bleibt dabei; nur Bargain Radar erzwingt
+            # sie JEDES Mal beim (Wieder-)Auswaehlen sichtbar, weil die
+            # Spalte dort der ganze Witz des Presets ist.
+            _acts610 = getattr(self, "_hold_col_acts", None)
+            if _acts610 and 11 in _acts610 and p.get("sym") == "satellite":
+                _acts610[11].setChecked(True)
         finally:
             self._applying_hold_preset = False
         if not hasattr(self, "hold_status"):
@@ -21310,6 +23436,37 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if not snapshot:
             self.hold_status.setText(t("Please run \u201eMarket scan\u201c first."))
             return
+        # KATEGORIE/META-MEHRFACHFILTER (emm611): siehe compute_deals fuer das
+        # Vorbild. ALLE Kategorien baut hier auf der vollen Markt-Tabelle auf
+        # (industry.item_category_map()/market_category_options()), nicht nur
+        # auf baubaren Items wie Daytrade - Erze/Skins waeren sonst faelschlich
+        # ausgeschlossen.
+        cat_sel = self._h_cat_selected() if hasattr(self, "_h_cat_selected") else None
+        meta_sel = self._h_meta_selected() if hasattr(self, "_h_meta_selected") else None
+        if cat_sel is not None or meta_sel is not None:
+            cmap = industry.item_category_map()
+            if not cmap:
+                self.hold_status.setText(
+                    t("The category/meta filter needs the SDE data \u2013 please "
+                      "run \u201eLoad recipes\u201c once."))
+                return
+            rig_ids = industry.rig_group_ids_all()
+            def _hok(tid):
+                info = cmap.get(tid)
+                if not info:
+                    return False
+                c_id, g_id, m_id = info
+                if cat_sel is not None and not industry.kategorie_passt_mehrfach(
+                        cat_sel, c_id, g_id, rig_ids):
+                    return False
+                if meta_sel is not None and not industry.meta_passt_mehrfach(meta_sel, m_id):
+                    return False
+                return True
+            snapshot = [s for s in snapshot if _hok(s["type_id"])]
+            if not snapshot:
+                self.hold_status.setText(t("No items of this category/meta class in the "
+                                           "current hub scan."))
+                return
         days = self.h_window.currentData()
         filters = {
             "min_margin": self.h_below.value(),
@@ -21324,12 +23481,29 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "min_daily_vol": self.h_vol.value(),
             "min_exit_qty": self.h_exitqty.value(),
             "max_dos": self.h_dos.value(),
-            "avoid_falling": True,
+            # emm601 (Nutzer: "swings breakouts nach unten jedoch sind
+            # eigentlich geil zum einkaufen, die sollte man unbedingt
+            # mitnehmen!"): war hart auf True verdrahtet (kein Widget, der
+            # Nutzer konnte das NIE abschalten) - JEDES frisch fallende
+            # Item wurde komplett aus der Trefferliste entfernt, bevor es
+            # ueberhaupt in Sichtweite kam. Genau diese frischen Rueckgaenge
+            # sind aber die klassische Swing-Kaufgelegenheit. Das
+            # bestehende Sicherheitsnetz (dump_risk: Massenvolumen-Crash =
+            # vermutlich echte Neubewertung, kommt nicht zurueck) bleibt
+            # als ⚠-Warnung erhalten, filtert aber weiterhin nicht aus -
+            # genau die richtige Stelle fuer die Vorsicht, nicht ein
+            # pauschaler Trend-Filter.
+            "avoid_falling": False,
             "min_expected_pct": self.h_exp.value(),
             "min_expected_isk": self.h_expisk.value(),
             "price_min": self.h_pmin.value(),
             "price_max": self.h_pmax.value(),
-            "max_items": 300,
+            # emm603 (Nutzer: "mehr gescannte Items in allen Tabs"): Basis-
+            # Fallback, wird fuer hold_mode=="under" gleich unten durch den
+            # gratis Cache/Fetch-Split ueberschrieben; fuer "underbuild"
+            # (rekursive Baukosten-Rechnung, teuer) bewusst nur moderat
+            # angehoben statt wie bei "under".
+            "max_items": 600,
         }
         hold_mode = self.h_mode.currentData() if hasattr(self, "h_mode") else "under"
         if hold_mode == "under":
@@ -21352,8 +23526,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Trichterzahlen zeigen, dass Reichweite (nicht die Filter) der
             # Engpass ist - beim Kalibrier-Lauf war es umgekehrt ("nicht tief
             # genug" war das mit Abstand größte Tor).
-            filters["max_cached_items"] = 6000
-            filters["max_new_history"] = 350
+            # emm603 (Nutzer: "ESI-Deckel soweit oeffnen wie moeglich, mehr
+            # gescannte Items in allen Tabs"): wie bei Daytrade - der echte
+            # Schutz vor einer ESI-Sperre ist enrich()'s eigener RateLimited-
+            # Zaehler (5 Treffer -> stop_fetch), nicht diese Zahl. Deckel
+            # hochgesetzt, damit die Grundgesamtheit schneller Richtung
+            # Marktgroesse (~13'000) waechst statt sich bei 6'000 zu
+            # saettigen.
+            filters["max_cached_items"] = 20000
+            filters["max_new_history"] = 1000
         if hold_mode == "underbuild" and not industry.sde_ready():
             self.hold_status.setText(t("For „below build cost“ load the blueprints first."))
             return
@@ -21372,7 +23553,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         scan_region = store.get_scan_region()
         self._sync_fees_to_hub(scan_region)   # broker fee for THIS hub's standings
 
-        def job(progress=None, should_cancel=None):
+        def job(progress=None, should_cancel=None, status=None):
             recipes = industry.recipes_cached() if hold_mode == "underbuild" else None
             if recipes is not None and build_opts is not None:
                 # Zwei Boden-Lücken, die NUR T2 betrafen (Nutzer-Fund per
@@ -21397,16 +23578,46 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     bp: _mod for bp in recipes.invention_for_bpc}
                 self._last_floor_opts = dict(build_opts)
             _diag = {}
-            deals = scanner.find_deals(snapshot, self.settings, days, hold_mode, filters,
-                                       progress=progress, region=scan_region,
-                                       recipes=recipes, build_opts=build_opts,
-                                       should_cancel=should_cancel, diag=_diag)
+            # emm587: Auto-Nachscan wie bei Daytrade - NUR "under" hat das
+            # guenstige Cache/Budget-System (s. oben); "underbuild" rechnet
+            # pro Kandidat eine komplette Baukosten-Stueckliste und bliebe bei
+            # mehreren Runden spuerbar langsamer, deshalb dort nur 1 Runde.
+            # emm588: siehe Daytrade-Kommentar - seen_ids schliesst bereits
+            # analysierte Items von der naechsten Runde aus (exclude_type_ids),
+            # Treffer werden ueber die Runden gesammelt statt ersetzt.
+            deals = []
+            seen_ids = set()
+            _runden = 3 if hold_mode == "under" else 1
+            for _runde in range(_runden):
+                if should_cancel and should_cancel():
+                    break
+                if _runde and status:
+                    status(t("Too few hits ({n}) \u2013 extra round {r}/3 \u2026")
+                           .format(n=len(deals), r=_runde + 1))
+                if seen_ids:
+                    filters["exclude_type_ids"] = seen_ids
+                runde_deals = scanner.find_deals(
+                    snapshot, self.settings, days, hold_mode, filters,
+                    progress=progress, region=scan_region,
+                    recipes=recipes, build_opts=build_opts,
+                    should_cancel=should_cancel, diag=_diag)
+                _neu_analysiert = _diag.get("analyzed_ids") or set()
+                seen_ids |= _neu_analysiert
+                _vorhanden = {d["type_id"] for d in deals}
+                deals += [d for d in runde_deals if d["type_id"] not in _vorhanden]
+                if len(deals) >= 25 or not _neu_analysiert:
+                    # >=25: genug Treffer. leer: der Markt ist erschoepft -
+                    # eine weitere Runde haette ohnehin keine Items mehr uebrig.
+                    break
+            deals.sort(key=lambda r: r["score"], reverse=True)
+            deals = deals[:filters.get("max_items", 400)]
             if should_cancel and should_cancel():
-                return [], _diag
+                return deals, _diag
             esi.resolve_names([d["type_id"] for d in deals])
             return deals, _diag
 
-        w = Worker(job, with_progress=True, with_cancel=True)
+        w = Worker(job, with_progress=True, with_cancel=True, with_status=True)
+        w.status.connect(lambda s: self.hold_status.setText(s))
         w.progress.connect(lambda d, tot: self.hold_status.setText(t("Analysing \u2026 {d}/{n}").format(d=d, n=tot)))
 
         def done(res):
@@ -21473,6 +23684,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         ("contradictory", "contradictory (deep + rising)"),
         ("exp_nonpositive", "no profit after fees"),
         ("exp_pct_low", "expected profit % too small"),
+        ("long_bottom", "falling knife (stuck at the low for months)"),
         ("exp_isk_low", "ISK profit too small"),
         ("sell_fill_low", "sell fill too small"),
     ]
@@ -21538,20 +23750,39 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if "swing" in self._ladder_ctx:
             self._ladder_ctx["swing"]["deals"] = {d["type_id"]: d for d in deals}
             self._ladder_ctx["swing"]["added"].clear()
-        # Top-15 = best accumulation targets by combined Swing quality
+        # emm600 (wie Daytrade, Nutzer: "er soll nichts selber einstellen
+        # muessen um gute profitable handelbare trades zu finden"): die
+        # kombinierte Swing-Qualitaet (_swing_quality: Rabatt + Erwartungs-
+        # gewinn, gewichtet mit Trend-Sicherheit/Verlaesslichkeit/Wiederver-
+        # kaufs-Liquiditaet) ist jetzt IMMER die Grundreihenfolge, nicht nur
+        # wenn der "Top 15"-Schalter manuell aktiv ist. Der Schalter steuert
+        # nur noch Stern + Toenung.
         highlight = getattr(self, "hold_top_btn", None) and self.hold_top_btn.isChecked()
         ranked = sorted(deals, key=self._swing_quality, reverse=True)
         top_ids = {d["type_id"] for d in ranked[:15]}
-        if highlight:
-            deals = ranked
+        deals = ranked
         tint = QColor(theme.AMBER); tint.setAlpha(28)
-        self.hold_status.setText(
+        # KURZE ZEILE, VOLLE DIAGNOSE IM TOOLTIP (emm814, Bauplan-Kur -
+        # dasselbe Muster wie build_status/deal_status). AUSNAHME: KEIN
+        # Treffer - dann ist der Grund die Antwort und bleibt sichtbar.
+        _voll814 = (
             t("{n} hold candidates. ").format(n=len(deals)) + self._hold_diag_text() +
             t("Sortable by column click \u00b7 double-click = history \u00b7 right-click = "
               "open in game / shopping list."))
+        if deals:
+            self.hold_status.setText(
+                t("{n} hold candidates. ").format(n=len(deals)).strip()
+                + "  \u24d8")
+        else:
+            self.hold_status.setText(_voll814)
+        self.hold_status.setToolTip(_voll814)
+        self._wrap_tooltips(self.hold_status)
         self.hold_table.setSortingEnabled(False)
         self.hold_table.setRowCount(len(deals))
         green = QColor(theme.GREEN); red = QColor(theme.RED)
+        # AN self (emm814): _hold_apply_bars() laeuft nach jedem Sortieren
+        # erneut und braucht die Daten dann noch (Muster _bau_bar_rows).
+        self._hold_bar_rows = {}   # type_id -> (%, Text, Farbe, Tooltip)
         for i, d in enumerate(deals):
             trend = d.get("trend", "—")
             trend_txt = {"falling": t("\u2193 falling"), "sideways": t("\u2192 sideways"),
@@ -21577,6 +23808,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 hold_txt = f"~{round(days_est)} " + t("d") + mark; hold_val = days_est
             else:
                 hold_txt = "—"; hold_val = 9999.0
+            # BEWERTUNG VOR DEN ZELLEN (emm814): Balken-% ist Sortierwert
+            # von Spalte 12, die Farbstufe daempft unten die Gewinn-Zellen.
+            _pct814, _btxt814, _bcol814 = self._swing_bewertung(d)
+            self._hold_bar_rows[d["type_id"]] = (
+                _pct814, _btxt814, _bcol814,
+                t("Rating: the same combined quality the list is ranked by – "
+                  "discount and expected recovery profit, weighted by trend "
+                  "safety, reliability and resale volume. A caveat (still "
+                  "falling, suspected dump) beats a good number."))
             cells = [
                 (star + names.get(d["type_id"], f"#{d['type_id']}"), None),
                 (isk(d["sell_min"], suffix=False), d["sell_min"]),
@@ -21589,6 +23829,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 (f"{round(d['daily_vol']):,}".replace(",", "'"), d["daily_vol"]),
                 (f"{recov*100:.0f}", recov),
                 (hold_txt, hold_val),
+                self._vs_low_zelle(d.get("vs_low_pct")),
+                ("", _pct814),        # 12: Balken haengt als Zell-Widget darueber
             ]
             for j, (text, val) in enumerate(cells):
                 it = NumericItem(text, val) if j >= 1 else QTableWidgetItem(text)
@@ -21606,7 +23848,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                           "rising": theme.AMBER}.get(trend, theme.MUTED)
                     it.setForeground(QColor(tc))
                 if j in (5, 6):
-                    it.setForeground(green if d.get("exp_profit", 0) > 0 else red)
+                    # ZAHLEN ENTFLIMMERN (emm814, wie Daytrade/Scanner):
+                    # Verlust bleibt rot, gruen nur beim Gruen-Tier der
+                    # Bewertung (DIESELBE Regel wie der Balken, Regel 9),
+                    # alles dazwischen gedaempft.
+                    if d.get("exp_profit", 0) <= 0:
+                        it.setForeground(red)
+                    elif _bcol814 == theme.GREEN:
+                        it.setForeground(green)
+                    else:
+                        it.setForeground(QBrush(QColor(theme.MUTED)))
                 if j == 7:
                     # green when your sell order fills well, red when it just sits
                     it.setForeground(QColor(theme.GREEN if sf >= 50 else
@@ -21614,6 +23865,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if j == 9:
                     it.setForeground(QColor(theme.GREEN if recov >= 0.85 else
                                             (theme.AMBER if recov >= 0.6 else theme.RED)))
+                if j == 11:
+                    # emm608 (Nutzer: "etwas Farbe rein damit man sieht was
+                    # gut ist"): nah am echten Jahrestief = gruen, mittel =
+                    # amber, weit weg (auch gedeckelt angezeigt) = rot.
+                    _vlp = d.get("vs_low_pct")
+                    if _vlp is not None:
+                        it.setForeground(QColor(theme.GREEN if _vlp <= 15 else
+                                                (theme.AMBER if _vlp <= 50 else theme.RED)))
                 if j == 0 and d.get("dump_risk"):
                     it.setForeground(QColor(theme.AMBER))
                     it.setToolTip(
@@ -21642,8 +23901,35 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.hold_table.item(i, 0).setData(Qt.UserRole, d["type_id"])
         self._hold_top_ids = top_ids if highlight else None
         self.hold_table.setSortingEnabled(not highlight)
+        if not highlight:
+            # emm600: Sortier-Indikator auf "keine Spalte" -> die Tabelle
+            # bleibt in der Einfuege-Reihenfolge (= ranked, kombinierte
+            # Swing-Qualitaet); eigenes Klicken auf eine Spalte bleibt
+            # moeglich.
+            self.hold_table.sortByColumn(-1, Qt.AscendingOrder)
+        # BALKEN NACH DEM SORTIEREN ANHAENGEN (emm814): Zuordnung per
+        # type_id, nach jedem Sortieren neu - Guertel+Hosentraeger wie im
+        # Scanner/Daytrade (das aktuelle Qt bewegt Zell-Widgets zwar mit,
+        # der Haken schuetzt andere Qt-Versionen; die Rotprobe prueft
+        # deshalb das Anhaengen selbst, nicht den Haken - emm812-Lehre).
+        self._hold_apply_bars()
+        _hhdr814 = self.hold_table.horizontalHeader()
+        _alt814 = getattr(self, "_hold_bars_sort_slot", None)
+        if _alt814 is not None:
+            try:
+                _hhdr814.sortIndicatorChanged.disconnect(_alt814)
+            except (TypeError, RuntimeError):
+                pass
+        self._hold_bars_sort_slot = (lambda *_a: self._hold_apply_bars())
+        _hhdr814.sortIndicatorChanged.connect(self._hold_bars_sort_slot)
         self._autosize_once(self.hold_table, "hold")
         self._icon_prefetch_pending(self._rerender_hold)
+
+    def _hold_apply_bars(self):
+        """Bewertungs-Balken der Swing-Liste (Kern: _haenge_balken,
+        derselbe wie im Bau-Scanner/Daytrade). Spalte 12 (emm814)."""
+        self._haenge_balken(self.hold_table,
+                            getattr(self, "_hold_bar_rows", None) or {}, 12)
 
     def _open_chart_for(self, tid, name=None):
         """Springt in den Kursverlauf-Tab und zeigt das Item – von überall nutzbar."""
@@ -21673,7 +23959,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
     # ---- Swing Gold-Suche: best accumulation chances across under + drop -----
     _SWING_GOLD_PRESETS = {
-        "under": {"min_margin": 10, "min_daily_vol": 5, "avoid_falling": True,
+        # emm601: wie compute_hold - frische Ruecksetzer sind die Chance,
+        # nicht die Gefahr, siehe Kommentar dort.
+        "under": {"min_margin": 10, "min_daily_vol": 5, "avoid_falling": False,
                   "max_dos": 90, "min_hist_days": 20, "max_under_pct": 60,
                   "price_min": 0, "price_max": 0, "max_items": 400},
         "drop":  {"min_margin": 15, "min_daily_vol": 10, "max_dos": 40,
@@ -22048,6 +24336,32 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             for _i in (getattr(self, "_bd_invention_needs", None) or {}).values():
                 if _i.get("decryptor_id"):
                     _inv_aus.add(int(_i["decryptor_id"]))
+        # ERFINDEN IST ERLEDIGT -> KEIN INVENTION-MATERIAL MEHR (emm637).
+        # `_bd_inv_gedeckt` sagt (aus dem Blueprints-Reiter, derselbe
+        # Vergleich), fuer welche T2-Blaupausen die eigenen Kopien reichen.
+        # Deren Datacores/Decryptoren gehoeren nicht mehr in den Wagen.
+        # ABER NUR, WENN SIE SONST NIEMAND BRAUCHT: Datacores teilen sich
+        # mehrere Endprodukte. Ein Posten faellt also erst raus, wenn KEIN
+        # noch offener Invention-Posten ihn verlangt - sonst wuerde das
+        # gedeckte Produkt dem ungedeckten das Material wegnehmen (Regel 3).
+        _needs637 = getattr(self, "_bd_invention_needs", None) or {}
+        _ged637 = {int(x) for x in (getattr(self, "_bd_inv_gedeckt", None)
+                                    or set())}
+        if _ged637 and _needs637:
+            def _inv_posten(_i):
+                _s = {int(_d) for _d, _q in (_i.get("datacores") or [])}
+                if _i.get("decryptor_id"):
+                    _s.add(int(_i["decryptor_id"]))
+                return _s
+            _noch637, _fertig637 = set(), set()
+            for _bp637, _i637 in _needs637.items():
+                try:
+                    _bp637 = int(_bp637)
+                except (TypeError, ValueError):
+                    continue
+                (_fertig637 if _bp637 in _ged637 else _noch637).update(
+                    _inv_posten(_i637 or {}))
+            _inv_aus |= (_fertig637 - _noch637)
         if _inv_aus:
             items = [(t, n) for t, n in items if int(t) not in _inv_aus]
         owned, selling = self._owned_and_selling()
@@ -22147,13 +24461,26 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Kopfzahl: im KOPIER-MODUS zaehlt die PLAN-Fehlmenge (alles andere
         # ist per Definition nicht einzukaufen - gebaut oder gedeckt). Ohne
         # copy_qty wie bisher: fehlend oder gar kein Besitz.
+        _baut_kopf = set(getattr(self, "_bd_plan_builds", None) or ())
+        _n_baut = sum(1 for _r in rows if int(_r["tid"]) in _baut_kopf)
         if copy_qty:
-            _n_miss = sum(1 for _r in rows if (_r.get("missing") or 0) > 0)
+            # SELBSTGEBAUTES ZAEHLT AUCH HIER NICHT ALS FEHLEND (emm665,
+            # Nutzer-Screenshot 24.10.2026). Sein Gallente-Wagen sagte
+            # oben "you are missing 2 of 2 positions", zeigte zweimal
+            # Status "this plan builds it" - und unten stand "Nothing
+            # copied - the plan has 0 missing item(s)". DREI AUSSAGEN,
+            # ZWEI WAHRHEITEN, auf einem Bildschirm.
+            # Die Lehre stand seit Sitzung 20 zwanzig Zeilen tiefer im
+            # `else`-Zweig ("sonst sagt der Kopf 'dir fehlen 9 von 9',
+            # waehrend der Materialien-Reiter '0 zu kaufen' meldet") -
+            # der KOPIER-Zweig hat sie nie bekommen. Jetzt beide.
+            _n_miss = sum(1 for _r in rows
+                          if int(_r["tid"]) not in _baut_kopf
+                          and (_r.get("missing") or 0) > 0)
         else:
             # GEBAUTES ZAEHLT NICHT ALS FEHLEND (Sitzung 20) - sonst sagt der
             # Kopf "dir fehlen 9 von 9", waehrend der Materialien-Reiter
             # "0 zu kaufen" meldet. Dieselbe Menge, zwei Aussagen.
-            _baut_kopf = set(getattr(self, "_bd_plan_builds", None) or ())
             _n_miss = sum(1 for _r in rows
                           if int(_r["tid"]) not in _baut_kopf
                           and ((_r.get("missing") or 0) > 0
@@ -22166,7 +24493,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
              + (_txt("you are missing {m} of {n} positions").format(
                  m=_n_miss, n=len(rows)) if show_all
                 else _txt("you already have {n} item(s)").format(n=len(rows)))
-             + "</b>"))
+             + "</b>"
+             # NICHTS VERSCHWINDET STILL: wenn Posten nur deshalb nicht
+             # fehlen, weil der Plan sie selbst baut, gehoert das in den
+             # Kopf - sonst liest er "0 von 2" und sucht den Fehler.
+             # 11px, nicht 12: aa170 haelt die Schriftskala
+             # (11/13/15/19) - meine 12 hat sie prompt gerissen.
+             + ((" &nbsp;\u00b7&nbsp; <span style='font-size:11px;'>"
+                 + _txt("{n} of them the plan builds itself").format(
+                     n=_n_baut) + "</span>")
+                if (show_all and _n_baut) else "")))
         head.setWordWrap(True); v.addWidget(head)
         legend = QLabel(
             f"<span style='color:{theme.GREEN};'>\u25cf "
@@ -22204,6 +24540,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         tree.headerItem().setToolTip(7,
             _txt("Packaged volume of the quantity in „To cart“ – the same "
                  "value the build plan charges freight on."))
+        # "GEBRAUCHT" IST DER VOLLE BEDARF - UND DAS MUSS DASTEHEN
+        # (emm669, Nutzer-Befund 24.10.2026). Sein Amarr-Bild: Platinum
+        # GEBRAUCHT 139'356, BESITZE 4'192, FEHLT 8'352. Wer die ersten
+        # beiden subtrahiert, bekommt 135'164 und haelt die 8'352 fuer
+        # falsch. In Wahrheit deckt der eingefrorene Plan den Rest
+        # laengst aus Bestand, Selbstgebautem und Wiederaufbereitung -
+        # nur sagt es niemand. Drei Zahlen, die sich nicht verrechnen
+        # lassen, sind drei Gelegenheiten, dem Werkzeug zu misstrauen.
+        tree.headerItem().setToolTip(1,
+            _txt("The FULL demand of the plan \u2013 not what is left to buy. "
+                 "The difference to \u201eMissing\u201c is what the plan already "
+                 "covers from stock, from what it builds itself and from "
+                 "reprocessing. Subtracting \u201eOwned\u201c from this does NOT "
+                 "give \u201eMissing\u201c."))
         tree.headerItem().setToolTip(2,
             _txt("What you own IN TOTAL \u2013 per portfolio, at ANY location."))
         tree.headerItem().setToolTip(3,
@@ -22331,7 +24681,37 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         "for it is already on the list. Buying it as well would "
                         "pay for it twice. Tick it only if you deliberately want "
                         "to buy it instead."))
-                _fw = it.font(5); _fw.setBold(True); it.setFont(5, _fw)
+                    # DIE TO-CART-ZAHL DARF HIER NICHT WIE EINE
+                    # KAUFANWEISUNG AUSSEHEN (emm668, Nutzer-Screenshot
+                    # 24.10.2026): seine Gallente-Zeilen trugen "this plan
+                    # builds it" UND fettgedruckt 4'336 bzw. 7'086 in TO
+                    # CART. Fett heisst in dieser Tabelle "das ist deine
+                    # Kaufmenge" - bei einem Posten, den der Plan selbst
+                    # baut, ist das eine Aufforderung zum Doppelkauf. Die
+                    # ZAHL bleibt stehen, denn der Dialog laesst bewusst
+                    # zu, ihn trotzdem zu kaufen ("Ankreuzen kann man es
+                    # weiterhin von Hand") - sie wird nur gedaempft statt
+                    # hervorgehoben, und der Tooltip sagt, wofuer sie gilt.
+                    it.setForeground(5, QColor(theme.MUTED))
+                    it.setToolTip(5, _txt(
+                        "Only relevant if you tick this row on purpose - the "
+                        "plan builds this item, so nothing goes to the cart "
+                        "for it."))
+                # DIE RECHNUNG JE ZEILE AUSSCHREIBEN (emm669): der
+                # Spaltenkopf erklaert die Regel, diese Zeile nennt die
+                # Zahlen. `need - missing` ist exakt das, was der Plan
+                # schon deckt - mehr Aufschluesselung hat der Dialog
+                # nicht, und eine erfundene waere schlimmer als keine.
+                _need_z = int(r.get("need") or 0)
+                _miss_z = int(r.get("missing") or 0)
+                if _need_z > _miss_z:
+                    it.setToolTip(1, _txt(
+                        "Full demand {need}. The plan already covers {cov} "
+                        "(stock, self-built, reprocessing) \u2013 {miss} left "
+                        "to buy.").format(
+                            need=_num(_need_z), cov=_num(_need_z - _miss_z),
+                            miss=_num(_miss_z)))
+                _fw = it.font(5); _fw.setBold(not _wird_gebaut); it.setFont(5, _fw)
                 it.setForeground(5, QColor(theme.CYAN))
                 # "am Bau-Ort = 0" ist die wichtigste Zahl der Zeile: das
                 # Material liegt zwar irgendwo, aber NICHT dort, wo gebaut
@@ -22455,6 +24835,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _vol_lbl = QLabel("")
         _vol_lbl.setWordWrap(True)
 
+        def _haken_tids():
+            """Die ANGEHAKTEN type_ids - nur die kopieren die Kopier-Knoepfe.
+
+            emm783 (Nutzer-Screenshot 31.10.2026): Megacyte war abgewaehlt
+            und kam trotzdem ins Multibuy. Die Haken-Spalte gab es im
+            Kopier-Modus laengst, aber _copy_rows fragte sie nie ab -
+            ein entfernter Haken heisst "nicht kaufen".
+            """
+            return {int(_t) for _it, _t, _n, _q in checks
+                    if _it.checkState(0) == Qt.Checked}
+
         def _vol_posten():
             """Die Posten, deren Volumen unten summiert wird.
 
@@ -22465,7 +24856,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             """
             if copy_mode:
                 _p, _, _ = einkauf_posten(
-                    rows, "missing", getattr(self, "_bd_plan_builds", None))
+                    rows, "missing", getattr(self, "_bd_plan_builds", None),
+                    nur_tids=_haken_tids())
                 return [(_t, _q) for _t, _n, _q in _p]
             out = []
             for _it, _t, _n, _q in checks:
@@ -22546,8 +24938,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Haken aendern die Wagen-Liste - dann aendert sich auch ihr
         # Volumen. Nur die Fuss-Zeile neu schreiben, nie die Spalten:
         # `setText` auf einer Zeile wuerde itemChanged erneut ausloesen.
-        if not copy_mode:
-            tree.itemChanged.connect(lambda *_a: _vol_zeigen())
+        # AUCH IM KOPIER-MODUS (emm783): seit die Haken die Kopier-Liste
+        # bestimmen, muss die Volumen-Zeile jedem Hakenwechsel folgen.
+        tree.itemChanged.connect(lambda *_a: _vol_zeigen())
         if non_conflict:
             # Beim Namen nennen - "1 neue Items" liess den Nutzer raten, WAS
             # ueberhaupt in den Wagen wandert.
@@ -22637,8 +25030,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # AUSWAHL UND VOLUMEN-ZEILE AUS DEMSELBEN HELFER (emm546,
                 # Regel 9): sonst nennt die Zeile unten das Volumen einer
                 # anderen Liste als der, die hier kopiert wird.
+                # NUR DIE ANGEHAKTEN ZEILEN (emm783): die Haken-Spalte gab es
+                # im Kopier-Modus laengst, aber hier wurde sie nie abgefragt -
+                # Megacyte kam trotz entferntem Haken ins Multibuy.
+                _haken783 = _haken_tids()
+                _n_ab783 = sum(1 for _it, _t, _n_, _q_ in checks
+                               if _it.checkState(0) != Qt.Checked)
                 _posten, _skipped, _gebaut_raus = einkauf_posten(
-                    rows, feld, getattr(self, "_bd_plan_builds", None))
+                    rows, feld, getattr(self, "_bd_plan_builds", None),
+                    nur_tids=_haken783)
                 for _tid, _nm, _q in _posten:
                     # PUFFER wie im Einkaufswagen (Nutzer). Derselbe Helfer
                     # und dieselbe Einstellung `bau_buy_surplus`, die auch der
@@ -22658,7 +25058,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         "Nothing copied \u2013 the plan has 0 {what} (everything is built "
                         "or covered from stock/jobs, see status per row).").format(what=was)
                         + (_txt(" {n} position(s) are made by the plan itself.").format(
-                            n=len(_gebaut_raus)) if _gebaut_raus else ""))
+                            n=len(_gebaut_raus)) if _gebaut_raus else "")
+                        + (_txt(" \u2013 {n} unticked, not copied").format(
+                            n=_n_ab783) if _n_ab783 else ""))
                     self._flash_tip(_txt("No {what} to copy.").format(what=was),
                                     ms=self.FLASH_LESEN_MS)
                     return
@@ -22674,7 +25076,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     + (_txt(" \u2013 {n} skipped without a name").format(
                         n=len(_skipped)) if _skipped else "")
                     + (_txt(" \u2013 {n} left out, this plan builds them").format(
-                        n=len(_gebaut_raus)) if _gebaut_raus else ""))
+                        n=len(_gebaut_raus)) if _gebaut_raus else "")
+                    + (_txt(" \u2013 {n} unticked, not copied").format(
+                        n=_n_ab783) if _n_ab783 else ""))
                 self._flash_tip(
                     _txt("{n} {what} copied \u2713 \u2013 {k} without a resolved name "
                          "skipped ({names})").format(n=_n, what=was, k=len(_skipped),
@@ -22722,7 +25126,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Fehlmengen-Liste genau das. Das "vollkauf"-Feld in den
             # Dialog-rows bleibt harmlos liegen (eine Zeile Durchreichung),
             # falls die Entscheidung nochmal kippt.
-            _b_miss = QPushButton(_txt("Copy missing materials"))
+            # emm724 (Nutzer: "Copy ALL missing Materials / Copy: Jita /
+            # Copy: 4-HWWF"): der Sammel-Knopf sagt ausdruecklich ALLE.
+            _b_miss = QPushButton(_txt("Copy ALL missing materials"))
             _b_miss.setIcon(icons.icon("clipboard"))
             _b_miss.setStyleSheet(_amber)
             _b_miss.setToolTip(_txt("Only what the PLAN does not cover \u2013 the actual shopping list. If the "
@@ -22730,16 +25136,135 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                     "not count as missing)."))
             _b_miss.clicked.connect(
                 lambda: _copy_rows("missing", _txt("missing item(s)")))
+
+            # EINE EINKAUFSLISTE JE HUB (emm723, Nutzer 25.10.2026: "man
+            # muesste dann ja 2 shoppinglists kreaieren koennen fuers
+            # clipboard ... oder 2 Buttons im Einkaufswagen dann wenn multi
+            # Hub aktiviert ist" / "dann soll mir gesagt werden wo ich was
+            # kaufen muss"). Je gewaehltem Hub ein Kopier-Knopf; der Anteil
+            # je Hub kommt aus DENSELBEN Bausteinen wie die Preisrechnung
+            # (multihub_leiter/multihub_split ueber die gescannten
+            # Orderbuecher, inkl. hub-eigener Fracht - Regel 9). Dazu ein
+            # Rest-Knopf fuer Positionen, die an keinem der Hubs handelbar
+            # sind (die kauft man wie bisher am gescannten Hub).
+            def _copy_rows_hub(hub_key, hub_label):
+                _puffer_uebernehmen()
+                _books_h = self._bd_multihub_books()
+                if not _books_h:
+                    _copy_note.setStyleSheet(f"color:{theme.AMBER}; "
+                                             f"font-size:13px;")
+                    _copy_note.setText(_txt(
+                        "Buy hubs not scanned yet \u2013 press \u201eScan "
+                        "both hubs now\u201c in the Multi-Hub card first."))
+                    return
+                if hub_key not in _books_h:
+                    # Hub NACH dem Scan gewechselt (emm725): ohne diese
+                    # Bremse fand der Knopf "nichts" und liess die
+                    # Zwischenablage unveraendert - der Nutzer fuegte dann
+                    # die ALTE Liste des vorherigen Hubs ein (25.10.2026,
+                    # identische 4-HWWF/Dodixie-Listen).
+                    _copy_note.setStyleSheet(f"color:{theme.AMBER}; "
+                                             f"font-size:13px;")
+                    _copy_note.setText(_txt(
+                        "{hub} has no scanned prices yet – press "
+                        "„Scan both hubs now“ in the Multi-Hub "
+                        "card first (nothing copied).").format(
+                        hub=hub_label))
+                    return
+                # Haken gelten auch je Hub (emm783) - sonst kopierte der
+                # Hub-Knopf, was der ALL-Knopf korrekt weglaesst.
+                _posten_h, _sk_h, _geb_h = einkauf_posten(
+                    rows, "missing", getattr(self, "_bd_plan_builds", None),
+                    nur_tids=_haken_tids())
+                try:
+                    _vols_h, _ = self._item_volumes_with_esi_fix(
+                        [int(_t) for _t, _n, _q in _posten_h])
+                except Exception:
+                    _vols_h = {}
+                _fr_h = getattr(self, "_bd_buy_hub_fracht", None) or {}
+                _lines_h, _nur_scan, _duenn = [], 0, []
+                for _tid, _nm, _q in _posten_h:
+                    _qp = self._buy_surplus_qty(_q)
+                    _lt_h = industry.multihub_leiter(
+                        _books_h, int(_tid), _fr_h,
+                        (_vols_h or {}).get(int(_tid), 0) or 0)
+                    if not _lt_h:
+                        # ohne Order an den gewaehlten Hubs: steht im
+                        # ALL-Knopf; hier nur gezaehlt (emm724, der
+                        # Rest-Knopf ist auf Nutzer-Wunsch weg)
+                        _nur_scan += 1
+                        continue
+                    _sp_h, _rest_h = industry.multihub_split(_lt_h, _qp)
+                    if _rest_h > 0:
+                        # MIT NAME UND MENGE (emm796, Audit 31.10.2026, G1):
+                        # "market too thin for 1 item(s)" liess den Nutzer
+                        # raten, WAS und WIE VIEL fehlt - die Restmenge
+                        # steht in keiner Hub-Liste.
+                        _duenn.append((_nm, int(_rest_h)))
+                    _teil_h = _sp_h.get(hub_key)
+                    if _teil_h and _teil_h[0] > 0:
+                        _lines_h.append(f"{_nm}\t{int(_teil_h[0])}")
+                if not _lines_h:
+                    _copy_note.setStyleSheet(f"color:{theme.AMBER}; "
+                                             f"font-size:13px;")
+                    _copy_note.setText(_txt(
+                        "Nothing to buy at {hub}.").format(hub=hub_label))
+                    return
+                from PySide6.QtWidgets import QApplication as _QA2
+                _QA2.clipboard().setText("\n".join(_lines_h))
+                _copy_note.setStyleSheet(f"color:{theme.GREEN}; "
+                                         f"font-size:13px;")
+                _copy_note.setText(
+                    _txt("{n} position(s) for {hub} copied \u2713").format(
+                        n=len(_lines_h), hub=hub_label)
+                    + (_txt(" \u2013 {n} only at the scanned hub").format(
+                        n=_nur_scan) if _nur_scan else "")
+                    + (_txt(" \u2013 market too thin, NOT in any list: {what}").format(
+                        what=", ".join(
+                            f"{_nm_d} ({_r_d:,}".replace(",", "'") + ")"
+                            for _nm_d, _r_d in _duenn[:3])
+                        + (f" \u2026 (+{len(_duenn) - 3})"
+                           if len(_duenn) > 3 else "")) if _duenn else ""))
+
+            _hub_btns = []
+            _mh_locs_d = self._bd_buy_hub_locs()
+            # NUR EIN HUB = KEIN EIGENER HUB-KNOPF (emm734, Nutzer
+            # 26.10.2026, Solo-Modus Amarr: "jetzt gibts bei dne
+            # einstellungen immernoch 2 Copy Buttons aber der Copy ALLL
+            # wuerde reichen"): mit einem einzigen Kauf-Hub ist "Copy:
+            # <Hub>" dieselbe Liste wie "Copy ALL" (bis auf Posten ohne
+            # Orderbuch dort - die nennt die Multi-Hub-Karte ohnehin).
+            # Erst ab zwei Hubs braucht es die Aufteilung je Hub.
+            if len(_mh_locs_d) > 1:
+                for _hk_d, _hl_d in _mh_locs_d:
+                    _lbl_d = str(_hl_d.get("label") or _hk_d)
+                    _bh_d = QPushButton(_txt("Copy: {hub}").format(hub=_lbl_d))
+                    _bh_d.setIcon(icons.icon("clipboard"))
+                    _bh_d.setStyleSheet(_amber)
+                    _bh_d.setToolTip(_txt(
+                        "This hub's share of the shopping list \u2013 from the "
+                        "scanned order ladders, depth-aware, including this "
+                        "hub's own freight."))
+                    _bh_d.clicked.connect(
+                        lambda _c=False, _k=_hk_d, _l=_lbl_d:
+                        _copy_rows_hub(_k, _l))
+                    _hub_btns.append(_bh_d)
+                # KEIN "scanned hub (rest)"-Knopf (Nutzer 25.10.2026: "so
+                # einen button moechte ich nicht"): Posten ohne Order an den
+                # gewaehlten Hubs stehen im ALL-Knopf, und die Ergebniszeile
+                # jedes Hub-Knopfs zaehlt sie ("{n} only at the scanned hub").
             _close = QPushButton(_txt("Close")); _close.clicked.connect(dlg.reject)
             _close.setIcon(icons.icon("close"))
             row.insertWidget(0, _b_miss)
-            # Puffer direkt hinter den Kopier-Knopf, vor den Stretch.
-            row.insertWidget(1, _pf_lbl)
-            row.insertWidget(2, _pf)
+            for _i_d, _bh_d in enumerate(_hub_btns):
+                row.insertWidget(1 + _i_d, _bh_d)
+            # Puffer direkt hinter die Kopier-Knoepfe, vor den Stretch.
+            row.insertWidget(1 + len(_hub_btns), _pf_lbl)
+            row.insertWidget(2 + len(_hub_btns), _pf)
             # Ergebnis-Zeile IM Dialog (Nutzer-Vorfall: der Flash-Tip im
             # Hauptfenster war hinterm modalen Dialog unsichtbar - "wird
             # nichts kopiert"). _copy_rows schreibt hierher.
-            row.insertWidget(3, _copy_note)
+            row.insertWidget(3 + len(_hub_btns), _copy_note)
             row.addWidget(_close)
         else:
             cancel = QPushButton(_txt("Cancel")); cancel.clicked.connect(dlg.reject)
@@ -22955,9 +25480,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         ("Expensive niche (fat margin)",
          {"mode": "relist", "margin": 25, "profit": 1_000_000, "liq": 5, "vol": 2,
           "m3": 0, "pmin": 5_000_000, "pmax": 0}),
-        ("Instant sale (out fast)",
-         {"mode": "instant", "margin": 12, "profit": 50_000, "liq": 100, "vol": 20,
-          "m3": 0, "pmin": 0, "pmax": 0}),
+        # emm604 (Nutzer, "keinen echten Mehrwert ... entfernen"): "Instant
+        # sale (out fast)" live gemessen (Jita->Amarr, 18.10.2026) - 0 (null)
+        # Treffer. Der Modus "Immediate to buy order" selbst bleibt
+        # (rg_mode-Dropdown, hubs.py sell_mode=="instant") - nur dieser
+        # Preset-Shortcut mit seinen zu scharfen Vorgaben (margin:12,
+        # liq:100) wurde entfernt. Siehe MEMORY.md/CLAUDE.md emm604.
     ]
 
     def _apply_rg_preset(self):
@@ -23517,9 +26045,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         sg.setContentsMargins(16, 12, 16, 12)
         sg.setHorizontalSpacing(14); sg.setVerticalSpacing(8)
         stitle = QLabel(t("Route & strategy – where to buy, where to sell"))
+        # dito emm816 - der Titel spannt vier Spalten und verlangte
+        # 333 px; mit Umbruch zaehlt nur das laengste Wort.
+        stitle.setWordWrap(True)
         stitle.setStyleSheet(f"color:{theme.CYAN}; font-size:13px; font-weight:700; "
                              f"letter-spacing:1px;")
-        sg.addWidget(stitle, 0, 0, 1, 4)
+        sg.addWidget(stitle, 0, 0, 1, 3)
         # EIN- UND VERKAEUFER (Nutzer, Sitzung 16: "Ein und Verkaeufer gehoert
         # zum Regional Tab, wenn dann will ich es da waehlen koennen").
         #
@@ -23543,31 +26074,67 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 "count, exactly as before."))
             _cb.currentIndexChanged.connect(self._rg_handels_paar_speichern)
         self._rg_fuelle_charakter_auswahl()
-        for c, (lab, wdg) in enumerate([(t("Buy in"), self.rg_src),
-                                        (t("Sell in"), self.rg_tgt),
-                                        (t("Sale type"), self.rg_mode),
-                                        ("Preset", self.rg_preset)]):
+        # SCHMALER UND SCHRUMPFFAEHIG (emm816, Nutzer-Screenshot: "da sehe
+        # ich kaum etwas ohne nach rechts scrollen zu muessen ... reichen
+        # wenn sie 1/3 so breit sind wie jetzt"). GEMESSEN, nicht geraten:
+        # die drei Kopf-Karten verlangten zusammen 1206 px Mindestbreite
+        # (offscreen; auf seinem Windows entsprechend mehr) - mehr als
+        # sein Fenster hergab, deshalb der waagerechte Rollbalken ueber
+        # Liste UND Kopfzeile. URSACHEN EINZELN NACHGEMESSEN: (1) die
+        # vier Felder nebeneinander, (2) lange Beschriftungen ohne
+        # Umbruch, (3) die fehlende Obergrenze, die Qt die Felder ueber
+        # die ganze Karte dehnen liess, (4) die QComboBox-Voreinstellung
+        # "so breit wie der laengste Eintrag" - sie allein macht
+        # "Sale type" 200 statt 106 px breit (Kopfzeile 872 statt 792).
+        # AdjustToMinimumContentsLengthWithIcon + kurze Mindestlaenge
+        # senkt diese Forderung; der Text wird bei Bedarf gekuerzt, die
+        # AUFGEKLAPPTE Liste bleibt dank popup_breiter() voll lesbar.
+        from PySide6.QtWidgets import QComboBox as _QCB816
+        # DREI SPALTEN, ZWEI REIHEN, FELDER FUELLEN DIE KARTE (emm818,
+        # Nutzer-Screenshot: "Anordnung komisch mach nicht 3 Dropdowns
+        # untereinander lieber 3 nebeneinander in Route Strategy / und
+        # fuelle die breite der Dropdowns der Karte angepasst auf").
+        # emm816 hatte auf zwei Spalten gestellt, um die Kopfzeile ins
+        # Fenster zu bringen - das Ergebnis waren sechs schmale Felder
+        # links und viel Leerraum rechts. Drei Spalten mit gleichem
+        # Dehnungsanteil fuellen die Karte und bleiben trotzdem schmal
+        # GENUG: die MINDESTbreite haengt an MinimumContentsLength, NICHT
+        # an der Hoechstbreite - deshalb kostet das Ausfuellen hier
+        # nichts (gemessen, s. b816).
+        # REIHENFOLGE IST DIE AUSSAGE (emm819, Nutzer: "bitte mach das
+        # Buyer unter Buy in ist und seller unter Sell in"): wer kauft,
+        # steht unter dem Einkaufs-Hub; wer verkauft, unter dem
+        # Verkaufs-Hub. Die Spalte sagt damit selbst, wozu das Feld
+        # gehoert - vorher stand "Buyer" unter "Sell in".
+        _ALLE818 = [(t("Buy in"), self.rg_src), (t("Sell in"), self.rg_tgt),
+                    (t("Sale type"), self.rg_mode),
+                    (t("Buyer"), self.rg_buyer), (t("Seller"), self.rg_seller),
+                    ("Preset", self.rg_preset)]
+        for i816, (lab, wdg) in enumerate(_ALLE818):
             l = QLabel(lab)
             l.setStyleSheet(f"color:{theme.TEXT}; font-size:15px; font-weight:600;")
             wdg.setMinimumHeight(34)
             wdg.setStyleSheet("font-size:15px; padding:2px 8px;")
-            sg.addWidget(l, 1, c); sg.addWidget(wdg, 2, c)
-            sg.setColumnStretch(c, 1)
+            wdg.setSizeAdjustPolicy(
+                _QCB816.AdjustToMinimumContentsLengthWithIcon)
+            wdg.setMinimumContentsLength(4)
+            # KEINE Hoechstbreite mehr (emm818): die Felder sollen die
+            # Karte ausfuellen. Die aufgeklappte Liste bleibt trotzdem
+            # mindestens so breit wie ihr laengster Eintrag.
+            self.popup_breiter(wdg, self.RG_POPUP_BREIT)
+            _r816 = 1 + (i816 // 3) * 2
+            _c816 = i816 % 3
+            sg.addWidget(l, _r816, _c816); sg.addWidget(wdg, _r816 + 1, _c816)
+        for _c818 in range(3):
+            sg.setColumnStretch(_c818, 1)
         # DAUERHINWEIS ENTFERNT (Nutzer-Wunsch Sitzung 12: "ich hasse
         # Infos, die das Tool ueberladen aussehen lassen").
         # Zweite Zeile der Karte: wer kauft, wer verkauft.
-        for c, (lab, wdg) in enumerate([(t("Buyer"), self.rg_buyer),
-                                        (t("Seller"), self.rg_seller)]):
-            l = QLabel(lab)
-            l.setStyleSheet(f"color:{theme.TEXT}; font-size:15px; font-weight:600;")
-            wdg.setMinimumHeight(34)
-            wdg.setStyleSheet("font-size:15px; padding:2px 8px;")
-            sg.addWidget(l, 3, c); sg.addWidget(wdg, 4, c)
         shint = QLabel("")
         shint.setVisible(False)
         shint.setObjectName("Muted"); shint.setWordWrap(True)
         shint.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
-        sg.addWidget(shint, 5, 0, 1, 4)
+        sg.addWidget(shint, 5, 0, 1, 3)
         rg_strat_card = self._collapsible(t("ROUTE & STRATEGY"), strat, accent=theme.CYAN)
         for label, p in self._RG_PRESETS:
             # ALLE Eintraege uebersetzen, nicht nur den neutralen: die
@@ -23591,7 +26158,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                         (t("Cargo hold (m³)"), self.rg_cargo)]):
             l = QLabel(lab)
             l.setStyleSheet(f"color:{theme.TEXT}; font-size:15px; font-weight:600;")
-            wdg.setMinimumHeight(32); wdg.setMinimumWidth(150); wdg.setMaximumWidth(240)
+            # UMBRUCH STATT BREITE (emm816): gemessen verlangte allein
+            # "Transport cost (ISK/m³)" 172 px Mindestbreite und zwang
+            # die Fracht-Karte auf 390 px - mit Umbruch zaehlt nur noch
+            # das laengste WORT. Der Text bleibt vollstaendig lesbar, er
+            # steht bei Enge nur zweizeilig.
+            l.setWordWrap(True)
+            wdg.setMinimumHeight(32)
+            wdg.setMinimumWidth(80); wdg.setMaximumWidth(240)
             fl.addWidget(l, 1, c); fl.addWidget(wdg, 2, c)
             self._install_tip(wdg, l)
         # DAUERHINWEIS ENTFERNT (Nutzer-Wunsch Sitzung 12: "ich hasse
@@ -23608,6 +26182,21 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         ctl = QFrame(); ctl.setObjectName("Card")
         g = QGridLayout(ctl); g.setContentsMargins(14, 6, 14, 6)
         g.setHorizontalSpacing(16); g.setVerticalSpacing(2)
+        # KATEGORIE/META-MEHRFACHFILTER (emm611, "direkt für alle bauen" ->
+        # auch Regional Trading).
+        self.rg_cat_btn, self._rg_cat_refresh, self._rg_cat_selected = self._filter_mehrfach_knopf(
+            t("All categories"), tooltip=t(
+                "Filter by item category (Ships/Modules/Rigs/Drones/… – "
+                "all checked = no filter). Needs „Load recipes“ once."))
+        self.rg_meta_btn, self._rg_meta_refresh, self._rg_meta_selected = self._filter_mehrfach_knopf(
+            t("All meta"), tooltip=t(
+                "Filter by meta class (Tech I/II/III, Faction, Officer, "
+                "Deadspace, Storyline, …) – all checked = no filter."))
+        # t() je Name - wie beim Daytrade-Meta-Knopf (emm696).
+        self._rg_meta_refresh([(_mk696, t(_mn696)) for _mk696, _mn696
+                               in industry.meta_bucket_optionen()])
+        self.rg_cat_btn.menu().aboutToHide.connect(self._rg_preset_to_custom)
+        self.rg_meta_btn.menu().aboutToHide.connect(self._rg_preset_to_custom)
         controls = [
             (t("Min margin"), self.rg_margin),
             (t("Min profit/unit (ISK)"), self.rg_profit),
@@ -23615,45 +26204,72 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             (t("Min Ø daily volume destination"), self.rg_vol),
             (t("Min profit/m³ (ISK)"), self.rg_m3),
             (t("Price from"), self.rg_pmin), (t("Price to (0=∞)"), self.rg_pmax),
+            (t("Category"), self.rg_cat_btn), (t("Meta"), self.rg_meta_btn),
         ]
         for i, (label, wdg) in enumerate(controls):
             wdg.setMaximumWidth(180); wdg.setMinimumWidth(90)
             lab = QLabel(label); lab.setObjectName("Muted")
-            r = (i // 5) * 2
-            g.addWidget(lab, r, i % 5)
-            g.addWidget(wdg, r + 1, i % 5)
+            # dito emm816: "Min Ø daily volume destination" verlangte
+            # allein 174 px - mit Umbruch nur noch das laengste Wort.
+            lab.setWordWrap(True)
+            # FESTE 3 JE REIHE (emm815): die Karte hat in der Kopfzeile
+            # zwei Fuenftel der Fensterbreite - 5 je Reihe wuerde die
+            # Felder unter ihre Mindestbreite quetschen (Daytrade/Swing
+            # haben die halbe Breite und deshalb 4).
+            r = (i // 3) * 2
+            g.addWidget(lab, r, i % 3)
+            g.addWidget(wdg, r + 1, i % 3)
             self._install_tip(wdg, lab)
             if hasattr(wdg, "valueChanged"):
                 wdg.valueChanged.connect(self._rg_preset_to_custom)
-        g.setColumnStretch(5, 1)
+        g.setColumnStretch(3, 1)
         rg_filter_card = self._collapsible(t("FINE FILTERS (OPTIONAL)"), ctl, expanded=False)
-        # Boxen (ROUTE + FRACHT + FEINFILTER) in einen Container -> links in den
-        # oberen Split.
-        from PySide6.QtWidgets import QWidget as _QW, QVBoxLayout as _QVB
-        rg_boxes = _QW(); _rbl = _QVB(rg_boxes)
-        _rbl.setContentsMargins(0, 0, 0, 0); _rbl.setSpacing(6)
+        # BAUPLAN-KUR (emm815, dasselbe Muster wie Daytrade emm813 und
+        # Swing emm814): ROUTE, FRACHT und FEINFILTER nebeneinander als
+        # flache Kopfzeile, AlignTop. Die Route braucht am meisten Platz
+        # (vier Felder in zwei Reihen), die Fracht am wenigsten (zwei) -
+        # deshalb Stretch 2 : 1 : 2 statt gleicher Drittel. Der alte
+        # obere 60/40-Split mit fester Hoehe entfaellt.
+        self._rg_strat_card = rg_strat_card
+        self._rg_fracht_card = rg_fracht_card
+        self._rg_filter_card = rg_filter_card
+        _kopf815 = QWidget()
+        _kh815 = QHBoxLayout(_kopf815)
+        _kh815.setContentsMargins(0, 0, 0, 0)
+        _kh815.setSpacing(8)
+        _kh815.addWidget(rg_strat_card, 2, Qt.AlignTop)
+        _kh815.addWidget(rg_fracht_card, 1, Qt.AlignTop)
+        _kh815.addWidget(rg_filter_card, 2, Qt.AlignTop)
+        root.addWidget(_kopf815, 0)
 
         self.rg_status = QLabel("")
         self.rg_status.setObjectName("Muted")
         self.rg_status.setWordWrap(True)
-        self.rg_status.setVisible(False)   # leer -> versteckt (kein Platz über ROUTE)
+        self.rg_status.setVisible(False)   # leer -> versteckt
         self._auto_hide_when_empty(self.rg_status)
-        _rbl.addWidget(self.rg_status)
-        _rbl.addWidget(rg_strat_card); _rbl.addWidget(rg_fracht_card)
-        _rbl.addWidget(rg_filter_card)
+        root.addWidget(self.rg_status)
 
-        self.rg_table = QTableWidget(0, 10)
+        # SPALTE 10 "vs Ø destination" und 11 "Rating" (emm815): den
+        # Vergleich des Zielpreises mit dem dort tatsaechlich bezahlten
+        # Ø-Preis gab es bisher nirgends - er entlarvt die Fantasie-
+        # Sell-Orders, auf denen die absurden Margen beruhen. Das Rating
+        # ist der Bewertungs-Balken wie im Bau-Scanner/Daytrade/Swing.
+        self.rg_table = QTableWidget(0, 12)
         self.rg_table.setShowGrid(False)
         self.rg_table.setIconSize(QSize(32, 32))
         self.rg_table.setHorizontalHeaderLabels(
             [t("Item"), t("Sell (source)"), t("Sell (destination)"),
              t("Profit/unit"), t("Margin %"), t("Profit/m³"), t("m³/unit"),
              t("Demand destination"), t("Supply destination"),
-             t("Ø daily vol destination")])
+             t("Ø daily vol destination"), t("vs Ø destination"),
+             t("Rating")])
         hdr = self.rg_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, 10):
+        for col in range(1, 12):
             hdr.setSectionResizeMode(col, QHeaderView.Interactive)
+        # Balken braucht Platz fuer seinen Text - Autosize misst nur die
+        # (leere) Zelle darunter, deshalb eine feste Startbreite.
+        self.rg_table.setColumnWidth(11, 150)
         self._make_columns_friendly(self.rg_table)
         self.rg_table.verticalHeader().setVisible(False)
         self.rg_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -23679,6 +26295,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             9: "\u00d8 daily volume at the destination (market history): how many units "
                "actually trade there per day. \u201e\u2014\u201c = no history (e.g. "
                "structure).",
+            10: "How far the destination price used for the calculation sits above "
+                "what is ACTUALLY paid there (\u00d8 of the 30-day history). +10 % is "
+                "a normal regional difference; +5000 % is a fantasy sell order "
+                "nobody ever buys \u2013 the margin next to it is then worthless. "
+                "\u201e\u2013\u201c = no history, or the destination price is itself an "
+                "estimate.",
+            11: "Rating: the margin, held against the sales volume at the "
+                "destination. A caveat (destination price unrealistic or "
+                "estimated, destination hardly traded, volume unknown) beats a "
+                "good margin.",
         })
         # SPALTEN-VORGABE REGIONAL (Nutzer, Sitzung 16, zweite Runde: "und so
         # der Region Trading Tab"): Item · Buy (source) · Sell (destination) ·
@@ -23688,23 +26314,41 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # viel dort schon liegt.
         # REIHENFOLGE wie bei Daytrade/Swing per moveSection, weil der Header
         # nirgends gespeichert wird.
-        _REG_STD = [0, 1, 2, 5, 4, 8, 9]
+        # + 10 ("vs Ø Ziel") und 11 (Rating), emm815: Marge, Ziel-Volumen
+        # und der Realismus des Zielpreises stehen jetzt nebeneinander -
+        # genau die Entscheidungsgrundlage des Nutzers ("die Margin ist
+        # hier ausschlaggebend" + Volumen am Verkaufshub). Dafuer faellt
+        # "Supply destination" (8) aus der VORGABE - sie bleibt im Menue
+        # waehlbar; sonst waere die Zeile wieder eine Zahlenwand.
+        _REG_STD = [0, 1, 2, 5, 4, 9, 10, 11]
         self._rg_spalten_btn, self._rg_col_acts = self._spalten_knopf(
             self.rg_table, set(_REG_STD),
             [(1, t("Sell (source)")), (2, t("Sell (destination)")),
              (3, t("Profit/unit")), (4, t("Margin %")), (5, t("Profit/m³")),
              (6, t("m³/unit")), (7, t("Demand destination")),
              (8, t("Supply destination")),
-             (9, t("Ø daily vol destination"))],
+             (9, t("Ø daily vol destination")),
+             (10, t("vs Ø destination")), (11, t("Rating"))],
             t("Which columns are visible - the rest can be switched on."))
         _rhdr = self.rg_table.horizontalHeader()
         for _ziel, _log in enumerate(_REG_STD):
             _ist = _rhdr.visualIndex(_log)
             if _ist != _ziel:
                 _rhdr.moveSection(_ist, _ziel)
-        self._assemble_top_and_table(root, rg_boxes, self.rg_table, "region",
-                                     box_ratio=60,
-                                     spalten_btn=self._rg_spalten_btn)
+        # LISTE IN VOLLER BREITE UND HOEHE (emm815): Spalten-Knopf
+        # rechtsbuendig direkt ueber der Liste, dann die Tabelle. Der
+        # Order-Tiefe-Kasten BLEIBT hier sichtbar (anders als Daytrade
+        # und Swing): Regional ist die Verkaufsseite, dort laeuft man das
+        # Orderbuch am Ziel wirklich ab - er sitzt jetzt unter der Liste
+        # statt im alten oberen Split.
+        from PySide6.QtWidgets import QHBoxLayout as _QHB815
+        _sprow815 = _QHB815()
+        _sprow815.setContentsMargins(0, 0, 0, 0)
+        _sprow815.addStretch()
+        _sprow815.addWidget(self._rg_spalten_btn)
+        root.addLayout(_sprow815, 0)
+        root.addWidget(self.rg_table, 3)
+        self._build_ladder_panel(root, "region")
         self.rg_table.itemSelectionChanged.connect(
             lambda: self._ladder_select("region", self.rg_table))
 
@@ -24298,9 +26942,30 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "min_liquidity": self.rg_liq.value(),
             "price_min": self.rg_pmin.value(),
             "price_max": self.rg_pmax.value(),
-            "max_items": 400,
+            # emm603 (Nutzer: "Prioritaet hat mehr handelbare Items zu
+            # finden"): hubs.arbitrage() vergleicht zwei BEREITS GELADENE
+            # volle Orderbuecher - dieser Deckel kostet KEINEN zusaetzlichen
+            # ESI-Abruf, er wirft nur schon berechnete Treffer wieder weg
+            # (score-sortiert, dann hart abgeschnitten). 400 war ein Rest aus
+            # der alten Pauschal-Deckel-Logik (wie Daytrade/Swing vor dem
+            # Cache/Fetch-Umbau). Grosszuegig angehoben; das wirklich teure
+            # Budget (frische ESI-Historien am Ziel) wird GETRENNT unten
+            # gedeckelt (s. _FETCH_BUDGET_RG), damit der ESI-Teil trotzdem
+            # genauso geschuetzt bleibt wie bei Daytrade/Swing.
+            "max_items": 2500,
         }
         tgt_region = tgt.get("region_id")   # None for player structures
+        # ZIELPREIS-REALISMUS (emm815). Der Nutzer nannte zuerst "Volumen
+        # am einkaufshub und am verkaufshub", korrigierte sich dann aber
+        # selbst: "das volumen am einkaufshub ist irrellevant wenn ich
+        # per sell to sell mache" - richtig, an der Quelle NIMMT man nur,
+        # was in der Sell-Order liegt. Der Schwindel hinter den absurden
+        # Margen seines Screenshots ("EMP S" 35 -> 149'800 ISK,
+        # 413316 %) sitzt am ZIEL: dort steht eine Fantasie-Sell-Order
+        # weit ueber dem, was dort je bezahlt wurde. Gegenmittel ist der
+        # Durchschnittspreis der ZIEL-Historie - die wird fuer das
+        # Ziel-Volumen ohnehin schon geholt, kostet also keinen
+        # einzigen zusaetzlichen ESI-Abruf.
         self.rg_status.setText(_txt("Loading order books …"))
 
         def job(progress=None, status=None):
@@ -24332,11 +26997,25 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 import concurrent.futures as _cf
 
                 tgt_reach = {}
+                # emm815: Ø-Preis der Ziel-Historie - aus DERSELBEN Abfrage
+                # wie das Ziel-Volumen (window_stats liefert beides), also
+                # ohne einen einzigen zusaetzlichen ESI-Abruf.
+                tgt_avg = {}
+                # emm603: derselbe RateLimited-Schutz wie scanner.enrich() -
+                # ohne ihn waere das hoehere Fetch-Budget unten (1000 statt
+                # 350) nicht gleich gut abgesichert, da _dv() RateLimited
+                # bisher still als generische Exception verschluckt hat.
+                import threading as _th603
+                _rl_state = {"hits": 0, "stop": False}
+                _rl_lock = _th603.Lock()
 
                 def _dv(tid):
                     try:
-                        hist = scanner.history_cached(tid, tgt_region)
-                        dv = scanner.window_stats(hist, 30).get("daily_vol", 0)
+                        allow = not _rl_state["stop"]
+                        hist = scanner.history_cached(tid, tgt_region, allow_fetch=allow)
+                        _ws815 = scanner.window_stats(hist, 30)
+                        dv = _ws815.get("daily_vol", 0)
+                        tgt_avg[tid] = _ws815.get("avg", 0.0) or 0.0
                         # Relist verkauft per SELL-Order am Ziel -> Exit-Beleg:
                         # erreichen die Tages-Hochs am Ziel den dortigen Ask?
                         # (dieselbe Logik wie sell_reach im Daytrade-Scanner)
@@ -24360,10 +27039,35 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                             if _vals:
                                 sr = sum(_vals) / len(_vals)
                         return tid, dv, sr
+                    except esi.RateLimited:
+                        with _rl_lock:
+                            _rl_state["hits"] += 1
+                            if _rl_state["hits"] >= 5:
+                                _rl_state["stop"] = True
+                        return tid, 0, 0.0
                     except Exception:
                         return tid, 0, 0.0
+                # emm603: derselbe Cache/Fetch-Split wie Daytrade/Swing (statt
+                # den `max_items`-Deckel oben als einzige ESI-Bremse zu
+                # missbrauchen). Bereits FRISCH gecachte Zielhistorien sind
+                # gratis (nur DB-Lesevorgang) und laufen IMMER mit - geholt
+                # werden pro Scan maximal 1000 NEUE Historien (Nutzer: ESI-
+                # Deckel soweit oeffnen wie moeglich - abgesichert durch den
+                # RateLimited-Zaehler oben in _dv, derselbe Schutz wie
+                # scanner.enrich(), NICHT mehr nur durch diese Zahl). Der
+                # Rest bleibt diese Runde unbekannt (dv=0/sr=0.0, wie bisher
+                # beim Fehlerfall) und wird beim naechsten Scan aus dem dann
+                # gewachsenen Cache mitgenommen.
+                _FETCH_BUDGET_RG = 1000
+                try:
+                    _cached_ids_tgt = store.fresh_history_type_ids(tgt_region, 24)
+                except Exception:
+                    _cached_ids_tgt = set()
+                _have_ids = [i for i in ids if i in _cached_ids_tgt]
+                _fresh_ids = [i for i in ids if i not in _cached_ids_tgt]
+                _ids_fetch = _have_ids + _fresh_ids[:_FETCH_BUDGET_RG]
                 with _cf.ThreadPoolExecutor(max_workers=12) as ex:
-                    futs = [ex.submit(_dv, _i) for _i in ids]
+                    futs = [ex.submit(_dv, _i) for _i in _ids_fetch]
                     n = 0
                     for f in _cf.as_completed(futs):
                         _tid, v, sr = f.result()
@@ -24371,7 +27075,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         tgt_reach[_tid] = sr
                         n += 1
                         if progress:
-                            progress(n, len(ids))
+                            progress(n, len(_ids_fetch))
             # LEERE ZIELMAERKTE (Nutzer-Idee, Sitzung 16: "ein Item, was
             # Handelsvolumen hat, aber der Markt ist leer - so etwas muss
             # gefunden werden"). Diese Items sind aus `arbitrage` schon
@@ -24423,6 +27127,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if d.get("target_vol") is None:
                     d["target_vol"] = (day_vol.get(d["type_id"], None)
                                        if tgt_region else None)
+                # emm815: Ø-Preis am Ziel. None = unbekannt (Struktur ohne
+                # Historie oder diese Runde nicht geholt) - NICHT 0, das
+                # hiesse "dort wurde nie etwas bezahlt" und waere gelogen.
+                _ta815 = tgt_avg.get(d["type_id"]) if tgt_region else None
+                d["target_avg"] = _ta815 if _ta815 else None
             return deals
 
         w = Worker(job, with_progress=True, with_status=True)
@@ -24475,6 +27184,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         min_liq = self.rg_liq.value()
         min_vol = self.rg_vol.value()
         pmin = self.rg_pmin.value(); pmax = self.rg_pmax.value()
+        # KATEGORIE/META-MEHRFACHFILTER (emm611): hier statt in
+        # compute_arbitrage(), weil ALLE Feinfilter live aus dem Cache in
+        # _apply_rg_view laufen (siehe Docstring) - sonst wuerde der Cache-Pfad
+        # (< 5 Min alte Route) den Kategorie/Meta-Filter ignorieren.
+        cat_sel = self._rg_cat_selected() if hasattr(self, "_rg_cat_selected") else None
+        meta_sel = self._rg_meta_selected() if hasattr(self, "_rg_meta_selected") else None
+        _rg_cmap = {}
+        _rg_rig_ids = set()
+        if cat_sel is not None or meta_sel is not None:
+            _rg_cmap = industry.item_category_map()
+            _rg_rig_ids = industry.rig_group_ids_all()
         # Trichter-Zähler (dieselbe Ehrlichkeits-Regel wie die Swing-
         # Diagnosezeile): jeder Ausschluss wird gezählt, die Statuszeile
         # erklärt, WO die Kandidaten bleiben - statt kommentarlos
@@ -24485,6 +27205,19 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             diag[k] = diag.get(k, 0) + 1
         out = []
         for d in raw:
+            if cat_sel is not None or meta_sel is not None:
+                info = _rg_cmap.get(d.get("type_id"))
+                if not info:
+                    _d("no_cat_data")
+                    continue
+                c_id, g_id, m_id = info
+                if cat_sel is not None and not industry.kategorie_passt_mehrfach(
+                        cat_sel, c_id, g_id, _rg_rig_ids):
+                    _d("cat_filtered")
+                    continue
+                if meta_sel is not None and not industry.meta_passt_mehrfach(meta_sel, m_id):
+                    _d("meta_filtered")
+                    continue
             buy = d.get("source_sell", 0) or 0
             if pmin and buy < pmin:
                 _d("price_low")
@@ -24578,6 +27311,65 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                               ).format(n=_n(d['no_target_history'])))
         return (" · ".join(parts) + ". ") if parts else ""
 
+    def _arb_quality(self, d, instant=False):
+        """emm600 (korrigiert nach Nutzer-Rueckfrage: "swing trade und
+        regional trade funktionieren in der handelbarkeit anders, weil da
+        von sell to sell verkauft wird und die buy orders keine rolle
+        spielen"): kombinierte Arbitrage-Qualitaet - Gewinn/m3 ist nichts
+        wert, wenn am Ziel kaum oder gar nicht verkauft wird. Gewichtet
+        profit_m3 NICHT mit einer geratenen absoluten ISK-Schwelle (Regel 5:
+        messen statt raten, und profit_m3 hat anders als z.B. ROI-% keine mir
+        bekannte "gute Zahl") - stattdessen bleibt profit_m3 selbst unskaliert
+        und wird nur mit bereits vorhandenen, echten Handelbarkeits-Kennzahlen
+        am Ziel multipliziert; das aendert nur die REIHENFOLGE, nicht die
+        angezeigten Werte. target_vol: wie viel am Ziel taeglich ueberhaupt
+        umgesetzt wird (0 = fast wertlos, None = Spieler-Struktur ohne
+        Historie -> neutral, wir wissen es schlicht nicht). Der 50/Tag-
+        Bezugspunkt ist derselbe, den _swing_quality fuer Wiederverkaufs-
+        Liquiditaet bereits verwendet.
+        DER ZWEITE FAKTOR UNTERSCHEIDET SICH NACH VERKAUFSART (`instant`,
+        identisch mit `_sofort_rg`/`_render_arbitrage`'s Modus-Flag):
+        - relist (Standard): man stellt am Ziel eine EIGENE Sell-Order und
+          wartet auf einen Kaeufer - hier zaehlt `tgt_sell_reach` (erreichen
+          die Tages-Hochs am Ziel im Schnitt die Verkaufsorder?). ERSTE
+          FASSUNG hatte diesen Faktor pauschal fuer BEIDE Modi benutzt - ein
+          Fehler, der mir erst durch die Nutzer-Rueckfrage aufgefallen ist:
+          `tgt_sell_reach` wird in main_window.py (_dv()) NUR fuer
+          mode=="relist" ueberhaupt berechnet, bleibt bei "instant" IMMER
+          0.0 (nicht None!) und haette so jeden instant-Treffer identisch
+          und grundlos abgestraft.
+        - instant ("Immediate to buy order"): man verkauft SOFORT GEGEN die
+          bestehende Buy-Order am Ziel - Sell-Orders anderer spielen keine
+          Rolle, "erreicht der Markt meine Sell-Order" ist hier die falsche
+          Frage. Relevant ist statt dessen, ob die BUY-ORDER selbst tief
+          genug ist, die Lieferung ohne Preisverschlechterung aufzunehmen -
+          dafuer steht `target_demand` (Stueckzahl der Ziel-Kauforder,
+          hubs.py: target_demand = buy_qty)."""
+        pm3 = max(0.0, d.get("profit_m3", 0) or 0)
+        tvol = d.get("target_vol", None)
+        liq = 0.7 if tvol is None else 0.15 + 0.85 * min(1.0, tvol / 50.0)
+        # ZIELPREIS-REALISMUS (emm815): bisher fragte die Reihung nur,
+        # OB am Ziel gehandelt wird - nicht, ob der dort abgelesene
+        # Preis dem entspricht, was dort je bezahlt wurde. Eine
+        # Fantasie-Sell-Order ergab deshalb einen riesigen Gewinn/m3 und
+        # stand ganz oben (Nutzer-Screenshot: "EMP S" fuer 149'800 ISK
+        # statt ~200). KEINE geratene Untergrenze (erster Versuch hatte
+        # 0.05 - das reichte gegen einen um Faktor 749 aufgeblasenen
+        # Gewinn nicht annaehernd): der Gewinn haengt LINEAR am
+        # Zielpreis, also wird genau durch das Vielfache geteilt, um das
+        # der Preis zu hoch ist. Das ist die ehrliche Korrektur, keine
+        # Strafe. None (kein Ø bekannt) bleibt neutral.
+        _ueber = self.arb_ziel_ueber(d)
+        if _ueber is not None and _ueber >= self.RG_ZIEL_UNREAL:
+            liq *= self.RG_ZIEL_UNREAL / _ueber
+        if instant:
+            dem = d.get("target_demand", 0) or 0
+            reach_f = 0.5 + 0.5 * min(1.0, dem / 50.0)
+        else:
+            reach = d.get("tgt_sell_reach", None)
+            reach_f = 0.5 + 0.5 * reach if reach is not None else 0.85
+        return pm3 * liq * reach_f
+
     def _rerender_arbitrage(self):
         _d = getattr(self, "_arb_last", None)
         if _d is not None:
@@ -24586,40 +27378,70 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     def _render_arbitrage(self, deals):
         self._arb_last = deals
         highlight = bool(getattr(self, "rg_top_btn", None) and self.rg_top_btn.isChecked())
+        # VORGEZOGEN (stand vorher weiter unten, nur fuer die Spaltenkopf-
+        # Beschriftung): wird VOR der Sortierung gebraucht, weil
+        # _arb_quality je nach Verkaufsart einen anderen Handelbarkeits-
+        # Faktor ansetzt (s. Docstring von _arb_quality).
+        _sofort_rg = (getattr(self, "_arb_modus", None) or
+                      (self.rg_mode.currentData() if hasattr(self, "rg_mode") else "relist")
+                      ) == "instant"
+        # emm600 (Nutzer: "er soll nichts selber einstellen muessen um gute
+        # profitable handelbare trades zu finden"): die Grundreihenfolge ist
+        # jetzt IMMER die kombinierte Qualitaet (_arb_quality), nicht mehr
+        # nur reiner Gewinn/m3 - sonst landet ein Fund, der am Ziel kaum
+        # gehandelt wird, trotzdem weit oben, nur weil die reine ISK/m3-Zahl
+        # gut aussieht.
+        deals = sorted(deals, key=lambda d: self._arb_quality(d, _sofort_rg),
+                       reverse=True)
         top_ids = set()
         if highlight and deals:
-            # BUGFIX: Top 15 sortierte bisher NUR nach Gewinn/m\u00b3 - ein Item mit
-            # gutem rechnerischem Gewinn, das am Ziel laut Markt-Historie NIE
-            # gehandelt wird (target_vol == 0), konnte trotzdem als Top-Pick
-            # markiert werden. Wer transportiert schon Ware zu einem Hub, wo sie
-            # niemand kauft? target_vol == 0 (NPC-Hub, echte Historie vorhanden)
-            # scheidet daher aus der Top-15-Kandidatur aus. target_vol is None
-            # (Spieler-Struktur ohne Handels-Historie) bleibt neutral zugelassen,
-            # weil wir da schlicht nichts wissen. Die volle Tabelle zeigt
-            # weiterhin ALLE Treffer (inkl. der roten/toten) - nur der Stern
-            # markiert sie nicht mehr als "Top".
+            # BUGFIX (galt schon vor emm600, jetzt auf _arb_quality statt
+            # reinem profit_m3 uebertragen): ein Item, das am Ziel laut
+            # Markt-Historie NIE gehandelt wird (target_vol == 0), konnte
+            # trotzdem als Top-Pick markiert werden. Wer transportiert schon
+            # Ware zu einem Hub, wo sie niemand kauft? target_vol == 0
+            # (NPC-Hub, echte Historie vorhanden) scheidet daher aus der
+            # Top-15-Kandidatur aus. target_vol is None (Spieler-Struktur
+            # ohne Handels-Historie) bleibt neutral zugelassen, weil wir da
+            # schlicht nichts wissen. Die volle Tabelle zeigt weiterhin ALLE
+            # Treffer (inkl. der roten/toten) - nur der Stern markiert sie
+            # nicht mehr als "Top".
             candidates = [d for d in deals
                          if d.get("target_vol") is None or (d.get("target_vol") or 0) > 0]
-            ranked = sorted(candidates, key=lambda d: d.get("profit_m3", 0) or 0, reverse=True)
+            ranked = sorted(candidates, key=lambda d: self._arb_quality(d, _sofort_rg),
+                            reverse=True)
             top_ids = {d["type_id"] for d in ranked[:15]}
             deals = sorted(deals, key=lambda d: (d["type_id"] not in top_ids,
-                                                 -(d.get("profit_m3", 0) or 0)))
+                                                 -self._arb_quality(d, _sofort_rg)))
         self._rg_deals = deals
         tint = QColor(theme.AMBER); tint.setAlpha(28)
         names = store.cached_names([d["type_id"] for d in deals])
         if "region" in self._ladder_ctx:
             self._ladder_ctx["region"]["deals"] = {d["type_id"]: d for d in deals}
             self._ladder_ctx["region"]["added"].clear()
-        self.rg_status.setText(
+        # KURZE ZEILE, VOLLE DIAGNOSE IM TOOLTIP (emm815, wie
+        # build_status/deal_status/hold_status). AUSNAHME: KEIN Treffer -
+        # dann ist der Grund die eigentliche Antwort und bleibt sichtbar.
+        _voll815 = (
             t("{n} arbitrage hits. ").format(n=len(deals))
             + self._rg_diag_text()
             + t("Buy at the source, sell at the destination. "
                 "Click a column to sort."))
+        if deals:
+            self.rg_status.setText(
+                t("{n} arbitrage hits. ").format(n=len(deals)).strip()
+                + "  \u24d8")
+        else:
+            self.rg_status.setText(_voll815)
+        self.rg_status.setToolTip(_voll815)
+        self._wrap_tooltips(self.rg_status)
         self.rg_table.setSortingEnabled(False)
+        # AN self (emm815): _rg_apply_bars() laeuft nach jedem Sortieren
+        # erneut und braucht die Daten dann noch (Muster _bau_bar_rows).
+        self._rg_bar_rows = {}   # type_id -> (%, Text, Farbe, Tooltip)
         # KOPF DER SPALTE 2 NACH DER VERKAUFSART DER RECHNUNG (s. compute_arbitrage).
-        _sofort_rg = (getattr(self, "_arb_modus", None) or
-                      (self.rg_mode.currentData() if hasattr(self, "rg_mode") else "relist")
-                      ) == "instant"
+        # _sofort_rg wird jetzt ganz oben in dieser Methode ermittelt (wird
+        # schon fuer die _arb_quality-Sortierung gebraucht).
         _kopf2 = t("Buy order (destination)") if _sofort_rg else t("Sell (destination)")
         _hi2 = self.rg_table.horizontalHeaderItem(2)
         if _hi2 is not None:
@@ -24632,6 +27454,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             vol = d.get("volume", 0)
             pm3 = d.get("profit_m3", 0)
             tvol = d.get("target_vol", None)
+            # BEWERTUNG VOR DEN ZELLEN (emm815): Balken-% ist Sortierwert
+            # von Spalte 11, die Farbstufe daempft unten die Gewinn-Zellen.
+            _ueber815 = self.arb_ziel_ueber(d)
+            _pct815, _btxt815, _bcol815 = self._arb_bewertung(d)
+            self._rg_bar_rows[d["type_id"]] = (
+                _pct815, _btxt815, _bcol815,
+                t("Rating: the margin, held against the sales volume at the "
+                  "destination. A caveat (destination price unrealistic or "
+                  "estimated, destination hardly traded, volume unknown) beats "
+                  "a good margin."))
             cells = [
                 (("★ " if d["type_id"] in top_ids else "")
                  + names.get(d["type_id"], f"#{d['type_id']}"), None),
@@ -24659,6 +27491,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     if d.get("tgt_sell_reach") is not None else "")
                  if tvol is not None else "—",
                  (tvol if tvol is not None else -1)),
+                # 10 (emm815): Zielpreis gegen den dort tatsaechlich
+                # bezahlten Ø-Preis. "—" = unbekannt (keine Historie)
+                # oder Zielpreis selbst geschaetzt; sortiert dann als
+                # -1 ans Ende, nicht als bester Wert.
+                (f"{(_ueber815 - 1.0) * 100:+,.0f} %".replace(",", "'")
+                 if _ueber815 is not None else "—",
+                 (_ueber815 if _ueber815 is not None else -1)),
+                ("", _pct815),       # 11: Balken haengt als Zell-Widget darueber
             ]
             for j, (text, val) in enumerate(cells):
                 it = NumericItem(text, val) if j >= 1 else QTableWidgetItem(text)
@@ -24672,7 +27512,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if j >= 1:
                     it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if j in (3, 4, 5):
-                    it.setForeground(QColor(theme.GREEN if d["profit_unit"] > 0 else theme.RED))
+                    # ZAHLEN ENTFLIMMERN (emm815, wie die anderen Tabs):
+                    # Verlust bleibt rot, gruen nur beim Gruen-Tier der
+                    # Bewertung (DIESELBE Regel wie der Balken, Regel 9) -
+                    # vorher leuchtete JEDE profitable Zeile gruen, auch
+                    # die mit der Geister-Marge von 413316 %.
+                    if d["profit_unit"] <= 0:
+                        it.setForeground(QColor(theme.RED))
+                    elif _bcol815 == theme.GREEN:
+                        it.setForeground(QColor(theme.GREEN))
+                    else:
+                        it.setForeground(QColor(theme.MUTED))
                 if j == 9 and d.get("tgt_sell_reach") is not None:
                     it.setToolTip(
                         t("S % = sell exit evidence at the DESTINATION: share of the spread the "
@@ -24687,6 +27537,29 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     if tvol < 10:
                         it.setToolTip(t("Hardly anything is traded here at the destination \u2013 careful, it may not "
                                         "sell."))
+                if j == 10:
+                    # emm815: Ampel auf den Realismus des Zielpreises.
+                    # Unbekannt ("—") bleibt gedaempft: keine Aussage,
+                    # keine Farbe. Schwelle RG_ZIEL_UNREAL ist dieselbe,
+                    # die auch die Bewertung benutzt (Arbeitsregel 9).
+                    if _ueber815 is None:
+                        it.setForeground(QColor(theme.MUTED))
+                        it.setToolTip(t(
+                            "No destination history for the comparison, or the "
+                            "destination price is itself an estimate from that "
+                            "history - then the comparison would only confirm "
+                            "itself."))
+                    else:
+                        it.setForeground(QColor(
+                            theme.GREEN if _ueber815 < 1.5 else
+                            theme.AMBER if _ueber815 < self.RG_ZIEL_UNREAL
+                            else theme.RED))
+                        if _ueber815 >= self.RG_ZIEL_UNREAL:
+                            it.setToolTip(t(
+                                "The sell order at the destination is far above "
+                                "everything actually paid there - most likely a "
+                                "fantasy order nobody buys from. The margin next "
+                                "to it is then worthless."))
                 if d.get("leerer_markt"):
                     # Die ganze Zeile bekommt einen Hinweis - der Fund ist
                     # eine CHANCE, keine gerechnete Marge. Wer das nicht
@@ -24702,11 +27575,38 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     it.setBackground(tint)
                 self.rg_table.setItem(i, j, it)
             self.rg_table.item(i, 0).setData(Qt.UserRole, d["type_id"])
-            if d["profit_unit"] > 0 and d["margin"] >= self.settings["target_margin"]:
+            # NAME NUR NOCH BEIM GRUEN-TIER GRUEN (emm815): die alte Regel
+            # (profitabel + Ziel-Marge erreicht) faerbte auch jede
+            # Geister-Marge gruen - genau die Zeilen, vor denen die
+            # Bewertung jetzt warnt.
+            if _bcol815 == theme.GREEN:
                 self.rg_table.item(i, 0).setForeground(QColor(theme.GREEN))
         self.rg_table.setSortingEnabled(not highlight)
+        if not highlight:
+            # emm600: wie bei Daytrade/Swing - Sortier-Indikator auf "keine
+            # Spalte", damit die kombinierte Qualitaets-Reihenfolge stehen
+            # bleibt, bis der Nutzer selbst auf eine Spalte klickt.
+            self.rg_table.sortByColumn(-1, Qt.AscendingOrder)
+        # BALKEN NACH DEM SORTIEREN ANHAENGEN (emm815): Zuordnung per
+        # type_id, nach jedem Sortieren neu - wie Scanner/Daytrade/Swing.
+        self._rg_apply_bars()
+        _rhdr815 = self.rg_table.horizontalHeader()
+        _alt815 = getattr(self, "_rg_bars_sort_slot", None)
+        if _alt815 is not None:
+            try:
+                _rhdr815.sortIndicatorChanged.disconnect(_alt815)
+            except (TypeError, RuntimeError):
+                pass
+        self._rg_bars_sort_slot = (lambda *_a: self._rg_apply_bars())
+        _rhdr815.sortIndicatorChanged.connect(self._rg_bars_sort_slot)
         self._autosize_once(self.rg_table, "regional")
         self._icon_prefetch_pending(self._rerender_arbitrage)
+
+    def _rg_apply_bars(self):
+        """Bewertungs-Balken der Regional-Liste (Kern: _haenge_balken,
+        derselbe wie im Bau-Scanner/Daytrade/Swing). Spalte 11 (emm815)."""
+        self._haenge_balken(self.rg_table,
+                            getattr(self, "_rg_bar_rows", None) or {}, 11)
 
     def _rg_selected_rows(self):
         sm = self.rg_table.selectionModel()
@@ -24866,7 +27766,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # links nimmt die volle Breite.
         # setVisible NACH addWidget - vorher macht Qt daraus ein eigenes
         # Fenster (b8-Falle).
-        if self._ladder_is_buy_side(key):
+        if self._ladder_is_buy_side(key) or key == "swing":
+            # Daytrade: Buy-Seite, dort unbrauchbar (s.o.). Swing (emm814,
+            # Nutzer auf die Frage "braucht es die ordertiefe ueberhaupt?"
+            # erklaert bekommen und entschieden: "ja unsichtbar machen"):
+            # der Kasten wird nicht genutzt; der Mengen-Vorschlag im
+            # Einkaufswagen braucht ihn nicht sichtbar - die Logik
+            # dahinter (ctx/spin/sel) laeuft unveraendert weiter.
             table.setVisible(False)
             box.setVisible(False)
 
@@ -24996,14 +27902,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             book = esi.fetch_structure_orders_full(self.settings.get("client_id"),
                                                    structure.get("character_id"), sid)
         except Exception:
-            book = prev[1] if prev else {}
+            # ALTER Stand behaelt den ALTEN Stempel (emm727). Vorher wurde
+            # der stale Rueckfall mit time.time() NEU gestempelt - der Cache
+            # log dann ueber seine Frische, und der Multi-Hub-Scan konnte
+            # "frisch geladen" nicht von "Abruf fehlgeschlagen, alte Preise"
+            # unterscheiden (Nutzer: "alles muss garantiert da und aktuell
+            # Sein"). Ohne vorherigen Stand wird NICHTS gecacht, damit der
+            # naechste Aufruf es erneut versucht.
+            return prev[1] if prev else {}
         cache[sid] = (time.time(), book)
         return book
 
-    def _structure_books(self, structure, type_ids):
+    def _structure_books(self, structure, type_ids, max_age=300):
         """{type_id: {'sell': [(p,q)…], 'buy': [(p,q)…]}} – volle Order-Leitern aus dem
-        (gecachten) Struktur-Orderbuch, gleiches Format wie fetch_type_orders."""
-        book = self._structure_agg(structure) or {}
+        (gecachten) Struktur-Orderbuch, gleiches Format wie fetch_type_orders.
+        max_age=0 (emm727): zwingend frisch laden - der Multi-Hub-Scan
+        verspricht dem Nutzer den AKTUELLEN Preisstand, kein 5-Minuten-Cache."""
+        book = self._structure_agg(structure, max_age=max_age) or {}
         out = {}
         for t in type_ids:
             b = book.get(t, {})
@@ -25018,8 +27933,59 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             return self._structure_books(structure, [type_id])[type_id]
         return esi.fetch_type_orders(type_id, station=station, region=region)
 
+    def _bd_kauf_leiter(self, type_id, region, station, structure=None):
+        """Verkaufs-Leiter [(preis, menge), ...] fuer den EINKAUF eines
+        Materials - die EINE Quelle fuer BEIDE Orderbuch-Pfade des Bauplans
+        (open_build_detail und "Neu berechnen", emm722 / Regel 9).
+
+        Multi-Hub aktiv + gescannt: die zusammengelegte Leiter beider
+        Kauf-Hubs, REIHENFOLGE nach Landepreis (inkl. hub-eigener Fracht,
+        industry.multihub_leiter), EINTRAEGE mit dem rohen Orderpreis -
+        die Leiter sagt also "kaufe in dieser Reihenfolge", bezahlt wird
+        der Orderpreis (die Fracht bleibt wie bisher die eigene
+        Kostenposition). Ohne Eintrag an beiden Hubs - oder ganz ohne
+        Multi-Hub - wie bisher der aktive Hub (_hub_orders)."""
+        _books = self._bd_multihub_books()
+        if _books and self._bd_buy_hub_locs():
+            try:
+                _vols, _ = self._item_volumes_with_esi_fix([int(type_id)])
+            except Exception:
+                _vols = {}
+            _leiter = industry.multihub_leiter(
+                _books, int(type_id),
+                getattr(self, "_bd_buy_hub_fracht", None) or {},
+                (_vols or {}).get(int(type_id), 0) or 0)
+            if _leiter:
+                return [(_roh, _m) for _lp, _m, _hub, _roh in _leiter]
+        _ob = self._hub_orders(int(type_id), region, station, structure)
+        return (_ob or {}).get("sell", [])
+
     def _active_hub_label(self):
         return self.g_hub.currentText() if hasattr(self, "g_hub") else "Jita"
+
+    def _active_hub_key(self):
+        """`hub_standings`-Schluessel ("jita"/"amarr"/...) des GERADE AKTIVEN
+        Hubs (oben in der Kopfleiste gewaehlt) - oder None, wenn der aktive
+        Hub eine Spielerstruktur ist (die hat keine NPC-Standings, dafuer
+        gibt es den hub_key=None-Rueckfall in `_fees_for_hub`).
+
+        emm598 (Nutzer, 18.10.2026, Order-Update/Redo-Gebuehren): bis hierhin
+        gab es diese Funktion nicht - `_load_order_mods` fragte die
+        Broker-Fee-Standings IMMER fest unter dem Schluessel "jita" ab,
+        egal, welcher Hub oben tatsaechlich aktiv war. Fuer Jita stimmte das
+        zufaellig, bei Amarr/Dodixie/Rens/Hek waeren es die FALSCHEN
+        Standings gewesen, und bei einer Spielerstruktur sogar Standings,
+        die dort gar nicht gelten (Strukturen haben keinen NPC-Eigentuemer).
+        Diese Funktion liefert den WIRKLICH aktiven Schluessel, damit die
+        Order-Update-Gebuehrenrechnung (und jede kuenftige Stelle, die
+        denselben Fehler vermeiden will) den richtigen Hub trifft."""
+        region, station, structure = self._active_hub()
+        if structure:
+            return None
+        for _k, _lbl, _r, s in hubs.NPC_HUBS:
+            if s == station:
+                return _k
+        return None
 
     @staticmethod
     def _short_hub_label(label, maxlen=16):
@@ -25439,6 +28405,30 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _sh_tools_menu.setToolTipsVisible(True)
         _sh_load_act = _sh_tools_menu.addAction(
             icons.icon("coins"), t("Load prices"))
+        # ZIELBUDGET (emm613, Nutzer: "Suggested quantity" kam auf 17,5B -
+        # "das ist mir etwas viel"; er will stattdessen vorgeben, WIEVIEL
+        # ISK er etwa einkaufen will). Eigenes Eingabefeld (IskKompaktEdit,
+        # mw_basis.py) direkt ueber der Aktion, die es benutzt - als
+        # Widget-Aktion schliesst ein Klick ins Feld das Menue NICHT
+        # (dasselbe Muster wie das Anteil-Feld im Kauf-Vorschlag-Panel
+        # weiter unten in dieser Methode).
+        from PySide6.QtWidgets import QWidgetAction as _QWA_bud
+        self.sh_budget = IskKompaktEdit()
+        self.sh_budget.setPlaceholderText(t("e.g. 5000000000"))
+        self.sh_budget.setToolTip(
+            t("Optional target budget for „Suggested quantity“: type the "
+              "full ISK amount (e.g. 5000000000) – it is shown compact "
+              "afterwards (5B). When set, the daily-volume suggestion is "
+              "scaled DOWN so the total cost roughly matches this budget "
+              "(never scaled up). Leave empty to use the plain suggestion."))
+        _sh_budget_w = QWidget()
+        _sh_budget_l = QHBoxLayout(_sh_budget_w)
+        _sh_budget_l.setContentsMargins(10, 6, 10, 4)
+        _sh_budget_l.addWidget(QLabel(t("Target budget (ISK):")))
+        _sh_budget_l.addWidget(self.sh_budget)
+        _sh_budget_wa = _QWA_bud(_sh_tools_menu)
+        _sh_budget_wa.setDefaultWidget(_sh_budget_w)
+        _sh_tools_menu.addAction(_sh_budget_wa)
         _sh_sugg_act = _sh_tools_menu.addAction(
             icons.icon("target"), t("Suggested quantity"))
         _sh_tools_sep = _sh_tools_menu.addSeparator()
@@ -25700,25 +28690,47 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.sh_table.horizontalHeader().setSortIndicator(
             col, _Qt.AscendingOrder if asc else _Qt.DescendingOrder)
 
-    def _render_shopping(self):
-        self.sh_table.blockSignals(True)
-        rows = store.list_shopping()
-        # Aufräumen: Items, die VOR dem Fix mit "★ "-Pr\u00e4fix im Namen gespeichert
-        # wurden (Top-15-Markierung ist mit reingerutscht), hier korrigieren -
-        # sonst bleibt der Stern für immer drin, auch nach dem Code-Fix, weil der
-        # nur NEUE Eintr\u00e4ge betrifft, nicht die schon gespeicherten.
-        for r in rows:
-            if (r.get("name") or "").startswith("\u2605 "):
-                r["name"] = r["name"].replace("\u2605 ", "")
-                store.update_shopping(r["id"], name=r["name"])
+    def _sh_zeilen_sortiert(self):
+        """Zeilen der Einkaufsliste in GENAU der Reihenfolge, die aktuell in
+        der Tabelle zu sehen ist - nach Spalten-Sortierung (`self._sh_sort`)
+        und ohne ausgeblendete Zeilen (`self._sh_hidden_ids`). Dieselbe
+        Berechnung wie bisher inline in `_render_shopping()`.
+
+        emm617 (Nutzer: "der work through mode geht nicht von oben nach
+        unten. manchmal verstelle ich die reihenfolge der columns und dan
+        geht der mode nicht von oben nach unten. bitte ändern, immer von
+        oben nach unten der Liste fahren"): `_sh_step_next()` holte bisher
+        IMMER `store.list_shopping()` roh - die DB-Reihenfolge, unabhängig
+        davon, wonach der Nutzer die Tabelle gerade sortiert hatte (Klick
+        auf einen Spaltenkopf, `_shopping_sort_by`). "Next" sprang damit
+        durch eine andere Reihenfolge als die sichtbar von oben nach unten
+        gelistete. Jetzt teilen sich `_render_shopping()` und
+        `_sh_step_next()` diese eine Funktion - "Next" läuft ab jetzt IMMER
+        in genau der Reihenfolge, die gerade auf dem Bildschirm steht."""
         tax = self.settings["sales_tax_pct"] / 100.0
         broker = self.settings["broker_fee_pct"] / 100.0
+        rows = store.list_shopping()
         _sort_col, _sort_asc = getattr(self, "_sh_sort", (None, True))
         if _sort_col is not None:
             rows = sorted(rows, key=lambda r: self._shopping_sort_value(
                 r, _sort_col, tax, broker), reverse=not _sort_asc)
         _hidden = getattr(self, "_sh_hidden_ids", set())
         rows = [r for r in rows if r["id"] not in _hidden]
+        return rows
+
+    def _render_shopping(self):
+        self.sh_table.blockSignals(True)
+        # Aufräumen: Items, die VOR dem Fix mit "★ "-Pr\u00e4fix im Namen gespeichert
+        # wurden (Top-15-Markierung ist mit reingerutscht), hier korrigieren -
+        # sonst bleibt der Stern für immer drin, auch nach dem Code-Fix, weil der
+        # nur NEUE Eintr\u00e4ge betrifft, nicht die schon gespeicherten.
+        for r in store.list_shopping():
+            if (r.get("name") or "").startswith("\u2605 "):
+                r["name"] = r["name"].replace("\u2605 ", "")
+                store.update_shopping(r["id"], name=r["name"])
+        tax = self.settings["sales_tax_pct"] / 100.0
+        broker = self.settings["broker_fee_pct"] / 100.0
+        rows = self._sh_zeilen_sortiert()
         self.sh_table.setRowCount(len(rows))
         tot_cost = tot_rev = tot_profit = 0.0
         _n_est = 0          # Zeilen, deren Kosten nur geschaetzt sind
@@ -25767,9 +28779,21 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if short:
                 qty_txt += f" (−{short:,})".replace(",", "'")
 
+            # emm616: "enorm teure" Zeile relativ zum Zielbudget markieren
+            # (Nutzer, nach dem Live-Test der Budget-Deckelung emm613/616:
+            # "markiere enorm teure Produkte mit einem Ausrufezeichen").
+            # Schwelle 10 % des Budgets - gilt fuer JEDE Zeile, nicht nur
+            # Fixposten ohne Mengen-Vorschlag: auch eine herunterskalierte
+            # Zeile kann am Mindestmass (1 Stueck) kleben bleiben und
+            # trotzdem einen grossen Teil des Budgets verschlingen.
+            _budget_akt = self.sh_budget.value() if hasattr(self, "sh_budget") else 0.0
+            _teuer = bool(_budget_akt > 0 and cost >= _budget_akt * 0.10)
+
             # col 0: item name + carries id/type_id
             src = (r.get("source") or "")
             tag = {"daytrade": "⚡ ", "swing": "↗ "}.get(src, "")
+            if _teuer:
+                tag = "❗ " + tag
             nm_it = QTableWidgetItem(tag + store.item_name_rein(r["name"]))
             _fnm = nm_it.font(); _fnm.setBold(True); nm_it.setFont(_fnm)
             nm_it.setFlags(nm_it.flags() & ~Qt.ItemIsEditable)
@@ -25778,6 +28802,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             f = nm_it.font(); f.setBold(in_order); nm_it.setFont(f)
             src_txt = {"daytrade": "Daytrade", "swing": "Swing"}.get(
                 src, t("manual/portfolio"))
+            _teuer_hinweis = t(
+                " ❗ This item alone costs {cost} – at least 10 % of your "
+                "{budget} target budget. It has no quantity suggestion to scale "
+                "down automatically; adjust or remove it by hand if the total "
+                "must fit the budget.").format(
+                    cost=isk(cost), budget=IskKompaktEdit._text_aus(_budget_akt)
+                ) if _teuer else ""
             if in_order:
                 nm_it.setForeground(QColor(theme.RED))
                 # AUCH IM TEXT, nicht nur in der Farbe (Nutzer, Sitzung 20).
@@ -25787,10 +28818,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # sieht es ueberhaupt erst.
                 nm_it.setText(nm_it.text() + " " + t("(order running)"))
                 nm_it.setToolTip(t("Source: {src}. You already have an open buy order for "
-                                   "this item in game.").format(src=src_txt))
+                                   "this item in game.").format(src=src_txt) + _teuer_hinweis)
             else:
                 nm_it.setForeground(QColor(theme.TEXT))
-                nm_it.setToolTip(t("Source: {src}. (\u26a1 Daytrade \u00b7 \u2197 Swing)").format(src=src_txt))
+                nm_it.setToolTip(t("Source: {src}. (\u26a1 Daytrade \u00b7 \u2197 Swing)").format(src=src_txt)
+                                 + _teuer_hinweis)
             nm_it.setData(Qt.UserRole, r["id"])
             nm_it.setData(Qt.UserRole + 1, r["type_id"])
             icon = self._table_icon(r["type_id"])
@@ -26776,7 +29808,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         root.addWidget(self.ord_andere)
 
         head = QHBoxLayout()
-        load = QPushButton(t("Check orders")); load.setObjectName("Primary")
+        load = QPushButton(t("Check orders"))
+        # NUR BLAUER STRICH, KEINE FUELLUNG (Nutzer 27.10.2026: "Check Orders
+        # muss keinen blauen Hintergrund haben, der Stroke in Blau reicht
+        # schon") - deshalb nicht mehr der Primary-Knopf.
+        load.setStyleSheet(
+            f"QPushButton{{padding:7px 14px; border:1px solid {theme.CYAN}; "
+            f"border-radius:8px; color:{theme.TEXT}; background:transparent;}}"
+            f"QPushButton:hover{{background:{theme.CYAN_FILL};}}"
+            f"QPushButton:pressed{{background:{theme.CYAN_FILL_PRESS};}}")
+        self._ord_load_btn = load
         load.setIcon(icons.icon("coins"))
         load.setToolTip(t("Fetches your open orders and the current market prices and marks where "
                           "you have been outbid/undercut.\n"
@@ -26805,12 +29846,80 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         head.addWidget(self._ord_step_toggle)
         self._ord_next_btn = QPushButton(t("Next ▶"))
         self._ord_next_btn.setIcon(icons.icon("arrow_right"))
-        self._ord_next_btn.setObjectName("Primary")
+        # AMBER (Nutzer 27.10.2026: "damit man sieht, dass er wichtig ist") -
+        # der Knopf, mit dem man im Work-through-Modus arbeitet.
+        self._ord_next_btn.setStyleSheet(
+            f"QPushButton{{padding:7px 16px; border:1px solid {theme.AMBER}; "
+            f"border-radius:8px; color:{theme.AMBER}; background:transparent; "
+            f"font-weight:700;}}"
+            f"QPushButton:hover{{background:{theme.AMBER}; color:{theme.BG};}}"
+            f"QPushButton:pressed{{background:{theme.AMBER}; color:{theme.BG};}}")
         self._ord_next_btn.setToolTip(t("Opens the next order that needs repricing in game and copies the new "
                                         "price."))
         self._ord_next_btn.clicked.connect(self._ord_step_next)
         self._ord_next_btn.setVisible(False)
         head.addWidget(self._ord_next_btn)
+        # ORDER-UPDATE-INTERVALL (emm735, Nutzer 27.10.2026, Discord-Wunsch
+        # "Spaceballs 2"): Standard in Tagen, 0 = aus. Die Uhr je Order startet
+        # von selbst (erstes "Next" oder Aenderung im Spiel) - hier wird nur die
+        # LAENGE gewaehlt, nie je Item. Eine Ausnahme je Item: Rechtsklick.
+        from PySide6.QtWidgets import QSpinBox as _QSpinBox735
+        # HAUPTSCHALTER MIT GEDAECHTNIS (emm741, Nutzer 27.10.2026: "days
+        # intervall bei order update soll nicht immer aktiv sein, nur wenn
+        # man es aktiviert ... bleibt aktiviert auch nach App-Neustart, bis
+        # man es selber wieder deaktiviert"). Die Checkbox traegt den
+        # bisherigen Beschriftungstext; ihr Zustand liegt in
+        # settings["ord_intervall_aktiv"]. FEHLT der Eintrag, gilt seit
+        # emm785 AUS (Nutzer 31.10.2026: "der Skip button sollte
+        # standardmaessig nicht angehackt sein") - bis dahin galt AN
+        # (emm741, Alt-Installationen). Wer den Haken setzt, behaelt ihn
+        # Neustart-fest; nur der STANDARD ohne Eintrag ist jetzt aus.
+        self._ord_int_cb = QCheckBox(t("Skip if updated within:"))
+        self._ord_int_cb.setIcon(icons.icon("clock"))   # b55: Symbolpflicht
+        _akt741 = self.settings.get("ord_intervall_aktiv")
+        self._ord_int_cb.setChecked(False if _akt741 is None else bool(_akt741))
+        head.addWidget(self._ord_int_cb)
+        self._ord_int_spin = _QSpinBox735()
+        self._ord_int_spin.setRange(0, 60)
+        self._ord_int_spin.setSuffix(" " + t("days"))
+        self._ord_int_std_spin = _QSpinBox735()
+        self._ord_int_std_spin.setRange(0, 168)
+        self._ord_int_std_spin.setSuffix(" h")
+        try:
+            self._ord_int_spin.setValue(int(float(
+                self.settings.get("ord_intervall_tage", 0) or 0)))
+            self._ord_int_std_spin.setValue(int(float(
+                self.settings.get("ord_intervall_stunden", 0) or 0)))
+        except Exception:
+            self._ord_int_spin.setValue(0)
+            self._ord_int_std_spin.setValue(0)
+        _tip735 = t(
+            "\u201eNext\u201c skips orders you repriced less than this long ago. "
+            "Days only: whole calendar days, the order is due again from 00:01. "
+            "With hours: exact time since the change (days + hours add up). "
+            "0 and 0 = every order every time. The clock of an order starts by "
+            "itself \u2013 with the first \u201eNext\u201c on it or when you change it "
+            "in game \u2013 and ends when the order no longer exists. A different "
+            "interval for one item: right-click its row. Applied with Enter or "
+            "a click elsewhere.")
+        for _sp735 in (self._ord_int_spin, self._ord_int_std_spin):
+            _sp735.setToolTip(_tip735)
+            _sp735.editingFinished.connect(self._ord_intervall_gesetzt)
+            _sp735.setEnabled(self._ord_int_cb.isChecked())
+            head.addWidget(_sp735)
+        self._ord_int_cb.setToolTip(t(
+            "Master switch for the interval. Off: „Next“ offers every "
+            "flagged order again, the entered days/hours and any per-item "
+            "intervals are kept but ignored. The switch survives an app "
+            "restart until you change it yourself."))
+        # Connect NACH setChecked - sonst schriebe schon der Aufbau den
+        # Zustand zurueck.
+        self._ord_int_cb.toggled.connect(self._ord_intervall_aktiv_gesetzt)
+        # NUR IM WORK-THROUGH-MODUS SICHTBAR (Nutzer 27.10.2026): ohne den
+        # Modus gibt es kein "Next", das ueberspringen koennte.
+        for _w735 in (self._ord_int_cb, self._ord_int_spin,
+                      self._ord_int_std_spin):
+            _w735.setVisible(False)
         head.addWidget(QLabel(t("Character:")))
         self.ord_char = QComboBox()
         self.ord_char.setToolTip(t("Only check the orders of this character (you change orders per "
@@ -26926,11 +30035,22 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 m.addSeparator()
                 a_undo = m.addAction(
                     t("\u21a9 Undo adjustment (currently {n}\u00d7)").format(n=cur_count))
+        # INTERVALL-AUSNAHME JE ITEM (emm735): der Standard steht oben im Tab;
+        # hier nur, wenn EIN Item anders laufen soll.
+        m.addSeparator()
+        a_int = m.addAction(t("Interval for this item…"))
+        a_int_std = None
+        if str(int(tid)) in (self.settings.get("ord_intervall_item") or {}):
+            a_int_std = m.addAction(t("Use the default interval again"))
         chosen = m.exec(table.viewport().mapToGlobal(pos))
         if chosen == a_chart:
             self._open_chart_for(tid, cell.text())
         elif chosen == a_open:
             self.open_ingame_market(tid)
+        elif chosen == a_int:
+            self._ord_intervall_item_setzen(tid, cell.text())
+        elif a_int_std is not None and chosen == a_int_std:
+            self._ord_intervall_item_setzen(tid, cell.text(), standard=True)
         elif a_undo is not None and chosen == a_undo:
             new_count = store.undo_order_mod_count(order_id)
             self._set_order_mod_cell(table, order_id, new_count)
@@ -26972,6 +30092,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.statusBar().showMessage(t("Loading open orders + market prices ({hub}) \u2026").format(hub=hub_lbl))
 
         _woanders = {}
+        _issued735 = {}    # {order_id: ESI `issued`} fuer die Intervall-Uhr (emm735)
 
         def job():
             import concurrent.futures as cf
@@ -26987,6 +30108,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                             if _lid:
                                 _woanders[_lid] = _woanders.get(_lid, 0) + 1
                             continue
+                        if o.get("order_id"):
+                            _issued735[o.get("order_id")] = o.get("issued")
                         myorders.append((int(tid), float(o.get("price", 0) or 0),
                                          bool(o.get("is_buy_order")),
                                          o.get("order_id"), cid,
@@ -27038,7 +30161,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                 continue
                     _andere.append((_n or str(_lid), _anz))
             return {"orders": myorders, "books": books, "names": names,
-                    "hub": active_loc, "andere": _andere}
+                    "hub": active_loc, "andere": _andere,
+                    "issued": dict(_issued735)}
 
         self._ord_laeuft = True
 
@@ -27093,10 +30217,22 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Namen, denn tax/broker werden je Zeile neu belegt: ein
             # Rueckfall auf sie gaebe die Werte der VORHERIGEN Zeile
             # zurueck (selbst gefangen, bevor die Suite lief).
+            #
+            # emm598 (Nutzer, 18.10.2026): hier stand bis jetzt fest
+            # verdrahtet "jita" - unabhaengig davon, welcher Hub oben
+            # tatsaechlich aktiv war. Fuer Jita stimmte das zufaellig, bei
+            # Amarr/Dodixie/Rens/Hek waeren es die STANDINGS DES FALSCHEN
+            # STATIONSBESITZERS gewesen, bei einer Spielerstruktur sogar
+            # Standings, die dort gar nicht gelten. `_active_hub_key()`
+            # liefert den wirklich aktiven Schluessel (oder None bei einer
+            # Struktur - dann greift in `_fees_for_hub` bewusst der
+            # Rueckfall auf die hub-unabhaengigen Werte).
+            _hubkey9 = self._active_hub_key()
+
             def _fees_row9(_cid9):
                 try:
                     _t9, _b9, _ = self._fees_for_hub(
-                        self.settings, _cid9, "jita")
+                        self.settings, _cid9, _hubkey9)
                     return float(_t9), float(_b9)
                 except Exception:
                     return _tax_glob9, _brk_glob9
@@ -27193,6 +30329,19 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                       "mod_count": mod_count, "cum_fee": cum_fee,
                                       "fee_wiped_out": fee_wiped_out,
                                       "vol_remain": vol_remain})
+            # INTERVALL-UHR je Order (emm735): neue Orders haben keine Uhr
+            # (faellig), eine im Spiel geaenderte `issued` startet sie beim
+            # Zeitpunkt der Aenderung. Faellt der Abgleich aus, bleibt alles
+            # faellig - im Zweifel nachbessern, nie faelschlich ueberspringen.
+            _issued_res735 = res.get("issued") or {}
+            try:
+                _clocks735 = store.order_intervall_sync(_issued_res735)
+            except Exception as _e735:
+                _clocks735 = {}
+                self._log_exception("Order-Intervall: Abgleich", str(_e735))
+            for _r735 in buy_rows + sell_rows:
+                _r735["clock"] = _clocks735.get(_r735.get("order_id"))
+                _r735["issued"] = _issued_res735.get(_r735.get("order_id")) or ""
             self._ordmod_buy = buy_rows
             self._ordmod_sell = sell_rows
             self._fill_order_table(self.buyord_table, buy_rows, True)
@@ -27307,11 +30456,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     def _fill_order_table(self, table, rows, is_buy):
         # nachzubessern zuerst, Verlust-Items ans Ende (nicht ansteuern lohnt
         # nicht) - oder nach der Spalte, die der Nutzer angeklickt hat.
+        import time as _time735
+        import datetime as _dt735
+        from .mw_helpers import (order_intervall_tage_bis as _tage_bis735,
+                                 order_intervall_faellig_ts as _faellig_ts735,
+                                 order_intervall_dauer_kurz as _dauer_kurz735)
         rows = self._ord_zeilen_sortiert(rows, is_buy)
         table.setRowCount(len(rows))
         for i, r in enumerate(rows):
             flag = r["flag"]
             loss = r.get("loss")
+            # INTERVALL (emm735): nachzubessern, aber vor kurzem erst angefasst
+            # -> wartet. Verlust-Zeilen bleiben rot (Finger weg gilt immer).
+            _fa735, _rest735, _tage735, _std735 = self._ord_faellig(r)
+            _wartet735 = bool(flag and not loss and not _fa735)
             nm = QTableWidgetItem(r["name"]); nm.setData(Qt.UserRole + 1, r["tid"])
             nm.setData(Qt.UserRole + 2, r.get("order_id"))
             _oic = self._table_icon(r["tid"])
@@ -27327,6 +30485,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             f = nm.font(); f.setBold(True); nm.setFont(f)
             if flag and loss:
                 nm.setForeground(QColor(theme.RED))
+            elif _wartet735:
+                nm.setForeground(QColor(theme.MUTED))
             table.setItem(i, 0, nm)
 
             def num(col, text, val):
@@ -27366,6 +30526,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 else:
                     st_txt = t("\u26a0 outbid") if is_buy else t("\u26a0 undercut")
             st_col = (theme.RED if loss else theme.AMBER) if flag else theme.GREEN
+            if _wartet735:
+                # IN WIEVIEL TAGEN wieder dran (Nutzer 27.10.2026): nur Tage =
+                # Kalendertage, faellig ab 00:01; mit Stunden = genaue Restzeit.
+                if _std735 > 0:
+                    st_txt = t("\u23f3 in {left}").format(
+                        left=_dauer_kurz735(_rest735))
+                else:
+                    _bis735 = _tage_bis735(r.get("clock"), _tage735,
+                                           _time735.time())
+                    st_txt = (t("\u23f3 tomorrow") if _bis735 <= 1
+                              else t("\u23f3 in {n} days").format(n=_bis735))
+                st_col = theme.MUTED
             st = QTableWidgetItem(st_txt)
             st.setForeground(QColor(st_col))
             if fee_wiped:
@@ -27394,6 +30566,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 st.setToolTip(
                     t("\u26a0 Purchase price unknown \u2013 no loss check. "
                       "Check the price yourself."))
+            if _wartet735:
+                _fmt735 = "%d.%m.%Y %H:%M"
+                _seit735 = _dt735.datetime.fromtimestamp(
+                    float(r.get("clock") or 0)).strftime(_fmt735)
+                _ab735 = _faellig_ts735(r.get("clock"), _tage735, _std735)
+                _iv735 = " ".join(
+                    x for x in (f"{_tage735} d" if _tage735 else "",
+                                f"{_std735} h" if _std735 else "") if x)
+                _tip735 = t(
+                    "Changed on {since} \u2013 your interval for this item is "
+                    "{iv}. \u201eNext\u201c skips this order until {due}, then it is "
+                    "due again; \u201ePrice\u201c still copies the new price.").format(
+                        since=_seit735, iv=_iv735,
+                        due=(_dt735.datetime.fromtimestamp(_ab735).strftime(_fmt735)
+                             if _ab735 else ""))
+                st.setToolTip((st.toolTip() + "\n\n" if st.toolTip() else "")
+                              + _tip735)
             table.setItem(i, 3 + _off, st)
             npit = num(4 + _off, isk(r["newp"], suffix=False) if flag else "—",
                        r["newp"] if flag else 0)
@@ -27527,10 +30716,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.statusBar().showMessage(t(
             "New price {price} for {name} copied \u2013 in game right-click the order, "
             "\u201emodify\u201c and paste.").format(price=isk(price), name=name))
+        return True      # wirklich kopiert (emm735: "Next" startet danach die Uhr)
 
     def _toggle_order_step(self, on):
         self._step_mode = on
         self._ord_next_btn.setVisible(on)
+        for _w735 in (self._ord_int_cb, self._ord_int_spin,
+                      self._ord_int_std_spin):
+            _w735.setVisible(on)
         # eigener Zähler + Erledigt-Merker je Seite (Buy/Sell laufen unabhängig)
         self._step_state = {"buy": {"idx": 0, "prev": None, "done": set()},
                             "sell": {"idx": 0, "prev": None, "done": set()}}
@@ -27551,9 +30744,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # IN DER REIHENFOLGE DER TABELLE (Nutzer 27.09.2026: nach "New
         # margin" sortieren und nur die oberen abarbeiten). Verlust-Items
         # nie ansteuern.
-        rows = [r for r in self._ord_zeilen_sortiert(src, buy)
-                if r["flag"] and not r.get("loss")]
+        # ORDER-UPDATE-INTERVALL (emm735): Orders, die vor weniger als N Tagen
+        # angefasst wurden, ueberspringt "Next". Die Uhr einer Order steht beim
+        # LADEN fest (`clock`); sie wird beim Abarbeiten NICHT in der Zeile
+        # nachgefuehrt - sonst schrumpfte die Liste unter dem Zaehler `idx`
+        # mit jedem Klick und jede zweite Order fiele durch. Die neue Uhr
+        # greift beim naechsten Laden.
+        _alle735 = [r for r in self._ord_zeilen_sortiert(src, buy)
+                    if r["flag"] and not r.get("loss")]
+        rows = [r for r in _alle735 if self._ord_faellig(r)[0]]
+        _wartet735 = len(_alle735) - len(rows)
         st = self._step_state.setdefault(key, {"idx": 0, "prev": None, "done": set()})
+        if not rows and _wartet735:
+            self._flash_tip(t("All remaining orders are waiting for their interval"))
+            self.statusBar().showMessage(t(
+                "{n} order(s) need repricing but were changed within the interval "
+                "– „Next“ skips them.").format(n=_wartet735))
+            return
         if not rows:
             self._flash_tip(t("Nothing to adjust ✓"))
             self.statusBar().showMessage(
@@ -27577,11 +30784,112 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._set_order_mod_cell(table, oid, new_count)
         self._highlight_order_row(table, r["tid"], st["done"])
         self.open_ingame_market(r["tid"], getattr(self, "_ord_char_cid", None))
-        self._copy_order_price(r["newp"], r["name"])
+        _kopiert735 = self._copy_order_price(r["newp"], r["name"])
+        # Uhr dieser Order starten - NUR wenn der Preis wirklich kopiert wurde
+        # (bei "Abbrechen" in der Rueckfrage wurde nichts angefasst).
+        if oid and _kopiert735:
+            try:
+                store.order_intervall_start(oid, r.get("issued") or "")
+            except Exception as _e735:
+                self._log_exception("Order-Intervall: Uhr starten", str(_e735))
         self.statusBar().showMessage(t(
             "[{i}/{n}] {name}: market opened, new price {price} copied \u2013 in game "
             "\u201emodify\u201c the order + paste, then \u201eNext\u201c.").format(
             i=st['idx'], n=len(rows), name=r['name'], price=isk(r['newp'])))
+
+    def _ord_faellig(self, r, jetzt=None):
+        """(faellig, rest_sekunden, tage, stunden) einer Order-Zeile. EINE
+        Stelle fuer Anzeige UND "Next" (emm735); die Entscheidung selbst ist
+        rein (mw_helpers.order_intervall_status)."""
+        import time as _t735
+        from .mw_helpers import order_intervall_dauer, order_intervall_status
+        tage, stunden = order_intervall_dauer(self.settings, r.get("tid"))
+        fa, rest = order_intervall_status(
+            r.get("clock"), tage, _t735.time() if jetzt is None else jetzt,
+            stunden)
+        return fa, rest, tage, stunden
+
+    def _ord_intervall_abfragen(self, name, tage, stunden):
+        """Kleiner Dialog: Tage + Stunden fuer EIN Item. Rueckgabe (tage,
+        stunden) oder None bei Abbrechen."""
+        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout,
+                                       QSpinBox as _QSpin)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(t("Interval for this item"))
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(t(
+            "Pause between repricings for {name} (0 days and 0 hours = every "
+            "time):").format(name=name)))
+        form = QFormLayout()
+        sd = _QSpin(); sd.setRange(0, 60); sd.setSuffix(" " + t("days"))
+        sd.setValue(int(tage))
+        sh = _QSpin(); sh.setRange(0, 168); sh.setSuffix(" h")
+        sh.setValue(int(stunden))
+        form.addRow(t("Days:"), sd)
+        form.addRow(t("Hours:"), sh)
+        lay.addLayout(form)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        return (sd.value(), sh.value())
+
+    def _ord_intervall_item_setzen(self, tid, name, standard=False):
+        """Intervall-Ausnahme fuer EIN Item setzen (0/0 = bei jedem Durchgang)
+        oder auf den Standard zurueck (emm735)."""
+        from .mw_helpers import order_intervall_dauer
+        neu = None
+        if not standard:
+            _t735, _h735 = order_intervall_dauer(self.settings, tid)
+            neu = self._ord_intervall_abfragen(name, _t735, _h735)
+            if neu is None:
+                return
+        je_item = dict(self.settings.get("ord_intervall_item") or {})
+        if standard:
+            je_item.pop(str(int(tid)), None)
+        else:
+            je_item[str(int(tid))] = [int(neu[0]), int(neu[1])]
+        self.settings["ord_intervall_item"] = je_item
+        try:
+            config.save_settings(self.settings)
+        except Exception as _e735:
+            self._log_exception("Order-Intervall: speichern", str(_e735))
+        self._rerender_order_tables()
+
+    def _ord_intervall_aktiv_gesetzt(self, on):
+        """Hauptschalter des Order-Update-Intervalls (emm741): Zustand in
+        die Einstellungen schreiben (ueberlebt den Neustart), Felder
+        mitschalten, Tabellen neu zeichnen. Die WERTE (Tage/Stunden,
+        Ausnahmen je Item) bleiben gespeichert - aus heisst ignoriert,
+        nicht geloescht."""
+        self.settings["ord_intervall_aktiv"] = bool(on)
+        try:
+            config.save_settings(self.settings)
+        except Exception as _e741:
+            self._log_exception("Intervall-Schalter speichern", str(_e741))
+        for _sp741 in (self._ord_int_spin, self._ord_int_std_spin):
+            _sp741.setEnabled(bool(on))
+        self._rerender_order_tables()
+
+    def _ord_intervall_gesetzt(self):
+        """Standard-Intervall uebernehmen - NUR bei Enter oder Klick woanders
+        (editingFinished, Nutzer 27.10.2026: "nach jedem Klick laedt alles und
+        das laggt"). Unveraendert = nichts tun (Enter UND Fokusverlust melden
+        sich nacheinander)."""
+        _t = int(self._ord_int_spin.value())
+        _h = int(self._ord_int_std_spin.value())
+        if (_t == int(self.settings.get("ord_intervall_tage", 0) or 0)
+                and _h == int(self.settings.get("ord_intervall_stunden", 0) or 0)):
+            return
+        self.settings["ord_intervall_tage"] = _t
+        self.settings["ord_intervall_stunden"] = _h
+        try:
+            config.save_settings(self.settings)
+        except Exception as _e735:
+            self._log_exception("Order-Intervall: speichern", str(_e735))
+        self._rerender_order_tables()
 
     def _set_order_mod_cell(self, table, order_id, count):
         """Aktualisiert die Nachbesserungen-Spalte einer Zeile live (per order_id),
@@ -28302,13 +31610,59 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         wo es ihn gibt - er kennt zusaetzlich die Konkurrenz und faellt
         deshalb kleiner aus. Erst danach der Anteil am Tagesvolumen, zuletzt
         der beim Hinzufuegen gemerkte Wert.
+
+        ZIELBUDGET (emm613, Nutzer: "bei 17B ist mir das etwas viel, ich
+        haette gerne eine Eingabemoeglichkeit fuer wieviel ISK ich etwa
+        einkaufen moechte"): ist im neuen Feld `self.sh_budget`
+        (IskKompaktEdit, Tools-Menue) ein Wert > 0 gesetzt, werden die oben
+        berechneten Mengen NACH der Berechnung mit einem gemeinsamen Faktor
+        herunterskaliert, bis die GESCHAETZTE Gesamtsumme ungefaehr das
+        Budget trifft - NIE hochskaliert (ein kleineres Budget soll nur
+        bremsen, ein groesseres aendert nichts an der eigentlichen
+        Tagesvolumen-Logik). Jede Zeile behaelt mindestens 1 Stueck, damit
+        kein Vorschlag komplett verschwindet.
+
+        emm616 (Nutzer, nach dem Live-Test von emm615: die Summe bewegte
+        sich trotz "capped at ~2B" kaum, weil ein paar riesige Einzelposten
+        ohne Tagesvolumen-Vorschlag - Standup XL-Set & Co., Menge 1, je bis
+        29B - den Faktor NICHT mitbekamen. Antwort auf die Nachfrage,
+        woertlich: "prozentual abmessen auch die dailyie Volume
+        siggesteet quantity miteinbeziehen natuerlich markiere enorm teure
+        Produkte mit einem ausrufezeichen"): der Skalierungsfaktor
+        beruecksichtigt jetzt die GESAMTE Liste, nicht nur die Zeilen mit
+        Mengen-Vorschlag - `fest_kosten` (Zeilen OHNE Vorschlag, Menge
+        bleibt wie sie ist) wird vom Budget abgezogen, der READ bleibt fuer
+        die skalierbaren Zeilen; reicht das Budget nicht mal fuer die
+        Fixposten, werden die skalierbaren Zeilen auf ihr Minimum (1)
+        gedrueckt. Fixposten selbst lassen sich (Menge 1) nicht weiter
+        senken - genau diese "enorm teuren Produkte" markiert
+        `_render_shopping()` stattdessen mit einem Ausrufezeichen (s. dort,
+        Schwelle 10 % des Budgets), statt sie stillschweigend zu ignorieren.
+
+        ORDERBUCH-TIEFE (emm618, Nutzer: "ich habe manchmal das problem das
+        suggestet quantity sich zu tief ins orderbook kauft mit anzahl
+        Items und so dann doch zu teuer werden k\u00f6nnen wiur das \u00e4ndern?"):
+        die Tagesvolumen-Menge (`_dv * share`) wusste bisher NICHTS vom
+        aktuellen Orderbuch - war das duenner als das Tagesvolumen, kaufte
+        man sich durch immer teurere Sell-Orders und zahlte am Ende viel
+        mehr als der sichtbare Bestpreis versprach. `_sh_tiefen_deckel()`
+        kappt die vorgeschlagene Menge jetzt zusaetzlich so, dass der
+        Durchschnittspreis beim Kauf nicht mehr als 8 % ueber dem besten
+        Sell-Preis liegt (NUR fuer die Tagesvolumen-Quelle - ein
+        Daytrade-Vorschlag ist eine BUY-ORDER-Menge, keine Sofortkauf-Menge,
+        und gr\u00e4bt sich nicht ins Orderbuch). Aus demselben Grund rechnet die
+        Budget-Deckelung ab jetzt mit der TIEFENBEWUSSTEN Durchschnittskoste
+        (`_sh_kosten_fuer_menge`, nutzt `market.fill_buy`) statt einem
+        flachen Stueckpreis mal Menge - die Schaetzung trifft die
+        tatsaechlichen Kosten jetzt auch bei duennem Orderbuch.
         """
         deals = self._ladder_ctx.get("day", {}).get("deals", {})
         stats = getattr(self, "_sh_stats", None) or {}
         share = getattr(self, "_sh_sug_share", None)
         share = (share.value() / 100.0) if share is not None else 0.25
         rows = store.list_shopping()
-        n = 0
+        vorschlag = {}   # row-id -> (type_id, menge, bisherige_menge)
+        tief_gedeckelt = 0
         for r in rows:
             d = deals.get(r["type_id"])
             if d:
@@ -28318,20 +31672,115 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 sq = max(1, int(round(_dv * share))) if _dv > 0 else 0
                 if sq <= 0:
                     sq = r.get("sugg_qty") or 0
-            if sq > 0 and (r.get("qty") or 0) != sq:
-                store.update_shopping(r["id"], qty=sq)
+                if sq > 0:
+                    _sq_vorher = sq
+                    sq = self._sh_tiefen_deckel(r["type_id"], sq)
+                    if sq < _sq_vorher:
+                        tief_gedeckelt += 1
+            if sq > 0:
+                vorschlag[r["id"]] = (r["type_id"], sq, r.get("qty") or 0)
+
+        # emm615: value_aktuell() statt value() - liest den Feldtext neu ein,
+        # falls ein Klick direkt vom Budget-Feld auf diese Aktion kein
+        # editingFinished ausgeloest hat (s. IskKompaktEdit.value_aktuell()).
+        budget = self.sh_budget.value_aktuell() if hasattr(self, "sh_budget") else 0.0
+        gedeckelt = False
+        if budget > 0:
+            # emm616: Fixkosten (Zeilen OHNE Mengen-Vorschlag) zaehlen mit -
+            # sie fressen vom Budget, auch wenn sie sich nicht skalieren
+            # lassen. Nur der REST steht fuer die skalierbaren Zeilen zur
+            # Verfuegung. emm618: Kosten jetzt tiefenbewusst
+            # (_sh_kosten_fuer_menge) statt flacher Stueckpreis mal Menge.
+            fest_kosten = sum(
+                self._sh_kosten_fuer_menge(r["type_id"], r.get("qty") or 0)
+                for r in rows if r["id"] not in vorschlag)
+            skalierbar_kosten = sum(self._sh_kosten_fuer_menge(tid, sq)
+                                     for tid, sq, _alt in vorschlag.values())
+            geschaetzt = fest_kosten + skalierbar_kosten
+            if geschaetzt > budget:
+                verfuegbar = max(0.0, budget - fest_kosten)
+                faktor = (verfuegbar / skalierbar_kosten) if skalierbar_kosten > 0 else 0.0
+                vorschlag = {rid: (tid, max(1, int(round(sq * faktor))), alt)
+                             for rid, (tid, sq, alt) in vorschlag.items()}
+                gedeckelt = True
+
+        n = 0
+        for rid, (_tid, sq, alt) in vorschlag.items():
+            if sq > 0 and alt != sq:
+                store.update_shopping(rid, qty=sq)
                 n += 1
         self._render_shopping()
         if n:
             self._flash_tip(t("Quantity set \u2713 ({n})").format(n=n))
-            self.statusBar().showMessage(
-                t("Suggested quantity (by daily volume) applied for {n} items.").format(n=n))
+            _zusatz = (t(" {n2} item(s) also capped by order-book depth "
+                        "(avg. price would otherwise rise too far above "
+                        "best price).").format(n2=tief_gedeckelt)
+                       if tief_gedeckelt else "")
+            if gedeckelt:
+                self.statusBar().showMessage(
+                    t("Suggested quantity (by daily volume, capped at ~{budget}) "
+                      "applied for {n} items.").format(
+                          budget=IskKompaktEdit._text_aus(budget), n=n) + _zusatz)
+            else:
+                self.statusBar().showMessage(
+                    t("Suggested quantity (by daily volume) applied for {n} items.").format(n=n)
+                    + _zusatz)
         else:
             self._flash_tip(t("No suggestions available"))
             self.statusBar().showMessage(t(
                 "No daily volume for any row \u2013 click \u201eLoad prices\u201c here, or "
                 "load the Daytrade deals. Without volume there is nothing to "
                 "suggest."))
+
+    def _sh_tiefen_deckel(self, type_id, sq, schwelle=0.08):
+        """Deckelt eine vorgeschlagene Menge `sq` so, dass der DURCHSCHNITTS-
+        preis beim Kauf nicht mehr als `schwelle` (Standard 8 %) ueber dem
+        besten Sell-Preis liegt - verhindert, dass "Suggested quantity"
+        sich zu tief ins Orderbuch hineinkauft (emm618, s. Docstring von
+        `_apply_suggested_qty`). Nutzt `market.worthwhile_fill()` - dieselbe
+        Funktion, die auch Daytrade/Swing fuer "noch lohnend" verwendet.
+        NIE hochskaliert, nur gedeckelt; ohne Orderbuch-Daten bleibt `sq`
+        unveraendert (keine Tiefeninformation vorhanden)."""
+        lad = self._sh_ladders.get(type_id)
+        if not lad or not lad.get("sell"):
+            return sq
+        best = lad["sell"][0][0]
+        if not best or best <= 0:
+            return sq
+        wf = market.worthwhile_fill(lad["sell"], best * (1 + schwelle))
+        if wf["qty"] <= 0:
+            return sq
+        return max(1, min(sq, int(wf["qty"])))
+
+    def _sh_kosten_fuer_menge(self, type_id, qty):
+        """Geschaetzte GESAMTKOSTEN fuer den Kauf von `qty` Stueck - bei
+        vorhandenem Orderbuch TIEFENBEWUSST (`market.fill_buy`, dieselbe
+        Rechnung wie die echte Kostenspalte in `_render_shopping`), sonst
+        die beste verfuegbare Schaetzung (`_sh_preis_schaetzung`) mal Menge.
+
+        emm618: vorher rechnete die Zielbudget-Deckelung (emm613/616) immer
+        mit einem FLACHEN Preis pro Stueck - ohne Ruecksicht auf die Tiefe
+        des Orderbuchs. Damit konnte die Deckelung ein duennes Orderbuch
+        systematisch unterschaetzen."""
+        lad = self._sh_ladders.get(type_id)
+        if lad and lad.get("sell") and qty > 0:
+            return market.fill_buy(lad["sell"], qty)["cost"]
+        return self._sh_preis_schaetzung(type_id) * qty
+
+    def _sh_preis_schaetzung(self, type_id):
+        """Bester verfuegbarer Stueckpreis fuer die Zielbudget-Deckelung
+        (emm613) - dieselbe Kaskade wie die Gesamtkosten-Spalte in
+        `_render_shopping` (Orderbuch > Scan-Schnappschuss > Tagesvolumen-
+        Durchschnitt), hier aber unabhaengig von einer bereits gesetzten
+        Menge aufrufbar."""
+        lad = self._sh_ladders.get(type_id)
+        if lad and lad.get("sell"):
+            return lad["sell"][0][0]
+        snap = (getattr(self, "_prices", None) or {}).get(type_id, {}) or {}
+        if snap.get("sell_min"):
+            return float(snap["sell_min"])
+        st = (getattr(self, "_sh_stats", None) or {}).get(type_id) or {}
+        return float(st.get("avg") or 0.0)
 
     def _toggle_sh_step(self, on):
         self._sh_step_mode = on
@@ -28346,8 +31795,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.statusBar().showMessage(t("Work-through mode off."))
 
     def _sh_step_next(self):
+        # emm617: holt die Zeilen jetzt ueber die gemeinsame Hilfsfunktion
+        # statt roh aus der Datenbank - "Next" laeuft damit in der gleichen
+        # Reihenfolge wie die sichtbare Tabelle (inkl. Spalten-Sortierung),
+        # nicht mehr in der rohen Einfuegereihenfolge. S. Docstring von
+        # _sh_zeilen_sortiert().
         steps = []
-        for r in store.list_shopping():
+        for r in self._sh_zeilen_sortiert():
             lad = self._sh_ladders.get(r["type_id"])
             price = self._overbid_price(lad["buy"][0][0]) if (lad and lad.get("buy")) else 0.0
             steps.append((r["type_id"], r["name"], price, r["id"]))
@@ -28495,6 +31949,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._market_return = prev
         if cur is getattr(self, "market_tab", None):
             self._mk_auto_start()
+        # PI LAEDT BEIM OEFFNEN VON SELBST (emm801; seit emm803 nur,
+        # wenn der Reiter ueberhaupt existiert - sonst waere getattr
+        # None und traefe cur=None).
+        _piw = getattr(self, "_pi_w", None)
+        if _piw is not None and cur is _piw:
+            self._pi_auto_laden()
         if cur is not None and hasattr(self, "_tab_widget"):
             for k, wdg in self._tab_widget.items():
                 if wdg is cur:
@@ -28627,6 +32087,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
         self.tabs.addTab(w, t("Profits"))
 
+    def _gewinn_fracht(self, txs):
+        """(Satz, Volumen, ohne) fuer die Fracht verkaufter Stueck - EINE
+        Stelle fuer Profits-Tab und Funfact (emm575, Regel 9)."""
+        satz = self._fracht_satz()
+        vols = (self._fracht_volumen({x["type_id"] for x in txs})
+                if satz > 0 else {})
+        ohne = {int(x) for x in (self.settings.get("fracht_aus_items") or [])
+                if str(x).lstrip("-").isdigit()}
+        return satz, vols, ohne
+
     def _render_profit(self):
         cid = self.pr_char.currentData()
         txs = store.get_transactions(None if cid in (None, "all") else cid)
@@ -28643,11 +32113,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _paar = (self._handels_charaktere() if cid in (None, "all") else None)
         # FRACHT (Nutzer 30.09.2026): verkaufte Stueck, die woanders gekauft
         # wurden als verkauft, tragen m3 x heutigen Satz.
-        _fr_satz = self._fracht_satz()
-        _fr_vols = (self._fracht_volumen({x["type_id"] for x in txs})
-                    if _fr_satz > 0 else {})
-        _fr_ohne = {int(x) for x in (self.settings.get("fracht_aus_items") or [])
-                    if str(x).lstrip("-").isdigit()}
+        _fr_satz, _fr_vols, _fr_ohne = self._gewinn_fracht(txs)
         events = market.realized_trades(txs, tax, broker, paar=_paar,
                                         fracht_satz=_fr_satz, volumen=_fr_vols,
                                         ohne=_fr_ohne)
@@ -28902,6 +32368,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                             esi.fetch_wallet_journal(client_id, cid))
                     except Exception:
                         pass
+                    self._orders_mitspeichern(client_id, cid)   # emm570
                     store.set_tx_synced(cid)
                 except Exception:
                     pass
@@ -29544,6 +33011,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         scopes = list(config.DEFAULT_SCOPES)
         if self.settings.get("use_assets"):
             scopes.append(config.ASSETS_SCOPE)
+            # MATERIAL IN OFFENEN VERTRAEGEN (emm760): gleicher Schalter -
+            # ein nicht angenommener Vertrag haelt die Ware fest und ESI
+            # meldet sie in KEINER /assets/-Antwort (emm745). Ohne den
+            # Scope meldet die Stock-Locations-Seite sie als "fehlt".
+            scopes.append(config.CONTRACTS_SCOPE)
         if self.settings.get("use_structures"):
             scopes.extend(config.STRUCTURE_SCOPES)
         if self.settings.get("use_ui"):
@@ -29556,6 +33028,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             scopes.extend(config.CORP_SCOPES)    # Corp-Hangar fuers Bauen (1.0.8)
         if self.settings.get("use_location"):
             scopes.append(config.LOCATION_SCOPE)  # Standort-Hinweis (emm313)
+        if config.PI_AKTIV and self.settings.get("use_pi"):
+            scopes.append(config.PI_SCOPE)        # PI-Uebersicht (emm801/803)
         return scopes
 
     def _scope_gruppen_namen(self, fehlende):
@@ -29564,10 +33038,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             (set(config.SKILL_SCOPES), t("skills, standings, industry jobs, blueprints")),
             ({config.IMPLANT_SCOPE}, t("implants")),
             ({config.ASSETS_SCOPE}, t("stock in your hangars")),
+            ({config.CONTRACTS_SCOPE}, t("material in open contracts")),
             (set(config.STRUCTURE_SCOPES), t("structure markets")),
             ({config.UI_SCOPE}, t("open in game")),
             (set(config.CORP_SCOPES), t("corporation hangar")),
             ({config.LOCATION_SCOPE}, t("location hint")),
+            ({config.PI_SCOPE}, t("planetary industry (PI)")),
             (set(config.DEFAULT_SCOPES), t("wallet and orders")),
         ]
         f = set(fehlende or ())
@@ -29709,6 +33185,526 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.statusBar().showMessage(t("Character removed."))
 
     # ---- Settings ----------------------------------------------------------
+    # ---- PI (Planetary Industry, emm801/802) ------------------------------
+    # Discord-Wunsch 31.10.2026 (HashtagMoDSucks): "PI timers, most
+    # definitely ... how much you have stored on a planet ... not only isk
+    # value, but cargo space taken up". Rechnung in eve_trader/pi.py (rein,
+    # gemessen in aa801/aa802). OPTIK WIE "INDUSTRY JOBS" (emm802, Nutzer
+    # mit Screenshot: "ich wuensche mir die optik so wie bei industry jobs
+    # tab. Mit charakteren die man zu schalten kann und jeweils karten die
+    # man Anordnen kann"): KartenRaster + RasterSortierer ("Arrange
+    # yourself", emm775-Mechanik) + Charakter-An/Aus-Panel rechts (emm334-
+    # Muster) - EINE KARTE JE KOLONIE.
+
+    def _build_pi_tab(self):
+        from PySide6.QtWidgets import QScrollArea
+        from .mw_bauplan_tabs import KartenRaster
+        from .mw_basis import RasterSortierer
+        w = QWidget()
+        root = QVBoxLayout(w)
+        root.setContentsMargins(14, 10, 14, 10)
+        root.setSpacing(8)
+        kopf = QHBoxLayout(); kopf.setSpacing(10)
+        titel = QLabel(t("PLANETARY INDUSTRY"))
+        titel.setStyleSheet(f"font-size:13px; letter-spacing:2px; "
+                            f"font-weight:800; color:{theme.GREEN};")
+        kopf.addWidget(titel)
+        kopf.addStretch()
+        self.pi_status = QLabel(t("Not loaded yet."))
+        self.pi_status.setObjectName("Muted")
+        self.pi_status.setWordWrap(True)
+        kopf.addWidget(self.pi_status)
+        # SELBER ANORDNEN - derselbe Umschalter wie in Industry Jobs
+        # (emm775): solange er gedrueckt ist, laesst sich jede Karte
+        # ziehen, die Anordnung bleibt auch nach dem Ausschalten.
+        self._pi_order_btn = QPushButton(" " + t("Arrange yourself"))
+        self._pi_order_btn.setIcon(icons.icon("menu"))
+        self._pi_order_btn.setCheckable(True)
+        self._pi_order_btn.setChecked(
+            bool(self.settings.get("pi_karten_manuell")))
+        self._pi_order_btn.setToolTip(t(
+            "Drag the cards where you want them with the left mouse button "
+            "held down \u2013 into another column or to another place in "
+            "the same one. Up to 5 columns, as deep as you like. Your "
+            "arrangement is kept, also after restarting. The buttons on the "
+            "cards keep working."))
+        self._pi_order_btn.toggled.connect(self._pi_handsortierung_umschalten)
+        kopf.addWidget(self._pi_order_btn)
+        self.pi_update_btn = QPushButton(t("Update PI"))
+        self.pi_update_btn.setIcon(icons.icon("refresh"))
+        self.pi_update_btn.setStyleSheet(theme.amber_rahmen_knopf())
+        self.pi_update_btn.clicked.connect(self._pi_aktualisieren)
+        kopf.addWidget(self.pi_update_btn)
+        root.addLayout(kopf)
+        # GRENZEN OFFEN SAGEN (Arbeitsregel 1): POCO/Skyhook kennt ESI
+        # nicht, und die ISK-Zahl ist der CCP-Durchschnitt, kein Hub-Preis.
+        _hinw = QLabel(t(
+            "Shows what sits in the colony pins (storage, launchpad, command "
+            "center) - i.e. what is waiting on the planet for pickup. "
+            "POCO/Skyhook hangar contents are not provided by ESI. The ISK "
+            "column uses CCP's server-wide average price, not a hub price."))
+        _hinw.setObjectName("Muted")
+        _hinw.setWordWrap(True)
+        root.addWidget(_hinw)
+        body = QHBoxLayout(); body.setSpacing(12)
+        self._pi_raster = KartenRaster(breite=380)
+        _sc = QScrollArea(); _sc.setWidgetResizable(True)
+        _sc.setFrameShape(QScrollArea.NoFrame)
+        _sc.setWidget(self._pi_raster)
+        body.addWidget(_sc, 1)
+        # Der Sortierer haengt am Raster (emm775-Mechanik): Schluessel ist
+        # "charakter_id:planet_id" - zwei Charaktere koennen Kolonien auf
+        # DEMSELBEN Planeten haben, die planet_id allein waere nicht
+        # eindeutig (s. pi.karten_spalten).
+        self._pi_sortierer = RasterSortierer(
+            self._pi_raster, _sc,
+            lambda _w: getattr(_w, "_pi_key", None),
+            self._pi_anordnung_merken, parent=w)
+        self._pi_sortierer.aktiv = bool(self.settings.get("pi_karten_manuell"))
+        # CHARAKTERE AN/AUS rechts - dasselbe Panel wie in Industry Jobs
+        # (emm334): gemerkt werden die AUSgeschalteten, neue sind von
+        # selbst an.
+        panel = QFrame(); panel.setObjectName("Card")
+        panel.setFixedWidth(230)
+        pv = QVBoxLayout(panel)
+        pv.setContentsMargins(10, 10, 10, 10); pv.setSpacing(6)
+        _pt = QLabel(t("CHARACTERS"))
+        _pt.setStyleSheet(f"font-size:13px; letter-spacing:2px; "
+                          f"font-weight:800; color:{theme.CYAN};")
+        pv.addWidget(_pt)
+        self._pi_schalter_box = QVBoxLayout()
+        self._pi_schalter_box.setSpacing(4)
+        pv.addLayout(self._pi_schalter_box)
+        self._pi_alle_btn = QPushButton(t("All on"))
+        self._pi_alle_btn.setIcon(icons.icon("check"))   # b55: mit Symbol
+        self._pi_alle_btn.clicked.connect(lambda: self._pi_alle_an())
+        pv.addWidget(self._pi_alle_btn)
+        pv.addStretch()
+        body.addWidget(panel)
+        root.addLayout(body, 1)
+        self._pi_w = w
+        self._pi_karten = None           # zuletzt geladene Karten (pi.py)
+        self._pi_fehlt = []
+        self._pi_fehler = []
+        self._pi_karten_widgets = {}     # {key: Karte} - b-Suite
+        self._pi_schalter = {}           # {cid: Knopf} - b-Suite
+        self._pi_uhr_teile = []          # [(QLabel, ende_ts)]
+        self._pi_laedt = False
+        self.tabs.addTab(w, t("PI"))
+        # Nur die TIMER-TEXTE einmal je Minute nachziehen - kein ESI-Abruf.
+        self._pi_uhr = QTimer(w)
+        self._pi_uhr.setInterval(60_000)
+        self._pi_uhr.timeout.connect(self._pi_uhr_tick)
+        self._pi_uhr.start()
+
+    def _pi_auto_laden(self):
+        """Beim Oeffnen des Reiters von selbst laden - beim ERSTEN Mal und
+        danach, wenn der Stand aelter als 5 Minuten ist (dasselbe Muster
+        wie die Jobs-Seite, _jobs_seite_gezeigt; ESI cacht PI-Daten ohnehin
+        minutenlang). Dazwischen laedt nur der Knopf; die Timer-Texte
+        laufen unabhaengig davon jede Minute lokal weiter (_pi_uhr_tick).
+        Ohne Schalter/Charaktere macht der Klickweg die Ansage."""
+        import time as _t
+        _alt = (self._pi_karten is None
+                or _t.time() - (getattr(self, "_pi_stand_ts", 0.0) or 0.0) > 300)
+        if (_alt and not self._pi_laedt
+                and self.settings.get("use_pi")
+                and self.settings.get("client_id")):
+            try:
+                _chars = store.list_characters()
+            except Exception:
+                _chars = []
+            if _chars:
+                self._pi_aktualisieren()
+
+    def _pi_aktualisieren(self):
+        """PI-Uebersicht neu von ESI holen (im Hintergrund)."""
+        if self._pi_laedt:
+            return
+        if not self.settings.get("use_pi"):
+            self.pi_status.setText(t(
+                "Switch on 'Planetary Industry (PI)' in Settings first, then "
+                "re-link your character (Characters tab)."))
+            return
+        client_id = self.settings.get("client_id")
+        try:
+            chars = store.list_characters()
+        except Exception:
+            chars = []
+        if not client_id or not chars:
+            self.pi_status.setText(t("No linked characters."))
+            return
+        self._pi_laedt = True
+        self.pi_update_btn.setEnabled(False)
+        self.pi_status.setText(t("Loading PI colonies ..."))
+
+        def job():
+            from .. import pi as _pi
+            granted = {}
+            for ch in chars:
+                _cid = int(ch["character_id"])
+                try:
+                    granted[_cid] = set(
+                        esi.granted_scopes(client_id, _cid) or set()) or None
+                except Exception:
+                    granted[_cid] = None
+            return _pi.pi_uebersicht(client_id, chars, granted)
+
+        def done(ergebnis):
+            self._pi_laedt = False
+            self.pi_update_btn.setEnabled(True)
+            karten, fehlt, fehler = ergebnis
+            self._pi_zeichnen(karten, fehlt, fehler)
+
+        def fail(msg):
+            self._pi_laedt = False
+            self.pi_update_btn.setEnabled(True)
+            self.pi_status.setText(t("PI update failed: {err}").format(err=msg))
+
+        # overlay=False: der Reiter zeigt seinen Zustand selbst (Status-
+        # Zeile + ausgegrauter Knopf) - das grosse Mittel-Overlay waere
+        # fuer diesen kleinen Abruf Laerm.
+        self._run(Worker(job), done, fail_cb=fail, overlay=False)
+
+    def _pi_zeit_text(self, ende_ts, jetzt=None):
+        """(Text, abgelaufen) fuer einen Extraktor-Ablauf. Absolute Zeit in
+        LOKALER Uhr + Rest/Ueberfaellig - beides, weil man nachts wissen
+        will, OB es laeuft, und tags, WANN man hin muss."""
+        if not ende_ts:
+            return ("\u2014", False)
+        if jetzt is None:
+            import time as _t
+            jetzt = _t.time()
+        _abs = dt.datetime.fromtimestamp(float(ende_ts)).strftime("%d.%m. %H:%M")
+        _rest = float(ende_ts) - float(jetzt)
+        _s = abs(int(_rest))
+        _tage, _s = divmod(_s, 86400)
+        _std, _s = divmod(_s, 3600)
+        _min = _s // 60
+        if _tage > 0:
+            _dauer = f"{_tage}d {_std}h"
+        elif _std > 0:
+            _dauer = f"{_std}h {_min:02d}m"
+        else:
+            _dauer = f"{_min}m"
+        if _rest >= 0:
+            return (t("in {dur} ({at})").format(dur=_dauer, at=_abs), False)
+        return (t("EXPIRED {dur} ago ({at})").format(dur=_dauer, at=_abs), True)
+
+    def _pi_uhr_tick(self):
+        """Minuetlich nur die Timer-Labels neu beschriften (kein ESI)."""
+        for _lbl, _ts in (self._pi_uhr_teile or []):
+            try:
+                _txt, _rot = self._pi_zeit_text(_ts)
+                _lbl.setText(_txt)
+                _lbl.setStyleSheet(
+                    f"color:{theme.RED if _rot else theme.GREEN}; "
+                    f"font-weight:700;")
+            except Exception:
+                continue
+
+    def _pi_aus(self):
+        return {str(x) for x in (self.settings.get("pi_chars_aus") or [])}
+
+    def _pi_char_schalten(self, cid, an):
+        aus = self._pi_aus()
+        if an:
+            aus.discard(str(cid))
+        else:
+            aus.add(str(cid))
+        self.settings["pi_chars_aus"] = sorted(aus)
+        config.save_settings_async(self.settings)
+        _b = (self._pi_schalter or {}).get(int(cid))
+        if _b is not None:
+            self._jobs_schalter_stil(_b, an)
+        self._pi_karten_zeichnen()
+
+    def _pi_alle_an(self):
+        self.settings["pi_chars_aus"] = []
+        config.save_settings_async(self.settings)
+        for _b in (self._pi_schalter or {}).values():
+            _b.blockSignals(True)
+            _b.setChecked(True)
+            _b.blockSignals(False)
+            self._jobs_schalter_stil(_b, True)
+        self._pi_karten_zeichnen()
+
+    def _pi_schalter_bauen(self, karten):
+        """Eine Zeile je Charakter MIT Kolonien: Name + An/Aus-Knopf
+        (dasselbe Muster wie _jobs_schalter_bauen, emm334)."""
+        from .mw_bauplan_tabs import KurzLabel
+        box = self._pi_schalter_box
+        while box.count():
+            it = box.takeAt(0)
+            _w = it.widget()
+            if _w is not None:
+                _w.deleteLater()
+            elif it.layout() is not None:
+                while it.layout().count():
+                    _x = it.layout().takeAt(0).widget()
+                    if _x is not None:
+                        _x.deleteLater()
+        self._pi_schalter = {}
+        aus = self._pi_aus()
+        _chars = {}
+        for k in (karten or []):
+            _chars[int(k.get("char_id") or 0)] = str(k.get("char") or "?")
+        for cid, name in sorted(_chars.items(), key=lambda kv: kv[1].lower()):
+            row = QHBoxLayout(); row.setSpacing(6)
+            nl = KurzLabel(name)
+            row.addWidget(nl, 1)
+            btn = QPushButton()
+            btn.setCheckable(True)
+            btn.setFixedWidth(52)
+            _an = str(cid) not in aus
+            btn.setChecked(_an)
+            self._jobs_schalter_stil(btn, _an)
+            btn.toggled.connect(
+                lambda an, _c=cid: self._pi_char_schalten(_c, an))
+            row.addWidget(btn)
+            box.addLayout(row)
+            self._pi_schalter[int(cid)] = btn
+
+    def _pi_handsortierung_umschalten(self, an):
+        """Anordnen-Modus an/aus - dieselbe Zusage wie in Industry Jobs
+        (emm775): ausschalten beendet nur das Ziehen, die Anordnung
+        bleibt."""
+        self.settings["pi_karten_manuell"] = bool(an)
+        config.save_settings_async(self.settings)
+        _s = getattr(self, "_pi_sortierer", None)
+        if _s is not None:
+            _s.aktiv = bool(an)
+            if not an:
+                _s.alles_zuruecksetzen()
+        _b = getattr(self, "_pi_order_btn", None)
+        if _b is not None:
+            _b.setStyleSheet(theme.amber_rahmen_knopf() if an else "")
+
+    def _pi_anordnung_merken(self, spalten):
+        """Nach dem Ablegen: die neue Spalten-Anordnung sichern - Schluessel
+        sind "charakter_id:planet_id" (s. pi.karten_spalten)."""
+        _sp = []
+        for _g in (spalten or []):
+            _l = [str(k) for k in (_g or []) if k]
+            if _l:
+                _sp.append(_l)
+        self.settings["pi_karten_anordnung"] = _sp
+        config.save_settings_async(self.settings)
+
+    def _pi_karte_klappen(self, key, on, body, pfeil_text):
+        """Lager auf/zu je Kolonie, gemerkt wie bei den Job-Karten
+        (emm338-Muster): `pi_karten_offen` haelt die AUFgeklappten."""
+        body.setVisible(bool(on))
+        pfeil_text(bool(on))
+        offen = {str(x) for x in (self.settings.get("pi_karten_offen") or [])}
+        if on:
+            offen.add(str(key))
+        else:
+            offen.discard(str(key))
+        self.settings["pi_karten_offen"] = sorted(offen)
+        config.save_settings_async(self.settings)
+
+    def _pi_karte(self, k, jetzt):
+        """EINE Kolonie als Karte - gleiche Formsprache wie die
+        Industry-Jobs-Karten (Card-Rahmen, cyan Kopf, Dropdown)."""
+        from html import escape as _esc
+        _menge_f = lambda n: f"{int(n):,}".replace(",", "'")
+        _m3_f = lambda v: f"{v:,.0f}".replace(",", "'")
+        card = QFrame(); card.setObjectName("Card")
+        card.setMinimumWidth(360)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(12, 10, 12, 10); v.setSpacing(5)
+        kopf = QHBoxLayout(); kopf.setSpacing(8)
+        name = QLabel(str(k.get("planet") or "?"))
+        name.setStyleSheet(f"color:{theme.CYAN}; font-weight:800; "
+                           f"font-size:{theme.FS_H2};")
+        kopf.addWidget(name)
+        kopf.addStretch()
+        # de_scan6: aus  (ESI-Planetentyp wie "barren" - EVE-Vokabular)
+        _typ = str(k.get("planet_type") or "?")
+        # de_scan6: an
+        _tb = QLabel(_typ)
+        _tb.setStyleSheet(f"color:{theme.MUTED}; border:1px solid "
+                          f"{theme.BORDER}; border-radius:4px; "
+                          f"padding:1px 7px; font-size:{theme.FS_SMALL};")
+        kopf.addWidget(_tb)
+        v.addLayout(kopf)
+        _ch = QLabel(str(k.get("char") or "?"))
+        _ch.setObjectName("Muted")
+        v.addWidget(_ch)
+        # EXTRAKTOREN: je einer eine Zeile - Produkt + Rate links, Timer
+        # rechts (gruen laeuft / rot ABGELAUFEN; die Uhr tickt minuetlich).
+        for e in k.get("extraktoren") or []:
+            zeile = QHBoxLayout(); zeile.setSpacing(8)
+            _pn = str(e.get("produkt") or e.get("produkt_tid") or "?")
+            _je_h = e.get("je_stunde")
+            _li = _esc(_pn)
+            if _je_h:
+                _li += (f' <span style="color:{theme.MUTED};">'
+                        + _esc(t("{n}/h").format(n=_menge_f(_je_h)))
+                        + "</span>")
+            _pl = QLabel(f'<span style="color:{theme.CYAN};">\u25a0</span> '
+                         + _li)
+            _pl.setTextFormat(Qt.RichText)
+            zeile.addWidget(_pl)
+            zeile.addStretch()
+            _txt, _rot = self._pi_zeit_text(e.get("ende_ts"), jetzt)
+            _tl = QLabel(_txt)
+            _tl.setStyleSheet(
+                f"color:{theme.RED if _rot else theme.GREEN}; "
+                f"font-weight:700;")
+            if e.get("ende_ts"):
+                self._pi_uhr_teile.append((_tl, float(e["ende_ts"])))
+            zeile.addWidget(_tl)
+            v.addLayout(zeile)
+        if not (k.get("extraktoren") or []):
+            _ke = QLabel(t("no extractors"))
+            _ke.setStyleSheet(f"color:{theme.MUTED};")
+            v.addWidget(_ke)
+        # FABRIKEN in EINER Zeile ("4x Proteins - 2x Biofuels").
+        _fab = k.get("fabriken") or []
+        if _fab:
+            _ft = " \u00b7 ".join(
+                f"{int(f.get('anzahl') or 0)}\u00d7 "
+                + _esc(str(f.get("name") or "?")) for f in _fab)
+            fl = QLabel(t("Factories:") + " " + _ft)
+            fl.setTextFormat(Qt.RichText)
+            fl.setWordWrap(True)
+            fl.setStyleSheet(f"color:{theme.TEXT}; font-size:{theme.FS_SMALL};")
+            v.addWidget(fl)
+        # LAGER ZUM AUSKLAPPEN (emm338-Muster): Kopfzeile traegt die
+        # Summen, darunter je Pin die Items mit Menge/m3/ISK.
+        _lager = k.get("lager") or []
+        _key = f"{k.get('char_id')}:{k.get('planet_id')}"
+        card._pi_key = _key
+        if _lager:
+            _offen = str(_key) in {str(x) for x in
+                                   (self.settings.get("pi_karten_offen") or [])}
+            pf = QPushButton()
+            pf.setCheckable(True)
+            pf.setChecked(_offen)
+            pf.setCursor(Qt.PointingHandCursor)
+            pf.setToolTip(t("Click to show or hide the stored items"))
+            pf.setStyleSheet(
+                f"QPushButton{{text-align:left; background:{theme.PANEL2}; "
+                f"color:{theme.TEXT}; border:1px solid {theme.BORDER}; "
+                f"border-radius:4px; padding:3px 8px; font-weight:700;}}"
+                f"QPushButton:hover{{background:{theme.CYAN_FILL}; "
+                f"border:1px solid {theme.CYAN}; color:{theme.CYAN};}}"
+                f"QPushButton:checked{{border:1px solid {theme.CYAN};}}")
+            _sum_txt = t("storage: {m3} m\u00b3 \u00b7 {isk} ISK").format(
+                m3=_m3_f(k.get("m3_gesamt") or 0),
+                isk=isk(k.get("isk_gesamt") or 0, suffix=False))
+
+            def _pfeil_text(on, _b=pf, _s=_sum_txt):
+                _b.setText(("\u25be " if on else "\u25b8 ") + _s)
+            _pfeil_text(_offen)
+            v.addWidget(pf)
+            body = QWidget()
+            bv = QVBoxLayout(body)
+            bv.setContentsMargins(0, 2, 0, 0); bv.setSpacing(2)
+            for l in _lager:
+                _pl2 = QLabel(_esc(str(l.get("pin_name") or "?"))
+                              + f' <span style="color:{theme.MUTED};">'
+                              + _esc("{m3} m\u00b3 \u00b7 {isk}".format(
+                                  m3=_m3_f(l.get("m3") or 0),
+                                  isk=isk(l.get("isk") or 0, suffix=False)))
+                              + "</span>")
+                _pl2.setTextFormat(Qt.RichText)
+                _pl2.setStyleSheet("font-weight:700;")
+                bv.addWidget(_pl2)
+                for i in l.get("items") or []:
+                    _il = QLabel(
+                        f"{_menge_f(i.get('menge') or 0)}\u00d7 "
+                        + _esc(str(i.get("name") or "?"))
+                        + f' <span style="color:{theme.MUTED};">'
+                        + _esc("{m3} m\u00b3 \u00b7 {isk}".format(
+                            m3=_m3_f(i.get("m3") or 0),
+                            isk=isk(i.get("isk") or 0, suffix=False)))
+                        + "</span>")
+                    _il.setTextFormat(Qt.RichText)
+                    _il.setStyleSheet(
+                        f"padding-left:14px; font-size:{theme.FS_SMALL};")
+                    bv.addWidget(_il)
+            v.addWidget(body)
+            body.setVisible(_offen)      # erst im Layout, dann schalten (b8)
+            pf.toggled.connect(lambda on, _k=_key, _bd=body, _f=_pfeil_text:
+                               self._pi_karte_klappen(_k, on, _bd, _f))
+            card._pi_body = body
+            card._pi_pfeil = pf
+        else:
+            _le = QLabel(t("storage empty"))
+            _le.setStyleSheet(f"color:{theme.MUTED};")
+            v.addWidget(_le)
+            card._pi_body = None
+            card._pi_pfeil = None
+        v.addStretch()
+        return card
+
+    def _pi_zeichnen(self, karten, fehlt=None, fehler=None):
+        """Frisch geladene Daten uebernehmen: Schalter-Panel neu, Karten
+        neu, Statuszeile."""
+        import time as _t
+        self._pi_stand_ts = _t.time()
+        self._pi_karten = karten or []
+        self._pi_fehlt = list(fehlt or [])
+        self._pi_fehler = list(fehler or [])
+        self._pi_schalter_bauen(self._pi_karten)
+        self._pi_karten_zeichnen()
+
+    def _pi_karten_zeichnen(self):
+        """Karten der EINGESCHALTETEN Charaktere ins Raster - in der selbst
+        gezogenen Spalten-Anordnung (pi.karten_spalten)."""
+        import time as _t
+        from .. import pi as _pi
+        karten = self._pi_karten or []
+        aus = self._pi_aus()
+        sichtbar = [k for k in karten
+                    if str(int(k.get("char_id") or 0)) not in aus]
+        self._pi_uhr_teile = []
+        self._pi_karten_widgets = {}
+        jetzt = _t.time()
+        _je_key = {}
+        for k in sichtbar:
+            _je_key[f"{k.get('char_id')}:{k.get('planet_id')}"] = k
+        _spalten = _pi.karten_spalten(
+            list(_je_key), self.settings.get("pi_karten_anordnung"),
+            max_spalten=5)
+        _karten_sp = []
+        for _gruppe in _spalten:
+            _sp = []
+            for _key in _gruppe:
+                w = self._pi_karte(_je_key[_key], jetzt)
+                self._pi_karten_widgets[_key] = w
+                _sp.append(w)
+            if _sp:
+                _karten_sp.append(_sp)
+        self._pi_raster.setze_spalten(_karten_sp)
+        _so = getattr(self, "_pi_sortierer", None)
+        if _so is not None:
+            for _k in self._pi_karten_widgets.values():
+                _so.ueberwache(_k)
+            _so.aktiv = bool(self.settings.get("pi_karten_manuell"))
+        teile = []
+        if karten:
+            teile.append(t("{n} colonies, as of {at}").format(
+                n=len(karten),
+                at=dt.datetime.now().strftime("%H:%M:%S")))
+            if len(sichtbar) < len(karten):
+                teile.append(t("{n} hidden").format(
+                    n=len(karten) - len(sichtbar)))
+        elif self._pi_karten is not None:
+            teile.append(t("No PI colonies found."))
+        if self._pi_fehlt:
+            teile.append(t(
+                "No PI permission: {who} - re-link the character "
+                "(Characters tab).").format(who=", ".join(self._pi_fehlt)))
+        if self._pi_fehler:
+            teile.append(t("Errors: {what}").format(
+                what="; ".join(self._pi_fehler)))
+        if teile:
+            self.pi_status.setText("  |  ".join(teile))
+
     def _build_settings_tab(self):
         w = QWidget()
         root = QVBoxLayout(w)
@@ -29762,6 +33758,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.s_location.addItem(t("Off"), False)
         self.s_location.addItem(t("On (warn when the character is not at the hub)"), True)
         self.s_location.setCurrentIndex(1 if self.settings.get("use_location") else 0)
+        # PI-UEBERSICHT (emm801): eigener Scope, STANDARD AUS (Regel 3 -
+        # wer kein PI macht, soll keinen manage_planets-Scope anfragen).
+        self.s_pi = QComboBox()
+        self.s_pi.addItem(t("Off"), False)
+        self.s_pi.addItem(t("On (PI timers and planet storage)"), True)
+        self.s_pi.setCurrentIndex(1 if self.settings.get("use_pi") else 0)
         # CORP-HANGAR FUERS BAUEN (1.0.8). STANDARD AUS (Entscheid 14.09.2026,
         # Regel 3). Wirkt wie die anderen Berechtigungs-Schalter SOFORT und
         # verlangt ein Neu-Verlinken - EVE erteilt Scopes nur beim Login.
@@ -29809,7 +33811,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # verbinden, sonst schreibt schon der Aufbau.
         for _key, _cb in (("use_structures", self.s_struct), ("use_assets", self.s_source),
                           ("use_ui", self.s_ui), ("use_implants", self.s_implants),
-                          ("use_corp", self.s_corp), ("use_location", self.s_location)):
+                          ("use_corp", self.s_corp), ("use_location", self.s_location),
+                          ("use_pi", self.s_pi)):
             _cb.currentIndexChanged.connect(
                 lambda _i, k=_key, c=_cb: self._scope_schalter_sofort(k, c))
 
@@ -29852,6 +33855,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _cl.setContentsMargins(0, 0, 0, 0); _cl.setSpacing(8)
         _cl.addWidget(self.s_client, 1)
 
+        # PI-ZEILE NUR WENN AKTIV (emm803): der Schalter s_pi existiert
+        # weiter (Speichern/Zuruecksetzen fassen ihn an), haengt aber
+        # eingelagert in keinem Layout - unsichtbar.
         fields = [
             (t("ESI client ID"), _client_row),
             (t("Callback port"), self.s_port),
@@ -29868,6 +33874,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             (t("Corporation hangars (build)"), self.s_corp),
             (t("Corp divisions"), self._corp_div_row),
         ]
+        if config.PI_AKTIV:
+            fields.insert(fields.index(
+                (t("Character location"), self.s_location)) + 1,
+                (t("Planetary Industry (PI)"), self.s_pi))
         self.s_corp.setToolTip(t(
             "On: the build plan, run planner and blueprints also count the "
             "hangar divisions ticked below - of every corporation your linked "
@@ -29881,6 +33891,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "On: next to the character at the top a warning appears when the "
             "character is not docked at the selected hub. Needs the scope "
             "esi-location.read_location.v1 in your EVE app and re-linking."))
+        self.s_pi.setToolTip(t(
+            "On: the PI tab shows your planet colonies - extractor timers, "
+            "what the factories run, and what sits in storage (quantity, m3 "
+            "and an ISK estimate). Needs the scope "
+            "esi-planets.manage_planets.v1 in your EVE app and re-linking - "
+            "CCP offers no read-only PI scope; the tool only ever reads."))
         self.s_implants.setToolTip(t("Detects plugged-in manufacturing time implants (Zainou 'Beancounter' "
                                      "Industry BX-80X) via ESI and includes their bonus in the build time. "
                                      "Needs a new login (new scope) - visible afterwards under 'Build "
@@ -30160,6 +34176,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "ui": bool(self.s_ui.currentData()),
             "implants": bool(self.s_implants.currentData()),
             "location": bool(self.s_location.currentData()),
+            "pi": bool(self.s_pi.currentData()),
             "use_corp": bool(self.s_corp.currentData()),
             "corp_divs": tuple(n for n, c in self.s_corp_divs.items()
                                if c.isChecked()),
@@ -30249,7 +34266,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         selbst wieder in die Einstellungen.
         """
         _combos = (self.s_mode, self.s_source, self.s_struct, self.s_ui,
-                   self.s_implants, self.s_fees_skills, self.s_corp, self.s_location)
+                   self.s_implants, self.s_fees_skills, self.s_corp,
+                   self.s_location, self.s_pi)
         for _c in _combos:
             _c.blockSignals(True)
         for _c in self.s_corp_divs.values():
@@ -30280,6 +34298,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 1 if self.settings.get("use_implants") else 0)
             self.s_location.setCurrentIndex(
                 1 if self.settings.get("use_location") else 0)
+            self.s_pi.setCurrentIndex(
+                1 if self.settings.get("use_pi") else 0)
             self.s_corp.setCurrentIndex(
                 1 if self.settings.get("use_corp") else 0)
             from .. import corp as _corp_r
@@ -30526,8 +34546,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         n_add = 0
         for tid, menge in verlust.items():
             try:
+                # MIT PUFFER wie jeder andere Kauf-Weg (emm796, G2):
+                # `bau_buy_surplus` galt ueberall ausser hier - gerade der
+                # Verlust-Nachkauf ist der Fall, fuer den die Marge gedacht
+                # ist ("damit ein Fehlkauf nicht sofort eine zweite
+                # Einkaufsfahrt erzwingt").
                 store.add_shopping(int(tid), str(namen.get(int(tid), tid)),
-                                   int(menge), source="build")
+                                   self._buy_surplus_qty(int(menge)),
+                                   source="build")
                 n_add += 1
             except Exception:
                 continue
@@ -30584,14 +34610,29 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Material, das ein anderer Plan beansprucht, ist fuer DIESEN Plan
         # nicht verfuegbar - es als "gedeckt" zu melden ist eine falsche
         # Entwarnung, und der Nutzer stuende am Reaktor ohne Material.
-        live = ((getattr(self, "_bd_opts", None) or {}).get("stock")
-                or getattr(self, "_bd_live_stock", None) or {})
+        # emm636: ... ABER NICHT DEN EINFRIER-MERGE. `_bd_opts["stock"]`
+        # traegt bei einem eingefrorenen Plan je Item max(Einfrier-Bestand,
+        # live) - und damit genau die Zahl, die ein real verschwundenes
+        # Material versteckt. Dieser Melder soll es FINDEN. `_bd_echter_
+        # bestand()` liefert denselben Abzug (Reservierungen, Scope,
+        # Einfuegung) auf dem ROHEN Live-Stand, den `fehlbedarf_vorschau`
+        # in ihrem Kopf ausdruecklich verlangt. GEMESSEN am Fall des
+        # Nutzers: Ceramic Powder, Einfrier-Stand 14'504, real 10'010 - der
+        # Reiter meldete 16'758 zu kaufen statt 21'252; die Differenz von
+        # 4'494 fehlte ihm spaeter im Spiel (s. `_bd_echter_bestand`).
+        live = self._bd_echter_bestand()
         # NUR SICHER ZUGEORDNETES (Befund 21.09.2026, nachgestellt): ESI
         # sagt nicht, zu welchem Bauplan ein Job gehoert - bauen zwei
         # eingefrorene Plaene dieselbe Reaktion, bekamen BEIDE dieselben
-        # Runs gutgeschrieben und meldeten "nichts fehlt". Die ANZEIGE darf
-        # das weiterhin raten (`_bd_runplan_delivered`), diese Rechnung
-        # nicht: sie sagt dem Nutzer, was ihm fehlen wird.
+        # Runs gutgeschrieben und meldeten "nichts fehlt".
+        # STAND HEUTE (emm667, 24.10.2026): die ANZEIGE RAET NICHT MEHR.
+        # Seit Stufe C (26.09.2026) setzt der Runplaner
+        # `_bd_runplan_delivered = dict(_bd_runplan_delivered_sicher)` -
+        # beide lesen dieselbe Karte. Hier stand bis heute noch "die
+        # ANZEIGE darf das weiterhin raten", und genau dieser Satz hat
+        # mich dem Nutzer gegenueber eine falsche Auskunft geben lassen
+        # ("deine 255 sind geraten" - sind sie nicht). EIN VERALTETER
+        # KOMMENTAR IST GEFAEHRLICHER ALS GAR KEINER: er wird geglaubt.
         # SEIT 30.09.2026 DIESELBE ERLEDIGT-KARTE WIE DIE EINKAUFSLISTE
         # (`_rest_geliefert_jetzt`: sicher geliefert + Hand-Haken + Vorstufen).
         # Nutzer (Basilisk): alle Composite-Reaktionen abgehakt, aber noch
@@ -30601,15 +34642,69 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # ueber die Pipeline im Bestand (`live`).
         geliefert = self._rest_geliefert_jetzt()
         # ERZEUGNIS SCHON IM BESTAND = sicher geliefert + laufende/abholbereite
-        # Jobs DIESES Plans (deren Output steckt als Pipeline in `live`). Ein
+        # Jobs (deren Output steckt als Pipeline in `live`). Ein
         # abgehakter Run, den ESI noch nicht kennt, bleibt kommende
         # Produktion (s. fehlbedarf_vorschau, `im_bestand`).
+        #
+        # UMSTRITTENE ITEMS: FREMDE JOB-PIPELINE DECKT NICHT (emm721,
+        # Pruefpunkt aus OFFENE_PUNKTE.md, GEMESSEN in
+        # werkzeuge/sim_emm721.py Szenario A): `_bd_active_jobs_map` traegt
+        # beim frischen/gespeichert-ungefrorenen Plan ALLE Jobs ALLER
+        # Plaene (Filterung nur im Einfrier-Zweig, emm717), und die
+        # PIPELINE aller Jobs steckt in `live` (`_virtual_stock` zaehlt
+        # jobs_by_char ungefiltert). Kauft dieser Plan ein Zwischenprodukt,
+        # das ein ANDERER Plan gerade baut, meldete die Pruefung "gedeckt" -
+        # die 25 Stueck in der Pipeline gehoeren aber dem anderen Plan, der
+        # Nutzer kaufte ZU WENIG (Regel 3, dieselbe Krankheit wie emm715,
+        # nur auf der MATERIAL-Ebene statt der Run-Ebene). Dieselbe Regel,
+        # dieselben Funktionen (Regel 9): auf einem umstrittenen Item
+        # (`_umstrittene_items` - ein anderer offener Plan baut es) zaehlt
+        # ein Job, der nicht nachweislich DIESEM Plan gehoert, weder als
+        # `im_bestand` NOCH mit seiner Pipeline in `live`:
+        #  * Karte plan-gefiltert (gefroren, `_jobs_karte_plan_gefiltert`):
+        #    die Karten-Jobs sind belegt eigene -> zaehlen wie bisher;
+        #    fremd = alle uebrigen Jobs (`_bd_active_jobs_alle` minus
+        #    eigene job_ids) auf umstrittenen Items.
+        #  * Karte UNGEFILTERT: kein Job ist belegbar eigener - auf
+        #    umstrittenen Items gelten alle als fremd (harmlose Richtung:
+        #    schlimmstenfalls kauft der Nutzer, was sein eigener
+        #    ungespeicherter Job liefert - nie zu wenig).
+        # UNUMSTRITTENE Items bleiben unveraendert (Szenario B): dort
+        # heben sich Pipeline in `live` und `im_bestand` genau auf - das
+        # war der Sinn der bisherigen, bedingungslosen Schleife.
         _im_bestand = {int(_t): int(_n or 0) for _t, _n in
                        (getattr(self, "_bd_runplan_delivered_sicher", None)
                         or {}).items()}
+        _gef721 = self._jobs_karte_plan_gefiltert()
+        _umst721 = self._umstrittene_items(
+            self.settings, getattr(self, "_bd_open_plan_id", None))
+        _eigene_jid721 = set()
+        if _gef721:
+            for _js in (getattr(self, "_bd_active_jobs_map", None) or {}).values():
+                for _j in (_js or []):
+                    try:
+                        _eigene_jid721.add(int(_j.get("job_id")))
+                    except (TypeError, ValueError):
+                        pass
         for _t, _js in (getattr(self, "_bd_active_jobs_map", None) or {}).items():
+            if not _gef721 and int(_t) in _umst721:
+                continue        # fremder Bau: zaehlt nicht als eigener Output
             _im_bestand[int(_t)] = (_im_bestand.get(int(_t), 0)
                                     + sum(int(_j.get("runs") or 0) for _j in (_js or [])))
+        # ... und die FREMDE Pipeline auf umstrittenen Items aus dem
+        # Bestand nehmen. KOPIE, nicht in place: im ungefrorenen Zweig ist
+        # `live` dasselbe dict wie `_bd_opts["stock"]` - das gehoert dem
+        # Plan, nicht dieser Pruefung. Nur bis 0 abziehen (Hangar-Anteil
+        # bleibt; den regeln die Reservierungen wie bisher).
+        if _umst721:
+            live = dict(live)
+            # SEIT emm799 ueber die EINE Stelle (_fremde_pipeline_umstritten,
+            # Regel 9) - dieselbe Rechnung speist jetzt auch
+            # _recompute_bd_stock, damit Planrechnung und Fehlbedarf nie
+            # wieder zwei verschiedene Pipelines sehen.
+            for _t, _u721 in (self._fremde_pipeline_umstritten() or {}).items():
+                live[int(_t)] = max(0, int(live.get(int(_t), 0) or 0)
+                                    - int(_u721))
         # BESTANDSGEDECKTE RUNS (emm514): ihr "Erzeugnis" IST der Bestand in
         # `live` - zaehlten sie nicht hier, gaelten sie als KOMMENDE
         # Produktion UND der Bestand laege zusaetzlich in `live`: doppelt
@@ -30624,7 +34719,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         return reprocess.fehl_anpassen(
             _fehl, ((plan.get("reprocess") or {}).get("schritte") or []),
             set(getattr(self, "_bd_runplan_checked", None) or set())
-            | self._erz_durch_bestand(), live)
+            | self._erz_durch_bestand(), live,
+            # TEILGEDECKT (emm738): fuer Erz, dessen Minerale der Bestand
+            # schon zum Teil deckt, fehlt nur noch der Rest.
+            teil=self._erz_bestand_lage())
 
     def _rest_geliefert_jetzt(self):
         """{type_id: erledigte Runs} = sicher ESI-geliefert ODER von Hand
@@ -30649,7 +34747,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Spiel nachweislich verbraucht. Ungespeichert (ohne Zuordnung,
         # der Map traegt dort ALLE Jobs) bleibt es beim alten Weg - sonst
         # zaehlte ein fremder Job hier mit (Regel 3).
-        if getattr(self, "_bd_open_plan_id", None):
+        # NUR BEI WIRKLICH GEFILTERTER KARTE (emm717, Nutzer 25.10.2026:
+        # "gespeichert aber noch nicht gefrohren / reserviert funktioniert
+        # also nicht"): die Plan-Id allein belegt die Filterung nicht -
+        # `_aktive_jobs_filtern` laeuft nur im Einfrier-Zweig. Ein
+        # gespeicherter, ungefrorener Plan trug hier ALLE Jobs als
+        # "geliefert" ein; seine Jobs zaehlen jetzt wie beim frischen Plan
+        # ueber den Vorstufen-Block unten (Umstritten-Regel). EINE
+        # Bedingung fuer alle Leser: `_jobs_karte_plan_gefiltert`.
+        if self._jobs_karte_plan_gefiltert():
             for _t, _js in (getattr(self, "_bd_active_jobs_map", None) or {}).items():
                 _lauf = sum(int(_j.get("runs") or 0) for _j in (_js or []))
                 if _lauf > 0:
@@ -30661,6 +34767,44 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _paar = _by_key.get(_k)
             if _paar:
                 _hand[_paar[0]] = _hand.get(_paar[0], 0) + _paar[1]
+        # DER HAKEN GILT NUR, BIS ESI WIDERSPRICHT (emm747, Nutzer
+        # 28.10.2026: "es kann ja sein das ich bsp 10 runs machen muss ich
+        # mache ingame nur 8 runs ... ich hacke aber trotzdem ab. ESI
+        # müsste prüfen, hacken lösen und 2 Runs hinschreiben").
+        # BIS HIER GALT ER UNBEFRISTET - sein Catalyst-Fall vom 27./28.10.:
+        # 50 Runs abgehakt, kein Job gelaufen, das Material fiel aus dem
+        # Bedarf, und die Einkaufsliste nannte 3'459'456 Tritanium zu
+        # wenig. emm650 hat den Fall zwar erkannt, aber nur gewarnt.
+        # Jetzt zaehlt ein Haken nach Ablauf der Frist nur noch so weit,
+        # wie ESI ihn deckt; die Differenz wird wieder zu offenem Bedarf.
+        # IN BEIDE RICHTUNGEN (seine Nachfrage "würde aber nach 2 oder 3
+        # stunden ESI merken, ah ist doch da muss es korrigieren können"):
+        # hier wird NICHTS gespeichert - der Stand entsteht bei jedem
+        # Aufbau neu, ein spaeter Beleg stellt den Haken von selbst
+        # wieder her.
+        # OHNE `gedeckt` (s. `_haken_stand_jetzt`): `_gedeckte_items`
+        # fuehrt ueber `_rest_runs_jetzt` wieder hierher. Der Irrtum geht
+        # in die sichere Richtung - eher zu viel Bedarf als zu wenig.
+        try:
+            _plan_h747 = (getattr(self, "_bd_plan_ref", None) or {}).get(
+                "plan") or {}
+            from .mw_helpers import haken_wirksam as _hw747f
+            # `getattr`, NICHT der direkte Aufruf: diese Rechnung wird in
+            # den Suiten auch von schlanken Attrappen gerufen, die nur die
+            # paar Felder mitbringen, die sie braucht (aa721 fiel genau
+            # darauf herein). Fehlt die Methode, gilt der Haken wie vor
+            # emm747 - also exakt das bisherige Verhalten, kein Absturz.
+            _hsj747 = getattr(self, "_haken_stand_jetzt", None)
+            _wirk747, _ = _hw747f(
+                _hsj747(_plan_h747) if _hsj747 is not None else {})
+            for _t747, _max747 in _wirk747.items():
+                if _t747 in _hand and _hand[_t747] > _max747:
+                    _hand[_t747] = int(_max747)
+        except Exception as _hw747:
+            # Eine Korrektur, die scheitert, darf den Restbedarf nicht
+            # zerreissen - dann gilt der Haken wie bisher voll (Regel 3
+            # greift hier nicht, aber das ist genau das alte Verhalten).
+            self._log_exception("Haken-Wirkung (emm747)", str(_hw747))
         for _t, _n in _hand.items():
             geliefert[_t] = max(int(geliefert.get(_t, 0) or 0), int(_n))
         # VORSTUFEN, DIE KEIN VERBRAUCHER MEHR BRAUCHT (Nutzer 28.09.2026,
@@ -30677,8 +34821,32 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # `geliefert` (emm422) - nicht ein zweites Mal addieren, sonst
             # gaelte ein halb laufender Verbraucher als fertig und seine
             # Vorstufen als "nicht mehr gebraucht" (unsichere Richtung).
-            if not getattr(self, "_bd_open_plan_id", None):
+            # UMSTRITTENE ITEMS ZAEHLEN NICHT (emm715, Nutzer 25.10.2026,
+            # Vagabond FRISCH erstellt: "im runplaner wird schon angezeigt
+            # ich haette Fuel Reactions fertig gemacht ... dabei sind all
+            # diese Sachen in anderen Bauplaenen reserviert"): beim
+            # ungespeicherten Plan traegt `_bd_active_jobs_map` ALLE Jobs
+            # aller Plaene (die Plan-Filterung laeuft nur im Einfrier-
+            # Zweig). Fremde Jobs erklaerten so die Verbraucher fuer
+            # gedeckt, `vorstufen_erledigt` strich deren Vorstufen aus der
+            # Einkaufsliste, und der Nutzer kaufte ZU WENIG (Regel 3).
+            # Dieselbe Regel wie in `delivered_sicher` und im Runplaner-
+            # Erledigt-Budget (mw_bauplan_tabs, emm715): baut ein anderer
+            # offener Plan dasselbe Item, zaehlt der Job in einer RECHNUNG
+            # gar nicht. Nachgestellt in werkzeuge/sim_emm715.py.
+            # AUCH FUER DEN GESPEICHERTEN, NOCH NICHT GEFRORENEN PLAN
+            # (emm717): seine Karte ist genauso ungefiltert wie die des
+            # frischen - nur die wirklich plan-gefilterte Karte (gefroren,
+            # `_jobs_karte_plan_gefiltert`) steckt schon oben in
+            # `geliefert` (emm422) und wird hier nicht doppelt gezaehlt.
+            # Die eigene Plan-Id geht als Ausschluss mit: der eigene
+            # Snapshot macht die eigenen Items nicht umstritten.
+            if not self._jobs_karte_plan_gefiltert():
+                _umstritten_v = self._umstrittene_items(
+                    self.settings, getattr(self, "_bd_open_plan_id", None))
                 for _t, _js in (getattr(self, "_bd_active_jobs_map", None) or {}).items():
+                    if int(_t) in _umstritten_v:
+                        continue
                     _erl_v[int(_t)] = (int(_erl_v.get(int(_t), 0) or 0)
                                        + sum(int(_j.get("runs") or 0) for _j in (_js or [])))
             for _t, _n in vorstufen_erledigt(_plan_v.get("build_runs"),
@@ -30834,30 +35002,89 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # (28.09.2026, `_erz_durch_bestand`).
         return reprocess.rest_anpassen(
             need, ((plan.get("reprocess") or {}).get("schritte") or []),
-            set(_checked) | self._erz_durch_bestand())
+            set(_checked) | self._erz_durch_bestand(),
+            # TEILGEDECKT (emm738): nur noch der Erz-Rest kommt dazu; der
+            # bestandsgedeckte Mineral-Anteil bleibt im Restbedarf stehen
+            # und wird vom Aufrufer gegen den Bestand gerechnet.
+            teil=self._erz_bestand_lage())
 
-    def _erz_durch_bestand(self):
-        """Erz-Schritte des offenen Plans, deren Minerale der Bestand schon
-        deckt (reprocess.schritte_durch_bestand) - EINE Stelle fuer
+    def _erz_bestand_lage(self):
+        """{schritt_key: (rest_portionen, portionen)} des offenen Plans -
+        wie viel jedes Erz-Schritts der Mineral-Bestand schon deckt
+        (reprocess.schritte_rest_portionen, emm738) - EINE Stelle fuer
         Einkaufsliste, Fehlbedarf, Materialien-Reiter und Runplaner.
         Bestand = der fuer DIESEN Plan zaehlende (`_bd_opts["stock"]`, nach
-        fremden Reservierungen), Bedarf = Restbedarf der offenen Runs."""
+        fremden Reservierungen), Bedarf = Restbedarf der offenen Runs.
+
+        NEBENWIRKUNG MIT ABSICHT (Nutzer 27.10.2026: "reservationslogik
+        checken"): das Ergebnis wird am GESPEICHERTEN Plan festgehalten
+        (`erz_bestand_stand`), denn der Anspruch des Plans
+        (`plan_anspruch_mitlaufend` -> `anspruch_anpassen`) muss dieselben
+        Minerale beanspruchen, die der Plan jetzt aus dem Lager nimmt -
+        sonst zaehlt jeder ANDERE Plan sie als frei und kauft zu wenig.
+        Veralteter Stand irrt in die sichere Richtung: sinkt der Bestand
+        spaeter, beansprucht der Plan zu viele Minerale (und zu wenig Erz,
+        das ohnehin nicht im Hangar liegt), nie zu wenige."""
         try:
             from eve_trader.ui.mw_helpers import restbedarf_map
             plan = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
             _sch = (plan.get("reprocess") or {}).get("schritte") or []
             if not _sch or not plan.get("build_runs") or not plan.get("build_mats"):
-                return set()
+                return {}
             _stock = (getattr(self, "_bd_opts", None) or {}).get("stock") or {}
             if not _stock:
-                return set()
+                return {}
             _rem, need = restbedarf_map(plan.get("build_runs") or {},
                                         plan.get("build_mats") or {},
                                         self._rest_geliefert_jetzt())
-            return reprocess.schritte_durch_bestand(_sch, need, _stock)
+            lage = reprocess.schritte_rest_portionen(_sch, need, _stock)
+            try:
+                _pid = getattr(self, "_bd_open_plan_id", None)
+                if _pid is not None:
+                    _stand = {str(k): [int(v[0]), int(v[1])]
+                              for k, v in lage.items()}
+                    for _p in (self.settings.get("bau_saved_plans", []) or []):
+                        if _p.get("id") == _pid:
+                            if _p.get("erz_bestand_stand") != _stand:
+                                _p["erz_bestand_stand"] = _stand
+                                config.save_settings(self.settings)
+                            break
+            except Exception as _es:
+                self._log_exception("Erz-Bestand-Stand sichern", str(_es))
+            return lage
         except Exception as _eb:
             self._log_exception("Erz durch Bestand", str(_eb))
-            return set()
+            return {}
+
+    def _erz_durch_bestand(self):
+        """Erz-Schritte des offenen Plans, deren Minerale der Bestand schon
+        GANZ deckt - seit emm738 der Sonderfall rest == 0 von
+        `_erz_bestand_lage` (eine Rechnung, Regel 9)."""
+        return {k for k, v in (self._erz_bestand_lage() or {}).items()
+                if v and int(v[0]) == 0}
+
+    def _erz_deckung_jetzt(self):
+        """Reicht das Erz IM HANGAR fuer die offenen Reprocessing-Schritte?
+        (emm739, s. `reprocess.erz_deckung`.) EINE Stelle fuer alle Leser.
+
+        Gerechnet wird gegen den ECHTEN Live-Bestand, nicht gegen
+        max(Einfrier, live): genau dieser Maximum-Griff hat die Luecke vom
+        25.10.2026 zwei Tage lang versteckt. Leer, wenn kein Plan mit
+        Reprocessing offen ist oder das Erz reicht."""
+        try:
+            plan = (getattr(self, "_bd_plan_ref", None) or {}).get("plan") or {}
+            _sch = (plan.get("reprocess") or {}).get("schritte") or []
+            if not _sch:
+                return []
+            _live = getattr(self, "_bd_live_stock", None)
+            if not _live:
+                return []
+            return reprocess.erz_deckung(
+                _sch, _live, teil=self._erz_bestand_lage(),
+                abgehakt=(getattr(self, "_bd_runplan_checked", None) or set()))
+        except Exception as _ed:
+            self._log_exception("Erz-Deckung", str(_ed))
+            return []
 
     def _check_shortfall(self):
         from ..sprache import t as _txt   # `t` ist hier lokal belegt
@@ -30879,14 +35106,45 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # DIESELBE Rechnung wie die Dauer-Anzeige im Materialien-Reiter.
         defizite = self._fehlbedarf_jetzt()
         names = getattr(self, "_bd_names_ref", None) or {}
-        if not defizite:
+        # ERZ-DECKUNG (emm739): zu wenig Erz beschafft faellt sonst erst
+        # Tage spaeter auf - dann als fehlendes MINERAL, und niemand
+        # verbindet es mehr mit dem Einkauf.
+        _erz739 = self._erz_deckung_jetzt()
+        if not defizite and not _erz739:
             QMessageBox.information(
                 self, t("Check shortfall"),
                 t("Everything is covered \u2713\n\nHangar + pipeline + your remaining "
                   "runs cover the remaining need of every ingredient.\n(Calculated "
                   "against the REAL current stock, not the frozen state.)"))
             return
-        z = [t("Working through the remaining runs, THIS WILL BE MISSING:"), ""]
+        z = []
+        _zz739 = lambda n: f"{int(n):,}".replace(",", "'")   # noqa: E731
+        if _erz739:
+            z.append(t("NOT ENOUGH ORE for the planned reprocessing \u2013 these "
+                       "minerals will be missing later:"))
+            z.append("")
+            for _r739 in _erz739[:10]:
+                z.append(t("{ore}: {have} of {need} in the hangar \u2013 {miss} "
+                           "short ({pct} %)").format(
+                    ore=names.get(_r739["erz"], f'#{_r739["erz"]}'),
+                    have=_zz739(_r739["da"]), need=_zz739(_r739["soll"]),
+                    miss=_zz739(_r739["luecke"]), pct=f'{_r739["pct"]:.1f}'))
+                for _m739, _q739 in sorted(_r739["ausfall"].items(),
+                                           key=lambda kv: -kv[1])[:6]:
+                    z.append("      \u2192 " + t("about {n} {mat} will be missing")
+                             .format(n=_zz739(_q739),
+                                     mat=names.get(_m739, f'#{_m739}')))
+            z += ["", t("Buy the missing ore (or the minerals directly) \u2013 ore "
+                        "from contracts, mining or a corp mate counts too, this "
+                        "check looks at the hangar, not at your purchases."), ""]
+        if not defizite:
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle(_txt("Check shortfall"))
+            dlg.setIcon(QMessageBox.Warning)
+            dlg.setText("\n".join(z))
+            dlg.exec()
+            return
+        z += [t("Working through the remaining runs, THIS WILL BE MISSING:"), ""]
         for tid, fehlt, bedarf, da, prod in defizite[:25]:
             _z = lambda n: f"{n:,}".replace(",", "'")   # noqa: E731
             z.append(t("{name}: {n} units   (remaining need {need}, on hand {have}, "
@@ -31347,6 +35605,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.statusBar().showMessage(t(
                 "Switched on and saved. Add esi-location.read_location.v1 to your "
                 "EVE app, then re-link your character (Characters tab)."))
+        elif neu and key == "use_pi":
+            self.statusBar().showMessage(t(
+                "Switched on and saved. Add esi-planets.manage_planets.v1 to "
+                "your EVE app, then re-link your character (Characters tab)."))
         elif neu:
             self.statusBar().showMessage(t(
                 "Switched on and saved. Now re-link your character (Characters "
@@ -31402,6 +35664,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "use_ui": bool(self.s_ui.currentData()),
             "use_implants": bool(self.s_implants.currentData()),
             "use_location": bool(self.s_location.currentData()),
+            "use_pi": bool(self.s_pi.currentData()),
             "use_corp": bool(self.s_corp.currentData()),
             "corp_divisions": [n for n, c in self.s_corp_divs.items()
                                if c.isChecked()],
@@ -31636,6 +35899,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                             esi.fetch_wallet_journal(client_id, cid))
                     except Exception:
                         pass
+                    self._orders_mitspeichern(client_id, cid)   # emm570
                     store.set_tx_synced(cid)
             all_tx = store.get_transactions()
             type_ids = {_ti["type_id"] for _ti in all_tx}
@@ -32704,7 +36968,32 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     def _spalten_wiederherstellen(self):
         """Beim Start: gemerkte Breiten setzen. Wiederhergestellte Tabellen
         werden als 'schon bemessen' vermerkt, damit _autosize_once sie nicht
-        gleich wieder ueberschreibt."""
+        gleich wieder ueberschreibt.
+
+        emm597 (Nutzer, 18.10.2026, Screenshot Daytrade): "kaum Items und
+        days of stock immernoch da obwohl im dropdown nicht angehackt" -
+        gefunden: Qt's QHeaderView.restoreState() bringt aus dem HIER
+        gespeicherten Blob (Sitzung 17, NUR fuer Spaltenbreiten gedacht -
+        "wenn man die breiter zieht, sollen sie beim naechsten Start genau
+        so wieder da sein") zwangslaeufig AUCH die Sichtbarkeit jeder Spalte
+        mit (Qt kennt keine "nur Breite" Variante). Bei Daytrade/Swing/
+        Regional gibt es daneben den eigenen "Columns"-Dropdown
+        (_spalten_knopf, Sitzung 16) - der setzt bei JEDEM Start zuerst die
+        im Code festgelegte Vorgabe (_DAY_STD/_SWING_STD/_REG_STD) und
+        kreuzt die Haekchen im Menue entsprechend an. Hat der Nutzer
+        IRGENDWANN einmal (auch nur zum Nachschauen) eine Spalte im Dropdown
+        angehakt und die App danach beendet, speichert _spalten_merken
+        diesen Zustand - und restoreState() stellt ihn ab dann bei JEDEM
+        weiteren Start wieder her, OHNE die Dropdown-Haekchen nachzuziehen:
+        Spalte ist sichtbar, Haekchen bleibt leer. Genau das hat der Nutzer
+        gesehen (Days of Stock). Fix: bei den drei Dropdown-Tabellen den
+        IST-Zustand (Sichtbarkeit je Spalte), den _spalten_knopf GERADE EBEN
+        bei der Fenster-Konstruktion gesetzt hat, vor restoreState() sichern
+        und danach drueberlegen - restoreState() liefert dann effektiv nur
+        noch die Breiten, die Sichtbarkeit bleibt bei der Code-Vorgabe (und
+        damit synchron zu den Haekchen im Menue). Die Spalten-REIHENFOLGE
+        ruehrt das nicht an (bleibt wie gespeichert - absichtliches Feature
+        aus Sitzung 17, Spalten sind per Drag verschiebbar)."""
         from PySide6.QtCore import QByteArray
         _alle = self.settings.get("ui_spalten") or {}
         if not _alle:
@@ -32719,6 +37008,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     continue          # Spaltenzahl geaendert: alter Zustand passt nicht
             except (TypeError, ValueError, RuntimeError):
                 continue
+            # emm597: IST-Sichtbarkeit der Dropdown-gesteuerten Spalten VOR
+            # restoreState() sichern (siehe Docstring oben).
+            _acts597 = None
+            _versteckt_vorher597 = None
+            if _n.endswith("_table"):
+                _acts597 = getattr(self, "_%s_col_acts" % _n[:-6], None)
+            if _acts597:
+                try:
+                    _versteckt_vorher597 = {
+                        idx: _hv.isSectionHidden(idx) for idx in _acts597}
+                except Exception:
+                    _versteckt_vorher597 = None
             try:
                 _hv.restoreState(QByteArray.fromBase64(_s.encode()))
                 self._sized.add(_n)
@@ -32726,6 +37027,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     self._char_aktionen_breite()
             except Exception:
                 continue
+            # emm597: Code-Vorgabe der Sichtbarkeit wiederherstellen (nur
+            # die Breiten aus dem Blob sollen bleiben) und die Haekchen im
+            # Columns-Menue synchron dazu halten.
+            if _acts597 and _versteckt_vorher597 is not None:
+                try:
+                    for idx, war_versteckt in _versteckt_vorher597.items():
+                        _hv.setSectionHidden(idx, war_versteckt)
+                        if idx in _acts597:
+                            _acts597[idx].setChecked(not war_versteckt)
+                    _hv.setSectionHidden(0, False)   # Item-Spalte immer sichtbar
+                except Exception:
+                    pass
 
     @staticmethod
     def _bp_in_job_tooltip(jobs):
@@ -33136,6 +37449,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self._overlay_want = 0
         self._hide_overlay()
         self._spinner_stop()
+        # ABBRECHEN HEISST AUCH: DAS LADE-SCHLOSS AUF (emm746). Ein
+        # verworfener Oeffnen-Worker erreicht weder `done` noch `fail` -
+        # ohne diese Zeile bliebe der Bauplan bis zum Fristablauf zu.
+        try:
+            self._bd_lade_frei()
+        except Exception:
+            pass
         # re-enable via the same helpers the workers use, so the GLOBAL scan and
         # SDE buttons (g_scan_btn / g_sde_btn) are covered too — a hardcoded list
         # missed them and left „Markt-Scan“ stuck disabled after a cancel.

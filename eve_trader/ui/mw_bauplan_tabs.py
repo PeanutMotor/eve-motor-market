@@ -33,6 +33,16 @@ from .mw_basis import (KEIN_DECRYPTOR, ROLLE_KOPIERNAME, NumericItem,
                        dec_anzeige, isk, kopier_menue, ohne_mausrad)
 
 
+from .mw_helpers import run_zustand as _mwh_run_zustand
+from .mw_helpers import nachlauf_runs as _mwh_nachlauf_runs
+from .mw_helpers import offener_bedarf as _mwh_offener_bedarf
+from .mw_helpers import zusammenlegen_noetig as _mwh_zusammenlegen
+from .mw_helpers import start_blocker as _mwh_start_blocker
+from .mw_helpers import haken_pruefen as _mwh_haken_pruefen
+from .mw_helpers import haken_wirksam as _mwh_haken_wirksam
+from .mw_helpers import bp_stand_packen as _mwh_bp_stand_packen
+from .mw_helpers import bp_stand_lesen as _mwh_bp_stand_lesen
+
 class SlotKaestchen(QWidget):
     """Job-Slots als Kaestchen (emm330): fertig gruen, laufend in der Farbe
     der Aktivitaet, frei nur umrandet. Ohne bekanntes Maximum nur die belegten."""
@@ -222,6 +232,7 @@ class KartenRaster(QWidget):
         super().__init__(parent)
         self._breite = int(breite)
         self._karten = []
+        self._gruppen = []          # emm772: Spalten-Form (leer = zeilenweise)
         self._spalten = 0
         self._gitter = QGridLayout(self)
         self._gitter.setContentsMargins(0, 0, 0, 0)
@@ -245,6 +256,7 @@ class KartenRaster(QWidget):
             k.setParent(None)
             k.deleteLater()
         self._karten = list(karten)
+        self._gruppen = []          # emm772: zeilenweise, keine Spalten
         self._anordnen(neu=True)
 
     def lage(self):
@@ -259,7 +271,64 @@ class KartenRaster(QWidget):
                 out.append(None)
         return out
 
+    def setze_spalten(self, spalten):
+        """Karten SPALTENWEISE setzen (emm772): `spalten` ist eine Liste
+        von Listen, jede innere Liste wird eine Spalte untereinander.
+
+        Nutzer 30.10.2026: "alle charaktere von Account 1 sitzen links
+        untereinander ... nicht mehr als 4 Accounts neben einander".
+        Das normale `setze` fuellt zeilenweise und kann das nicht; die
+        Breiten-Logik (`spalten()`) bleibt daneben unangetastet, sie
+        gilt weiter fuer alle anderen Raster.
+        """
+        self._abhaengen()
+        for k in self._karten:
+            k.setParent(None)
+            k.deleteLater()
+        self._gruppen = [list(g or []) for g in (spalten or []) if g]
+        self._karten = [k for g in self._gruppen for k in g]
+        self._anordnen(neu=True)
+
+    def ordne_gruppen(self, gruppen):
+        """Nur UMHAENGEN, ohne die Karten neu zu bauen (emm775) - beim
+        Ziehen muss das in jedem Mausschritt passieren, ein Neuaufbau
+        waere dort viel zu teuer (und die gegriffene Karte waere weg)."""
+        # `if g` wirft leere Spalten weg - DIE eine Stelle dafuer
+        # (emm775): zieht man die letzte Karte aus einer Spalte, soll
+        # sie verschwinden statt als Luecke stehen zu bleiben.
+        self._gruppen = [list(g) for g in (gruppen or []) if g]
+        self._karten = [k for g in self._gruppen for k in g]
+        self._anordnen_gruppen()
+
+    def _anordnen_gruppen(self):
+        """Spalten nebeneinander, Karten darin untereinander. Passen
+        nicht alle Spalten in die Breite, rutscht der Rest als neuer
+        Block darunter - genau das vom Nutzer gewuenschte Verhalten
+        ("wer mehr Accounts hat rutscht dann Account 5 ... nach
+        unten"), nur dass hier zusaetzlich die FENSTERBREITE mitredet:
+        eine Spalte, die nicht mehr passt, waere sonst abgeschnitten."""
+        pro_block = max(1, min(self.spalten(), len(self._gruppen)))
+        self._spalten = pro_block
+        self._abhaengen()
+        reihe0 = 0
+        for _i in range(0, len(self._gruppen), pro_block):
+            block = self._gruppen[_i:_i + pro_block]
+            for _c, gruppe in enumerate(block):
+                for _r, k in enumerate(gruppe):
+                    self._gitter.addWidget(k, reihe0 + _r, _c, Qt.AlignTop)
+            reihe0 += max((len(g) for g in block), default=0)
+        for r in range(max(self._gitter.rowCount(), reihe0 + 1)):
+            self._gitter.setRowStretch(r, 1 if r == reihe0 else 0)
+        for c in range(max(self._gitter.columnCount(), pro_block)):
+            self._gitter.setColumnStretch(c, 1 if c < pro_block else 0)
+
     def _anordnen(self, neu=False):
+        if getattr(self, "_gruppen", None):
+            n = max(1, min(self.spalten(), len(self._gruppen)))
+            if n == self._spalten and not neu:
+                return
+            self._anordnen_gruppen()
+            return
         n = self.spalten()
         if n == self._spalten and not neu:
             return
@@ -655,10 +724,17 @@ class BauplanTabs:
         return (t("Nothing matches the filters."), None, None, None)
 
     def _bfs_mb_laden(self):
-        """Knopf im Leer-Hinweis: My Blueprints nachladen (emm371-Mechanik:
-        Rueckruf ueber `_bp_geladen_rueckrufe`), danach neu zeichnen - der
-        Gewinn-Filter sieht dann Zahlen."""
+        """My Blueprints nachladen (emm371-Mechanik: Rueckruf ueber
+        `_bp_geladen_rueckrufe`), danach neu zeichnen - der Gewinn und die
+        90d-Spalte sehen dann Zahlen. Kommt vom Leer-Hinweis-Knopf UND von
+        selbst aus `_bfs_auto_nachladen` (emm805) - deshalb der Schutz
+        gegen Doppelstart."""
+        if getattr(self, "_bfs_mb_laeuft", False):
+            return
+        self._bfs_mb_laeuft = True
+
         def _fertig(_ok, _msg=""):
+            self._bfs_mb_laeuft = False
             try:
                 self._bfs_zeichnen()
             except Exception as _e:
@@ -666,6 +742,45 @@ class BauplanTabs:
         self._bp_geladen_rueckrufe = (
             list(getattr(self, "_bp_geladen_rueckrufe", None) or []) + [_fertig])
         self._reload_my_blueprints(overlay=False)
+
+    def _bfs_auto_nachladen(self, res):
+        """Gewinn- und 90d-Spalte besorgen sich ihre Daten SELBST (emm805).
+        Nutzer 01.11.2026 (Screenshot, alles "\u2014"/"?"): "Build from
+        Stock zeigt kein Profit ... und auch kein 90 tage avg" - der
+        Hinweis "load My Blueprints first" stand nur klein in der
+        Statuszeile, den liest niemand.
+        (1) Fehlt die Blaupausen-Wirtschaft, laedt sie hier im Hintergrund
+            nach (ein Lauf gleichzeitig, Rueckruf zeichnet neu).
+        (2) Fehlende Markt-Historien holt dieselbe Nachlade-Mechanik wie
+            Sold/day (_absatz_nachladen: max 400 je Lauf, je Typ einmal je
+            Sitzung) - danach wird NUR der Trend neu gerechnet."""
+        _econ805 = (getattr(self, "_bp_econ_stand", None)
+                    or {}).get("profit_by_bp")
+        if _econ805 is None:
+            self._bfs_mb_laden()
+        try:
+            _ohne805 = [int(z["produkt"]) for z in (res.get("zeilen") or [])
+                        if (res.get("trend") or {}).get(int(z["produkt"]))
+                        is None]
+            if _ohne805:
+                self._absatz_nachladen(_ohne805, fertig=self._bfs_trend_neu)
+        except Exception as _e805:
+            self._log_exception("BFS: Historien nachladen", str(_e805))
+
+    def _bfs_trend_neu(self):
+        """Nach dem Historien-Nachladen (emm805): NUR den Trend aus der
+        lokalen Historie neu rechnen und zeichnen - Bestand und Blaupausen
+        bleiben stehen, kein neuer ESI-Vollabruf."""
+        res = self._bfs_daten
+        if not res:
+            return
+        try:
+            res["trend"] = self._preis_trend_je_typ(
+                [int(z["produkt"]) for z in (res.get("zeilen") or [])])
+        except Exception as _e805b:
+            self._log_exception("BFS: Trend neu rechnen", str(_e805b))
+            return
+        self._bfs_zeichnen()
 
     def _bfs_leer_blink_schritt(self):
         """Blinkt den Leer-Knopf, solange er der naechste Handgriff ist.
@@ -808,6 +923,7 @@ class BauplanTabs:
             self._bfs_stand_ts = res.get("ts") or 0.0
             self._bfs_cat_fuellen()
             self._bfs_zeichnen()
+            self._bfs_auto_nachladen(res)       # Gewinn + 90d selbst holen (emm805)
 
         def fail(_err):
             self._bfs_laeuft = False
@@ -1015,7 +1131,13 @@ class BauplanTabs:
             txt += " · " + t("{n} item types partly reserved by locked plans "
                              "(not counted)").format(n=res["n_res"])
         if econ is None:
-            txt += " · " + t("profit: load My Blueprints first")
+            txt += " · " + (t("profit: loading My Blueprints \u2026")
+                            if getattr(self, "_bfs_mb_laeuft", False)
+                            else t("profit: load My Blueprints first"))
+        elif (getattr(self, "_bp_econ_stand", None) or {}).get("eingang") is None:
+            # Blaupausen sind da, aber ohne Markt-Scan gibt es keine Preise
+            # (econ_ready=False) - sagen, was fehlt, statt stummer Striche.
+            txt += " · " + t("profit: load recipes + run a market scan first")
         self._bfs_stand_lbl.setText(txt)
         warn = []
         if res.get("kein_ort"):
@@ -1262,7 +1384,7 @@ class BauplanTabs:
         v.setContentsMargins(14, 10, 14, 10)
         v.setSpacing(8)
         kopf = QHBoxLayout(); kopf.setSpacing(10)
-        titel = QLabel(t("STOCK LOCATIONS (BETA)"))
+        titel = QLabel(t("STOCK LOCATIONS"))
         titel.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
                             f"color:{theme.GREEN};")
         titel.setToolTip(t(
@@ -1399,6 +1521,15 @@ class BauplanTabs:
         _sc.setFrameShape(QScrollArea.NoFrame)
         _sc.setWidget(self._lager_raster)
         body.addWidget(_sc, 1)
+        # Der Sortierer haengt am Raster (emm775) - er erbt Hover,
+        # Knopf-Schutz und Mitscrollen von `KartenSortierer`.
+        from .mw_basis import RasterSortierer as _RS775
+        self._jobs_sortierer = _RS775(
+            self._jobs_raster, _sc,
+            lambda w: getattr(w, "_jobs_cid", None),
+            self._jobs_anordnung_merken, parent=page)
+        self._jobs_sortierer.aktiv = bool(
+            self.settings.get("jobs_karten_manuell"))
         # ORTE AN/AUS (Nutzer: "eine Legende rechts, wo man waehlen kann,
         # auf welchen Strukturen / NPC-Stationen Materialien ueberhaupt
         # getrackt werden sollen"). Gemerkt in settings["lager_orte_aus"]
@@ -1424,6 +1555,30 @@ class BauplanTabs:
             "Switch every location on - or, when all are on, off at once."))
         self._lager_alle_btn.clicked.connect(lambda: self._lager_alle_umschalten())
         pv.addWidget(self._lager_alle_btn)
+        # NUR BAU-STRUKTUREN - WIE DER BAUPLAN (emm632, Nutzer 23.10.2026:
+        # "wenn ich im Bauplan eingestellt habe dass nur materials von den
+        # Baustrukturen die ich angegeben habe zaehlen soll, dann soll das
+        # Stock Locations doch genauso machen, ... muesste man die selbe
+        # Einstellung machen koennen"). Stock Locations zaehlte bisher IMMER
+        # global (eigene Orte-Liste `lager_orte_aus`, unabhaengig von den an
+        # Baupläne verlinkten Strukturen `bau_stock_scope`/
+        # `verlinkte_struktur_ids`) - waehrend "Already on hand" im Bauplan-
+        # Fenster nur die Strukturen zaehlt, die DORT verlinkt sind. Lag
+        # Material an einem global eingeschalteten, aber nicht verlinkten
+        # Ort, zeigten beide Seiten unterschiedliche Fehlbetraege fuer
+        # DIESELBEN Materialien. Dieser Knopf schaltet die Orte-Liste mit
+        # EINEM Klick auf exakt dieselbe Menge um, die der Bauplan auch
+        # zaehlt - keine automatische Aenderung, der Nutzer entscheidet.
+        self._lager_struct_btn = QPushButton(t("Only build structures (like plan)"))
+        self._lager_struct_btn.setIcon(icons.icon("factory"))
+        self._lager_struct_btn.setToolTip(t(
+            "Switches on exactly the structures linked under Settings → "
+            "Structures (the same set the build plan's own „Already on "
+            "hand“ uses when its stock scope is not „everywhere“) - "
+            "every other location goes off, so both pages agree."))
+        self._lager_struct_btn.clicked.connect(
+            lambda: self._lager_nur_strukturen())
+        pv.addWidget(self._lager_struct_btn)
         pv.addStretch()
         body.addWidget(panel)
         v.addLayout(body, 1)
@@ -1433,11 +1588,42 @@ class BauplanTabs:
         self._lager_karten = {}          # {ort_id: Karte} - b-Suite
         self._lager_schalter = {}        # {ort_id: Knopf} - b-Suite
         self._lager_schalter_orte = None
+        # ALLE 5 MIN NEU PRUEFEN, WAEHREND DIE SEITE OFFEN IST (emm629,
+        # Nutzer 23.10.2026: "ESI checks haben einen zu hohen Zeit
+        # Intervall, ich moechte das Stocklocations und Bauplan mind alle
+        # 5 min ESI checken ob sich meine Personal Assets also meine
+        # materials veraendert haben"). Vorher lief die Nachlade-Pruefung
+        # nur beim NAVIGIEREN hierher (_bau_nav(6)) und erst ab 10 Min.
+        # Alter - wer auf der Seite blieb, sah veraltete Zahlen nicht von
+        # selbst neu. Jetzt zusaetzlich ein Taktgeber: alle 5 Min. dieselbe
+        # Pruefung wie beim Betreten (_lager_seite_gezeigt, Schwelle
+        # ebenfalls auf 5 statt 10 Min. gesenkt) - aber NUR solange die
+        # Lagerorte-Seite auch wirklich zu sehen ist (b_stack-Index 6),
+        # sonst wuerde ein ganz anderer offener Reiter stundenlang stille
+        # ESI-Abrufe ausloesen, die niemand sieht.
+        self._lager_poll_uhr = QTimer(page)
+        self._lager_poll_uhr.setInterval(300_000)
+        self._lager_poll_uhr.timeout.connect(self._lager_poll_tick)
+        self._lager_poll_uhr.start()
         return page
 
+    def _lager_poll_tick(self):
+        """Taktgeber-Ziel fuer `self._lager_poll_uhr` (emm629) - stoesst die
+        normale Nachlade-Pruefung nur an, waehrend die Lagerorte-Seite auch
+        wirklich offen ist."""
+        try:
+            if getattr(self, "b_stack", None) is not None and \
+                    self.b_stack.currentIndex() == 6:
+                self._lager_seite_gezeigt()
+        except Exception as _e629:
+            self._log_exception("Lagerorte 5-Min-Takt", str(_e629))
+
     def _lager_seite_gezeigt(self):
-        """Aus _bau_nav(6): beim ersten Zeigen und ab 10 min Alter laden
-        (ESI cacht Assets ohnehin bis zu einer Stunde)."""
+        """Aus _bau_nav(6): beim ersten Zeigen und ab 5 min Alter laden
+        (emm629 - vorher 10 min; der Nutzer will Aenderungen an seinen
+        Assets spaetestens nach 5 Min. sehen. ESI selbst cacht /assets/
+        serverseitig weiterhin bis zu einer Stunde - das kann kein
+        Client-Takt umgehen, s. `esi._assets_meta`)."""
         import time as _t
         self._lager_plaene_fuellen()
         # SUCHE BEIM BETRETEN LEEREN (emm488, Nutzer: "wenn ich die Tabs
@@ -1453,7 +1639,7 @@ class BauplanTabs:
             self._lager_suche.blockSignals(False)
             self._lager_suche_timer.stop()
             self._lager_suche_leeren.setVisible(False)
-        if self._lager_daten is None or _t.time() - self._lager_stand_ts > 600:
+        if self._lager_daten is None or _t.time() - self._lager_stand_ts > 300:
             self._lager_laden()
         elif _suche_war:
             self._lager_zeichnen()
@@ -1571,6 +1757,17 @@ class BauplanTabs:
             # Fehlbetrag zu hoch, und genau daraus wurde ein Nachkauf.
             asset_n = {}
             _asset_alter = []        # Sekunden, je Charakter (emm528)
+            # DASSELBE ALTER, ABER JE NAME (emm745). Nutzer 28.10.2026:
+            # "ich schiebe die Items oft ueber den Stationshandel rueber,
+            # das ist ein Handelsfenster zwischen zwei charakteren". Jeder
+            # Charakter hat seinen EIGENEN /assets/-Cache mit eigenem
+            # Ablauf - nach einer Uebergabe gibt es also ein Fenster von
+            # bis zu einer Stunde, in dem der Absender schon frisch
+            # gelesen ist (Ware weg) und der Empfaenger noch alt (Ware
+            # noch nicht da). Dann liegt das Material in KEINER Antwort,
+            # ohne dass irgendetwas kaputt waere. Die Schrumpf-Warnung
+            # kann das nur sagen, wenn sie das Alter der ANDEREN kennt.
+            _alter_je_name = {}
             besitzer_namen = {}
             beh_namen = {}
             char_fuer_ort = {}      # {ort: [cid, ...]} - ALLE, die dort Assets haben
@@ -1594,6 +1791,7 @@ class BauplanTabs:
                     _ag = esi.assets_age_seconds(cid)
                     if _ag is not None:
                         _asset_alter.append(float(_ag))
+                        _alter_je_name[name] = float(_ag)    # emm745
                 except Exception:
                     pass
                 for r in z:
@@ -1646,6 +1844,76 @@ class BauplanTabs:
                         if via not in _l:
                             _l.append(via)
                     zeilen.extend(zc)
+            # MATERIAL IN OFFENEN VERTRAEGEN (emm760; Rechnung emm745,
+            # Nutzer 28.10.2026: 18'240'750 Pyerite "ploetzlich fehlend",
+            # Aufloesung "ich habe alles von Peanut Motor zu Leziris
+            # Lezflow getauscht" - ein nicht angenommener Vertrag haelt
+            # die Ware fest, ESI meldet sie bei KEINEM Beteiligten unter
+            # /assets/). Die Posten kommen als normale Zeilen mit dem
+            # synthetischen Behaelter "Offener Vertrag" dazu: sie zaehlen
+            # im Fehlbetrag mit ("liegt in einem offenen Vertrag" statt
+            # "fehlt") und sind am Ort des Vertrags sichtbar. Gezaehlt
+            # werden NUR Vertraege EIGENER Aussteller: die Ware hat
+            # UNSEREN Hangar verlassen und gehoert bis zur Annahme noch
+            # uns; was ein Fremder uns anbietet, gehoert uns erst nach
+            # der Annahme (dann steht es regulaer in /assets/). Scope je
+            # Charakter vorab aus dem Token geprueft (granted_scopes,
+            # lokal) - vor dem Re-link wuerde sonst jeder Aufbau je
+            # Charakter ein 403 ins Log schreiben.
+            from .. import vertraege as _vt760
+            _v_scope_fehlt, _v_fehler, _v_listen = [], [], []
+            for ch in chars:
+                cid = int(ch["character_id"])
+                _nm760 = ch.get("character_name") or str(cid)
+                try:
+                    _sc760 = esi.granted_scopes(client_id, cid) or set()
+                except Exception:
+                    _sc760 = set()
+                if config.CONTRACTS_SCOPE not in _sc760:
+                    _v_scope_fehlt.append(_nm760)
+                    continue
+                try:
+                    _v_listen.append(
+                        esi.fetch_character_contracts(client_id, cid) or [])
+                except Exception as _ve760:
+                    _v_fehler.append(_nm760)
+                    self._log_exception(
+                        f"Stock locations: contracts {_nm760}", str(_ve760))
+            _eigene760 = [int(c["character_id"]) for c in chars]
+            _v_offen = {k: v for k, v
+                        in _vt760.offene_vertraege(_v_listen).items()
+                        if _vt760.beteiligte(v, _eigene760) == "aussteller"}
+            _v_items = {}
+            for _vid760, _v760 in sorted(_v_offen.items()):
+                try:
+                    _v_items[_vid760] = esi.fetch_character_contract_items(
+                        client_id, int(_v760.get("issuer_id") or 0), _vid760)
+                except Exception as _ie760:
+                    _v_items[_vid760] = None
+                    self._log_exception(
+                        f"Stock locations: contract items #{_vid760}",
+                        str(_ie760))
+            _v_fehlend = _vt760.fehlende_items(_v_offen, _v_items)
+            _vz760, _v_benutzt = _vt760.lager_zeilen(_v_offen, _v_items)
+            for _vid760, _v760 in _v_benutzt.items():
+                # Anzeigename des synthetischen Behaelters: wohin geht es?
+                _emp760 = besitzer_namen.get(
+                    ("char", int(_v760.get("assignee_id") or 0)))
+                if str(_v760.get("type") or "") == "courier":
+                    _lbl760 = t("Courier contract (in transit)")
+                elif _emp760:
+                    _lbl760 = t("Open contract to {name}").format(
+                        name=_emp760)
+                else:
+                    _lbl760 = t("Open contract")
+                beh_namen[-int(_vid760)] = _lbl760
+                _o760 = int(_v760.get("start_location_id") or 0)
+                _iss760 = int(_v760.get("issuer_id") or 0)
+                if _o760 and _iss760:
+                    _l = char_fuer_ort.setdefault(_o760, [])
+                    if _iss760 not in _l:
+                        _l.append(_iss760)
+            zeilen.extend(_vz760)
             plaene = lagerorte.plaene_fuer_lagerorte(settings)
             # NOCH OFFENER Bedarf (emm463): die lokale Job-Zuordnung sagt,
             # welche Runs dieser Plan schon gebaut hat - kein ESI-Abruf.
@@ -1748,9 +2016,61 @@ class BauplanTabs:
             # bleiben mit Menge und Ort sichtbar (emm527) - ihren Bedarf
             # meldet dieser Plan nicht mehr.
             gebaut_tids = lagerorte.gebaute_tids(plaene)
-            bedarf = lagerorte.bedarf_aus_plaenen(plaene, _zuord, _extra)
+            # ESI-VERZUG (emm620, Nutzer: "Moma sagt ich haette genuegend
+            # Material aber ingame kan ich die letzten 2 Runs von Tungsten
+            # Carbide wiedermal nicht machen"): 3 von 5 Blaupausenkopien
+            # liefen schon, ihr Material war im Hangar weg - /assets/ ist bis
+            # zu 1 h gecacht und zeigte den Hangar noch VOLL. `short` verglich
+            # also gegen zu viel "verfuegbares" Material. Dieselbe Rechnung
+            # wie beim Bauplan-Materials-Reiter (emm424, `lag_verbrauch`),
+            # hier zum ersten Mal auch auf dieser Seite: Jobs NACH dem
+            # aeltesten Asset-Stand ueber alle Charaktere (konservativ -
+            # Regel 3, lieber zu viel abgezogen als zu wenig) zaehlen mit
+            # ihrer Basismenge (ohne ME) als "im Spiel schon verbraucht".
+            _lag = {}
+            try:
+                from .mw_helpers import lag_verbrauch
+                _jobs_by_tid620 = {}
+                for _j620 in _jobs_alle:
+                    _pid620 = _j620.get("product_type_id")
+                    if _pid620:
+                        _jobs_by_tid620.setdefault(int(_pid620), []).append(_j620)
+                _esi_stock_ts620 = (_t.time() - max(_asset_alter)) \
+                    if _asset_alter else None
+
+                def _mats_620(pid, act):
+                    if act not in (1, 9, 11):
+                        return None
+                    try:
+                        _rec620 = industry.recipes_cached()
+                    except Exception:
+                        return None
+                    _bp620 = (getattr(_rec620, "product_to_bp", None)
+                              or {}).get(int(pid))
+                    if not _bp620:
+                        return None
+                    return (getattr(_rec620, "bp_materials", None)
+                            or {}).get((_bp620[0], _bp620[1]))
+                _lag = lag_verbrauch(_jobs_by_tid620, _esi_stock_ts620, _mats_620)
+            except Exception as _lg620:
+                self._log_exception("Stock locations: ESI-Verzug", str(_lg620))
+                _lag = {}
+            # emm626: dieselbe DRITTE Quelle wie der Bauplan selbst
+            # (gedeckelt-und-strittig-sichere ESI-Ablieferung seit dem
+            # Einfrieren) - EINMAL global berechnet, damit die Einzelplan-
+            # Aufrufe (Liste mit nur [p]) nicht faelschlich annehmen, es
+            # gaebe nur diesen einen Plan, wenn es um "umstritten" geht.
+            try:
+                _rec626 = industry.recipes_cached()
+            except Exception:
+                _rec626 = None
+            _umstritten626 = lagerorte.umstrittene_tids(plaene)
+            bedarf = lagerorte.bedarf_aus_plaenen(
+                plaene, _zuord, _extra, delivered_jobs=_jobs_alle,
+                recipes=_rec626, umstritten=_umstritten626)
             bedarf_je_plan = {p.get("id"): lagerorte.bedarf_aus_plaenen(
-                [p], _zuord, _extra) for p in plaene}
+                [p], _zuord, _extra, delivered_jobs=_jobs_alle,
+                recipes=_rec626, umstritten=_umstritten626) for p in plaene}
             tids = {r["tid"] for r in zeilen} | set(bedarf)
             # Behaelter ohne eigenen Namen heissen nach ihrem Typ.
             beh_typ = lagerorte.behaelter_typen(zeilen)
@@ -1767,6 +2087,10 @@ class BauplanTabs:
                     beh_namen[i] = namen.get(tid) or f"#{tid}"
             orte = {r["ort"] for r in zeilen}
             ort_namen = self._lager_ort_namen(orte, char_fuer_ort)
+            # Ein Vertrag ohne start_location_id landet auf dem Pseudo-Ort
+            # 0 (emm760) - der braucht einen Namen statt "#0".
+            if 0 in orte:
+                ort_namen[0] = t("Contract (location unknown)")
             # STILL ZU KLEINER ABRUF (emm477): zweimal gemessen am
             # 08.10.2026 - 3'886 -> 2'501 Asset-Zeilen, 38 Mio Stueck weg,
             # ohne einen einzigen ESI-Fehler. Sinkt die Zeilenzahl eines
@@ -1782,11 +2106,20 @@ class BauplanTabs:
             return {"zeilen": zeilen, "namen": namen, "ort_namen": ort_namen,
                     "besitzer_namen": besitzer_namen, "beh_namen": beh_namen,
                     "bedarf": bedarf, "bedarf_je_plan": bedarf_je_plan,
+                    "lag": _lag,
                     "built": gebaut_tids,
                     "asset_alter": (max(_asset_alter) if _asset_alter else None),
+                    "asset_alter_je_char": _alter_je_name,       # emm745
                     "job_extra": _extra, "job_offen": _job_offen,
                     "job_fehler": _job_fehler, "schrumpf": _schrumpf,
                     "job_fest": _fest,
+                    # OFFENE VERTRAEGE (emm760): wie viele zaehlen mit,
+                    # und was davon NICHT lesbar war - unlesbar heisst
+                    # "die Mengen sind unvollstaendig", nie still.
+                    "vertrag_n": len(_v_benutzt),
+                    "vertrag_fehler": _v_fehler,
+                    "vertrag_fehlend": len(_v_fehlend),
+                    "vertrag_scope_fehlt": _v_scope_fehlt,
                     # ESI-FEHLERBUDGET (emm480): ein 420 waehrend des Abrufs
                     # beantwortet GAR NICHTS mehr - dann sind diese Zahlen
                     # unvollstaendig, auch wenn kein einzelner Abruf geworfen
@@ -1842,6 +2175,41 @@ class BauplanTabs:
             self._jobs_schalter_stil(_b, not alle_an)
         self._lager_alle_btn_stand()
         self._lager_zeichnen()
+
+    def _lager_nur_strukturen(self):
+        """Knopf "Only build structures (like plan)" (emm632): schaltet
+        Stock Locations auf GENAU die Orte, die auch der Bauplan zaehlt
+        (`verlinkte_struktur_ids` - dieselbe Liste wie `_bfs_bestand_holen`
+        und `_toggle_assets`s Struktur-Scope). Orte ohne Verlinkung (z.B.
+        eine NPC-Station, an der nur privat Material liegt) gehen aus - wer
+        sie trotzdem zaehlen will, schaltet sie danach von Hand wieder an;
+        der Knopf ist ein Vorschlag, keine Sperre."""
+        from .mw_helpers import verlinkte_struktur_ids
+        _verlinkt = {int(s) for s in verlinkte_struktur_ids(self.settings)}
+        orte = [int(o) for o in (self._lager_schalter_orte or [])]
+        if not orte:
+            self._flash_tip(t(
+                "No locations loaded yet - open Stock locations first."))
+            return
+        if not _verlinkt:
+            self._flash_tip(t(
+                "No build structures linked yet - set them under Settings "
+                "→ Structures first."))
+            return
+        self.settings["lager_orte_aus"] = sorted(
+            str(o) for o in orte if o not in _verlinkt)
+        config.save_settings_async(self.settings)
+        for _ort, _b in (getattr(self, "_lager_schalter", None) or {}).items():
+            _an = _ort in _verlinkt
+            _b.blockSignals(True)
+            _b.setChecked(_an)
+            _b.blockSignals(False)
+            self._jobs_schalter_stil(_b, _an)
+        self._lager_alle_btn_stand()
+        self._lager_zeichnen()
+        self._flash_tip(t(
+            "{n} build structure(s) switched on, everything else off – "
+            "same set the build plan uses.").format(n=len(_verlinkt & set(orte))))
 
     def _lager_alle_btn_stand(self):
         """Beschriftung des Toggles: "All off", solange alle an sind."""
@@ -1958,7 +2326,7 @@ class BauplanTabs:
         baum.setSelectionMode(QTreeWidget.ExtendedSelection)
         baum.setStyleSheet("QTreeWidget{background:transparent;}")
         baum.setColumnWidth(0, 230)
-        baum.setColumnWidth(1, 90)
+        baum.setColumnWidth(1, 120)
         kopier_menue(baum, lambda pos, _b=baum: self._lager_karte_menue(_b, pos))
         _amber = QBrush(QColor(theme.AMBER))
         _rot = QBrush(QColor(theme.RED))
@@ -1967,7 +2335,16 @@ class BauplanTabs:
         def _z(n):
             return f"{int(n):,}".replace(",", "'")
         for it in k["items"]:
-            top = QTreeWidgetItem([it["name"], _z(it["menge"]), ""])
+            # HABEN/BRAUCHEN IN EINEM BLICK (emm621, Nutzer: "in Stock
+            # locations waere cool wenn man sieht wieviel man hat und
+            # wieviel man braucht von allen Materialien"): vorher stand der
+            # Bedarf nur im Hover-Tooltip von Spalte 2 - jetzt steht er
+            # direkt in Spalte 1 neben dem Bestand ("haben / brauchen"),
+            # fuer JEDES Item mit Bedarf, nicht nur die fehlenden.
+            _ges_b = sum(q for _, q in (it.get("bedarf") or []))
+            _menge_txt = (f"{_z(it['menge'])} / {_z(_ges_b)}" if it.get("bedarf")
+                         else _z(it["menge"]))
+            top = QTreeWidgetItem([it["name"], _menge_txt, ""])
             top.setData(0, Qt.UserRole, it["tid"])
             top.setData(0, ROLLE_KOPIERNAME, it["name"])
             top.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
@@ -1977,10 +2354,45 @@ class BauplanTabs:
                 _st = t("missing {n}").format(n=_z(it["short"]))
                 top.setText(2, _st)
                 top.setForeground(2, _rot)
+                # WELCHER BAUPLAN BRAUCHT ES (emm622, Nutzer: "missing
+                # Items ich moechte gerne angezeigt bekommen fuer welchen
+                # Bauplan sie fehlen"): stand bisher nur im Hover-Tooltip
+                # von Spalte 2 (`_bd`) - jetzt als eigene Kind-Zeile je
+                # Bauplan, direkt sichtbar, noch VOR der Orts-/Besitzer-
+                # Aufschluesselung (zuerst "wofuer", dann "wo liegt was").
+                for _pl622, _q622 in (it.get("bedarf") or []):
+                    _pi622 = QTreeWidgetItem(
+                        [t("needed by: {plan}").format(plan=_pl622),
+                         _z(_q622), ""])
+                    _pi622.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+                    _pi622.setForeground(0, _rot)
+                    top.addChild(_pi622)
             elif it["bedarf"] or int(it["tid"]) in _gebaut_l:
                 # Ohne Bedarf, aber selbst gebaut (emm527): nichts zu tun -
                 # dasselbe Haekchen wie bei gedecktem Bedarf.
                 top.setText(2, "\u2713")
+            # NICHT LOSE IM HANGAR (emm770). Nutzer 30.10.2026: "mir fehlt
+            # Tritanium obwohl Bauplan und Stocklocations sagt, ich habe
+            # alles" - gemessen war die Differenz zum Spiel AUF DIE
+            # EINHEIT der Inhalt eines Containers. Ein Job zieht nur aus
+            # dem Item-Hangar. Die Menge bleibt richtig, sie bekommt die
+            # Fussnote; amber statt rot, denn es fehlt ja nichts - es
+            # liegt nur falsch.
+            _vp770 = int(it.get("verpackt", 0) or 0)
+            if _vp770 > 0:
+                _pi770 = QTreeWidgetItem(
+                    [t("of which in containers/contracts - unpack first"),
+                     _z(_vp770), ""])
+                _pi770.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+                _pi770.setForeground(0, _amber)
+                _pi770.setForeground(1, _amber)
+                _pi770.setToolTip(
+                    0, t("An industry job can only take material that lies "
+                         "LOOSE in the item hangar. What is in a container "
+                         "(or still in an open contract) has to be unpacked "
+                         "first - the game does not see it when you start "
+                         "the job."))
+                top.addChild(_pi770)
             if _bd:
                 top.setToolTip(2, t("Still needed by plans: {b}").format(b=_bd)
                                + "\n" + t("{n} across all tracked locations").format(
@@ -1999,6 +2411,16 @@ class BauplanTabs:
                     if pfad:
                         pi.setIcon(0, icons.icon("package"))
                     bi.addChild(pi)
+        # SPALTE 2 ("missing N'NNN") NIE ABSCHNEIDEN (emm628, Nutzer: "die
+        # zahlen nicht ganz fertig das missing ist abgeschnitten, manchmal
+        # je nach dem wie breit man das MoMa Fenster zieht"): ohne eigene
+        # Breite ueberliess die Spalte Qt's Standard "letzte Spalte dehnt
+        # sich" (stretchLastSection) - bei einem schmalen Fenster blieb ihr
+        # dann weniger als der Text braucht, und "missing 21'252" wurde
+        # hart abgeschnitten statt zu stehen. Feste Breite nach Inhalt UND
+        # Stretch aus, damit kein spaeterer Resize sie wieder zuquetscht.
+        baum.header().setStretchLastSection(False)
+        baum.resizeColumnToContents(2)
         baum.expanded.connect(lambda _i, _b=baum: (
             self._lager_hoehe_nachziehen(_b), self._lager_auf_btn_stand()))
         baum.collapsed.connect(lambda _i, _b=baum: (
@@ -2053,10 +2475,43 @@ class BauplanTabs:
         # Zeile gehoert zum Nachsehen weiter her, nur eben ohne Fehlbetrag.
         nur = None if begriffe else (set(bedarf)
                                      | (res.get("built") or set()))
+        # FREMDE ANSPRUECHE AUCH HIER (emm789, Audit 31.10.2026, K1/M1):
+        # Einzelplan-Ansicht: dieselben Regeln wie der offene Bauplan -
+        # die Ansprueche der ANDEREN reservierten Plaene mindern das
+        # Verfuegbare, der eigene Anspruch schuetzt (Rang-Plaene ohne
+        # Eigenschutz, wie in _recompute_bd_stock). Alle-Plaene-Ansicht:
+        # reservierte, NIE eingefrorene Plaene stehen nicht in der
+        # Bedarfs-Summe - ihr Anspruch wird abgezogen, sonst deckt ihr
+        # reserviertes Hangar-Material rechnerisch fremde Fehlmengen.
+        _fremd789, _eigen789 = {}, {}
+        try:
+            if pid is not None:
+                _fremd789, _ = self._reserved_by_other_plans(
+                    self.settings, pid)
+                _eigen789 = self._reserved_by_this_plan(self.settings, pid)
+                if str(pid) in self.plan_rang(self.settings):
+                    _eigen789 = {}
+            else:
+                _in_ansicht789 = {str(_p) for _p in
+                                  (res.get("bedarf_je_plan") or {})}
+                _mitgl789 = set(self.buendel_mitglieder(self.settings))
+                for _p789 in (self.settings.get("bau_saved_plans") or []):
+                    if (not _p789.get("reserve") or _p789.get("done_manual")
+                            or str(_p789.get("id")) in _in_ansicht789
+                            or str(_p789.get("id")) in _mitgl789):
+                        continue
+                    for _t789, _q789 in (self.plan_anspruch_mitlaufend(
+                            _p789) or {}).items():
+                        _fremd789[int(_t789)] = (_fremd789.get(int(_t789), 0)
+                                                 + int(_q789 or 0))
+        except Exception as _e789:
+            _fremd789, _eigen789 = {}, {}
+            self._log_exception("Stock Locations: Ansprueche", str(_e789))
         karten, fehlt = lagerorte.karten(
             zeilen, namen, ort_namen, res.get("besitzer_namen") or {},
             res.get("beh_namen") or {}, bedarf=bedarf, nur_tids=nur,
-            begriffe=begriffe, nur_orte=aktiv)
+            begriffe=begriffe, nur_orte=aktiv, lag=res.get("lag"),
+            fremd_abzug=_fremd789, eigen_schutz=_eigen789)
         # Der Einkaufslisten-Knopf nimmt GENAU das, was hier steht - je Item
         # einmal (ein Item liegt oft an mehreren Orten).
         _fehl_items = {}
@@ -2100,6 +2555,27 @@ class BauplanTabs:
             f'<span style="color:{theme.RED if _n_short else theme.MUTED};">'
             f'{_n_short}</span>')
         kc["short"]["unter"].setText(t("not enough across all characters"))
+        # WAS DIESE ZAHL NICHT ZAEHLT, GEHOERT DAZUGESAGT (emm677, Nutzer
+        # 24.10.2026: "Stock Locations findet auch nichts was fehlt um
+        # diese zu bauen" - und spaeter "Stock Locations sagt ich habe
+        # alles"). Diese Seite meldet AUSDRUECKLICH keinen Bedarf fuer
+        # Posten, die ein Plan SELBST BAUT (emm527b): ihre Erledigt-Karte
+        # ist duenner als die des Bauplans, und eine anteilige Gutschrift
+        # erzeugte hier nachweislich Fantasiezahlen (133'254 Rolled
+        # Tungsten Alloy). Die Entscheidung ist richtig - aber sie stand
+        # nirgends auf dem Bildschirm, und genau daran hat er heute
+        # Stunden verloren. Die RECHNUNG bleibt, die AUSKUNFT kommt dazu.
+        _tip_short = t(
+            "Only items one of your plans BUYS. What a plan builds itself "
+            "is deliberately not counted here - this page knows the build "
+            "progress less well than the plan does, and guessing it "
+            "produced wrong numbers before. For self-built items the run "
+            "planner of that plan is the answer.")
+        for _teil in ("zahl", "unter"):
+            try:
+                kc["short"][_teil].setToolTip(_tip_short)
+            except Exception:
+                pass
         # STAND
         from datetime import datetime as _dt
         teile = []
@@ -2136,6 +2612,33 @@ class BauplanTabs:
         if res.get("job_fest"):
             teile.append(t("{n} job(s) assigned automatically").format(
                 n=res["job_fest"]))
+        # emm620: ESI-Verzug sichtbar machen - sonst sieht die Korrektur aus
+        # wie ein unerklaerter Sprung in "MISSING" (Regel 8).
+        _n_lag = len(res.get("lag") or {})
+        if _n_lag:
+            teile.append(t("{n} item(s) corrected for jobs that already "
+                           "consumed material ESI hasn't shown yet")
+                         .format(n=_n_lag))
+        # OFFENE VERTRAEGE (emm760): was mitzaehlt, steht dran; was NICHT
+        # lesbar war, ist eine Warnung (Regel: gerechnet oder gemeldet,
+        # nie still - dieselbe Linie wie emm475/480).
+        if res.get("vertrag_n"):
+            teile.append(t("{n} open contract(s) counted as stock").format(
+                n=res["vertrag_n"]))
+        _vf760 = res.get("vertrag_fehler") or []
+        if _vf760:
+            teile.append(t("⚠ contracts of {names} not readable - "
+                           "stock incomplete").format(
+                               names=", ".join(_vf760)))
+        if res.get("vertrag_fehlend"):
+            teile.append(t("⚠ {n} contract(s) without item list - "
+                           "stock incomplete").format(
+                               n=res["vertrag_fehlend"]))
+        _vs760 = res.get("vertrag_scope_fehlt") or []
+        if _vs760:
+            teile.append(t("⚠ {n} character(s) can't share contracts "
+                           "yet - re-link to count material in contracts")
+                         .format(n=len(_vs760)))
         if len(aktiv) < len(orte):
             teile.append(t("{n} location(s) switched off").format(
                 n=len(orte) - len(aktiv)))
@@ -2260,7 +2763,7 @@ class BauplanTabs:
             rest.append(j)
         return rest, fest
 
-    def _lager_unvollstaendig_grund(self, res):
+    def _lager_unvollstaendig_grund(self, res, nur_sperrend=False):
         """Warum die Zahlen dieser Seite ZU HOCH sein koennen - oder "".
 
         emm476 (Nutzer: "jetzt ist es noch schlimmer geworden"): scheitert
@@ -2268,7 +2771,22 @@ class BauplanTabs:
         scheitert die Job-Liste, fehlt der Fortschritt. In beiden Faellen
         zeigt die Seite einen zu grossen Fehlbetrag, und genau daraus wurde
         am 08.10.2026 ein unnoetiger Nachkauf. EINE Stelle fuer die rote
-        Zeile UND die Sperre des Einkaufs-Knopfs (Regel 9)."""
+        Zeile UND die Sperre des Einkaufs-Knopfs (Regel 9).
+
+        `nur_sperrend` (emm767): NICHT jeder Grund sperrt noch. Der
+        SCHRUMPF (ein Charakter liefert weniger Zeilen als zuletzt
+        bestaetigt) ist seit heute reine WARNUNG - Nutzer 30.10.2026:
+        "punkt 4 möchte ich nur eine warnung, keine kauf sperre".
+        GRUND, von ihm gemessen und mehrfach belegt: er schiebt staendig
+        Material zwischen Charakteren, jedes Schieben sieht fuer ESI aus
+        wie ein gekuerzter Abruf, und die Sperre stand dadurch
+        praktisch dauerhaft ("die geht nicht weg, die bleibt immer da ->
+        Folge, ich kann nie eine einkaufsliste kopieren"). Die drei
+        anderen Gruende sperren weiter: dort ist etwas WIRKLICH
+        gescheitert (Abruf, Job-Liste, ESI-Budget), waehrend der Schrumpf
+        nur ein VERDACHT ist, den der Nutzer selbst am besten beurteilt -
+        er weiss, ob er gerade geschoben hat.
+        """
         from ..sprache import t as _txt
         teile = []
         # ESI-FEHLERBUDGET ERSCHOEPFT (emm480, gemessen in seiner fehler.log
@@ -2287,28 +2805,62 @@ class BauplanTabs:
             teile.append(_txt(
                 "Industry jobs not loaded - runs you have already built are "
                 "missing here."))
-        for _nm, _vor, _jetzt in ((res or {}).get("schrumpf") or []):
-            teile.append(_txt(
-                "{name}: ESI only sent {jetzt} of {vor} stacks - press "
-                "Refresh.").format(name=_nm, jetzt=_jetzt, vor=_vor))
+        # WAS WAHRSCHEINLICH PASSIERT IST, STATT NUR "ESI LIEFERTE WENIGER"
+        # (emm745). Der alte Satz klang nach Stoerung und schickte den
+        # Nutzer auf "Refresh" - beim haeufigsten Grund hilft das nicht:
+        # er hat die Sachen gerade einem anderen Charakter uebergeben
+        # (Handelsfenster oder Vertrag), und dessen Bestand ist bei ESI
+        # noch alt. Dann liegt das Material in KEINER Antwort, bis der
+        # Cache des Empfaengers ablaeuft. Das Alter der ANDEREN Charaktere
+        # steht daneben, damit man sieht, wie lange das noch dauert.
+        _alt745 = (res or {}).get("asset_alter_je_char") or {}
+        for _nm, _vor, _jetzt in (() if nur_sperrend
+                                  else ((res or {}).get("schrumpf") or [])):
+            _fremd745 = [v for k, v in _alt745.items()
+                         if k != _nm and v is not None]
+            _satz745 = _txt(
+                "{name}: {jetzt} instead of {vor} stacks – did you just "
+                "hand items to another character? Then they are in no "
+                "answer at all until ESI re-reads the receiver.").format(
+                    name=_nm, jetzt=_jetzt, vor=_vor)
+            if _fremd745:
+                _satz745 += " " + _txt(
+                    "Stock data of the others is up to {min} min old."
+                ).format(min=int(max(_fremd745) // 60))
+            teile.append(_satz745)
         if not teile:
             return ""
-        return _txt("⚠ INCOMPLETE DATA - do not buy from this list!") \
-            + "  " + "  ".join(teile)
+        # ZWEI KOEPFE, WEIL ES ZWEI LAGEN SIND (emm767). "Do not buy from
+        # this list" gehoert zu einem WIRKLICH gescheiterten Abruf - dort
+        # ist der Knopf auch gesperrt. Steht nur der Schrumpf-Verdacht da,
+        # ist der Knopf seit emm767 frei; derselbe harte Satz waere dann
+        # ein Widerspruch zum klickbaren Knopf. Er sagt jetzt, was zu tun
+        # ist: pruefen statt blind kaufen.
+        _hart = True if nur_sperrend else bool(
+            self._lager_unvollstaendig_grund(res, nur_sperrend=True))
+        _kopf = (_txt("⚠ INCOMPLETE DATA - do not buy from this list!")
+                 if _hart else
+                 _txt("⚠ Stock may be incomplete - check before you buy."))
+        return _kopf + "  " + "  ".join(teile)
 
     def _lager_unvollstaendig_zeigen(self, res):
-        """Rote Zeile oben + Einkaufs-Knopf sperren (emm476)."""
+        """Rote Zeile oben + Einkaufs-Knopf sperren (emm476).
+
+        Seit emm767 sind das ZWEI Fragen: die rote Zeile zeigt ALLES
+        (auch den Schrumpf), gesperrt wird nur noch bei wirklich
+        gescheiterten Abrufen."""
         from ..sprache import t as _txt
         grund = self._lager_unvollstaendig_grund(res)
+        _sperr = self._lager_unvollstaendig_grund(res, nur_sperrend=True)
         lbl = getattr(self, "_lager_warn_lbl", None)
         if lbl is not None:
             lbl.setText(grund)
             lbl.setVisible(bool(grund))
         btn = getattr(self, "_lager_kauf_btn", None)
         if btn is not None:
-            btn.setEnabled(not grund)
-            if grund:
-                btn.setToolTip(grund)
+            btn.setEnabled(not _sperr)
+            if _sperr:
+                btn.setToolTip(_sperr)
             else:
                 btn.setToolTip(_txt(
                     "Everything that is really missing across ALL listed "
@@ -2333,7 +2885,8 @@ class BauplanTabs:
         # KEINE EINKAUFSLISTE AUS UNVOLLSTAENDIGEN DATEN (emm476): fehlt der
         # Bestand eines Charakters oder die Job-Liste, sind die Fehlbetraege
         # zu hoch - der Nutzer wuerde kaufen, was er schon hat.
-        _grund = self._lager_unvollstaendig_grund(self._lager_daten or {})
+        _grund = self._lager_unvollstaendig_grund(self._lager_daten or {},
+                                                  nur_sperrend=True)
         if _grund:
             self._flash_tip(_grund)
             return
@@ -2342,6 +2895,12 @@ class BauplanTabs:
         if not posten:
             self._flash_tip(t("Nothing is missing \u2013 nothing to buy."))
             return
+        # DERSELBE PUFFER WIE UEBERALL (emm796, Audit 31.10.2026, G2):
+        # `bau_buy_surplus` wirkte auf Einkaufswagen und Kopierknoepfen,
+        # nur diese Liste kam ohne die versprochene Sicherheitsmarge -
+        # dieselbe EINE Stelle (_buy_surplus_qty), kein zweiter Rechner.
+        posten = [(_n796, self._buy_surplus_qty(_q796))
+                  for _n796, _q796 in posten]
         QApplication.clipboard().setText(lagerorte.multibuy_text(posten))
         self._flash_tip(t("{n} materials copied for EVE's multibuy.").format(
             n=len(posten)))
@@ -2504,6 +3063,26 @@ class BauplanTabs:
         self._jobs_stand_lbl = QLabel("")
         self._jobs_stand_lbl.setObjectName("Muted")
         kopf.addWidget(self._jobs_stand_lbl)
+        # SELBER ANORDNEN (emm775, Nutzer 30.10.2026: "Einfach einen
+        # button einfügen ''Arrangement'' oder so und dannn können wie
+        # die karten selber anordnen wie wir wollen"). Umschalter zum
+        # ANLASSEN, genau wie in "Meine Baupläne" (emm-Reihe 15.09.):
+        # solange er gedrueckt ist, laesst sich jede Karte ziehen, die
+        # Knoepfe darauf bleiben bedienbar.
+        self._jobs_order_btn = QPushButton(" " + t("Arrange yourself"))
+        self._jobs_order_btn.setIcon(icons.icon("menu"))
+        self._jobs_order_btn.setCheckable(True)
+        self._jobs_order_btn.setChecked(
+            bool(self.settings.get("jobs_karten_manuell")))
+        self._jobs_order_btn.setToolTip(t(
+            "Drag the cards where you want them with the left mouse button "
+            "held down \u2013 into another column or to another place in "
+            "the same one. Up to 5 columns, as deep as you like. Your "
+            "arrangement is kept, also after restarting. The buttons on the "
+            "cards keep working."))
+        self._jobs_order_btn.toggled.connect(
+            self._jobs_handsortierung_umschalten)
+        kopf.addWidget(self._jobs_order_btn)
         self._jobs_refresh_btn = QPushButton(t("Refresh"))
         self._jobs_refresh_btn.setIcon(icons.icon("refresh"))
         self._jobs_refresh_btn.setStyleSheet(theme.amber_rahmen_knopf())
@@ -2516,6 +3095,24 @@ class BauplanTabs:
                            "takes. A finished job keeps its slot until you deliver it."))
         hinweis.setObjectName("Muted"); hinweis.setWordWrap(True)
         v.addWidget(hinweis)
+        # OFFENE VERTRAEGE GANZ OBEN (emm765/emm768). Erst stand das als
+        # eigene Karte IM Raster (emm764) - Nutzer 29.10.2026 mit
+        # Screenshot: "nee das sieht zu verwirrend aus die contracts karte
+        # mitten in den Jobs karetn". Er hat recht: das Raster zeigt EINE
+        # KARTE JE CHARAKTER (Slots, laufende Jobs), die Vertrags-Karte sah
+        # genauso aus, war aber etwas voellig anderes und landete zwischen
+        # den Charakteren. Auf seine Wahl ("Breite Zeile unter den
+        # Kacheln") kam sie zwischen Kennzahlen und Karten; mit emm768
+        # steht sie ganz oben, noch vor den Kennzahl-Kacheln ("bitte
+        # dann Open Contracts KArte ganz oben anfügen"). Volle Breite,
+        # zuklappbar, Raster bleibt rein fuer Charaktere.
+        self._jobs_vertrag_box = QFrame()
+        self._jobs_vertrag_box.setObjectName("Card")
+        self._jobs_vertrag_lay = QVBoxLayout(self._jobs_vertrag_box)
+        self._jobs_vertrag_lay.setContentsMargins(12, 8, 12, 8)
+        self._jobs_vertrag_lay.setSpacing(4)
+        self._jobs_vertrag_box.hide()
+        v.addWidget(self._jobs_vertrag_box)
         # GESAMT-LEISTE (emm334): fertige Jobs, freie Slots, naechster Job -
         # ueber alle EINGESCHALTETEN Charaktere, auf einen Blick. emm346
         # (Nutzer: "den Text mehr in eine Grafik umwandeln, damit man schoen
@@ -2668,7 +3265,54 @@ class BauplanTabs:
                 namen = esi.resolve_names(list(tids)) if tids else {}
             except Exception:
                 namen = store.cached_names(list(tids)) if tids else {}
-            return {"chars": out, "namen": namen, "ts": jetzt}
+            # OFFENE VERTRAEGE JE CHARAKTER (emm764, Nutzer 29.10.2026:
+            # "können wir bitte in Industry Jobs exta karte haben für
+            # Contracts und welcher charakter wie viele offen hat? für
+            # noch mehr übersicht"). Derselbe Abruf und dieselbe Rechnung
+            # wie in Stock locations (emm760/763, Regel 9) - hier nur
+            # anders gezeigt: nicht als Bestand, sondern als Uebersicht
+            # "wer hat was offen". Die POSITIONEN werden hier NICHT
+            # geholt: das waere ein Abruf je Vertrag, und fuer "wie viele
+            # offen" braucht es sie nicht (die Stueckzahl steht auf der
+            # Stock-locations-Seite).
+            from .. import vertraege as _vt764
+            _v_listen764, _v_fehler764, _v_scope764 = [], [], []
+            for ch in chars:
+                _cid764 = int(ch["character_id"])
+                _nm764 = ch.get("character_name") or str(_cid764)
+                try:
+                    _sc764 = esi.granted_scopes(client_id, _cid764) or set()
+                except Exception:
+                    _sc764 = set()
+                if config.CONTRACTS_SCOPE not in _sc764:
+                    _v_scope764.append(_nm764)
+                    continue
+                try:
+                    _v_listen764.append(esi.fetch_character_contracts(
+                        client_id, _cid764) or [])
+                except Exception as _ve764:
+                    _v_fehler764.append(_nm764)
+                    self._log_exception(
+                        f"Industry jobs: contracts {_nm764}", str(_ve764))
+            _offen764 = _vt764.offene_vertraege(_v_listen764)
+            # NUR WAS DU ANNEHMEN MUSST (emm771, Nutzer 30.10.2026:
+            # "zeige in den Contract Liste bitte nur ausstehende
+            # Contracts an und nur solche die ich annehmen muss").
+            # `offene_vertraege` bleibt die Grundlage - die BESTANDS-
+            # Frage in Stock locations braucht weiter beide Seiten und
+            # beide Status; hier wird nur enger gezeigt.
+            _je764 = _vt764.anzunehmen(
+                _offen764, [int(c["character_id"]) for c in chars])
+            return {"chars": out, "namen": namen, "ts": jetzt,
+                    "vertraege": _je764,
+                    # Die Zahl im Kopf zaehlt dasselbe wie die Zeilen -
+                    # eine Gesamtzahl ueber ALLE offenen Vertraege waere
+                    # groesser als die Summe darunter und sofort ein
+                    # Widerspruch.
+                    "vertraege_n": sum(int(v.get("rein") or 0)
+                                       for v in _je764.values()),
+                    "vertraege_fehler": _v_fehler764,
+                    "vertraege_scope": _v_scope764}
 
         def done(res):
             self._jobs_laeuft = False
@@ -2754,6 +3398,15 @@ class BauplanTabs:
             kopf.addWidget(_cb)
             card._corp_badge = _cb
         if _n_fertig:
+            # ABHOLBEREIT MUSS INS AUGE SPRINGEN (emm809, Nutzer 01.11.2026:
+            # "in Industry Tab, sieht man meiner meinung nach zu wenig gut
+            # was abhole bereit ist"): die ganze Karte bekommt einen
+            # gruenen Rahmen - das Haekchen-Abzeichen allein ging zwischen
+            # vielen Karten unter. Gleiche Flaeche/Radius wie QFrame#Card
+            # im Theme, nur der Rahmen wird gruen und dicker.
+            card.setStyleSheet(
+                f"QFrame#Card{{background:{theme.PANEL}; "
+                f"border:2px solid {theme.GREEN}; border-radius:8px;}}")
             _badge = QLabel(f"\u2713 {_n_fertig}")
             _badge.setToolTip(t("\u2713 {n} ready to deliver").format(n=_n_fertig))
             _badge.setStyleSheet(f"background:{theme.GREEN}; color:{theme.BG}; "
@@ -2790,8 +3443,22 @@ class BauplanTabs:
             fz.setWordWrap(True)
             fz.setStyleSheet(f"color:{theme.RED};")
             v.addWidget(fz)
-        if gr["ready"]:
-            rk = QLabel(t("\u2713 {n} ready to deliver").format(n=_n_fertig))
+        # DER FERTIG-BLOCK IST IMMER DA, AUCH LEER (emm767). Nutzer
+        # 29.10.2026 mit Screenshot: "ich hätte gerne das die
+        # standardgrösse von den karten geilch gross ist wenn sie leer
+        # ist als wie wenn Items ready to deliver sind" - Peanut Motor
+        # stand mit "1 ready to deliver" plus Item-Zeile zwei Zeilen
+        # hoeher als seine Nachbarn, das Gitter sah ungleich aus. Statt
+        # die Zeilen wegzulassen, bekommen sie LEEREN TEXT: gleiche
+        # Schrift, gleiche Abstaende, also exakt dieselbe Hoehe - ein
+        # mit Pixeln gesetztes Mindestmass waere bei anderer
+        # Schriftgroesse wieder falsch. Hat ein Charakter MEHRERE
+        # fertige Posten, waechst die Karte weiterhin; das ist echter
+        # Inhalt und kein Ungleichgewicht (und die Reihen-Ausrichtung
+        # des Rasters faengt es ab, emm398).
+        if True:
+            rk = QLabel(t("\u2713 {n} ready to deliver").format(n=_n_fertig)
+                        if gr["ready"] else "")
             rk.setStyleSheet(f"color:{theme.GREEN}; font-weight:700; padding-top:4px;")
             v.addWidget(rk)
             # Fertig-Zeile mit Corp-Marke (emm397, Nutzer "ja"): ein fertiger
@@ -2799,7 +3466,7 @@ class BauplanTabs:
             # die Zeile EIN Label ist (Namen escaped, Marke als Span).
             from html import escape as _esc
             _rt = []
-            for g in gr["ready"]:
+            for g in gr["ready"] or ():
                 _s = f"{g['n']}\u00d7 " + _esc(
                     str(namen.get(g["tid"]) or "#" + str(g["tid"])))
                 if g.get("corp"):
@@ -2892,6 +3559,17 @@ class BauplanTabs:
         self.settings["jobs_karten_offen"] = sorted(offen)
         config.save_settings_async(self.settings)
 
+    def _jobs_vertrag_klappen(self, on, rumpf, pfeil_text):
+        """Vertrags-Zeile auf/zu - und der Zustand ueberlebt den Neustart
+        (emm766). Dasselbe Muster wie `_jobs_karte_klappen`, nur merkt
+        dieser Schluessel das ZUGEKLAPPT-Sein: die Zeile ist standard
+        OFFEN (Nutzer: "ist standard aufgeklappt"), und ein fehlender
+        Schluessel muss deshalb "offen" bedeuten."""
+        rumpf.setVisible(bool(on))
+        pfeil_text(bool(on))
+        self.settings["jobs_vertraege_zu"] = not bool(on)
+        config.save_settings_async(self.settings)
+
     def _jobs_aus(self):
         return {str(x) for x in (self.settings.get("jobs_chars_aus") or [])}
 
@@ -2924,6 +3602,11 @@ class BauplanTabs:
             row = QHBoxLayout(); row.setSpacing(6)
             nl = KurzLabel(str(e.get("name") or cid))
             row.addWidget(nl, 1)
+            # KEIN ACCOUNT-FELD MEHR (emm775 loest emm772/773/774 ab):
+            # die Karten werden jetzt mit der Maus angeordnet, und zwei
+            # Mechanismen fuer dieselbe Sache waeren einer zu viel
+            # (Nutzer-Entscheid "Ersetzen"). Das Panel bleibt damit
+            # schmal genug fuer Name und An/Aus.
             btn = QPushButton()
             btn.setCheckable(True)
             btn.setFixedWidth(52)
@@ -2935,6 +3618,33 @@ class BauplanTabs:
             box.addLayout(row)
             self._jobs_schalter[int(cid)] = btn
         self._jobs_schalter_cids = set(int(c) for c in (chars or {}))
+
+    def _jobs_handsortierung_umschalten(self, an):
+        """Anordnen-Modus an/aus (emm775). Der Modus ist zum ANLASSEN
+        gedacht; ausschalten beendet nur das Ziehen, die Anordnung
+        bleibt - dieselbe Zusage wie in "Meine Baupläne"."""
+        self.settings["jobs_karten_manuell"] = bool(an)
+        config.save_settings_async(self.settings)
+        _s = getattr(self, "_jobs_sortierer", None)
+        if _s is not None:
+            _s.aktiv = bool(an)
+            if not an:
+                _s.alles_zuruecksetzen()
+        _b = getattr(self, "_jobs_order_btn", None)
+        if _b is not None:
+            _b.setStyleSheet(theme.amber_rahmen_knopf() if an else "")
+
+    def _jobs_anordnung_merken(self, spalten):
+        """Nach dem Ablegen: die neue Spalten-Anordnung sichern
+        (emm775). `spalten` ist [[cid, ...], ...] - genau die Form, die
+        `jobs_hand_spalten` wieder einliest."""
+        _sp = []
+        for _g in (spalten or []):
+            _l = [int(c) for c in (_g or []) if c is not None]
+            if _l:
+                _sp.append(_l)
+        self.settings["jobs_karten_anordnung"] = _sp
+        config.save_settings_async(self.settings)
 
     def _jobs_char_schalten(self, cid, an):
         aus = self._jobs_aus()
@@ -2982,14 +3692,190 @@ class BauplanTabs:
         jetzt = self._jobs_stand_ts or _t.time()
         alle = d.get("chars") or {}
         _chars = jobs_sichtbar(alle, self.settings.get("jobs_chars_aus"))
-        karten = []
-        for cid in jobs_karten_folge(_chars):
-            k = self._jobs_karte(cid, _chars[cid], namen, jetzt)
-            self._jobs_karten[int(cid)] = k
-            karten.append(k)
-        self._jobs_raster.setze(karten)
+        # SELBST GEZOGENE SPALTEN (emm775, loest die Account-Nummern
+        # aus emm772 ab - Nutzer-Entscheid "Ersetzen"). Ohne
+        # gespeicherte Anordnung verteilt `jobs_hand_spalten` die
+        # Karten nach der Dringlichkeits-Folge auf die Spalten.
+        from .mw_helpers import jobs_hand_spalten
+        _spalten = jobs_hand_spalten(
+            _chars, self.settings.get("jobs_karten_anordnung"),
+            max_spalten=5, folge=jobs_karten_folge(_chars))
+        _karten_sp = []
+        for _gruppe in _spalten:
+            _sp = []
+            for cid in _gruppe:
+                k = self._jobs_karte(cid, _chars[cid], namen, jetzt)
+                k._jobs_cid = int(cid)          # Schluessel fuer den Sortierer
+                self._jobs_karten[int(cid)] = k
+                _sp.append(k)
+            if _sp:
+                _karten_sp.append(_sp)
+        self._jobs_raster.setze_spalten(_karten_sp)
+        _so = getattr(self, "_jobs_sortierer", None)
+        if _so is not None:
+            for _k in self._jobs_karten.values():
+                _so.ueberwache(_k)
+            _so.aktiv = bool(self.settings.get("jobs_karten_manuell"))
+        # Die Vertraege stehen NICHT im Raster (emm765, s.
+        # _jobs_seite_bauen) - sie sind kein Charakter.
+        self._jobs_vertrag_zeile_fuellen(d, _chars)
         self._jobs_summe_zeigen(_chars, len(alle) - len(_chars), jetzt)
         self._jobs_rest_auffrischen()
+
+    def _jobs_vertrag_zeile_fuellen(self, d, sichtbare):
+        """Breite Zeile "OPEN CONTRACTS" ueber den Job-Karten (emm765).
+
+        Nutzer 29.10.2026: "können wir bitte in Industry Jobs exta karte
+        haben für Contracts und welcher charakter wie viele offen hat?
+        für noch mehr übersicht" - zuerst als Karte IM Raster gebaut
+        (emm764), nach seinem Screenshot verworfen ("nee das sieht zu
+        verwirrend aus die contracts karte mitten in den Jobs karetn")
+        und auf seine Wahl hierher verlegt: EINE Zeile ueber die volle
+        Breite zwischen den Kennzahl-Kacheln und den Karten. Das Raster
+        bleibt damit, was es verspricht - eine Karte je Charakter.
+
+        Je Charakter: "N out" (er ist AUSSTELLER, SEINE Ware haengt im
+        Vertrag) und "N in" (Ware kommt zu ihm, sobald er annimmt);
+        Kurier-Vertraege bekommen eine eigene Marke, weil ihre Ware
+        wirklich fliegt. Alles in EINER Rich-Text-Zeile, damit die
+        Hoehe konstant bleibt; bei vielen Charakteren bricht sie um.
+
+        Die Zeile verschwindet ganz, wenn es nichts zu sagen gibt (kein
+        Vertrag, kein Fehler, keine Scope-Luecke) - sie bleibt aber,
+        sobald etwas schieflief (gerechnet oder gemeldet, nie still).
+        """
+        box = getattr(self, "_jobs_vertrag_box", None)
+        if box is None:
+            return
+        lay = self._jobs_vertrag_lay
+        while lay.count():
+            _it = lay.takeAt(0)
+            _w = _it.widget()
+            if _w is not None:
+                _w.deleteLater()
+        _je = (d or {}).get("vertraege") or {}
+        _fehler = (d or {}).get("vertraege_fehler") or []
+        _scope = (d or {}).get("vertraege_scope") or []
+        _zeilen = []
+        for _cid, _e in (sichtbare or {}).items():
+            if int(_cid) < 0:            # Corp-Karte, kein Charakter
+                continue
+            _z = _je.get(int(_cid))
+            if not _z or not _z.get("rein"):
+                continue
+            _zeilen.append((str(_e.get("name") or _cid), _z))
+        _zeilen.sort(key=lambda x: (-x[1]["rein"], x[0]))
+        self._jobs_vertrag_zeilen = _zeilen            # b-Suite
+        if not _zeilen and not _fehler and not _scope:
+            box.hide()
+            return
+        from html import escape as _esc765
+        kopf = QHBoxLayout(); kopf.setSpacing(8)
+        # ZUKLAPPBAR, STANDARD OFFEN (emm766). Nutzer 29.10.2026 auf die
+        # Frage nach 30 Charakteren - er hatte selbst gemessen: "Ab 5
+        # charakteren gibt es eine 2te reihe", bei 30 waeren es rund
+        # sieben, und die Zeile fraesse die Job-Karten weg. Sein
+        # Auftrag: "Contracts KArte kann man zuklappen, ist standard
+        # aufgeklappt, klappt man sie aber zu bleibt sie so auch bei
+        # schliesssen und wieder öffnen der AP, klappt man sie auf,
+        # bleibt sie so". Gemerkt wird deshalb das ZUGEKLAPPT-Sein
+        # (`jobs_vertraege_zu`) - fehlt der Schluessel, ist sie offen.
+        _zu766 = bool(self.settings.get("jobs_vertraege_zu"))
+        _pf766 = QPushButton()
+        _pf766.setCheckable(True)
+        _pf766.setChecked(not _zu766)
+        _pf766.setCursor(Qt.PointingHandCursor)
+        _pf766.setToolTip(t("Click to show or hide the contract list"))
+        # ALS KNOPF ERKENNBAR (emm768, Nutzer: "mach den ein und zu
+        # klappen button erkenntlicher"). Vorher war er randlos und sah
+        # aus wie eine Ueberschrift - dieselbe Lehre wie emm347 bei den
+        # Job-Karten ("beim Mouseover soll man erkennen, dass es etwas
+        # zum Anklicken ist"): eigene Flaeche, Rahmen, Hand-Cursor, und
+        # beim Darueberfahren cyan.
+        _pf766.setStyleSheet(
+            f"QPushButton{{text-align:left; background:{theme.PANEL2}; "
+            f"color:{theme.AMBER}; border:1px solid {theme.AMBER}; "
+            f"border-radius:4px; padding:3px 10px; "
+            f"font-size:13px; letter-spacing:2px; font-weight:800;}}"
+            f"QPushButton:hover{{background:{theme.CYAN_FILL}; "
+            f"border-color:{theme.CYAN}; color:{theme.CYAN};}}")
+        _t765 = _pf766
+        kopf.addWidget(_pf766)
+        _ges = int((d or {}).get("vertraege_n") or 0)
+        if _ges:
+            _b = QLabel(str(_ges))
+            _b.setToolTip(t("{n} contract(s) waiting for you to accept "
+                            "\u2013 counted once each.").format(n=_ges))
+            _b.setStyleSheet(f"background:{theme.AMBER}; color:{theme.BG}; "
+                             f"font-weight:800; border-radius:4px; "
+                             f"padding:1px 7px;")
+            kopf.addWidget(_b)
+        # KEIN ERKLAERTEXT IN DIE KOPFZEILE (b153): ein Label ohne
+        # Umbruch neben Titel und Marke zwingt der ganzen Seite seine
+        # Breite auf - genau die Falle, die oben schon die Legende in
+        # eine eigene Zeile gezwungen hat (626 statt <= 600 px). Der
+        # Satz steht deshalb im Tooltip des Titels.
+        _t765.setToolTip(t("Only OUTSTANDING contracts addressed to you "
+                           "\u2013 the ones you still have to accept. What "
+                           "you issued yourself is waiting on the other "
+                           "side and is not listed here; Stock locations "
+                           "still counts its material as stock."))
+        kopf.addStretch()
+        _w = QWidget(); _w.setLayout(kopf)
+        lay.addWidget(_w)
+        rumpf = QWidget()
+        lay2 = QVBoxLayout(rumpf)
+        lay2.setContentsMargins(0, 0, 0, 0); lay2.setSpacing(4)
+        lay.addWidget(rumpf)
+        self._jobs_vertrag_rumpf = rumpf               # b-Suite
+
+        def _pfeil766(on, _b=_pf766, _n=len(_zeilen)):
+            _b.setText(("\u25be " if on else "\u25b8 ")
+                       + t("CONTRACTS TO ACCEPT"))
+        _pf766.toggled.connect(
+            lambda on, _r=rumpf, _f=_pfeil766:
+            self._jobs_vertrag_klappen(on, _r, _f))
+        _pfeil766(not _zu766)
+        rumpf.setVisible(not _zu766)
+        if _zeilen:
+            _teile = []
+            for _nm, _z in _zeilen:
+                _wert = []
+                if _z.get("rein"):
+                    _wert.append(f'<span style="color:{theme.CYAN}; '
+                                 f'font-weight:700;">'
+                                 + _esc765(t("{n} in").format(n=_z["rein"]))
+                                 + "</span>")
+                if _z.get("kurier"):
+                    _wert.append(f'<span style="color:{theme.MUTED};">'
+                                 + _esc765(t("{n} courier").format(
+                                     n=_z["kurier"])) + "</span>")
+                _teile.append(f'<span style="color:{theme.TEXT};">'
+                              + _esc765(_nm) + "</span> "
+                              + " ".join(_wert))
+            _zl = QLabel(("&nbsp;&nbsp;\u00b7&nbsp;&nbsp;").join(_teile))
+            _zl.setTextFormat(Qt.RichText)
+            _zl.setWordWrap(True)
+            _zl.setStyleSheet(f"font-size:{theme.FS_SMALL};")
+            _zl.setToolTip(t("Contracts addressed to this character and "
+                             "still outstanding - he has to accept them. "
+                             "Already accepted courier runs are not "
+                             "listed."))
+            lay2.addWidget(_zl)
+        for _txt765, _farbe in ((t("Contracts of {names} not readable.")
+                                 .format(names=", ".join(_fehler))
+                                 if _fehler else None, theme.RED),
+                                (t("{n} character(s) can't share contracts "
+                                   "yet \u2013 re-link them.")
+                                 .format(n=len(_scope)) if _scope else None,
+                                 theme.AMBER)):
+            if not _txt765:
+                continue
+            _wz = QLabel(_txt765)
+            _wz.setWordWrap(True)
+            _wz.setStyleSheet(f"color:{_farbe}; font-size:{theme.FS_SMALL};")
+            lay2.addWidget(_wz)
+        box.show()
 
     def _jobs_summe_zeigen(self, chars, versteckt, jetzt):
         from .mw_helpers import jobs_summe, jobs_dauer_kurz, jobs_kapazitaet
@@ -3008,6 +3894,14 @@ class BauplanTabs:
         self._jobs_kapazitaet = ka                  # b-Suite
         kc = self._jobs_kacheln
         _farbe_f = theme.GREEN if su["ready"] else theme.MUTED
+        # KACHEL-RAHMEN ALS SIGNAL (emm809): mit Abholbereitem gruen
+        # umrandet, sonst der normale Kachel-Stil aus _industrie_kachel.
+        kc["ready"]["rahmen"].setStyleSheet(
+            f"QFrame#Card{{background:{theme.PANEL2}; "
+            f"border:2px solid {theme.GREEN}; border-radius:6px;}}"
+            if su["ready"] else
+            f"QFrame#Card{{background:{theme.PANEL2}; "
+            f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
         kc["ready"]["zahl"].setText(
             f'<span style="color:{_farbe_f};">\u2713 {su["ready"]}</span>')
         kc["ready"]["unter"].setText(t("ready to deliver"))
@@ -3084,7 +3978,18 @@ class BauplanTabs:
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(7)
         _side_w = QWidget()
-        _side_w.setFixedWidth(380)
+        # BREITE GEMESSEN, NICHT GESCHAETZT (emm703, Nutzer 25.10.2026:
+        # "Finefilters im Scanner sind zusammengedrueckt ... einfach etwas
+        # Breiter machen man hat ja auch mehr als genug platz"). Die 380 px
+        # waren nachweislich zu schmal: die Feinfilter-Reihe braucht
+        # 4 Felder x 90 px Mindestbreite (170 fuer Kategorie, 130 fuer Tech)
+        # + 3 x 16 px Spalten-Abstand + 2 x 14 px Rand + 2 x 1.5 px
+        # Karten-Rahmen = 559 px. Bei 380 px blieb Qt darunter und schnitt
+        # die Beschriftungen ab ("All categor", "All buildab" im Screenshot).
+        # 560 px deckt den gemessenen Bedarf; die Item-Liste links behaelt
+        # bei jeder ueblichen Fensterbreite mehr Platz, als ihre fuenf
+        # Spalten brauchen.
+        _side_w.setFixedWidth(560)
         self.b_side = QVBoxLayout(_side_w)
         self.b_side.setContentsMargins(0, 0, 0, 0)
         self.b_side.setSpacing(7)
@@ -3336,8 +4241,21 @@ class BauplanTabs:
         ctl = QFrame(); ctl.setObjectName("Card")
         g = QGridLayout(ctl); g.setContentsMargins(14, 6, 14, 6)
         g.setHorizontalSpacing(16); g.setVerticalSpacing(2)
-        self.b_cat = QComboBox(); self.b_cat.setMinimumWidth(170)
-        self.b_cat.addItem(t("All categories"), None)
+        # KATEGORIE-MEHRFACHAUSWAHL (emm704, Nutzer 25.10.2026:
+        # "mehrfachauswahl waere gut"). Vorher ein QComboBox mit GENAU EINER
+        # Kategorie oder "alle" - wer Schiffe UND Module suchen wollte,
+        # musste zweimal scannen. Jetzt derselbe Checkbox-Knopf wie in Swing
+        # Trade und Regional Trading (`_filter_mehrfach_knopf`, emm611) -
+        # kein neuer Baustein, nur hier bisher nicht verdrahtet. Die Liste
+        # bleibt wie gehabt auf BAUBARE Kategorien beschraenkt
+        # (`buildable_category_options`, s. _reload_categories) - der Scanner
+        # sucht Dinge zum Bauen, Erze/SKINs gehoeren hier nicht hin.
+        self.b_cat, self._b_cat_refresh, self._b_cat_selected = \
+            self._filter_mehrfach_knopf(
+                t("All categories"), tooltip=t(
+                    "Filter by item category - all checked = no filter. "
+                    "Needs „Load recipes“ once."))
+        self.b_cat.setMinimumWidth(170)
         self.b_tech = QComboBox(); self.b_tech.setMinimumWidth(130)
         # WICHTIG: als String-Key speichern, NICHT als Python-Set - QComboBox.
         # findData() (in _apply_build_preset für die Presets gebraucht) vergleicht
@@ -3365,8 +4283,15 @@ class BauplanTabs:
         for rid, rname in sorted(industry.RACE_NAMES.items(), key=lambda x: x[1]):
             self.b_race.addItem(rname, rid)
 
-        self.b_cat.setToolTip(t("Only items of this category (ships, modules, ammo \u2026). "
-                                "Needs the SDE \u2013 \u201eLoad recipes\u201c."))
+        # emm704: Text folgt der Mehrfachauswahl - "this category" (Einzahl)
+        # stimmte nicht mehr, sobald man mehrere Haken setzen kann. Er wird
+        # hier GESETZT statt am Knopf-Aufbau oben, weil diese Zeile schon
+        # vorher die Tooltips aller Feinfilter-Felder an einer Stelle
+        # buendelte - das bleibt so, sonst stuenden zwei Texte an zwei
+        # Orten und liefen auseinander.
+        self.b_cat.setToolTip(t("Only items of the ticked categories (ships, modules, "
+                                "ammo \u2026) - all ticked = no filter. Needs the SDE "
+                                "\u2013 \u201eLoad recipes\u201c."))
         self.b_tech.setToolTip(t(
             "Tech level. LP/faction items are excluded on principle "
               "because their BPC cost (LP + ISK) cannot be calculated "
@@ -3389,23 +4314,39 @@ class BauplanTabs:
             (t("Price from"), self.b_pmin), (t("Price to (0=∞)"), self.b_pmax),
         ]
         for i, (label, wdg) in enumerate(bcontrols):
-            wdg.setMaximumWidth(190); wdg.setMinimumWidth(90)
+            # MINDESTBREITEN NICHT PLATTMACHEN (emm703): die pauschale 90
+            # ueberschrieb die weiter oben GEZIELT gesetzten Werte
+            # (b_cat 170, b_tech 130) - deren lange Eintraege
+            # ("All categories", "All buildable (T1-T3)") wurden dadurch
+            # abgeschnitten. max() haelt den jeweils groesseren Wert.
+            wdg.setMaximumWidth(190)
+            wdg.setMinimumWidth(max(90, wdg.minimumWidth()))
             lab = QLabel(label); lab.setObjectName("Muted")
-            r = (i // 5) * 2
-            g.addWidget(lab, r, i % 5)
-            g.addWidget(wdg, r + 1, i % 5)
+            # VIER STATT FUENF SPALTEN (emm703): bei fuenf Feldern je Reihe
+            # haette dieselbe Reihe 170+130+90+90+90 = 570 px Felder
+            # gebraucht, also 665 px Karte. Mit vier Feldern sind es 480 px
+            # Felder und 559 px Karte - gleiche Zeilenzahl (8 Felder = 2
+            # Reihen), aber alles lesbar statt gequetscht.
+            r = (i // 4) * 2
+            g.addWidget(lab, r, i % 4)
+            g.addWidget(wdg, r + 1, i % 4)
             self._install_tip(wdg, lab)
             if hasattr(wdg, "valueChanged"):
                 wdg.valueChanged.connect(self._build_preset_to_custom)
             elif hasattr(wdg, "currentIndexChanged"):
                 wdg.currentIndexChanged.connect(self._build_preset_to_custom)
-        g.setColumnStretch(5, 1)
+        # emm704: Der Kategorie-Knopf hat kein `currentIndexChanged` mehr
+        # (die Schleife oben verknuepft nur Spin-/Combo-Felder) - wie beim
+        # Vorbild in Swing Trade haengt die Preset-Markierung deshalb am
+        # Schliessen des Menues, nicht an jedem einzelnen Haken.
+        self.b_cat.menu().aboutToHide.connect(self._build_preset_to_custom)
+        g.setColumnStretch(4, 1)   # emm703: vier Feldspalten (0-3), Rest links buendig
         # Zeigt an, wenn das Reaktions-Preset aktiv ist, damit der Schalter
         # nicht unsichtbar im Hintergrund wirkt. (only_cap gibt es nicht
         # mehr - Capital-Module laufen regulaer unter T1/T2 mit.)
         self.b_only_cap_lbl = QLabel("")
         self.b_only_cap_lbl.setStyleSheet(f"color:{theme.CYAN}; font-size:11px;")
-        g.addWidget(self.b_only_cap_lbl, 4, 0, 1, 4)
+        g.addWidget(self.b_only_cap_lbl, 4, 0, 1, 3)   # emm703: 4 Feldspalten
         self.b_refine_btn = QPushButton(" " + t("Optimal quantity"))
         self.b_refine_btn.setIcon(icons.icon("trend_up"))
         self.b_refine_btn.setToolTip(t(
@@ -3417,7 +4358,7 @@ class BauplanTabs:
               "hits. Results are kept for this session only (RAM, no "
               "file) – no data litter on the disk."))
         self.b_refine_btn.clicked.connect(self._refine_all_optimal_qty)
-        g.addWidget(self.b_refine_btn, 4, 4, 1, 2)
+        g.addWidget(self.b_refine_btn, 4, 3, 1, 2)   # emm703: 4 Feldspalten
         # ZUGEKLAPPT starten (Nutzer: "keine ueberladenen Layouts, ich will
         # nur 3-4 Knoepfe"). Die Feinfilter setzt normalerweise das
         # Preset - wer sie braucht, klappt sie auf. Nichts entfernt,
@@ -3724,7 +4665,46 @@ class BauplanTabs:
                     _w.deleteLater()
         if not plan:
             return
+        # "EIGENE BPC" = KEINE INVENTION MEHR ZEIGEN (emm706, Nutzer
+        # 25.10.2026: "wenn man own BPC's anhackt braucht es keine invention
+        # informationen mehr im invention Tab vorallem der regler wo man die
+        # invention time einstellen kan und so ist ja dann echt nicht mehr
+        # noetig zu sehen, das verwirrt nur").
+        # Diese Liste entstand bisher REIN aus den SDE-Daten: alles mit
+        # Invention-Rezept bekam eine Karte, ob der Nutzer die Kopie schon
+        # besitzt oder nicht. Die RECHNUNG wusste es laengst besser -
+        # `industry._inv_cost` liefert bei gesetztem `inv_manual_override`
+        # 0 ISK und `_invention_me_pct` liefert None. Decryptor-Wahl,
+        # Erfolgschance und Kopien-Regler in der Karte wirkten damit auf
+        # KEINEN einzigen Wert des Plans: Bedienelemente ohne Wirkung, die
+        # aussahen, als haetten sie welche. Jetzt faellt die Karte weg;
+        # ME/TE und der Haken selbst bleiben ueber `_own_bpc_fallback_card`
+        # erreichbar (sie ist genau dafuer da), sodass man jederzeit
+        # zurueckschalten kann.
+        # NUR IM EINZELPLAN (von der Suite gefangen, b118): im BUENDEL sitzt
+        # der "Eigene BPC"-Haken je Ende IN dieser Karte (`_bd_inv_own`) -
+        # faellt die Karte weg, ist der Haken unerreichbar und man kaeme nie
+        # wieder zurueck. Dort greift stattdessen der laengst vorhandene,
+        # engere Weg: `_sp_box.hide()` blendet die Kopieranleitung samt
+        # Regler aus und laesst die Karte mit Haken und ME/TE stehen
+        # (Zeile ~4812). Im Einzelplan haengen Haken und ME/TE dagegen an
+        # `own_bpc_widgets`, die `_own_bpc_fallback_card` auffaengt - erst
+        # dadurch ist das Entfernen der ganzen Karte hier ueberhaupt sicher.
+        # NUR DER ECHTE NUTZER-HAKEN, NICHT JEDER OVERRIDE (Simulation
+        # werkzeuge/sim_emm706.py, Szenarien D und E): `inv_manual_override`
+        # hat VIER Quellen, und nur eine davon ist der Haken. "Load own
+        # BPCs" (main_window.py:8196) setzt den Override fuer JEDES Item mit
+        # eigener BPO - auch fuer KOMPONENTEN, ohne dass der Nutzer etwas
+        # anhakt. Die erste Fassung fragte nur den Override ab und liess
+        # damit Komponenten-Karten verschwinden, fuer die es gar keinen
+        # Haken zum Zurueckschalten gibt: `_own_bpc_fallback_card` kennt
+        # ausschliesslich das Endprodukt. Deshalb hier `_bd_own_bpc` (der
+        # Haken selbst) UND `tid == top_type_id` - der ESI-Automatikfall
+        # bleibt unveraendert wie bisher.
+        _obc_an = (int(getattr(self, "_bd_type", 0) or 0) != industry.BUENDEL_ID
+                   and bool(getattr(self, "_bd_own_bpc", False)))
         items = []
+        _obc_weg = []          # (tid, bp_id) - fuer den Hinweis in der Karte
         for tid, runs in (plan.get("build_runs") or {}).items():
             if runs < 1:
                 continue
@@ -3736,6 +4716,9 @@ class BauplanTabs:
                 continue
             inv = recipes.invention_for_bpc.get(bp_id)
             if not inv:
+                continue
+            if _obc_an and tid == top_type_id:
+                _obc_weg.append((tid, bp_id, runs))
                 continue
             items.append((tid, bp_id, runs, inv))
 
@@ -3760,10 +4743,58 @@ class BauplanTabs:
             fb_title = QLabel(t("\u2699 End product ME/TE ({name})").format(name=names.get(top_type_id, "")))
             fb_title.setStyleSheet(f"color:{theme.CYAN}; font-weight:700;")
             fb_v.addWidget(fb_title)
-            fb_info = QLabel(t("This item needs no invention (T1/BPO) - ME/TE still "
-                               "apply, e.g. if your own blueprint is already researched."))
+            # ZWEI VERSCHIEDENE GRUENDE, ZWEI TEXTE (emm706): bis hierher gab
+            # es nur den T1/BPO-Fall. Seit "Eigene BPC" die Invention-Karte
+            # ausblendet, landet auch ein T2-Item hier - "needs no invention
+            # (T1/BPO)" waere dann schlicht falsch.
+            # AM HAKEN, NICHT AN DER LISTE (Simulation, Restlueckenbefund):
+            # `_obc_weg` ist leer, wenn das Endprodukt gar nicht gebaut wird
+            # (voll aus Bestand gedeckt) - der Haken kann trotzdem gesetzt
+            # sein. Haengt der Text an der Liste, steht dort dann faelschlich
+            # "needs no invention (T1/BPO)" fuer ein T2-Item.
+            _obc_hier = next((_e for _e in _obc_weg if _e[0] == top_type_id), None)
+            if _obc_an:
+                # NEUTRAL FORMULIERT (emm710): "You ticked" war falsch - der
+                # Haken setzt sich AUCH VON SELBST, sobald ESI eine eigene
+                # Kopie findet (mw_bauplan_fenster.py ~2058, nur am neuen,
+                # ungespeicherten Plan). Dem Nutzer zu sagen, er habe etwas
+                # angehakt, was das Programm getan hat, ist dieselbe Sorte
+                # Falschaussage wie die aus emm707.
+                # TEXT PRAEZISIERT (emm716): die Automatik greift nur noch
+                # beim Oeffnen aus My Blueprints auf eine eigene Kopie -
+                # der Satz sagt jetzt genau das.
+                fb_info = QLabel(t(
+                    "„Own BPC“ is active for this item, so no invention is "
+                    "planned - decryptor, success chance and copies have no "
+                    "effect and are hidden. It is ticked automatically when "
+                    "you open the plan from My Blueprints on your own copy; "
+                    "untick it to plan invention again."))
+            else:
+                fb_info = QLabel(t("This item needs no invention (T1/BPO) - ME/TE still "
+                                   "apply, e.g. if your own blueprint is already researched."))
             fb_info.setObjectName("Muted"); fb_info.setWordWrap(True)
             fb_v.addWidget(fb_info)
+            # REICHEN DIE EIGENEN RUNS UEBERHAUPT? (emm706, selbst beim
+            # Durchdenken gefunden und dem Nutzer vorab gesagt): die Rechnung
+            # setzt die Invention bei "Eigene BPC" auf 0 - AUCH wenn die
+            # Kopie fuer die geplante Menge gar nicht reicht. Das ist eine
+            # bestehende, bewusste Vereinfachung; ohne Invention-Karte waere
+            # hier aber der letzte sichtbare Hinweis darauf verschwunden.
+            # Deshalb sagt die Karte es jetzt ausdruecklich, statt dass der
+            # Nutzer es erst im Spiel vor dem leeren Hangar merkt.
+            if _obc_hier is not None:
+                _noetig706 = int(_obc_hier[2] or 0)
+                _haben706 = int(getattr(self, "_bd_own_bpc_runs", 0) or 0)
+                if _haben706 and _noetig706 > _haben706:
+                    _warn706 = QLabel(t(
+                        "⚠ Your copy covers {haben} run(s), the plan needs "
+                        "{noetig}. The missing ones would have to be invented or "
+                        "bought - the plan still calculates 0 ISK invention cost "
+                        "for them."
+                    ).format(haben=_haben706, noetig=_noetig706))
+                    _warn706.setStyleSheet(f"color:{theme.AMBER};")
+                    _warn706.setWordWrap(True)
+                    fb_v.addWidget(_warn706)
             fb_row1 = QHBoxLayout(); fb_row1.setSpacing(6)
             _me_cap = QLabel(t("ME:")); _me_cap.setStyleSheet("font-size:11px;")
             fb_row1.addWidget(_me_cap); fb_row1.addWidget(_me_sp)
@@ -3809,7 +4840,12 @@ class BauplanTabs:
         # Struktur für Invention (zugewiesen oder Auto-Wahl) - Warnung, wenn
         # noch gar keine Struktur angelegt ist.
         has_structs = bool(self.settings.get("bau_structures"))
-        inv_struct = self._struct_for_activity("invention") if has_structs else None
+        # emm720: der Invention-Tab zeigt/rechnet fuer den OFFENEN Plan -
+        # seine eigene Struktur-Wahl gilt mit (als Parameter durchgereicht).
+        inv_struct = self._struct_for_activity(
+            "invention",
+            override=getattr(self, "_bd_struct_override", None)) \
+            if has_structs else None
         assigned_map = self.settings.get("bau_activity_struct", {}) or {}
         struct_lbl = QLabel()
         if not has_structs:
@@ -3818,7 +4854,12 @@ class BauplanTabs:
             struct_lbl.setStyleSheet(f"color:{theme.AMBER}; font-weight:700;")
         elif inv_struct:
             # "Auto" heisst in beiden Sprachen gleich und bleibt.
-            tag = t("assigned") if assigned_map.get("invention") else "Auto"
+            # emm720: eine Plan-eigene Wahl heisst beim Namen, nicht "Auto".
+            if (getattr(self, "_bd_struct_override", None)
+                    or {}).get("invention"):
+                tag = t("this plan")
+            else:
+                tag = t("assigned") if assigned_map.get("invention") else "Auto"
             struct_lbl.setText(t("Structure: ") + f"<b>{inv_struct.get('name','?')}</b> "
                                f"({tag})")
             struct_lbl.setStyleSheet(f"color:{theme.MUTED};")
@@ -4658,7 +5699,7 @@ class BauplanTabs:
                 from .mw_helpers import t1_original_lage as _t1lage512
                 _lage512, _bpo512, _bpcr512 = _t1lage512(
                     t1_bp, getattr(self, "_bd_owned_bp_cache", None),
-                    getattr(self, "_bd_bp_im_job", None),
+                    self._bd_bp_im_job_wirksam(),
                     getattr(self, "_bd_bp_fehler", None))
                 if not combo.isEnabled():
                     _lage512 = "unknown"          # Own BPC: kein Kopierjob
@@ -5089,7 +6130,20 @@ class BauplanTabs:
         from PySide6.QtWidgets import QTableWidgetItem
         tbl.setSortingEnabled(False)
         stock = (getattr(self, "_bd_opts", None) or {}).get("stock") or {}
-        _virt_tab = getattr(self, "_bd_virt_stock", None) or {}
+        # DIE PIPELINE STEHT BEIM EINGEFRORENEN PLAN WOANDERS (emm691,
+        # dieselbe Falle wie emm679 beim Startblocker): `_bd_virt_stock`
+        # ist bei einem EINGEFRORENEN Plan absichtlich leer
+        # (mw_bauplan_fenster: "Beim eingefrorenen Plan ist der
+        # Einfrier-Stand nicht in Lager/Pipeline zerlegbar"). Alle seine
+        # Plaene sind eingefroren - der "enough ... n of them in build"-
+        # Hinweis (Ferrogel-805-Vorfall, Sitzung 8) und die
+        # Sofort-Start-Zusage unten haben bei ihm also NIE gegriffen:
+        # Reaktor-Inhalt zaehlte als "liegt im Hangar".
+        # `_bd_pipeline_live` gibt es in beiden Faellen (dieselbe Quelle,
+        # die `_bestand_fuer_deckung` abzieht); `_bd_virt_stock` bleibt
+        # Rueckfall.
+        _virt_tab = (getattr(self, "_bd_pipeline_live", None)
+                     or getattr(self, "_bd_virt_stock", None) or {})
         # GESAMTBESITZ (Portfolio, ALLE Orte) - nur fuer den Tooltip, EINMAL
         # geholt statt je Zeile. Die Spalte selbst bleibt unveraendert: sie
         # zaehlt weiter nur, was der Plan wirklich verplanen kann.
@@ -5234,6 +6288,11 @@ class BauplanTabs:
                     _out_je_run[int(_t_o)] = int(_bp_o[2] or 1)
         except Exception:
             _out_je_run = {}
+        # NACHLAUF-RUNS (emm646) - EINE Stelle fuer beide Reiter
+        # (Materialien UND Runplaner), siehe `_nachlauf_fuer_plan`.
+        _nachlauf, _nachkauf = self._nachlauf_fuer_plan(plan, stock,
+                                                        _rest_runs)
+        _zusammen = self._zusammenlegen_fuer_plan(plan, _rest_runs)
         buy = plan.get("buy") or {}
         stock_used = plan.get("stock_used") or {}
         build_runs = plan.get("build_runs") or {}
@@ -5328,10 +6387,16 @@ class BauplanTabs:
         # ERZ, DESSEN MINERALE SCHON IM BESTAND LIEGEN (28.09.2026): nicht
         # mehr gebraucht, auch ohne Haken in Stufe 0.
         try:
+            _rp_lage738 = self._erz_bestand_lage() or {}
             _rp_erz_bestand = {int(str(_k).split("|")[1])
-                               for _k in self._erz_durch_bestand()}
+                               for _k, _v in _rp_lage738.items()
+                               if _v and int(_v[0]) == 0}
         except Exception:
+            _rp_lage738 = {}
             _rp_erz_bestand = set()
+        # TEILGEDECKT (emm738): je Erz (Restmenge, Gesamtmenge) ueber seine
+        # Schritte - nur wenn wirklich etwas wegfaellt (0 < Rest < Gesamt).
+        _rp_erz_teil = {}
         _rp_alle = (plan or {}).get("reprocess") or {}
         try:
             _cn_rp = {int(_c["character_id"]): (_c.get("character_name")
@@ -5351,6 +6416,16 @@ class BauplanTabs:
             if _st.get("gratis"):
                 _rp_gratis[int(_st.get("erz") or 0)] = (
                     _rp_gratis.get(int(_st.get("erz") or 0), 0) + int(_st.get("menge") or 0))
+            _tlf738 = _rp_lage738.get(reprocess.schritt_key(_st))
+            try:
+                _rest738 = (int(_tlf738[0]) * int(_st.get("portion") or 0)
+                            if _tlf738 is not None else int(_st.get("menge") or 0))
+            except (TypeError, ValueError, IndexError):
+                _rest738 = int(_st.get("menge") or 0)
+            _e738 = int(_st.get("erz") or 0)
+            _alt738 = _rp_erz_teil.get(_e738, (0, 0))
+            _rp_erz_teil[_e738] = (_alt738[0] + _rest738,
+                                   _alt738[1] + int(_st.get("menge") or 0))
             _rp_erz_info[int(_st.get("erz") or 0)] = (
                 "\u267b \u2192 " + ", ".join(
                     f"{int(_q):,}".replace(",", "'") + " " + str((names or {}).get(_m) or _m)
@@ -5603,11 +6678,34 @@ class BauplanTabs:
             # falsch: der Reaktor-Inhalt liegt nicht im Hangar. Ingame stand
             # 830/1'635, das Tool sagte "genug". Die Zusage rechnet deshalb
             # NUR mit dem, was wirklich im Lager liegt.
-            _virt = getattr(self, "_bd_virt_stock", None) or {}
+            # ... UND BEIM EINGEFRORENEN PLAN GRIFF DER ABZUG NIE (emm691):
+            # `_bd_virt_stock` ist dort absichtlich leer, abgezogen wurde
+            # also null - exakt die emm679-Falle, nur hier in der
+            # POSITIVEN Zusage statt im Warnhinweis. Seit Sitzung 8 war
+            # dieser Fix fuer seine (durchweg eingefrorenen) Plaene
+            # wirkungslos.
+            # Jetzt DIESELBEN Quellen wie `_startblocker_fuer_zeile`
+            # (Regel 9: Zusage und Warnung sind EINE Frage mit zwei
+            # Vorzeichen - rechnen sie verschieden, koennen "kann sofort
+            # starten" und "wartet auf ..." gleichzeitig dastehen):
+            # echter Bestand (ohne Einfrier-Merge, nach fremden
+            # Reservierungen) minus die Pipeline, die es in beiden
+            # Faellen gibt.
+            # LEER BLEIBT LEER (Regel 3): liefert der echte Bestand nichts,
+            # gibt es keine gruene Zusage - NICHT auf den Einfrier-Merge
+            # zurueckfallen, der haelt absichtlich auch Verbrauchtes fest.
+            # Nur ein ABSTURZ der Rechnung faellt auf den alten Weg zurueck
+            # (dann lieber die alte Unschaerfe als gar keine Anzeige).
+            try:
+                _lag_s = self._bd_echter_bestand() or {}
+            except Exception:
+                _lag_s = stock
+            _virt = (getattr(self, "_bd_pipeline_live", None)
+                     or getattr(self, "_bd_virt_stock", None) or {})
             for m, jq in mats:
                 if build_runs.get(m):
                     return False          # Zutat haengt selbst am Bau
-                _lager = (int(stock.get(m, 0) or 0)
+                _lager = (int(_lag_s.get(m, 0) or 0)
                           - int(_virt.get(m, 0) or 0))
                 if _lager < jq:
                     return False
@@ -5716,6 +6814,20 @@ class BauplanTabs:
                     r["reason"] = t("Everything in this plan that uses this item is "
                                     "already built or running - the remaining runs "
                                     "are not needed. Nothing to buy, nothing to start.")
+                elif _offen_runs == 0 and _nachlauf.get(int(r["tid"])):
+                    # SACKGASSE AUFGELOEST (emm646): die geplanten Runs sind
+                    # aufgebraucht, das Erzeugnis ist verbaut, und die
+                    # naechste Stufe braucht mehr. Frueher stand hier
+                    # "nothing left to build" - und der Nutzer stand im
+                    # Spiel vor dem leeren Reaktor.
+                    _nn = int(_nachlauf[int(r["tid"])])
+                    status_txt = t("{n} more run(s) needed").format(n=_nn)
+                    status_col = theme.AMBER
+                    r["reason"] = t(
+                        "All planned runs of this item are done, but the next "
+                        "stage has used up the output and needs more. Start "
+                        "{n} more run(s) - the shopping list cannot help here, "
+                        "this plan builds the item itself.").format(n=_nn)
                 elif _offen_runs == 0:
                     # NICHTS MEHR ZU BAUEN: alle Runs geliefert oder gestartet.
                     # Vorher stand hier "can be built - 13'019 units" (Nutzer
@@ -5748,6 +6860,24 @@ class BauplanTabs:
                     r["reason"] = t("Built entirely per plan (see run planner) \u2013 "
                                     "nothing to buy, no stock needed.")
                 n_built += 1
+            elif _nachlauf.get(int(r["tid"])) or _nachkauf.get(int(r["tid"])):
+                # emm646: gedeckt waere hier falsch - es fehlt etwas, das
+                # bisher niemand verlangt hat.
+                _nn2 = int(_nachlauf.get(int(r["tid"]), 0))
+                if _nn2:
+                    status_txt = t("{n} more run(s) needed").format(n=_nn2)
+                    r["reason"] = t(
+                        "The planned runs are used up and the output is gone - "
+                        "start {n} more run(s).").format(n=_nn2)
+                else:
+                    _nk2 = int(_nachkauf.get(int(r["tid"]), 0))
+                    status_txt = t("{n} still to buy").format(
+                        n=f"{_nk2:,}".replace(",", "'"))
+                    r["reason"] = t(
+                        "Nobody builds this item, and the remaining runs need "
+                        "more than is in stock.")
+                status_col = theme.AMBER
+                n_missing += 1
             elif _rest_bekannt and int(r["tid"]) not in _rest_fehlt:
                 # FUER DIE RESTLICHEN RUNS GEDECKT. Der Gesamt-Bedarf oben
                 # sagt zwar noch "es fehlt etwas", aber das bezieht sich auf
@@ -5816,6 +6946,32 @@ class BauplanTabs:
                     "to {n} of this in game - the stock shown here may not be "
                     "there any more. Nothing is recalculated; check in game "
                     "before you rely on it.").format(n=_lag_txt)).strip()
+            # ZUSAMMENLEGEN (emm648): die Summe reicht, aber kein
+            # einzelner Charakter hat genug - ein EVE-Job sieht nur den
+            # Hangar seines Charakters. Als ZUSATZ, nie statt einer
+            # anderen Meldung: es ist ein Handgriff, kein Mangel.
+            _zl = (_zusammen or {}).get(int(r["tid"]))
+            if _zl:
+                # de_scan4: aus - BEGRUENDUNG: `_zl['fehlt']` ist der
+                # interne KARTENSCHLUESSEL aus zusammenlegen_noetig()
+                # (mw_helpers); angezeigt wird die Zahl, eingebettet in
+                # die t()-Texte direkt hier (emm696).
+                status_txt += " · " + t(
+                    "consolidate {n} from {who}").format(
+                        n=f"{int(_zl['fehlt']):,}".replace(",", "'"),
+                        who=str(_zl["bester"]))
+                status_col = theme.AMBER
+                r["reason"] = ((r.get("reason") or "") + "\n\n" + t(
+                    "You have enough in total ({ges}), but spread over "
+                    "several characters - the biggest holder is {who} with "
+                    "{hat}. A job in EVE can only use the hangar of the "
+                    "character running it, so move {n} over first. Nothing "
+                    "to buy.").format(
+                        ges=f"{int(_zl['gesamt']):,}".replace(",", "'"),
+                        who=str(_zl["bester"]),
+                        hat=f"{int(_zl['bester_menge']):,}".replace(",", "'"),
+                        n=f"{int(_zl['fehlt']):,}".replace(",", "'"))).strip()
+                # de_scan4: an
             if int(r.get("inv_esi") or 0) > 0:
                 _ie_txt = f"{int(r['inv_esi']):,}".replace(",", "'")
                 status_txt += " · " + t("{n} used by started invention jobs").format(
@@ -5830,11 +6986,38 @@ class BauplanTabs:
                 # überstimmen kann - eigene, klar sichtbare Farbe statt normalem Rot.
                 status_txt = t("on blacklist \u2013 never built")
                 status_col = theme.VIOLET
-            elif r.get("grund_art") == "kein_bp":
+            elif (r.get("grund_art") == "kein_bp"
+                  and not (_rest_bekannt
+                           and int(r["tid"]) not in _rest_fehlt)):
                 # "Meine Blueprints"-Kategorie nicht als besessen markiert - auch
                 # das überstimmt "Alles selbst bauen" nicht (kann ja nicht ohne
                 # eigene Blaupause bauen). Eigene Farbe (Cyan), damit man's von
                 # Blacklist UND von "wirklich kein Rezept" unterscheiden kann.
+                #
+                # NICHT MEHR UNBEDINGT (emm718, Nutzer 25.10.2026, Gallente-1-
+                # Buendel: "Materials Tab zeigt wieder ich haette intermediate
+                # reactions nicht, ja logisch habe ich nicht mehr es ist alles
+                # verbaut bereits zu composite Reactions"). URSACHE: weil die
+                # Blaupausen-Kategorie "Intermediate Reactions" hier nicht als
+                # besessen markiert ist, kauft der Plan sie statt sie zu bauen
+                # (`never_build_hit`, production_plan) - und die KOMPLETTE
+                # Planmenge (170.5k) landet in `buy`, ohne jeden Bezug zum
+                # REST-Bedarf. Die Zeile weiter oben (`elif _rest_bekannt and
+                # tid not in _rest_fehlt`) hatte laengst richtig erkannt: der
+                # einzige Verbraucher (Composite Reactions) ist fertig, also
+                # wird nichts mehr gebraucht - aber dieser Block hier
+                # ueberschrieb das UNBEDINGT mit "Blueprint not marked as
+                # owned", jedesmal, ganz gleich ob gerade etwas fehlte oder
+                # nicht. Jetzt gilt die Kein-BP-Meldung nur noch, wenn der
+                # Rest-Bedarf (`_rest_fehlt`, dieselbe Rechnung wie die
+                # Einkaufsliste) das Item WIRKLICH noch listet - ist er
+                # bekannt und sagt "nicht drin", bleibt die vorher korrekt
+                # gesetzte Zeile (z. B. "covered for the remaining runs ✓")
+                # stehen. Ist der Rest-Bedarf NICHT bekannt (`_rest_bekannt`
+                # False, z. B. kein gerechneter Plan), greift die alte
+                # Meldung unveraendert - safe Richtung: lieber einmal zu viel
+                # "Blueprint not marked as owned" als eine echte Luecke
+                # verschweigen.
                 status_txt = t("Blueprint not marked as owned")
                 status_col = theme.CYAN
             # ---- Herkunft getrennt ausweisen (Nutzer-Kernwunsch) -----------
@@ -5919,6 +7102,29 @@ class BauplanTabs:
                                 "in stock for this plan (reprocessed or bought). "
                                 "The ore is no longer needed and not on the "
                                 "shopping list.")
+            elif (int(r["tid"]) in _rp_erz_teil
+                  and 0 < _rp_erz_teil[int(r["tid"])][0]
+                  < _rp_erz_teil[int(r["tid"])][1]):
+                # TEILGEDECKT (emm738, Nutzer 27.10.2026: "jetzt will die
+                # Shopping-Liste die wieder kaufen ... die Materialien sind
+                # ja gedeckt"): ein Teil der Minerale liegt schon im Lager,
+                # das Erz muss nur noch den Rest decken - volle Portionen.
+                _rm738, _gm738 = _rp_erz_teil[int(r["tid"])]
+                _missing_q = max(0, int(_rm738) - int(_src_qty))
+                _miss_live = False
+                miss_txt = ("\u2013" if _missing_q <= 0
+                            else f"{_missing_q:,}".replace(",", "'"))
+                status_txt = t("\u267b only {rest} of {total} still needed "
+                               "\u2013 the other minerals are already in "
+                               "stock").format(
+                    rest=f"{int(_rm738):,}".replace(",", "'"),
+                    total=f"{int(_gm738):,}".replace(",", "'"))
+                status_col = theme.AMBER
+                r["reason"] = t("Most of the minerals this ore was planned for "
+                                "are already in stock for this plan. Only the "
+                                "remainder has to be bought and reprocessed "
+                                "(whole batches); the shopping list counts "
+                                "only this remainder.")
             # DIE FARBE FOLGT DER AUSSAGE (Sitzung 17, Nutzer: "es sieht auf
             # den ersten Blick so aus, als haette ich nicht alles - dabei
             # habe ich es, weil ich es noch bauen werde"). Die Spalte rechnet
@@ -6998,11 +8204,34 @@ class BauplanTabs:
         if not self.settings.get("bau_structures"):
             return None
         try:
-            _s = self._struct_for_activity("invention")
+            # emm720: der Runplaner zeigt den Science-Ort DIESES Plans -
+            # die Plan-eigene Struktur-Wahl gilt mit.
+            _s = self._struct_for_activity(
+                "invention",
+                override=getattr(self, "_bd_struct_override", None))
         except Exception:
             return None
         _n = (_s or {}).get("name")
         return _n or None
+
+    KNOPF_H_RUNPLAN = 24
+
+    def _knopf_hoehe_fest(self, huelle):
+        """Zeilenhoehe fuer eine Knopf-Zeile im Runplaner (emm576). Die
+        Kopier-Knoepfe bekommen eine FESTE Hoehe: ihre Wunschhoehe haengt an
+        Schrift und Stil, und unter Windows (Schrift ~1,4x) wuchs der Knopf
+        nach dem Bauen ueber die vorher gemessene Zeile hinaus - der untere
+        Rand fehlte. Mit fester Hoehe ist die Zeile ausrechenbar: Knopf +
+        Huellen-Rand + Zellpolster des Baums + Luft. Gibt die Hoehe zurueck,
+        die der Aufrufer als sizeHint setzt."""
+        from PySide6.QtWidgets import QPushButton as _QPB576
+        for _b in huelle.findChildren(_QPB576):
+            _b.setFixedHeight(self.KNOPF_H_RUNPLAN)
+        _m = huelle.layout().contentsMargins() if huelle.layout() else None
+        _rand = (_m.top() + _m.bottom()) if _m else 0
+        huelle.setMinimumHeight(self.KNOPF_H_RUNPLAN + _rand)
+        huelle.adjustSize()
+        return max(36, self.KNOPF_H_RUNPLAN + _rand + 12)
 
     def _science_block(self, tbl, names, klapp_vorher):
         """Kopieren + Invention als eigene Runplaner-Bloecke (emm411, v2 emm425).
@@ -7045,7 +8274,14 @@ class BauplanTabs:
         if checked is None:
             checked = set()
         dec_map = getattr(self, "_bd_decryptor_map", None) or {}
-        # Namen: erst die des Plans, Luecken aus dem Namens-Cache (ohne Netz).
+        # Namen: erst die des Plans, Luecken aus dem Namens-Cache (ohne Netz),
+        # was DANACH noch fehlt per ESI nachladen (emm700, Discord-Bug
+        # "Robust" 18.10.2026: "#1033" statt Blaupausen-Name unter Invent T2 -
+        # seltene T2-Blaupausen, die der frueheste Namens-Resolve des Plans
+        # noch nicht kannte, weil _bd_invention_needs erst SPAETER entsteht
+        # als jener Resolve-Lauf). DIESELBE Zwei-Stufen-Regel wie an jeder
+        # anderen Namens-Stelle dieser Datei (Zeilen ~800, ~1878, ~8546) -
+        # hier fehlte nur die zweite Stufe.
         _ids = set(needs) | {int(i.get("t1") or 0) for i in needs.values()}
         nm = dict(names or {})
         _fehlen = [i for i in _ids if i and not nm.get(i)]
@@ -7054,6 +8290,12 @@ class BauplanTabs:
                 nm.update(store.cached_names(_fehlen) or {})
             except Exception:
                 pass
+            _fehlen2 = [i for i in _fehlen if not nm.get(i)]
+            if _fehlen2:
+                try:
+                    nm.update(esi.resolve_names(_fehlen2) or {})
+                except Exception:
+                    pass
 
         def _name(tid):
             return str(nm.get(int(tid)) or f"#{tid}")
@@ -7196,8 +8438,10 @@ class BauplanTabs:
             for _b in knoepfe:
                 _cl.addWidget(_b)
             _cl.addStretch()
-            _cw.adjustSize()
-            _h9 = max(30, _cw.sizeHint().height() + 6)
+            # KNOPF-HOEHE FEST (emm576, Nutzer 17.10.2026: "Gelbe
+            # Kopier-Buttons im Runplaner sind teilweise immernoch
+            # abgeschnitten unten") - siehe _knopf_hoehe_fest.
+            _h9 = self._knopf_hoehe_fest(_cw)
             z.setSizeHint(2, QSize(0, _h9))
             tbl.setItemWidget(z, 2, _cw)
 
@@ -7355,7 +8599,7 @@ class BauplanTabs:
                 # Besitz bleibt die Zeile stumm.
                 _lg512, _bo512, _bc512 = _t1lage512(
                     _t1, getattr(self, "_bd_owned_bp_cache", None),
-                    getattr(self, "_bd_bp_im_job", None),
+                    self._bd_bp_im_job_wirksam(),
                     getattr(self, "_bd_bp_fehler", None))
                 if _lg512 in ("copies_only", "none"):
                     z.setText(4, z.text(4) + " · " + (
@@ -7526,6 +8770,573 @@ class BauplanTabs:
             _tm.timeout.connect(lambda: self._science_block_auffrischen())
         _tm.start()
 
+    def _bestand_je_charakter(self):
+        """{type_id: {Charaktername: Menge}} aus den geladenen Assets.
+
+        emm648. Keine neue ESI-Abfrage - dieselbe Quelle wie
+        `_owned_where`. Containerinhalte zaehlen zum Charakter: fuer die
+        Frage "kann DIESER Slot den Job starten" ist egal, ob das Zeug
+        lose liegt oder in einer Kiste daneben.
+        """
+        try:
+            _c2n = {c["character_id"]: c.get("character_name") or str(c)
+                    for c in (store.list_characters() or [])}
+        except Exception:
+            _c2n = {}
+        aus = {}
+        for _cid, _st in (getattr(self, "_assets_struct", None) or {}).items():
+            _nm = _c2n.get(_cid, f"Char {_cid}")
+            for _t, _q in ((_st.get("hangar") or {})).items():
+                if _q:
+                    aus.setdefault(int(_t), {})
+                    aus[int(_t)][_nm] = aus[int(_t)].get(_nm, 0) + int(_q)
+            for _c in (_st.get("containers") or []):
+                for _t, _q in ((_c.get("contents") or {})).items():
+                    if _q:
+                        aus.setdefault(int(_t), {})
+                        aus[int(_t)][_nm] = aus[int(_t)].get(_nm, 0) + int(_q)
+        return aus
+
+    def _zusammenlegen_fuer_plan(self, plan, rest_runs=None):
+        """{tid: {...}} - wo reicht die Summe, aber kein einzelner Slot?
+
+        emm648, NUTZER-FALL 24.10.2026: Ceramic Powder 26'150 insgesamt,
+        davon Berry Motor 22'400 und Peanut Motor 3'750; fuer 255 Runs
+        Sylramic Fibers braucht er 24'990. MoMa meldete "covered", EVE
+        zeigte "3'750 / 24'939" - weil ein EVE-Job nur auf den Hangar
+        SEINES Charakters zugreift. Seine Vorgabe ("charaktere sind quasi
+        ein erweiterter hangar") bleibt richtig; es fehlte nur der
+        Hinweis, dass man vorher zusammenlegen muss.
+        """
+        try:
+            if rest_runs is None:
+                rest_runs = self._rest_runs_jetzt()
+            if rest_runs is None:
+                return {}
+            _br = {int(_k): int(_v or 0)
+                   for _k, _v in ((plan or {}).get("build_runs") or {}).items()}
+            _erl = {_t: max(0, _g - int((rest_runs or {}).get(_t, _g)))
+                    for _t, _g in _br.items()}
+            _bed = _mwh_offener_bedarf(_br, (plan or {}).get("build_mats") or {},
+                                       _erl)
+            return _mwh_zusammenlegen(_bed, self._bestand_je_charakter())
+        except Exception as _zl_e:
+            self._log_exception("Zusammenlegen", str(_zl_e))
+            return {}
+
+    def _nachlauf_fuer_plan(self, plan, stock=None, rest_runs=None):
+        """({tid: Runs nachziehen}, {tid: zu kaufen}) fuer DIESEN Plan.
+
+        EINE Stelle fuer beide Reiter (emm646): der Materialien-Reiter
+        zeigt den Status, der Runplaner die Zeile - zwei Rechnungen waeren
+        wieder zwei Wahrheiten (Arbeitsregel 9).
+
+        AUSBRINGUNG JE RUN AUS DEM PLAN (`build_made`/`build_runs`), NICHT
+        aus der SDE: dort hat Tungsten Carbide zwei Rezepte (20 und 10'000
+        je Run), und mit dem falschen rechnet man um Faktor 500 daneben.
+        Ein Fehler darf nie den Reiter zerreissen (Regel 3) - dann eben
+        keine Nachlauf-Zeilen.
+        """
+        try:
+            if rest_runs is None:
+                rest_runs = self._rest_runs_jetzt()
+            if rest_runs is None:
+                return {}, {}
+            if stock is None:
+                # DER ECHTE BESTAND, NICHT DER EINFRIER-MERGE (emm671,
+                # Nutzer 24.10.2026: "wir haben wieder das Rolled Tungsten
+                # Alloy problem ... doch kein Bauplan sagt ich soll die
+                # bauen und Stock Locations findet auch nichts").
+                # GEMESSEN IN SEINEM SPIEL: Tungsten Carbide verlangt
+                # 3'717 Rolled Tungsten Alloy, Terahertz Metamaterials
+                # 46'944 - im Hangar liegen 684. Der Nachlauf schwieg,
+                # weil `_bd_opts["stock"]` bei einem eingefrorenen Plan
+                # max(Einfrier-Stand, live) ist. Diese Zahl HAELT
+                # verbrauchtes Material bewusst fest - fuer die
+                # Einkaufsliste richtig ("gekauft ist gekauft"), fuer die
+                # Frage "reicht es fuer die naechste Stufe" genau falsch.
+                # DERSELBE FEHLER WIE emm636 (23.10.), an neuer Stelle:
+                # ich habe emm646 heute geschrieben und ihm wieder die
+                # versteckende Zahl gegeben. `_bd_echter_bestand()` ist
+                # die Quelle, die es dafuer schon gibt.
+                try:
+                    stock = self._bd_echter_bestand() or {}
+                except Exception:
+                    stock = ((getattr(self, "_bd_opts", None) or {})
+                             .get("stock") or {})
+            _br_n = {int(_k): int(_v or 0)
+                     for _k, _v in ((plan or {}).get("build_runs") or {}).items()}
+            _made_n = {int(_k): int(_v or 0)
+                       for _k, _v in ((plan or {}).get("build_made") or {}).items()}
+            _je_n = {_t: max(1, _made_n.get(_t, 0) // _br_n[_t])
+                     for _t in _br_n if _br_n[_t] > 0 and _made_n.get(_t)}
+            _erl_n = {_t: max(0, _g - int((rest_runs or {}).get(_t, _g)))
+                      for _t, _g in _br_n.items()}
+            _ofen_n = {}
+            for _t_j, _js_j in (getattr(self, "_bd_active_jobs_map", None)
+                                or {}).items():
+                _r_j = sum(int(_j.get("runs") or 0) for _j in (_js_j or []))
+                if _r_j and _je_n.get(int(_t_j)):
+                    _ofen_n[int(_t_j)] = _r_j * _je_n[int(_t_j)]
+            # DER HAND-HAKEN ZAEHLT AUCH ALS OFEN (emm740, Nutzer 27.10.2026,
+            # 21:35, mit Screenshot): Minuten nach dem Abhaken dreier Zeilen
+            # sprang ihr Nachlauf vom Mehrbedarf auf geplante Runs plus
+            # Mehrbedarf (Crystalline Carbonide Armor Plate: +242 ->
+            # +183'750 = 183'508 + 242). Ursache war eine Asymmetrie: der
+            # Haken zaehlte die Runs als ERLEDIGT (ueber `rest_runs`), ihr
+            # Erzeugnis aber erst dann als KOMMEND, wenn ESI den laufenden
+            # Job meldet (~5-min-Takt; Bestand ~1 h) - dazwischen galt der
+            # Output als nie dagewesen und `nachlauf_runs` verlangte den
+            # vollen Bedarf nach. emm652 haelt fest, dass der Hand-Haken an
+            # den anderen tragenden Stellen GEGLAUBT wird - hier jetzt auch:
+            # abgehakte Runs OHNE ESI-Beleg (weder sicher geliefert noch
+            # laufend) bringen ihren Output auf die Ofen-Seite. Grenze,
+            # bewusst in Kauf genommen: wer abhakt, ohne zu starten, bekommt
+            # hier nur noch den Mehrbedarf gemeldet - dafuer leuchtet an der
+            # Zeile die Haken-ohne-Beleg-Warnung (emm650).
+            _check740 = getattr(self, "_bd_runplan_checked", None) or set()
+            _by_key740 = getattr(self, "_bd_runplan_runs_by_key", None) or {}
+            _hand740 = {}
+            for _k7 in _check740:
+                _p7 = _by_key740.get(_k7)
+                if not _p7:
+                    continue
+                try:
+                    _hand740[int(_p7[0])] = (_hand740.get(int(_p7[0]), 0)
+                                             + int(_p7[1]))
+                except (TypeError, ValueError, IndexError):
+                    continue
+            _sicher740 = (getattr(self, "_bd_runplan_delivered_sicher", None)
+                          or {})
+            # AUCH HIER GILT DER HAKEN NUR, BIS ESI WIDERSPRICHT (emm748).
+            # emm747 hat das heute fuer `_rest_geliefert_jetzt` eingebaut -
+            # und NUR dort. Regel 9 sagt: eine Ursache, eine Quelle, ALLE
+            # Vorkommen. Dies ist das zweite Vorkommen, und es ist das
+            # gefaehrlichere: der Block oben schreibt den Output eines
+            # unbelegten Hakens auf die HABEN-Seite der Materialbilanz.
+            # GEMESSEN an seiner settings.json und dem Diagnose-Export vom
+            # 28.10.2026, Plan "Minmatar 1", Fernite Carbide (16673):
+            #   319 Runs geplant, 319 abgehakt, je Run 10'000 Stueck.
+            #   Deckt ESI die Haken nicht, ergibt der Block hier
+            #   319 x 10'000 = 3'190'000 Stueck "kommt noch" - gegen einen
+            #   Restbedarf von 33'600 bei 12'412 im Hangar. Die Luecke von
+            #   21'188, die er im Spiel vor sich hatte, verschwand damit
+            #   rechnerisch, und `nachlauf_runs` schwieg komplett.
+            #   Seine Worte dazu (28.10.2026): "Und warum habe ich zu wenig
+            #   Fernide Carbide, wenn der Bauplan und Stocklocations nicht
+            #   erkennen das ich zu wenig habe?"
+            # Mit der Kappung zaehlt nach Ablauf der Frist nur noch, was
+            # ESI belegt - und das steckt ueber `_beleg7` ohnehin schon
+            # drin, also faellt der Phantom-Ofen weg. INNERHALB der Frist
+            # bleibt emm740 unveraendert: dort ist der Haken genau richtig,
+            # weil ESI den eben gestarteten Job noch nicht sieht.
+            # ZWEITER BEFUND AUS DERSELBEN MESSUNG: `_beleg7` las bisher
+            # `_bd_runplan_delivered_sicher`, waehrend `haken_pruefen`
+            # mit `_bd_runplan_delivered` urteilt. Zwei Karten fuer
+            # dieselbe Frage - und sie gehen auseinander, sobald die
+            # plan-gefilterte Karte weniger traegt als die rohe. Dann
+            # gilt der Haken als BESTAETIGT (wirksam = alle Runs),
+            # waehrend `_beleg7` fast nichts abzieht: der gelieferte
+            # Output zaehlt ein zweites Mal als Ofen, obwohl er laengst
+            # im Hangar liegt und im `stock` steckt. Aufgefallen in
+            # werkzeuge/sim_emm748.py, Teil C4 (sein Stand von heute:
+            # 317 geliefert, 2 Runs laufen). Jetzt kommt BEIDES aus
+            # EINER Quelle - dem Haken-Stand selbst, dessen drittes Feld
+            # genau diese belegte Run-Zahl ist (Arbeitsregel 9).
+            _wirk748, _stand748 = {}, {}
+            try:
+                _hsj748 = getattr(self, "_haken_stand_jetzt", None)
+                if _hsj748 is not None:
+                    # OHNE `gedeckt` - wie in `_rest_geliefert_jetzt`:
+                    # `_gedeckte_items` fuehrt ueber `_rest_runs_jetzt`
+                    # wieder hierher. Der Irrtum geht in die sichere
+                    # Richtung (eher zu viel Nachlauf als zu wenig).
+                    _stand748 = _hsj748(plan) or {}
+                    _wirk748, _ = _mwh_haken_wirksam(_stand748)
+            except Exception as _hw748:
+                # Scheitert die Kappung, gilt der Haken wie vor emm748 -
+                # also exakt das bisherige Verhalten, kein Absturz.
+                self._log_exception("Haken-Wirkung im Nachlauf (emm748)",
+                                    str(_hw748))
+                _wirk748, _stand748 = {}, {}
+            for _t7, _n7 in _hand740.items():
+                if not _je_n.get(_t7):
+                    continue
+                _lauf7 = sum(int(_j.get("runs") or 0) for _j in
+                             ((getattr(self, "_bd_active_jobs_map", None)
+                               or {}).get(_t7) or []))
+                _beleg7 = int(_sicher740.get(_t7, 0) or 0) + _lauf7
+                _n7w = int(_n7)
+                if _t7 in _wirk748:
+                    _n7w = min(_n7w, int(_wirk748[_t7] or 0))
+                    try:
+                        # Feld 3 des Haken-Stands: geliefert + laufend,
+                        # dieselbe Zahl, gegen die der Haken geprueft
+                        # wurde. Nie KLEINER als die bisherige Rechnung
+                        # (Regel 3 - ein zu kleiner Beleg macht den Ofen
+                        # zu gross und versteckt wieder eine Luecke).
+                        _beleg7 = max(_beleg7, int(_stand748[_t7][2]))
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        pass
+                _ohne7 = min(_n7w, _br_n.get(_t7, _n7w)) - _beleg7
+                if _ohne7 > 0:
+                    _ofen_n[_t7] = (_ofen_n.get(_t7, 0)
+                                    + _ohne7 * _je_n[_t7])
+            if not _erl_n:
+                return {}, {}
+            # SCHLUESSEL AUF int (emm672): ein GESPEICHERTER Plan kommt
+            # aus JSON, dort sind alle Map-Schluessel STRINGS. `_br_n`
+            # habe ich oben umgewandelt, `build_mats` nicht - und damit
+            # suchte `nachlauf_runs` mit int in einer str-Map und fand
+            # NIE etwas. Deshalb hat emm646 seit heute frueh kein
+            # einziges Mal gefeuert. Gemessen an seiner settings.json:
+            # alle drei aktiven Plaene haben str-Schluessel.
+            _bm_n = {}
+            for _k_m, _v_m in ((plan or {}).get("build_mats") or {}).items():
+                try:
+                    _bm_n[int(_k_m)] = [(int(_m), int(_q or 0))
+                                        for _m, _q in (_v_m or [])]
+                except (TypeError, ValueError):
+                    continue
+            return _mwh_nachlauf_runs(_br_n, _bm_n,
+                                      _je_n, _erl_n, stock, _ofen_n)
+        except Exception as _nl_e:
+            self._log_exception("Nachlauf-Runs", str(_nl_e))
+            return {}, {}
+
+    def _startblocker_fuer_zeile(self, plan, tid, R):
+        """Warum kann GENAU DIESE Zeile jetzt nicht starten? [] = startbereit.
+
+        HERAUSGELOEST (emm672): der Block stand inline in
+        `_fill_bauplan_schedule` und hat beim Umbau prompt aa649 rot
+        gemacht - die Pruefung liest die 1500 Zeichen VOR dem Aufruf von
+        `start_blocker`, und mein `if R > 0:` rutschte hinaus. Dieselbe
+        Lehre wie bei aa322 und aa651 heute: nicht das Fenster
+        aufmachen, den Code dorthin legen, wo er hingehoert.
+
+        ZWEI DINGE, DIE HIER FRUEHER FALSCH WAREN und den Hinweis
+        "wartet auf ..." stumm gemacht haben, obwohl er faellig war
+        (Nutzer 24.10.2026, Rolled Tungsten Alloy):
+          1. SCHLUESSELTYP. Ein GESPEICHERTER Plan kommt aus JSON, dort
+             sind alle Map-Schluessel STRINGS. Gesucht wurde mit int -
+             `.get(16657)` auf `{"16657": ...}` gibt None, und der
+             Blocker lief kein einziges Mal. An seiner settings.json
+             gemessen: alle drei aktiven Plaene haben str-Schluessel.
+          2. BESTANDSBEGRIFF. `_bd_opts["stock"]` ist bei einem
+             eingefrorenen Plan max(Einfrier-Stand, live) und haelt
+             verbrauchtes Material fest - fuer diese Frage die falsche
+             Zahl (s. emm671).
+        """
+        try:
+            _bm_src = (plan or {}).get("build_mats") or {}
+            _br_src = (plan or {}).get("build_runs") or {}
+            _mats = (_bm_src.get(tid) if tid in _bm_src
+                     else _bm_src.get(str(tid)))
+            _ges = int((_br_src.get(tid) if tid in _br_src
+                        else _br_src.get(str(tid), 0)) or 0)
+            if not _mats or _ges <= 0:
+                return []
+            _anteil = [(int(_m), -(-int(_q or 0) // _ges) * int(R))
+                       for _m, _q in _mats]
+            _br = {}
+            for _k, _v in _br_src.items():
+                try:
+                    _br[int(_k)] = int(_v or 0)
+                except (TypeError, ValueError):
+                    continue
+            try:
+                _lag = self._bd_echter_bestand() or {}
+            except Exception:
+                _lag = (getattr(self, "_bd_opts", None) or {}).get("stock") or {}
+            # DIE PIPELINE MUSS ABGEZOGEN WERDEN - UND BEIM EINGEFRORENEN
+            # PLAN STEHT SIE WOANDERS (emm679, Nutzer 24.10.2026: "immer
+            # noch keine Meldung: warten auf Rolled Tungsten Alloy", nach
+            # einem echten Neustart).
+            # `start_blocker` rechnet `Lager - Pipeline`, weil der
+            # Reaktor-Inhalt nicht im Hangar liegt. Ich habe dafuer
+            # `_bd_virt_stock` genommen - das ist bei einem EINGEFROZENEN
+            # Plan aber ABSICHTLICH LEER (mw_bauplan_fenster: "Beim
+            # eingefrorenen Plan ist der Einfrier-Stand nicht in
+            # Lager/Pipeline zerlegbar"). Abgezogen wurde also null:
+            # 65'884 statt 684 Rolled Tungsten Alloy, und der Hinweis
+            # blieb stumm. ALLE SEINE PLAENE SIND EINGEFROREN - der
+            # Blocker hat bei ihm nie funktioniert.
+            # `_bd_pipeline_live` ist die Pipeline, die es in beiden
+            # Faellen gibt (dieselbe Quelle, die `_bestand_fuer_deckung`
+            # schon abzieht). Sie kommt zuerst, `_bd_virt_stock` bleibt
+            # Rueckfall.
+            _pipe = (getattr(self, "_bd_pipeline_live", None)
+                     or getattr(self, "_bd_virt_stock", None) or {})
+            return _mwh_start_blocker(_anteil, _br, _lag, _pipe)
+        except Exception as _sb_e:
+            self._log_exception("Startblocker", str(_sb_e))
+            return []
+
+    def _haken_stand_jetzt(self, plan, gedeckt=None):
+        """{tid: (zustand, abgehakt, belegt)} - deckt ESI die Hand-Haken?
+        EINE Stelle fuer den Runplaner UND die Materialrechnung (Regel 9).
+
+        HERAUSGELOEST (emm747): der Block stand inline in
+        `_fill_bauplan_schedule` und diente dort nur der ANZEIGE. Seit
+        der Haken sich korrigieren soll (s. `haken_wirksam`), braucht
+        ihn auch `_rest_geliefert_jetzt` - und zwei Rechnungen waeren
+        wieder zwei Wahrheiten.
+
+        `gedeckt`: {tid}, deren Bestand den offenen Bedarf deckt
+        (emm664). Der Runplaner reicht `_gedeckte_items(plan)` herein;
+        `_rest_geliefert_jetzt` darf das NICHT - `_gedeckte_items` ruft
+        `_rest_runs_jetzt`, das wieder hierher fuehrt (Endlosschleife).
+        Ohne diese Angabe faellt ein Haken, dessen Erzeugnis im Hangar
+        liegt, in "unbestaetigt" und zaehlt nur noch das Belegte - der
+        Restbedarf wird also eher zu GROSS als zu klein. Das ist die
+        sichere Richtung (Regel 3); die ANZEIGE urteilt weiterhin mit
+        Deckung und warnt deshalb nicht.
+        """
+        import time as _tm_h
+        _hr_h, _ht_h = {}, {}
+        # max() ueber die STUFEN, nicht Summe (emm654): `_bd_runplan_erledigt`
+        # addiert die Charakter-Zeilen schon beim Anhaken.
+        for _k_h, _n_h in (getattr(self, "_bd_runplan_erledigt", None)
+                           or {}).items():
+            _s_h, _, _t_h = str(_k_h).rpartition("|")
+            try:
+                _hr_h[int(_t_h)] = max(_hr_h.get(int(_t_h), 0), int(_n_h or 0))
+            except (TypeError, ValueError):
+                continue
+        for _k_h, _ts_h in (getattr(self, "_bd_runplan_erledigt_ts", None)
+                            or {}).items():
+            _s_h, _, _t_h = str(_k_h).rpartition("|")
+            try:
+                _ht_h[int(_t_h)] = max(_ht_h.get(int(_t_h), 0.0), float(_ts_h))
+            except (TypeError, ValueError):
+                continue
+        _lauf_h = {}
+        for _t_j, _js_j in (getattr(self, "_bd_active_jobs_map", None)
+                            or {}).items():
+            _lauf_h[int(_t_j)] = sum(int(_j.get("runs") or 0)
+                                     for _j in (_js_j or []))
+        return _mwh_haken_pruefen(
+            _hr_h, _ht_h,
+            getattr(self, "_bd_runplan_delivered", None) or {},
+            _lauf_h, _tm_h.time(), gedeckt=gedeckt,
+            plan_runs={int(_k): int(_v or 0) for _k, _v in
+                       ((plan or {}).get("build_runs") or {}).items()})
+
+    def _gedeckte_items(self, plan):
+        """{type_id}, deren BESTAND den offenen Bedarf schon deckt.
+
+        HERAUSGELOEST STATT INLINE (emm664): der Block stand zuerst
+        mitten in `_fill_bauplan_schedule` und hat prompt aa651 rot
+        gemacht - die Pruefung liest die ersten 4000 Zeichen dieser
+        Methode, und der Aufruf von `haken_pruefen` rutschte hinaus.
+        DIESELBE LEHRE WIE BEI aa322 HEUTE FRUEH: nicht das Fenster
+        aufmachen, sondern den Code dorthin legen, wo er hingehoert.
+        Hier ist das ohnehin die bessere Form - dieselbe Bauart wie
+        `_nachlauf_fuer_plan`, und damit einzeln pruefbar.
+        """
+        try:
+            _rest = self._rest_runs_jetzt() or {}
+            _br = {int(_k): int(_v or 0) for _k, _v in
+                   ((plan or {}).get("build_runs") or {}).items()}
+            _erl = {_t: max(0, _g - int(_rest.get(_t, _g)))
+                    for _t, _g in _br.items()}
+            _bm_g = {}
+            for _k_g, _v_g in ((plan or {}).get("build_mats") or {}).items():
+                try:
+                    _bm_g[int(_k_g)] = [(int(_m), int(_q or 0))
+                                        for _m, _q in (_v_g or [])]
+                except (TypeError, ValueError):
+                    continue
+            _bed = _mwh_offener_bedarf(_br, _bm_g, _erl)
+            # ECHTER BESTAND, nicht der Einfrier-Merge (emm671) - sonst
+            # unterdrueckt die Deckung eine Warnung mit Material, das es
+            # laengst nicht mehr gibt. Dieser Block ist von heute (emm664)
+            # und hatte denselben Fehler.
+            try:
+                _lag = dict(self._bd_echter_bestand() or {})
+            except Exception:
+                _lag = dict((getattr(self, "_bd_opts", None) or {}).get(
+                    "stock") or {})
+            # DIE PIPELINE NICHT NOCHMAL DAZU (emm679): `_bd_live_stock`
+            # ist laut eigener Beschreibung "agg - Lager UND Pipeline
+            # schon zusammen", und `_bd_echter_bestand` baut darauf auf.
+            # Mein urspruenglicher Block addierte `_bd_virt_stock`
+            # obendrauf: bei einem nicht eingefrorenen Plan zaehlte die
+            # Pipeline damit DOPPELT, und zwar in die unsichere Richtung -
+            # zu viel Bestand heisst zu wenig Warnungen. (Beim
+            # eingefrorenen Plan fiel es nicht auf, weil `_bd_virt_stock`
+            # dort absichtlich leer ist - genau die Asymmetrie, die auch
+            # den Startblocker stumm gemacht hat.)
+            return {int(_t) for _t, _q in (_bed or {}).items()
+                    if int(_lag.get(int(_t), 0)) >= int(_q or 0)}
+        except Exception as _gd_e:
+            # Regel 3: im Zweifel LIEBER WARNEN als still sein.
+            self._log_exception("Gedeckte Items", str(_gd_e))
+            return set()
+
+    def _bp_stand_fuer_plan(self, plan, type_id):
+        """(per_item_cap, per_item_runs_cap) fuer `schedule_build`.
+
+        emm681, Nutzer 24.10.2026: "Aber der Plan sollte nicht staendig
+        neu verteilen denn durch dass das meine ingame bauschleifen
+        einfach mal mehrere Stunde oder Tage laufen, sollte ja klar sein
+        was in Zukunft im Hangar landet und was nicht."
+
+        Beim EINGEFRORENEN Plan wird der Blaupausen-Stand beim ersten
+        Aufbau festgehalten und danach wiederverwendet; der offene Plan
+        rechnet weiter live, denn dort WILL der Nutzer sehen, was seine
+        Aenderungen bewirken. Warum die EINGABE festgehalten wird und
+        nicht das Ergebnis, steht bei `bp_stand_packen` in mw_helpers.py.
+
+        FUENF BREMSEN, damit daraus kein stiller Dauerzustand wird:
+          * ohne gespeicherten Plan (`_bd_open_plan_id`) gibt es nichts
+            zu merken - dann immer live;
+          * ohne geladenen ESI-Blaupausen-Cache wird NICHTS festgehalten
+            (emm684). Das ist die wichtigste und die einzige, die ich
+            beim ersten Mal falsch gebaut habe - Begruendung unten an
+            der Stelle selbst;
+          * ein LEERER Live-Stand wird nie festgeschrieben. Direkt nach
+            dem Start sind die ESI-Blaupausen noch nicht geladen; wer
+            diesen Moment einfriert, plant fuer immer ohne Kopien-Grenze
+            (Regel 3: im Zweifel nicht festschreiben);
+          * ein UNVOLLSTAENDIGER Abruf wird nicht festgeschrieben. Steht
+            etwas in `_bd_bp_fehler`, hat mindestens ein Charakter seine
+            Blaupausen nicht geliefert - und ein gescheiterter Abruf ist
+            kein "du hast sie nicht" (emm479). Sein fehler.log vom
+            24.10.2026 zeigt genau das: fuenf 504er auf den Job- und
+            Corp-Abrufen innerhalb von zwei Minuten. Wer einen solchen
+            Moment festhaelt, macht aus einer Stoerung von Minuten einen
+            Planungsfehler von Tagen;
+          * Gueltigkeit haengt an Plan-Items UND Einfrier-Zeitpunkt -
+            auftauen und neu einfrieren nimmt den Stand automatisch neu.
+        """
+        _live_cap = self._resolve_per_item_bp_cap() or {}
+        _live_rcap = self._resolve_per_item_runs_cap(type_id) or {}
+        self._bd_bp_stand_fest = False
+        try:
+            _frz = getattr(self, "_bd_frozen", None) or {}
+            _ts = _frz.get("ts")
+            if not _ts:
+                return _live_cap, _live_rcap
+            _pid = getattr(self, "_bd_open_plan_id", None)
+            if _pid is None:
+                return _live_cap, _live_rcap
+            _eintrag = None
+            for _p in (self.settings.get("bau_saved_plans", []) or []):
+                if _p.get("id") == _pid:
+                    _eintrag = _p
+                    break
+            if _eintrag is None:
+                return _live_cap, _live_rcap
+            _runs = (plan or {}).get("build_runs") or {}
+            _cap, _rcap = _mwh_bp_stand_lesen(
+                _eintrag.get("runplan_bp_stand"), _runs, _ts)
+            if _cap is not None:
+                self._bd_bp_stand_fest = True
+                return _cap, _rcap
+            # BREMSE 2, NACHGESCHAERFT (emm684). Sie lautete "ein LEERER
+            # Live-Stand wird nie festgeschrieben" - und war damit zu
+            # schwach. Gemessen an seinem Amarr-Buendel (24.10.2026): der
+            # Stand war nicht leer, er hatte fuenf Eintraege - aber die
+            # kamen ALLE aus der Buendel-Logik (`_multi_bp_cap_je_ende`,
+            # die Kopien je Endprodukt: 25/17/17/9/5 = genau seine fuenf
+            # Schiffe). Der ESI-Blaupausen-Cache hatte NICHTS beigesteuert,
+            # weil er noch nicht geladen war. Jede Reaktion fiel damit auf
+            # die pauschale Stufen-Zahl (`reaction.copies = 1`) zurueck -
+            # 480 Runs Terahertz Metamaterials auf EINEM Slot, obwohl er
+            # 16 Formeln besitzt. Vorher haette sich das beim naechsten
+            # Laden von selbst korrigiert; festgehalten wird daraus ein
+            # Dauerzustand.
+            # Gefragt wird deshalb nach der QUELLE, nicht nach dem
+            # Ergebnis: ohne geladenen Cache gibt es nichts festzuhalten.
+            if not getattr(self, "_bd_owned_bp_cache", None):
+                return _live_cap, _live_rcap
+            if not _live_cap:
+                return _live_cap, _live_rcap
+            if getattr(self, "_bd_bp_fehler", None):
+                return _live_cap, _live_rcap
+            _neu = _mwh_bp_stand_packen(_live_cap, _live_rcap, _runs, _ts)
+            if _eintrag.get("runplan_bp_stand") != _neu:
+                _eintrag["runplan_bp_stand"] = _neu
+                from .. import config as _cfg
+                _cfg.save_settings_async(self.settings)
+            self._bd_bp_stand_fest = True
+            return _live_cap, _live_rcap
+        except Exception as _bs_e:
+            # Regel 3: lieber live rechnen als gar nicht - aber sichtbar.
+            self._log_exception("Blaupausen-Stand", str(_bs_e))
+            self._bd_bp_stand_fest = False
+            return _live_cap, _live_rcap
+
+    def _bp_stand_verwerfen(self):
+        """Den festgehaltenen Blaupausen-Stand wegwerfen - der naechste
+        Aufbau nimmt einen frischen (emm681).
+
+        DAS IST DER AUSWEG, und er haengt bewusst an einer Handlung, die
+        der Nutzer ohnehin kennt: "ESI-Blaupausenbesitz laden". Wer
+        ausdruecklich seine Blaupausen neu einliest, meint genau das -
+        rechne mit dem, was ich JETZT habe. Ihn stattdessen zum Auftauen
+        zu schicken waere falsch: das Auftauen wirft auch den
+        Einfrier-Bestand weg, also die Grundlage, auf der "geliefert seit
+        dem Einfrieren" ueberhaupt gezaehlt wird."""
+        try:
+            _pid = getattr(self, "_bd_open_plan_id", None)
+            if _pid is None:
+                return False
+            for _p in (self.settings.get("bau_saved_plans", []) or []):
+                if _p.get("id") != _pid:
+                    continue
+                if _p.pop("runplan_bp_stand", None) is None:
+                    return False
+                from .. import config as _cfg
+                _cfg.save_settings_async(self.settings)
+                return True
+        except Exception as _bv_e:
+            self._log_exception("Blaupausen-Stand verwerfen", str(_bv_e))
+        return False
+
+    def _runplan_neu_verteilen(self):
+        """Der Knopf "Neu verteilen" im Runplaner (emm685).
+
+        WAS ER TUT: den festgehaltenen Blaupausen-Stand wegwerfen, die
+        Blaupausen frisch aus ESI holen und den Plan neu aufbauen. Der
+        Planer verteilt dann wieder so, wie der Nutzer es beschreibt -
+        die laengste Reaktion zuerst auf alle verfuegbaren Kopien, damit
+        die Stufe moeglichst gleichzeitig fertig wird.
+
+        WAS ER NICHT TUT, und das ist genauso wichtig: er fasst WEDER
+        die Haken NOCH den Einfrier-Bestand an. Verteilt werden die Runs
+        DES PLANS; was schon geliefert oder abgehakt ist, wird danach
+        wie immer von den Zeilen abgezogen. Nichts, was er gebaut hat,
+        wird ihm noch einmal angeboten.
+        (Eine Verteilung NUR der Restmenge waere etwas anderes - dann
+        muesste `build_runs` des eingefrorenen Plans wandern, und darauf
+        sitzen Einkaufsliste, Reservierungen und "geliefert seit dem
+        Einfrieren" alle auf. Das ist kein Knopf, das ist ein Umbau.)"""
+        from ..sprache import t as _txt
+        self._bp_stand_verwerfen()
+        _btn = getattr(self, "_bd_neuverteilen_btn", None)
+        try:
+            # Frische Blaupausen holen: ohne sie faellt der Planer auf die
+            # pauschale Stufen-Zahl zurueck, und genau daraus entstand
+            # emm684 (480 Runs auf EINER Blaupause, obwohl er 16 hat).
+            if _btn is not None:
+                _btn.setEnabled(False)
+            self._bd_fetch_all_owned_blueprints(force=True)
+        except Exception as _nv_e:
+            self._log_exception("Neu verteilen", str(_nv_e))
+        finally:
+            if _btn is not None:
+                _btn.setEnabled(True)
+        _rb = getattr(self, "_bd_full_rebuild", None)
+        if _rb:
+            _rb()
+        try:
+            self._flash_tip(_txt("Runs redistributed ✓"))
+        except Exception:
+            pass
+        return True
+
     def _fill_bauplan_schedule(self, plan, names, type_id, qty, hdr, sub, tbl, bp_tbl=None,
                                bp_warn_lbl=None):
         from ..sprache import t as _txt   # `t` ist hier lokal belegt
@@ -7541,6 +9352,18 @@ class BauplanTabs:
             # Kalender-Zeit trotzdem aktuell halten (seriell, da keine Parallelität).
             self._bd_last_sched_seconds = self._serial_plan_seconds(plan, type_id)
             return
+        # NACHLAUF NUR EINMAL JE ITEM ZEIGEN (emm654). Derselbe Fund wie
+        # bei der ESI-Warnung, nur die andere Haelfte: `_nachlauf_rp` ist
+        # nach ITEM geschluesselt, die Zeilen sind je Charakter UND Welle.
+        # Ein Item auf drei Charakteren haette "+128 to run" DREIMAL
+        # angezeigt - er haette 384 Runs gefahren. Die Zahl ist eine
+        # Gesamtmenge, also gehoert sie an genau eine Zeile.
+        _nl_gezeigt = set()
+        # Dasselbe fuer die offene Haken-Differenz (emm747): auch sie
+        # ist eine ITEM-Gesamtzahl und darf nur an EINER Zeile stehen.
+        _hk_gezeigt = set()
+        # ... und fuer die Lauf-Zahl teilgestarteter Zeilen (emm756).
+        _lauf_gezeigt = set()
         recipes = getattr(self, "_bd_recipes", None)
         if not plan or not recipes:
             tbl.clear()
@@ -7837,8 +9660,8 @@ class BauplanTabs:
                     bp_warn_lbl.setVisible(True)
                 elif _n_low:
                     bp_warn_lbl.setText(
-                        _txt("\u26a0 {n} item(s) have too few blueprint copies for the "
-                             "fastest possible build:<br>").format(n=_n_low)
+                        _txt("\u26a0 {n} item(s): your blueprint copies have too few "
+                             "runs for this plan:<br>").format(n=_n_low)
                         + "<br>".join(_breakdown(_n_low_by_stage))
                         + "<br><span style='font-size:11px;'>"
                         + _txt("Details in the Blueprints tab.") + "</span>")
@@ -7886,6 +9709,12 @@ class BauplanTabs:
             # (sonst behält der Kalender eine veraltete Zeit).
             self._bd_last_sched_seconds = self._serial_plan_seconds(plan, type_id)
             return
+        # DER EINGEFRORENE PLAN VERTEILT NICHT MEHR NEU (emm681). Welche
+        # Eingabe hier steht, entscheidet die Zuteilung; `_bp_stand_fuer_plan`
+        # haelt die beiden Live-Eingaben bei einem eingefrorenen Plan fest.
+        # Begruendung und Messung stehen bei `bp_stand_packen` in
+        # mw_helpers.py.
+        _cap_item, _rcap_item = self._bp_stand_fuer_plan(plan, type_id)
         res = industry.schedule_build(
             jobs, sched_chars, te_factor=te,
             mfg_bp=_cap("component"), react_bp=_cap("reaction"), end_bp=_cap("end"),
@@ -7893,10 +9722,10 @@ class BauplanTabs:
             # `_runplan_ziel_sekunden`. Leeres Ergebnis = nur straffen.
             stage_ziel=self._runplan_ziel_sekunden(),
             fuel_ids={j["tid"] for j in jobs if j.get("is_fuel")},
-            per_item_cap=self._resolve_per_item_bp_cap(),
+            per_item_cap=_cap_item,
             # RUNS JE JOB DECKELN (Nutzer 19.09.2026: "17 Stueck mit einem
             # Blueprint ... gibts maximal 10 runs"): BPC-Runs / SDE-Limit.
-            per_item_runs_cap=self._resolve_per_item_runs_cap(type_id))
+            per_item_runs_cap=_rcap_item)
         # PLANER-DIAGNOSE (Nutzer 25.09.2026: "ich habe 19 Blueprints und
         # nicht nur 11, as fast as possible nutzt nicht alle" und "stelle ich
         # 23 h ein, dauert die Reaktion 15 h 26 m"). Beides laesst sich von
@@ -7948,9 +9777,18 @@ class BauplanTabs:
             _eigene_res = {}
         _frz_sched = getattr(self, "_bd_frozen", None)
         if _frz_sched and _frz_sched.get("plan_snapshot") and _frz_sched.get("ts"):
+            # emm791: fremd zugeordnete Jobs (anderer Plan / "keiner")
+            # zaehlen nicht als eigener Fortschritt - dieselbe Quelle, die
+            # auch die Zuordnungs-Fragen benutzen.
+            try:
+                _vergeben791 = store.job_zuordnung_alle()
+            except Exception:
+                _vergeben791 = None
             _auto_keys, _auto_runs = self._frozen_auto_checked(
                 getattr(self, "_bd_delivered_jobs", None) or [],
-                res["assignments"], float(_frz_sched["ts"]))
+                res["assignments"], float(_frz_sched["ts"]),
+                vergeben=_vergeben791,
+                plan_id=getattr(self, "_bd_open_plan_id", None))
             # Geliefert-Stand JE ITEM auch fuer teilweise gelieferte merken -
             # der Nutzer will sehen "ESI hat 12 von 24 Runs gesehen", nicht
             # erst beim Vollstand ein Zeichen bekommen (Sitzung 8).
@@ -8099,10 +9937,86 @@ class BauplanTabs:
             tot=self._fmt_dur(tot), react=self._fmt_dur(react_total),
             comp=self._fmt_dur(stt.get('component', 0)),
             end=self._fmt_dur(stt.get('end', 0))) + _extra_t)
+        # WARUM DIESE ZEITEN JETZT STEHENBLEIBEN (emm681). Der Nutzer hat
+        # beobachtet, dass sich die Verteilung waehrend des Bauens aendert
+        # ("Aber der Plan sollte nicht staendig neu verteilen"). Beim
+        # eingefrorenen Plan tut sie das nicht mehr - aber eine
+        # Einschraenkung, die er nicht sehen kann, ist fuer ihn nicht von
+        # einem Fehler zu unterscheiden (Merksatz aus emm677). Deshalb
+        # steht sie hier, wo die Zahlen stehen, die sie stabil haelt.
+        # HANDLUNG ZUERST (seine Ansage vom 24.10.2026).
+        try:
+            if getattr(self, "_bd_bp_stand_fest", False):
+                hdr.setToolTip(_txt(
+                    "Nothing to do - these times stay put now.\n\n"
+                    "The frozen plan keeps the blueprint count it had when "
+                    "you froze it, so the same runs stay with the same "
+                    "characters while you build. Before, every used-up "
+                    "blueprint copy quietly changed the split.\n\n"
+                    "Want it recalculated with your blueprints as they are "
+                    "today? Press „Load ESI blueprint ownership“ in "
+                    "the Blueprints tab. Do NOT unfreeze for this - that "
+                    "would also drop the frozen stock the „delivered "
+                    "since“ count is based on."))
+            else:
+                hdr.setToolTip("")
+        except Exception:
+            pass
         # Der Header zeigt bereits die Gesamtzeiten (Reaktionen → Komponenten →
         # Endprodukt). Die frühere „Zeit je Charakter“-Detailzeile war zu überladen
         # und wurde entfernt. Der Sub-Text ist jetzt für WARNUNGEN reserviert und
         # wird nur dann sichtbar/auffällig, wenn wirklich etwas fehlt.
+        # NACH der Liefer-Karte gerechnet, NICHT mehr am Aufbau-Anfang
+        # (emm755, Nutzer 29.10.2026 mit Screenshot: die frische
+        # emm753-Warnung nannte 17 Positionen "ohne ESI-Beleg" -
+        # darunter Fernite Carbide, das laut planer_diagnose desselben
+        # Aufbaus 319/319 SICHER GELIEFERT war). Ursache: dieser Block
+        # stand am Anfang von `_fill_bauplan_schedule`, waehrend
+        # `_bd_runplan_delivered` und die plan-gefilterte Job-Karte
+        # erst WEITER UNTEN aus den frischen ESI-Jobs entstehen - der
+        # Haken-Stand (und der Nachlauf, der ihn seit emm748 selbst
+        # liest) hinkte damit immer einen Aufbau hinterher; direkt
+        # nach dem Fensteroeffnen urteilte er ueber eine LEERE Karte
+        # und erklaerte jeden alten Haken fuer unbelegt. Zwischen dem
+        # alten und diesem Ort liest nichts die vier Werte (gemessen
+        # vor dem Verschieben), es aendert sich also nur der Stand
+        # der Karten, auf dem sie rechnen: der frische.
+        # emm646: Nachlauf-Runs einmal je Aufbau - dieselbe Stelle wie
+        # im Materialien-Reiter (`_nachlauf_fuer_plan`).
+        _nachlauf_rp, _nachkauf_rp = self._nachlauf_fuer_plan(plan)
+        # HAKEN GEGEN ESI (emm650): der Haken ist die BEHAUPTUNG des
+        # Nutzers ("hab ich gefahren"), der Punkt der BELEG. Bleibt der
+        # Beleg laenger als eine Stunde aus, hat er ingame vermutlich
+        # nicht alle Runs gefahren - genau das will er wissen ("Kann es
+        # das nicht, ist mein run nicht komplett abgeschlossen und ich
+        # habe ingame einen fehler gemacht"). Bisher fiel dieses Signal
+        # unter den Tisch.
+        _haken_stand = {}
+        _haken_offen = {}
+        try:
+            # WAS DER BESTAND SCHON DECKT (emm664). Nutzer-Frage:
+            # "kann MoMa nicht pruefen ob ueber alle Plaene hinweg
+            # gesehen genuegend Crystalline Carbonide da ist? oder
+            # fehlt wirklich und tatsaechlich 1 Run?" - gute Frage,
+            # und die Antwort war: es fehlt nichts. Sein Tooltip sagte
+            # "973 abgehakt, ESI sieht 972" - Differenz EINS, bei
+            # Millionen Stueck im Hangar. Deshalb zaehlt hier der
+            # BESTAND gegen den offenen Bedarf: ist das Erzeugnis da,
+            # ist ein fehlender ESI-Beleg folgenlos.
+            # DIE RECHNUNG SELBST LIEGT IN `_haken_stand_jetzt` (emm747) -
+            # dieselbe Stelle, die jetzt auch die Materialrechnung fragt.
+            _haken_stand = self._haken_stand_jetzt(
+                plan, gedeckt=self._gedeckte_items(plan))
+            # DIE DIFFERENZ IST AUSFUEHRBAR (emm747, Nutzer: "ESI müsste
+            # prüfen, hacken lösen und 2 Runs hinschreiben für amber mit
+            # kopieren wie wirs kennen"). `_haken_offen` traegt je Item
+            # die Runs, die der Haken behauptet und ESI nicht deckt.
+            _, _haken_offen = _mwh_haken_wirksam(_haken_stand)
+        except Exception as _hk_e:
+            self._log_exception("Haken gegen ESI", str(_hk_e))
+            _haken_stand = {}
+            _haken_offen = {}
+
         warns = []
         if getattr(self, "_bd_science_data_missing", False):
             warns.append(_txt("\u26a0 Science skill data missing \u2013 press \u201eLoad "
@@ -8112,6 +10026,57 @@ class BauplanTabs:
             warns.append(_txt("\u26a0 Reaction skill not loaded \u2013 press \u201eLoad skills "
                               "\u2192 Job slots\u201c, otherwise the reaction times are too "
                               "long."))
+        # ALTE HAKEN OHNE ESI-BELEG HALTEN MATERIAL FEST (emm753,
+        # zugesagt in der emm750-Diskussion: "sichtbare Meldung ... dann
+        # entscheidest du je Fall"). Seit emm750 gibt ein Hand-Haken in
+        # der Reservierung NICHTS mehr frei - die Zutaten einer
+        # abgehakten, aber von ESI nie belegten Zeile bleiben diesem Plan
+        # reserviert. Beim Verklicker ist das genau richtig (sein Wunsch,
+        # woertlich: "verklicke ich mich, wird material freigegeben und
+        # andere Pl\u00e4ne nutzen es dann, das w\u00e4re falsch"). Hat er aber
+        # WIRKLICH gebaut und nur die Job-Zuordnung fehlt, haelt der Plan
+        # Material fest, das laengst verbraucht ist, und andere Plaene
+        # schlagen Kaeufe vor. Diese Abwaegung kann nur ER treffen -
+        # deshalb steht sie HIER, sichtbar, statt still zu passieren.
+        # `_haken_offen` traegt genau die richtigen Items: Zustand
+        # "unbestaetigt" = Frist um, ESI deckt nicht, Bestand deckt nicht
+        # (emm747/`haken_wirksam`). GEMESSEN an seinen Plaenen (29.10.):
+        # 13 solcher Haken, u.a. Particle Accelerator Unit (300 abgehakt,
+        # 70 belegt, 262 h alt) und Helium Fuel Block (202/92, 436 h).
+        # NUR BEI AKTIVER RESERVIERUNG (emm754, Nutzer 29.10.2026 auf
+        # meine Abschlussmeldung: "hangar cleaner 1 ist aber ein alter
+        # bereits abgeschlossener Bauplan"). Er hat recht doppelt: meine
+        # 13er-Zaehlung nahm abgeschlossene Plaene mit (Hangar Cleaner 1
+        # ist done + Schloss aus und reserviert NICHTS), und die Meldung
+        # "ihre Zutaten bleiben reserviert" waere bei jedem Plan ohne
+        # Schloss eine Falschaussage. Ohne Reservierung sagt der Haken
+        # ohne Beleg weiterhin nur, was emm650 laengst an der Zeile
+        # anzeigt - dafuer braucht es keine zweite Warnung.
+        _warn_res754 = False
+        try:
+            _pid754 = getattr(self, "_bd_open_plan_id", None)
+            if _pid754 is not None:
+                for _p754 in (self.settings.get("bau_saved_plans") or []):
+                    if _p754.get("id") == _pid754:
+                        _warn_res754 = (bool(_p754.get("reserve"))
+                                        and not _p754.get("done_manual"))
+                        break
+        except Exception:
+            _warn_res754 = False
+        if _haken_offen and _warn_res754:
+            _hk_sorted = sorted(_haken_offen.items(), key=lambda x: -x[1])
+            _hk_namen = ", ".join(
+                self._bp_basisname(_t_w, names.get(_t_w, f"#{_t_w}"))
+                for _t_w, _r_w in _hk_sorted[:3])
+            if len(_hk_sorted) > 3:
+                _hk_namen += " " + _txt("and {n} more").format(
+                    n=len(_hk_sorted) - 3)
+            warns.append(_txt(
+                "\u26a0 {k} ticked position(s) without ESI proof ({items}) "
+                "\u2013 their ingredients stay reserved for this plan. "
+                "Misclick? Untick the line. Really built? Assign the job "
+                "(Job assignments) or finish the plan with \u201eDone\u201c."
+            ).format(k=len(_hk_sorted), items=_hk_namen))
         if warns:
             sub.setText("\n".join(warns))
             sub.setStyleSheet(
@@ -8220,12 +10185,52 @@ class BauplanTabs:
         _plan_runs_tid = {}
         for _t_r, _r_r in _runs_by_tid.items():
             _plan_runs_tid[int(_t_r)] = int(_r_r)
+        # LAUFENDE JOBS NUR BEIM GESPEICHERTEN PLAN (emm715, Nutzer
+        # 25.10.2026, Vagabond FRISCH erstellt: "im runplaner wird schon
+        # angezeigt ich haette Fuel Reactions fertig gemacht, und
+        # components auch schon, dabei sind all diese Sachen in anderen
+        # Bauplaenen reserviert"). Der Kommentar direkt hierueber sagt
+        # woertlich "Jobs DIESES Plans" - aber `_bd_active_jobs_map`
+        # traegt beim UNGESPEICHERTEN Plan ALLE laufenden Jobs aller
+        # Plaene (`_aktive_jobs_filtern` laeuft nur im Einfrier-Zweig).
+        # Folge, in werkzeuge/sim_emm715.py nachgestellt: die fremden
+        # Jobs fuellten das Erledigt-Budget, die Vorstufen-Regel erklaerte
+        # Fuel und Intermediate-Reaktionen zu "kein Verbraucher braucht
+        # sie mehr", und zwei Stufen standen als "(Completed)" da, obwohl
+        # dieser Plan nie einen Job gestartet hatte - die GEFAEHRLICHE
+        # Richtung: wer dem glaubt, baut zu wenig.
+        # DIE REGEL kommt aus `delivered_sicher` (Befund 21.09.2026):
+        # UMSTRITTENE Items - ein anderer offener Plan baut dasselbe -
+        # zaehlen in einer RECHNUNG gar nicht, denn der Job laesst sich
+        # nicht zuordnen; lieber zu viel bauen/kaufen als zu wenig. Die
+        # Dot-Heuristik (`_job_gehoert_anderem_plan`) taugt hier NICHT:
+        # sie schweigt, sobald der eigene Plan das Item auch beansprucht -
+        # und ein frischer Plan beansprucht seine Items immer selbst.
+        # Startet der Nutzer dagegen Jobs an einem ungespeicherten Plan,
+        # dessen Items KEIN anderer Plan baut, zaehlen sie wie bisher
+        # (b41: "alles in der Bauschleife" bleibt eine fertige Stufe mit
+        # Lauf-Punkt). Beim GESPEICHERTEN Plan ist die Karte ueber die
+        # job_zuordnung plan-gefiltert (emm268/emm422) - unveraendert.
+        # GESPEICHERT HEISST NOCH NICHT GEFILTERT (emm717, Nutzer
+        # 25.10.2026: "gespeichert aber noch nicht gefrohren / reserviert
+        # funktioniert also nicht"): die Filterung laeuft nur im Einfrier-
+        # Zweig oben (Bedingung: frozen mit plan_snapshot UND ts). Ein
+        # gespeicherter, ungefrorener Plan traegt ALLE Jobs auf der Karte -
+        # fuer ihn gilt darum dieselbe Umstritten-Regel wie beim frischen
+        # Plan. EINE Bedingung fuer alle Leser:
+        # `_jobs_karte_plan_gefiltert` (mw_helpers, Regel 9).
+        _jobs_zaehlen_715 = self._jobs_karte_plan_gefiltert()
+        _umstritten_715 = (set() if _jobs_zaehlen_715
+                           else self._umstrittene_items(
+                               self.settings,
+                               getattr(self, "_bd_open_plan_id", None)))
         for _t_r, _pl_r in _plan_runs_tid.items():
             _fertig = int((getattr(self, "_bd_runplan_delivered", None)
                            or {}).get(_t_r, 0) or 0)
-            _fertig += sum(int(_j.get("runs") or 0) for _j in
-                           ((getattr(self, "_bd_active_jobs_map", None) or {})
-                            .get(_t_r) or []))
+            if _jobs_zaehlen_715 or _t_r not in _umstritten_715:
+                _fertig += sum(int(_j.get("runs") or 0) for _j in
+                               ((getattr(self, "_bd_active_jobs_map", None) or {})
+                                .get(_t_r) or []))
             # nie mehr abziehen als geplant war - sonst wuerde ein Item, von
             # dem man MEHR gebaut hat als der Plan vorsah, negative Runs
             # zeigen.
@@ -8393,8 +10398,11 @@ class BauplanTabs:
             _hakt_alle0 = getattr(self, "_bd_runplan_checked", None) or set()
             _rp_zeilen0, _rp_erl0 = [], 0      # emm434: Stufen-Abschluss
             try:
-                _erz_bestand0 = set(self._erz_durch_bestand())
+                _lage0 = self._erz_bestand_lage() or {}
+                _erz_bestand0 = {_k for _k, _v in _lage0.items()
+                                 if _v and int(_v[0]) == 0}
             except Exception:
+                _lage0 = {}
                 _erz_bestand0 = set()
             for _cid0, _steps0 in sorted(_by_char0.items(),
                                          key=lambda kv: (kv[0] is None, kv[0] or 0)):
@@ -8493,11 +10501,29 @@ class BauplanTabs:
                             "minerals already in stock \u2713"))
                         for _c0 in range(tbl.columnCount()):
                             _row0.setForeground(_c0, QColor(theme.GREEN))
+                        # HANDLUNG ZUERST (emm674): hier ist die Handlung
+                        # "nichts tun" - und genau das soll dastehen.
                         _row0.setToolTip(4, _txt(
-                            "Every mineral this ore was planned for is already "
-                            "in stock for this plan (reprocessed or bought). "
-                            "The ore is no longer needed and not on the "
-                            "shopping list."))
+                            "Nothing to do - you can skip this ore. Every "
+                            "mineral it was planned for is already in stock "
+                            "for this plan (reprocessed or bought), so it is "
+                            "not on the shopping list either."))
+                    _teil0 = _lage0.get(_key0)
+                    if (not _hakt0 and _key0 not in _erz_bestand0
+                            and _teil0 and 0 < int(_teil0[0]) < int(_teil0[1])):
+                        # TEILGEDECKT (emm738): ein Teil der Minerale liegt
+                        # schon im Lager - nur noch der Rest an Portionen.
+                        _row0.setText(4, _row0.text(4) + "  \u00b7  " + _txt(
+                            "only {n} of {m} batches still needed \u2013 the "
+                            "rest of its minerals is already in stock").format(
+                            n=f"{int(_teil0[0]):,}".replace(",", "'"),
+                            m=f"{int(_teil0[1]):,}".replace(",", "'")))
+                        _row0.setForeground(4, QColor(theme.AMBER))
+                        _row0.setToolTip(4, _txt(
+                            "Buy and reprocess only this many batches - the "
+                            "minerals the other batches would yield are "
+                            "already in stock for this plan. The shopping "
+                            "list counts only this remainder."))
                     _row0.setCheckState(0, Qt.Checked if _hakt0 else Qt.Unchecked)
                     _rp_zeilen0.append(_row0)
                     if _hakt0 or _key0 in _erz_bestand0:
@@ -8522,10 +10548,27 @@ class BauplanTabs:
                         _b0.setToolTip(_txt("Click copies {r} \u2013 paste it into the "
                                             "quantity field in game (Ctrl+V).").format(
                             r=f"{_menge0:,}".replace(",", "'")))
+                        # DIESELBE REGEL WIE BEI DEN BLAUPAUSEN-KNOEPFEN
+                        # (emm820, Arbeitsregel 9: eine Ursache, ALLE
+                        # Vorkommen). Die Erz-Zeile sagt bei gedecktem
+                        # Bestand schon gruen "minerals already in stock"
+                        # und im Tooltip "Nothing to do" - der
+                        # Kopier-Knopf daneben leuchtete trotzdem amber
+                        # weiter und lud zum Abarbeiten ein. Beim
+                        # Nutzer-Haken gilt dasselbe.
+                        _ged820e = bool(_hakt0 or _key0 in _erz_bestand0)
+                        _rand820e = theme.MUTED if _ged820e else theme.AMBER_DIM
+                        _text820e = theme.MUTED if _ged820e else theme.AMBER
+                        if _ged820e:
+                            _b0.setToolTip(_b0.toolTip() + "\n" + _txt(
+                                "This line is already covered (delivered or "
+                                "in build) - nothing left to copy or start "
+                                "here. The run count stays as a record of "
+                                "what was planned."))
                         _b0.setStyleSheet(
                             f"QPushButton{{background:{theme.PANEL2}; "
-                            f"border:1px solid {theme.AMBER_DIM}; "
-                            f"color:{theme.AMBER}; border-radius:5px; "
+                            f"border:1px solid {_rand820e}; "
+                            f"color:{_text820e}; border-radius:5px; "
                             f"padding:0px 10px; font-weight:700;}}"
                             f"QPushButton:hover{{border-color:"
                             f"{theme.AMBER}; background:{theme.PANEL};}}")
@@ -8534,8 +10577,7 @@ class BauplanTabs:
                             self._copy_runs_value(_v, _n))
                         _cl0.addWidget(_b0)
                         _cl0.addStretch()
-                        _cw0.adjustSize()
-                        _h0 = max(34, _cw0.sizeHint().height() + 10)
+                        _h0 = self._knopf_hoehe_fest(_cw0)
                         _row0.setSizeHint(2, QSize(0, _h0))
                         _row0.setSizeHint(0, QSize(0, _h0))
                         tbl.setItemWidget(_row0, 2, _cw0)
@@ -9051,13 +11093,12 @@ class BauplanTabs:
                         # Falschaussage (Fehlerklasse Sitzung 9). Jetzt
                         # fragt jeder Zweig seinen eigenen Beleg ab, und
                         # was keinen hat, heisst "nicht_noetig".
-                        # de_scan4: aus - interner Zustands-Schluessel, nie angezeigt
-                        _zustand = ("laeuft"
-                                    if (_lauf_r > 0 and _gel_r < R_plan)
-                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)
-                                    else "bestand" if _best_r > 0
-                                    else "nicht_noetig")
-                        # de_scan4: an
+                        # emm645: DIESELBE Regel, nur an EINER pruefbaren
+                        # Stelle (`mw_helpers.run_zustand`) - der Punkt ist
+                        # die Sicherheit des Nutzers und muss den Umbau des
+                        # Runplaners unbeschadet ueberstehen. aa645 pinnt sie.
+                        _zustand = _mwh_run_zustand(_gel_r, _lauf_r, _fert_r,
+                                                    _best_r, R_plan)
                         R = R_plan
                         # BEREIT ZUM ABLIEFERN (emm433): Jobs dieses Items,
                         # die ESI fertig meldet, aber noch nicht abgeholt.
@@ -9069,8 +11110,106 @@ class BauplanTabs:
                     # Aufteilung in Blaupausen-Jobs - MIT Runs-Deckel je Job
                     # (`max_runs` aus schedule_build: BPC-Runs / SDE-Limit),
                     # kein Teil groesser als eine Kopie hergibt (17 -> 10 + 7).
-                    njobs, parts = self._bp_teile(R, njobs, a.get("max_runs"),
+                    # KNOEPFE TRAGEN DEN NACHLAUF GLEICH MIT (emm740, Nutzer
+                    # 27.10.2026: "ich will einfach einmal die Amber-Buttons-
+                    # Anzahl Runs kopieren und diese bauen und das soll genau
+                    # stimmen am Schluss"). Vorher stand der Nachlauf nur als
+                    # "+n to run" NEBEN einer offenen Zeile - wer die Knoepfe
+                    # kopierte, baute ihn nicht mit und musste ihn im Kopf
+                    # addieren. Jetzt: die EINE Marker-Zeile des Items (gleiche
+                    # Wahl wie der Marker selbst: die erste, `_nl_gezeigt`)
+                    # rechnet ihn in die Aufteilung ein, solange sie noch
+                    # offene eigene Runs hat; die Zeit je Zeile folgt aus den
+                    # Teilen automatisch. Erledigte Zeilen behalten den
+                    # "add {n} runs"-Weg von emm690.
+                    _nl_knopf740 = 0
+                    if R > 0 and _tid_a not in _nl_gezeigt:
+                        _nl_knopf740 = int((_nachlauf_rp or {})
+                                           .get(_tid_a, 0) or 0)
+                    njobs, parts = self._bp_teile(R + _nl_knopf740, njobs,
+                                                  a.get("max_runs"),
                                                   a.get("parts"))
+                    # ZEIT FUER DIE RESTLICHEN RUNS, NICHT FUER DIE
+                    # URSPRUENGLICHEN (emm664, Nutzer 24.10.2026: "der
+                    # runplaner ist nicht dynamisch genug, die Zeitangabe
+                    # scheint sich nicht anzupassen, 1 run Crystalline
+                    # wuerde niemals 4D52h dauern" - er hat recht, bei
+                    # einem einzigen Run stand die Dauer der ganzen
+                    # urspruenglichen Zeile).
+                    # `a["seconds"]` ist die Wanduhr-Zeit, die
+                    # `schedule_build` fuer die GEPLANTE Run-Zahl gelegt
+                    # hat. Sinkt R durch ESI-Fortschritt oder Haken, muss
+                    # sie mitsinken, sonst behauptet die Zeile eine
+                    # Wartezeit, die es nicht mehr gibt - und der
+                    # Stufen-Gesamtwert oben stimmt auch nicht.
+                    # GERECHNET WIRD UEBER DIE ZEIT JE RUN und den
+                    # LAENGSTEN Teil-Job: die Jobs laufen parallel, also
+                    # bestimmt der groesste die Wanduhr. Derselbe Weg wie
+                    # in der Wellen-Aufteilung weiter oben (`_tv`).
+                    _tv_z = float(a.get("tv") or 0.0)
+                    if not _tv_z and a.get("parts"):
+                        try:
+                            _tv_z = (float(a.get("seconds") or 0.0)
+                                     / max(1, max(a["parts"])))
+                        except (TypeError, ValueError):
+                            _tv_z = 0.0
+                    # DIE LUECKE VON emm664 (emm683). Nutzer 24.10.2026:
+                    # "hypersynaptic fibers 1 Run dauert nicht 2d17h
+                    # unvorstellbar diese lange Zeit fuer nur 1 run / Sylramic
+                    # fibers ebenso (da steht 1 Run dauert 5D 6h)". Er hat
+                    # wieder recht, und emm664 hat es nur zur HAELFTE
+                    # behoben: `tv` und `parts` setzt `schedule_build` NUR
+                    # fuer Items mit Runs-Deckel (`_rcap_for(tid)`). Seine
+                    # Reaktionen haben keinen - in seiner Planer-Diagnose
+                    # ist die Spalte TEILE bei JEDER Reaktionszeile leer.
+                    # Fuer sie blieb `_tv_z` null, und die Zeile fiel auf
+                    # `a["seconds"]` zurueck: die Dauer der URSPRUENGLICHEN
+                    # Run-Zahl. Bei Sylramic Fibers stand damit an einer
+                    # Zeile mit EINEM offenen Run die Zeit fuer 319.
+                    # Dass es ihm nur bei Reaktionen auffiel, ist kein
+                    # Zufall, sondern genau die Trennlinie.
+                    # DRITTER RUECKFALL, dieselbe Rechnung: Sekunden je Run
+                    # aus der Wanduhr-Zeit der GEPLANTEN Runs. Ohne
+                    # Teil-Jobs ist die Zeile ein Job ueber R Runs.
+                    # ... UND `seconds` IST DIE WANDUHR, NICHT DIE SUMME
+                    # (emm688, Nutzer 25.10.2026: "ausserdem dauern 187
+                    # runs Tungsten Carbide wiedermal nicht nur 10h").
+                    # Er hat recht - und emm683 war daran schuld.
+                    # `a["seconds"]` ist die Zeit, die der CHARAKTER fuer
+                    # seine Zuteilung braucht, mit allen parallelen Jobs
+                    # schon eingerechnet. `seconds / runs` ist deshalb
+                    # NICHT die Zeit je Run, sondern die Zeit je Run
+                    # GETEILT DURCH DIE PARALLELITAET. Mit `max(parts)`
+                    # multipliziert kam genau um den Faktor `jobs` zu
+                    # wenig heraus.
+                    # NACHGERECHNET an seiner Planer-Diagnose vom
+                    # 25.10.2026, 08:18 - die alte Formel trifft alle
+                    # drei Anzeigen auf die Minute:
+                    #   Tungsten Carbide  480 zugeteilt, 5 Jobs -> 10h 40m
+                    #                     statt 2 T 5 h 21 m (Faktor 5)
+                    #   Terahertz Lezflow 480 zugeteilt, 5 Jobs -> 1 T 2 h
+                    #                     statt 5 T 14 h 47 m (Faktor 5)
+                    #   Terahertz Getflow 192 zugeteilt, 2 Jobs -> 2 T 19 h
+                    #                     statt 5 T 14 h 47 m (Faktor 2)
+                    # `runs / jobs` ist die Run-Zahl des LAENGSTEN Jobs,
+                    # also ist `seconds * jobs / runs` die echte Zeit je
+                    # Run. Der mit `tv` versorgte Fall (Items mit
+                    # Runs-Deckel) bleibt unangetastet.
+                    if not _tv_z:
+                        try:
+                            _r_pl_z = int(a.get("runs") or 0)
+                            _j_pl_z = max(1, int(a.get("jobs") or 1))
+                            if _r_pl_z > 0:
+                                _tv_z = (float(a.get("seconds") or 0.0)
+                                         * _j_pl_z / _r_pl_z)
+                        except (TypeError, ValueError):
+                            _tv_z = 0.0
+                    if _tv_z and parts:
+                        _sek_z = int(max(parts) * _tv_z)
+                    elif _tv_z:
+                        _sek_z = int(R * _tv_z)
+                    else:
+                        _sek_z = int(a.get("seconds", 0) or 0)
                     # Klare, schnell lesbare Blaupausen-Angabe: wie viele BPs muss
                     # ich diesem Char geben und mit wie vielen Runs je BP. Bei
                     # ungleichen Runs die Gruppen zeigen, z. B. "5×42 / 1×43 Runs".
@@ -9102,11 +11241,195 @@ class BauplanTabs:
                     _surp_here = (round(_surp_total * (a["runs"] / _tid_total_runs))
                                  if _surp_total and _tid_total_runs else 0)
                     iit = QTreeWidgetItem([a["name"], f"{R:,}".replace(",", "'"),
-                                           bp_txt, self._fmt_dur(a.get("seconds", 0)),
+                                           bp_txt, self._fmt_dur(_sek_z),
                                            _stufe_label(a),
                                            (f"+{_surp_here:,}".replace(",", "'")
                                             if _surp_here else "\u2013")])
                     iit.setTextAlignment(1, Qt.AlignCenter)   # Runs mittig
+                    # TEILGESTARTETE ZEILE SAGT ES (emm756, Nutzer
+                    # 29.10.2026, nach zweimaligem Raetseln ueber seine
+                    # Electrolytic Capacitor Units - 1'376 von 1'400
+                    # gestartet, die Zeile schrumpfte still auf 24:
+                    # "warum gibts keinen Blauen Dot" und "trotzdem hat
+                    # es nicht alle runs genommen", Antwort auf mein
+                    # Angebot: "ja"). Hat das Item laufende Runs UND die
+                    # Zeile noch offene, steht die Lauf-Zahl daneben -
+                    # einmal je Item, an der ersten Zeile mit Rest
+                    # (ITEM-Gesamtzahl, Lehre aus emm654).
+                    if R > 0 and _tid_a not in _lauf_gezeigt:
+                        _lauf_z756 = sum(
+                            int(_j.get("runs") or 0) for _j in
+                            ((getattr(self, "_bd_active_jobs_map", None)
+                              or {}).get(_tid_a) or [])
+                            if _j.get("status") != "ready")
+                        if _lauf_z756 > 0:
+                            _lauf_gezeigt.add(_tid_a)
+                            iit.setText(1, _txt("{r} \u00b7 {n} running").format(
+                                r=f"{R:,}".replace(",", "'"),
+                                n=f"{_lauf_z756:,}".replace(",", "'")))
+                            iit.setToolTip(1, _txt(
+                                "{n} run(s) of this item are in build right "
+                                "now (tracked via ESI) \u2013 only the {r} "
+                                "shown here are still open. The blue dot "
+                                "appears when nothing of the line is open "
+                                "any more.").format(
+                                    n=f"{_lauf_z756:,}".replace(",", "'"),
+                                    r=f"{R:,}".replace(",", "'")))
+                    # HAKEN OHNE BELEG (emm650): deutlich sichtbar, denn
+                    # es ist ein Hinweis auf einen Fehler IM SPIEL, nicht
+                    # im Werkzeug - je frueher er es sieht, desto
+                    # billiger. ANGEBRACHT WIRD ER ERST WEITER UNTEN, bei
+                    # `_apply_struck` - s. emm654. Hier steht nur die
+                    # Entscheidung, damit sie neben den uebrigen
+                    # Zeilen-Zusaetzen nachvollziehbar bleibt.
+                    _hs = (_haken_stand or {}).get(_tid_a)
+                    _warn_haken = bool(_hs and _hs[0] == "unbestaetigt")
+                    # NACHLAUF-RUN (emm646): die geplanten Runs sind
+                    # aufgebraucht, die naechste Stufe braucht aber mehr.
+                    # ABSICHTLICH an derselben Zeile und in derselben Stufe
+                    # (Nutzer-Wunsch: kein zweiter Reiter, nichts suchen) -
+                    # nur farblich abgesetzt, damit man sieht, DASS sich
+                    # etwas geaendert hat, und der Tooltip sagt warum.
+                    _nl_rp = int((_nachlauf_rp or {}).get(_tid_a, 0) or 0)
+                    # Merker fuer emm690 weiter unten: NUR die Zeile, die
+                    # den Marker wirklich traegt, stellt ihre Spalten um.
+                    _nl_marker_zeile = False
+                    # Dasselbe fuer die offene Haken-Differenz (emm747):
+                    # sie wird im Haken-Zweig weiter unten gesetzt und
+                    # teilt sich den Knopf-Umbau mit dem Nachlauf - sonst
+                    # stuende die Zahl am Namen, waehrend die Spalten
+                    # weiter die laengst gebauten Runs beschreiben (genau
+                    # der Fehler, den emm690 fuer den Nachlauf behoben hat).
+                    _hk_off_zeile = 0
+                    if _nl_rp and _tid_a not in _nl_gezeigt:
+                        _nl_gezeigt.add(_tid_a)
+                        _nl_marker_zeile = True
+                        iit.setText(0, iit.text(0) + "  \u00b7  "
+                                    + _txt("+{n} to run").format(n=_nl_rp)
+                                    + (" " + _txt("(already in the copy "
+                                                  "buttons)")
+                                       if _nl_knopf740 > 0 else ""))
+                        iit.setForeground(0, QColor(theme.AMBER))
+                        # HANDLUNG ZUERST (emm674): die Aufforderung stand
+                        # im dritten Satz.
+                        iit.setToolTip(0, _txt(
+                            "Start {n} more run(s) of this item. All planned "
+                            "runs are done, but the next stage has used up "
+                            "the output and needs more. The frozen plan "
+                            "itself stays unchanged - this is only what you "
+                            "still have to do.").format(n=_nl_rp))
+                    # WARTET AUF (emm648): die Zeile sieht startbereit
+                    # aus, aber eine Zutat steckt noch im Ofen. Nutzer
+                    # 24.10.2026: "warum kann ich dann keine Components
+                    # bauen weil mir ingame sylramic Fibers fehlt?" -
+                    # Antwort: 4'236'000 davon liefen in Reaktionen bis
+                    # zum 27.10. Ihm fehlte kein Material, ihm fehlte
+                    # diese Zeile.
+                    # SCHLUESSEL DER ZEILE - HIER, NICHT ERST UNTEN (emm682).
+                    # Nutzer 24.10.2026 mit Bildschirmfoto: "waiting for
+                    # Meldung da aber auf etwas was schon fertig gebaut
+                    # ist". Seine Fermionic-Condensates-Zeile trug Haken
+                    # UND gruenen Punkt UND "wartet auf Fluxed
+                    # Condensates". Grund: der Haken wurde erst rund 120
+                    # Zeilen WEITER UNTEN gesetzt (`_ckey_item in
+                    # _checked_set`) - der Startblocker oben wusste noch
+                    # nicht, dass die Zeile laengst erledigt ist. Eine
+                    # Aufforderung zu warten auf einer Zeile, die er schon
+                    # abgearbeitet hat, ist schlimmer als keine: sie laesst
+                    # ihn an seiner eigenen Arbeit zweifeln.
+                    # EIN Schluessel, EINE Stelle (Regel 9) - weiter unten
+                    # wird genau dieser weiterverwendet, nicht neu gebaut.
+                    _ckey_item = f"{stage}|{cid}|{a['tid']}{_wsuf}"
+                    _schon_erledigt = (_ckey_item in _checked_set
+                                       or _ckey_item in _haken_neu)
+                    # Die Nachlauf-Spalten (emm689) standen frueher HIER -
+                    # und damit doppelt falsch. Sie stehen jetzt hinter dem
+                    # Haken-Block (emm690, Begruendung dort): dort erst ist
+                    # durchgestrichen, was durchgestrichen wird.
+                    if R > 0 and not _schon_erledigt:
+                        _bl = self._startblocker_fuer_zeile(plan, _tid_a, R)
+                        if _bl:
+                            _b0 = max(_bl, key=lambda x: x["braucht"] - x["da"])
+                            _bis = ""
+                            for _j_b in ((getattr(self, "_bd_active_jobs_map",
+                                                  None) or {}).get(_b0["tid"])
+                                         or []):
+                                _e_b = self._iso_job_ts(_j_b.get("end_date"))
+                                if _e_b:
+                                    import time as _tm_b
+                                    _bis = max(_bis, _tm_b.strftime(
+                                        "%d.%m.", _tm_b.localtime(_e_b)))
+                            _nm_b = names.get(_b0["tid"], f"#{_b0['tid']}")
+                            # IN SPALTE 0, NICHT 4 (emm675, Nutzer
+                            # 24.10.2026: "muesste bei diesen reactions
+                            # jetzt nicht stehen: warten auf ... Rolled
+                            # Tungsten Alloy"). Der Hinweis WAR da - nur
+                            # haengte er hinten an Spalte 4 (STAGE), also
+                            # hinter "Reaction - stage 2 - Composite", und
+                            # die Spalte ist in seinem Fenster
+                            # abgeschnitten. Der wichtigste
+                            # Handlungshinweis der Zeile stand damit
+                            # ausserhalb des sichtbaren Bereichs.
+                            # Alle anderen Marker ("+n to run", "ESI
+                            # bestaetigt das nicht") stehen in Spalte 0
+                            # beim Namen - dieser gehoert genauso dorthin.
+                            # SPALTE 4, ABER VORNE (emm675). Zuerst stand
+                            # der Hinweis HINTEN an Spalte 4, also hinter
+                            # "Reaction - stage 2 - Composite" - und damit
+                            # in einem abgeschnittenen Fenster unsichtbar.
+                            # Dann habe ich ihn nach Spalte 0 geschoben:
+                            # falsch, denn Spalte 0 ist der NAME, ueber den
+                            # die Oberflaechen-Tests (b26, b41 und 56
+                            # weitere) ihre Zeilen finden - und ueber den
+                            # auch der Nutzer die Zeile wiedererkennt. Ein
+                            # Hinweis darf einen Bezeichner nicht
+                            # veraendern.
+                            # RICHTIG: dieselbe Spalte, aber VORANGESTELLT.
+                            # Dann steht er auch dann noch im Bild, wenn
+                            # rechts abgeschnitten wird.
+                            _warte_txt = (_txt("waiting for {w} (until {d})")
+                                          .format(w=_nm_b, d=_bis) if _bis
+                                          else _txt("waiting for {w}")
+                                          .format(w=_nm_b))
+                            # WEDER SPALTE 0 NOCH VORNE IN SPALTE 4 (emm675,
+                            # zwei Fehlversuche, beide von den Tests
+                            # gefangen):
+                            #   * Spalte 0 ist der NAME - b26/b41 und 56
+                            #     weitere finden ihre Zeilen darueber, und
+                            #     der Nutzer erkennt die Zeile daran. Ein
+                            #     Hinweis darf keinen Bezeichner aendern.
+                            #   * Spalte 4 VORNE bricht b7w, das auf dem
+                            #     Stufen-Praefix aufsetzt (`z[4].startswith`).
+                            # Also: Text wie bisher HINTEN an Spalte 4 -
+                            # aber der NAME wird bernsteinfarben und
+                            # bekommt denselben Tooltip. Die Faerbung
+                            # aendert keinen Text, faellt aber sofort auf,
+                            # auch wenn Spalte 4 abgeschnitten ist.
+                            iit.setText(4, iit.text(4) + "  \u00b7  \u23f8 "
+                                        + _warte_txt)
+                            iit.setForeground(4, QColor(theme.AMBER))
+                            iit.setForeground(0, QColor(theme.AMBER))
+                            # HANDLUNG ZUERST (emm674): er soll WARTEN oder
+                            # die Zutat nachziehen - das gehoert nach vorn,
+                            # nicht der Befund.
+                            _tip_warte = _txt(
+                                "Wait for {w} or make more of it first - this "
+                                "row needs {n} and only {d} are in the "
+                                "hangar. Running jobs do not count here: "
+                                "their output is not in the hangar yet.").format(
+                                    w=_nm_b,
+                                    n=f"{int(_b0['braucht']):,}".replace(",", "'"),
+                                    d=f"{int(_b0['da']):,}".replace(",", "'"))
+                            iit.setToolTip(4, _tip_warte)
+                            # SPALTE 0 BLEIBT UNANGETASTET (emm675, dritter
+                            # Fehlversuch): ein `if not toolTip(0)` hier
+                            # belegt den Platz, den eine spaetere, genauere
+                            # Erklaerung braucht - b41 erwartet dort "does
+                            # not need these runs any more". Wer sich in
+                            # eine Warteschlange draengelt, verdraengt
+                            # etwas Besseres. Der Hinweis steht in Spalte 4,
+                            # die Faerbung in Spalte 0 macht darauf
+                            # aufmerksam - das reicht.
                     if _weg:
                         # NICHTS VERSCHWINDET SPURLOS: die Zeile zeigt den
                         # REST, der Tooltip nennt Plan und bereits Gebautes.
@@ -9128,6 +11451,21 @@ class BauplanTabs:
                                 "{n} run(s) of it are covered by stock of the "
                                 "product itself (e.g. bought in) \u2013 nothing "
                                 "needs to be built for them.").format(n=_best_n)
+                            # SICHTBAR, NICHT NUR IM TOOLTIP (emm758,
+                            # Entscheid nach dem 24er-ECU-Fall vom
+                            # 29.10.2026, emm756): die Bestandsdeckung ist
+                            # eine MOMENTAUFNAHME eines geteilten Hangars -
+                            # fliessen die Stuecke ab, tauchen die Runs
+                            # wieder auf ("trotzdem hat es nicht alle runs
+                            # genommen"). Das Verhalten bleibt (sein
+                            # Fuel-Block-Fall emm514 haengt daran), aber die
+                            # Zahl steht jetzt AN der Zeile, damit er beim
+                            # Kopieren informiert entscheidet. ANGEHAENGT an
+                            # den bestehenden Spaltentext, nicht ersetzt -
+                            # emm756 schreibt dort evtl. schon die Lauf-Zahl.
+                            iit.setText(1, iit.text(1) + _txt(
+                                " \u00b7 {n} from stock").format(
+                                    n=f"{_best_n:,}".replace(",", "'")))
                         iit.setToolTip(1, _tip_weg)
                     iit.setTextAlignment(3, Qt.AlignRight | Qt.AlignVCenter)  # Zeit rechts
                     iit.setTextAlignment(5, Qt.AlignCenter)
@@ -9138,7 +11476,10 @@ class BauplanTabs:
                             "size) - split here proportionally by runs."
                         ).format(n=int(round(_surp_total))))
                     iit.setFlags(iit.flags() | Qt.ItemIsUserCheckable)
-                    _ckey_item = f"{stage}|{cid}|{a['tid']}{_wsuf}"
+                    # `_ckey_item` steht schon oben (emm682) - dort muss der
+                    # Startblocker wissen, ob die Zeile erledigt ist. Zweimal
+                    # denselben Schluessel zu bauen waeren zwei Wahrheiten,
+                    # die auseinanderlaufen koennen.
                     iit.setData(0, Qt.UserRole + 6, _ckey_item)
                     # HAND-HAEKCHEN FUER DIE EINKAUFSLISTE MERKEN (Sitzung 16,
                     # Nutzer: "die Einkaufsliste zeigt absurd viele
@@ -9173,6 +11514,83 @@ class BauplanTabs:
                     if _ckey_item in _checked_set:
                         iit.setCheckState(0, Qt.Checked)
                         _apply_struck(iit)
+                        # HAKEN OHNE BELEG - ERST HIER (emm654, Nutzer-
+                        # Screenshot 24.10.2026). ZWEI FEHLER standen auf
+                        # EINEM Bild, beide aus derselben Wurzel:
+                        # (1) FEHLALARM. `_haken_stand` ist nach ITEM
+                        #     geschluesselt (`stufe|tid`), die Zeilen sind
+                        #     aber je CHARAKTER. Rolled Tungsten Alloy trug
+                        #     die Warnung bei Leziris Lezflow, obwohl dort
+                        #     NICHTS angehakt war - der Haken lag bei einem
+                        #     anderen Charakter desselben Items. "Du hast
+                        #     abgehakt" auf einer Zeile, die er nie
+                        #     angefasst hat, verbrennt genau das Vertrauen,
+                        #     das dieses Signal braucht. Jetzt haengt die
+                        #     Warnung nur an Zeilen, die den Haken WIRKLICH
+                        #     tragen. (Dieselbe Lehre wie beim zweiten Weg
+                        #     zum gruenen Punkt, s. den Block darunter: ein
+                        #     itemweiter Massstab darf nicht ueber eine
+                        #     einzelne Zuteilung urteilen.)
+                        # (2) UNLESBAR. `_apply_struck` setzt Durchstreichen
+                        #     UND Gruen auf ALLE Spalten - die Warnung kam
+                        #     also durchgestrichen und gruen heraus, also
+                        #     optisch als "erledigt". Deshalb steht sie
+                        #     jetzt NACH dem Streichen und nimmt den Strich
+                        #     fuer Spalte 0 wieder heraus: der Haken bleibt
+                        #     gesetzt (so versprochen es der Tooltip), aber
+                        #     "fertig" behauptet die Zeile nicht mehr.
+                        if _warn_haken:
+                            # DIE DIFFERENZ STEHT DA, NICHT NUR DIE WARNUNG
+                            # (emm747, Nutzer 28.10.2026: "ESI müsste
+                            # prüfen, hacken lösen und 2 Runs hinschreiben
+                            # für amber mit kopieren wie wirs kennen").
+                            # Bis emm746 stand hier nur "ESI does not
+                            # confirm this" samt der Zusage, dass nichts
+                            # geaendert wird - und genau das war der
+                            # Schaden: das Material der nie gefahrenen
+                            # Runs blieb aus dem Bedarf (sein
+                            # Catalyst-Fall, 3'459'456 Tritanium).
+                            # NUR EINMAL JE ITEM (Lehre aus emm654):
+                            # `_haken_offen` ist eine Item-Gesamtzahl,
+                            # die Zeilen sind je Charakter und Welle.
+                            _hk_off747 = int((_haken_offen or {}).get(
+                                _tid_a, 0) or 0)
+                            if _hk_off747 > 0 and _tid_a not in _hk_gezeigt:
+                                _hk_gezeigt.add(_tid_a)
+                                _hk_off_zeile = _hk_off747
+                                iit.setText(0, iit.text(0) + "  ·  ⚠ "
+                                            + _txt("{n} run(s) still open")
+                                            .format(n=f"{_hk_off747:,}"
+                                                    .replace(",", "'")))
+                            else:
+                                iit.setText(0, iit.text(0) + "  ·  ⚠ "
+                                            + _txt("ESI does not confirm this"))
+                            _f_hw = iit.font(0)
+                            _f_hw.setStrikeOut(False)
+                            iit.setFont(0, _f_hw)
+                            iit.setForeground(0, QColor(theme.AMBER))
+                            # HANDLUNG ZUERST (emm674). Der Satz "stays as
+                            # you set it" ist seit emm747 NICHT mehr die
+                            # ganze Wahrheit und durfte nicht so
+                            # stehenbleiben: der Haken zaehlt nur noch so
+                            # weit, wie ESI ihn deckt. Dass er OPTISCH
+                            # gesetzt bleibt, steht jetzt ausdruecklich
+                            # dabei - samt der Rueckrichtung (seine
+                            # Nachfrage: "würde aber nach 2 oder 3 stunden
+                            # ESI merken, ah ist doch da muss es
+                            # korrigieren können").
+                            iit.setToolTip(0, _txt(
+                                "Check in game whether all these runs really "
+                                "started: you ticked {n}, ESI sees only {m}. "
+                                "The missing {d} run(s) count as open again, "
+                                "so their material is back in the shopping "
+                                "list. Your tick stays visible – if ESI "
+                                "confirms them later, it counts in full "
+                                "again by itself.").format(
+                                    n=f"{int(_hs[1]):,}".replace(",", "'"),
+                                    m=f"{int(_hs[2]):,}".replace(",", "'"),
+                                    d=f"{max(0, int(_hs[1]) - int(_hs[2])):,}"
+                                      .replace(",", "'")))
                         # HIER STAND EIN ZWEITER WEG ZUM GRUENEN PUNKT -
                         # ENTFERNT (Nutzer-Freigabe, Sitzung 14: "das mit dem
                         # Runplaner mach mal so").
@@ -9211,22 +11629,42 @@ class BauplanTabs:
                         if not iit.toolTip(0):
                             _del_n = (getattr(self, "_bd_runplan_delivered",
                                               None) or {}).get(a["tid"], 0)
-                            iit.setToolTip(0, (_txt("Ticked by hand. ESI: ")
-                                               + (_txt("{n} runs delivered.").format(n=_del_n)
-                                                  if _del_n else
-                                                  _txt("no delivered jobs seen for it yet "
-                                                       "(may lag behind)."))))
+                            # HANDLUNG ZUERST (emm674): der Text sagte nur,
+                            # was ESI sieht, und liess offen, ob er etwas tun
+                            # muss. Antwort in beiden Faellen: nichts - der
+                            # Haken gilt. Genau das gehoert an den Anfang.
+                            iit.setToolTip(0, (
+                                _txt("Nothing to do - your tick counts. ")
+                                + (_txt("ESI confirms {n} runs.").format(n=_del_n)
+                                   if _del_n else
+                                   _txt("ESI has not seen a delivered job yet; "
+                                        "that is normal for up to an hour."))))
                     else:
                         iit.setCheckState(0, Qt.Unchecked)
                         # TEILFORTSCHRITT sichtbar machen: ESI hat schon
                         # geliefert, aber noch nicht alle Plan-Runs - genau
                         # das "in der Bauschleife"-Signal des Nutzers.
-                        _del_n = ((getattr(self, "_bd_runplan_delivered",
-                                            None) or {}).get(a["tid"], 0)
-                                  + sum(int(_jj.get("runs") or 0) for _jj in
-                                        ((getattr(self, "_bd_active_jobs_map",
-                                                  None) or {})
-                                         .get(a["tid"]) or [])))
+                        _del_n = int((getattr(
+                            self, "_bd_runplan_delivered", None)
+                            or {}).get(a["tid"], 0) or 0)
+                        # NUR EIGENER BELEG FAERBT CYAN (emm806, Nutzer
+                        # 01.11.2026 zu cyan Items in einem FRISCHEN Plan:
+                        # "da kann nichts in der Bauschleife sein, ich habe
+                        # andere Bauplaene wo diese Sachen evt in der
+                        # Bauschlefie sein loenen ingame"). Auf der
+                        # UNGEFILTERTEN Job-Karte (frischer oder noch nicht
+                        # gefrorener Plan traegt ALLE laufenden Jobs aller
+                        # Plaene, s. _aktive_jobs_filtern) gilt dieselbe
+                        # Umstritten-Regel wie beim Erledigt-Budget
+                        # (emm715/717, oben): laufende Jobs eines Items, das
+                        # ein ANDERER Plan baut, sind kein "dieser Plan
+                        # laeuft schon"-Signal.
+                        if _jobs_zaehlen_715 or a["tid"] not in _umstritten_715:
+                            _del_n += sum(
+                                int(_jj.get("runs") or 0) for _jj in
+                                ((getattr(self, "_bd_active_jobs_map",
+                                          None) or {})
+                                 .get(a["tid"]) or []))
                         if _del_n:
                             # ESI-N/M AUS DER ZEILE ENTFERNT (Nutzer,
                             # Sitzung 9: "unnoetige Info" - und berechtigt
@@ -9237,12 +11675,49 @@ class BauplanTabs:
                             # Zahl). Punkt + Faerbung bleiben als Signal,
                             # das Detail steht im Tooltip auf Abruf.
                             iit.setForeground(0, QColor(theme.CYAN))
+                            # HANDLUNG ZUERST, BUCHHALTUNG DANACH (emm666,
+                            # Nutzer 24.10.2026 vor genau diesem Tooltip:
+                            # "hier auch tooltip - wie soll ich damit
+                            # umgehen"). Der Text erklaerte MoMas
+                            # Rechnung ("ESI sieht 64 ... Zeile braucht
+                            # 319 ... wird AUSGEBLENDET") und liess ihn
+                            # mit der Frage stehen, was er TUN soll.
+                            # Dabei ist die Antwort die einfachste von
+                            # allen: die offenen Runs fahren. Die Zahl
+                            # steht in der Zeile, aber der Tooltip ist
+                            # die Stelle, an der er nachfragt - also
+                            # beginnt er jetzt mit der Handlung.
+                            # "across ALL plans" WAR FALSCH und stand hier
+                            # seit Stufe C (emm667): die Zahl ist das, was
+                            # ESI DIESEM Plan sicher zuordnet
+                            # (`delivered_sicher` - Deckel auf die
+                            # Plan-Runs, umstrittene Items zaehlen gar
+                            # nicht). An den Daten des Nutzers geprueft:
+                            # Gallente 1 (16.10.) hat 64 zugeordnete
+                            # Sylramic-Runs, der Tooltip zeigte 64 -
+                            # global waeren es 878 gewesen. Der falsche
+                            # Zusatz liess ihn an einer richtigen Zahl
+                            # zweifeln, und mich auch.
                             iit.setToolTip(0, _txt(
-                                "ESI sees {seen} runs of this item (delivered or in the "
-                                "build pipeline, across ALL plans) \u2013 this row needs "
-                                "{need}. Once fully covered, the item is HIDDEN from "
-                                "the plan."
-                            ).format(seen=_del_n, need=int(a.get('runs') or 0)))
+                                "Still to run: {open}. ESI already sees {seen} of "
+                                "{need} runs for THIS plan (delivered or in the "
+                                "build pipeline) - at full count the row "
+                                "disappears by itself; nothing is lost."
+                            # ZWEI MASSSTAEBE IN EINEM SATZ (emm678,
+                            # Nutzer-Tooltip 24.10.2026: "ESI already sees
+                            # 1262 of 480 runs"). 1262 kann nicht von 480
+                            # sein: `_del_n` ist der Stand des ITEMS im
+                            # Plan (1'449 geplant, 1'262 belegt), `need`
+                            # war aber die Run-Zahl DIESER ZEILE (480).
+                            # Zeilen- und Item-Massstab in einem Verhaeltnis
+                            # ergeben Unsinn - dieselbe Fehlerklasse wie
+                            # emm654, diesmal in einem Satz statt in einer
+                            # Spalte. Jetzt beide Zahlen itemweit; die
+                            # Zeilen-Zahl steht ohnehin links in RUNS.
+                            ).format(open=f"{max(0, R):,}".replace(",", "'"),
+                                     seen=f"{int(_del_n):,}".replace(",", "'"),
+                                     need=f"{int(_plan_runs_tid.get(_tid_a, 0) or 0):,}"
+                                          .replace(",", "'")))
                         # LAEUFT, GEHOERT ABER NOCH KEINEM PLAN (Nutzer
                         # 28.09.2026): zaehlt nirgends als erledigt - die
                         # Zeile sagt es, damit niemand denselben Job ein
@@ -9253,11 +11728,111 @@ class BauplanTabs:
                             iit.setText(0, iit.text(0) + " " + _txt(
                                 "(running: {n} runs, not assigned to a plan yet)"
                             ).format(n=sum(int(_ju.get("runs") or 0) for _ju in _unz)))
+                            # HANDLUNG ZUERST (emm674).
                             iit.setToolTip(0, _txt(
-                                "A job for this item is running, but more than one "
-                                "plan builds it and it is not assigned yet. It "
-                                "counts for no plan until you assign it (button "
-                                "\u201e\u2026 not assigned \u2013 assign\u201c)."))
+                                "Assign this job (button \u201e\u2026 not assigned "
+                                "\u2013 assign\u201c) - until you do, it counts for "
+                                "no plan at all. More than one plan builds "
+                                "this item, so ESI cannot decide it."))
+                    # DIE SPALTEN DER NACHLAUF-ZEILE - NACH DEM STRICH UND
+                    # NUR AUF DER MARKER-ZEILE (emm690). Nutzer 25.10.2026:
+                    # "+3 to run" stand an seiner Fernite-Carbide-Zeile,
+                    # daneben unveraendert "10 blueprints 10x 29" und
+                    # 4 h 4 m - die Spalten beschrieben die 290 laengst
+                    # gebauten Runs statt der 3 nachzulegenden (emm689).
+                    # emm689 selbst war aber doppelt falsch gebaut, einen
+                    # Tag alt:
+                    #   (1) Es hing an `_nl_rp > 0` - das ist die ITEM-
+                    #       Karte, nicht die Zeile. Jede erledigte Zeile
+                    #       desselben Items bekam "3 Runs nachlegen"; bei
+                    #       zwei Charakteren haette er SECHS gebaut. Der
+                    #       Marker "+n to run" steht absichtlich nur EINMAL
+                    #       je Item (`_nl_gezeigt`, emm646) - die Spalten
+                    #       gehoeren auf genau diese eine Zeile.
+                    #   (2) Es lief VOR `_apply_struck`, und das streicht
+                    #       ALLE Spalten gruen durch. Die Anweisung las
+                    #       sich als erledigt - das Gegenteil ihrer
+                    #       Aussage.
+                    # Deshalb jetzt: nach dem Haken-Block, Spalten 2 und 3
+                    # entstreichen und bernsteinfarben - dieselbe Farbe wie
+                    # der Marker am Namen. NUR wenn die Zeile sonst
+                    # erledigt ist: hat sie noch offene eigene Runs,
+                    # beschreiben die Spalten echte Arbeit und bleiben.
+                    # SO PARALLEL WIE MOEGLICH (3x1 statt 1x3): drei
+                    # gleichzeitige Reaktionen brauchen die Zeit EINES
+                    # Runs. Nie mehr Jobs als Runs, nie mehr als zugeteilt.
+                    # Bekannte Grenze: loest er den Haken wieder, bleiben
+                    # die Spalten bis zum naechsten Aufbau (<= 5 min) auf
+                    # dem Nachlauf-Text stehen.
+                    # DIE OFFENE HAKEN-DIFFERENZ GEHOERT IN DENSELBEN KNOPF
+                    # (emm747, Nutzer: "2 Runs hinschreiben f\u00fcr amber mit
+                    # kopieren wie wirs kennen"). Beide Zahlen beschreiben
+                    # Arbeit, die an GENAU DIESER Zeile noch ansteht -
+                    # getrennte Knoepfe waeren zwei Zahlen fuer dieselbe
+                    # Handlung, und er muesste sie im Kopf addieren (die
+                    # Lehre aus emm690). Treffen beide zusammen, zaehlt
+                    # die Summe.
+                    # ZWEI VERSCHIEDENE ZAHLEN, EIN KNOPF (emm747, Nutzer:
+                    # "10 runs verschwinden (weil 8 davon liegen jetzt im
+                    # Hanger) also bleiben nurnoch 2 kopierbar"):
+                    #   NACHLAUF  = Runs ZUSAETZLICH zum Plan, weil die
+                    #               naechste Stufe mehr braucht -> "add n".
+                    #   HAKEN-REST = was von den GEPLANTEN Runs dieser
+                    #               Zeile noch aussteht, weil ESI den
+                    #               Haken nur teilweise deckt. Hier waere
+                    #               "add 2" falsch: es kommt nichts dazu,
+                    #               es bleiben 2 von 10 uebrig. Die Zeile
+                    #               schrumpft also auf 2 - Runs-Spalte und
+                    #               Knopf wie bei jeder offenen Zeile.
+                    # Treffen beide zusammen, zaehlt die Summe und der
+                    # "add"-Text gilt (dann kommt wirklich etwas dazu).
+                    _nl_z747 = _nl_rp if _nl_marker_zeile else 0
+                    _add747 = _nl_z747 + _hk_off_zeile
+                    if _add747 > 0 and _schon_erledigt:
+                        try:
+                            _nj_nl = max(1, min(int(njobs or 1), _add747))
+                            _tl_nl = self._bp_teile(_add747, _nj_nl,
+                                                    a.get("max_runs"),
+                                                    None)[1] or [_add747]
+                            if _nl_z747 > 0:
+                                iit.setText(2, _txt(
+                                    "add {n} runs \u00b7 {j} blueprint(s)").format(
+                                        n=f"{int(_add747):,}".replace(",", "'"),
+                                        j=len(_tl_nl)))
+                            else:
+                                # Reiner Haken-Rest: die Zeile sieht aus
+                                # wie eine offene Zeile mit 2 Runs.
+                                iit.setText(1, f"{int(_add747):,}"
+                                            .replace(",", "'"))
+                                # Dieselbe Schreibweise wie bei jeder
+                                # offenen Zeile (s. `bp_txt` oben) - er
+                                # soll den Knopf nicht erst deuten muessen.
+                                if len(_tl_nl) <= 1:
+                                    _bp747 = (f"1 Blueprint \u00b7 "
+                                              f"{int(_add747)} Runs")
+                                else:
+                                    from collections import Counter as _C747
+                                    _c747 = _C747(_tl_nl)
+                                    _g747 = " / ".join(
+                                        f"{_n747}\u00d7{_r747}" for _r747, _n747
+                                        in sorted(_c747.items(), reverse=True))
+                                    _bp747 = (f"{len(_tl_nl)} Blueprints "
+                                              f"\u00b7 {_g747} Runs")
+                                iit.setText(2, _bp747)
+                                _f_r747 = iit.font(1)
+                                _f_r747.setStrikeOut(False)
+                                iit.setFont(1, _f_r747)
+                                iit.setForeground(1, QColor(theme.AMBER))
+                            if _tv_z:
+                                iit.setText(3, self._fmt_dur(
+                                    int(max(_tl_nl) * _tv_z)))
+                            for _c_nl in (2, 3):
+                                _f_nl = iit.font(_c_nl)
+                                _f_nl.setStrikeOut(False)
+                                iit.setFont(_c_nl, _f_nl)
+                                iit.setForeground(_c_nl, QColor(theme.AMBER))
+                        except Exception as _nl_e:
+                            self._log_exception("Nachlauf-Zeile", str(_nl_e))
                     _cname_here = cmap.get(cid, str(cid))
                     _active_all = (getattr(self, "_bd_active_jobs_map", None)
                                   or {}).get(a["tid"]) or []
@@ -9355,14 +11930,17 @@ class BauplanTabs:
                                 f"{j.get('runs') or '?'} Runs"
                                 + (t(" (ready!)") if j.get("status") == "ready" else "")
                                 for j in _active)
+                            # HANDLUNG ZUERST (emm674).
                             iit.setToolTip(0, _txt(
-                                "Already running according to ESI at {who} "
-                                "({what}) - before starting this again, check "
-                                "whether it is already enough.").format(
+                                "Do not start this again before you have "
+                                "checked it: ESI already shows it running at "
+                                "{who} ({what}).").format(
                                     who=_cname_here, what=_who))
                             # WIE VIEL laeuft, wenn es weniger ist als die
                             # Zeile braucht - sonst sagt "(building)" dasselbe
                             # bei 5 wie bei 130 Runs.
+                            def _z9(_v):
+                                return f"{int(_v):,}".replace(",", "'")
                             _lauf_n9 = sum(int(j.get("runs") or 0) for j in _active)
                             _soll_n9 = int(a.get("runs") or 0)
                             # VOLL GEDECKT (Nutzer 26.09.2026): bei 0 offenen
@@ -9379,14 +11957,26 @@ class BauplanTabs:
                             _plan_i9 = int(_plan_runs_tid.get(_tid_a, 0) or 0)
                             if _weg >= R_plan and _plan_i9 > 0 and \
                                     _gel_i9 + _lauf_i9 >= _plan_i9:
+                                # "RUNS" DAZUSCHREIBEN UND TRENNEN (emm673,
+                                # Nutzer 24.10.2026: "hier steht unit
+                                # building von / von aber besser waere die
+                                # umgerechnete Anzeige Runs building von /
+                                # von"). Es WAREN schon Runs - aber ohne
+                                # Tausendertrennung und ohne Einheit liest
+                                # sich "(building 5115/10315)" wie eine
+                                # Stueckzahl. Eine Zahl ohne Einheit ist
+                                # eine Einladung zum Fehlschluss; bei
+                                # einem Item mit 200 Stueck je Run ist der
+                                # Unterschied der Faktor 200.
                                 iit.setText(0, iit.text(0) + " " + _txt(
-                                    "(covered \u2713 {plan}/{plan}: {gel} delivered "
-                                    "\u00b7 {lauf} running)").format(
-                                        plan=_plan_i9, gel=_gel_i9, lauf=_lauf_i9))
+                                    "(covered \u2713 {plan}/{plan} runs: {gel} "
+                                    "delivered \u00b7 {lauf} running)").format(
+                                        plan=_z9(_plan_i9), gel=_z9(_gel_i9),
+                                        lauf=_z9(_lauf_i9)))
                             else:
                                 iit.setText(0, iit.text(0) + " " + (
-                                    _txt("(building {n}/{m})").format(
-                                        n=_lauf_n9, m=_soll_n9)
+                                    _txt("(building {n}/{m} runs)").format(
+                                        n=_z9(_lauf_n9), m=_z9(_soll_n9))
                                     if 0 < _lauf_n9 < _soll_n9 else _txt("(building)")))
                     # Aktivität merken (für "Blueprint-Name kopieren": Reaktion vs
                     # Fertigung -> "Reaction Formula" bzw. "Blueprint").
@@ -9577,10 +12167,17 @@ class BauplanTabs:
                                 iit.setText(0, iit.text(0) + "  "
                                             + _txt("\u2753 could belong to "
                                                    "another build plan"))
+                                # HANDLUNG ZUERST (emm674): der Text nannte
+                                # nur das Problem. Was er TUN kann, steht
+                                # jetzt vorne - zuordnen oder den Job in Ruhe
+                                # lassen.
                                 iit.setToolTip(0, _txt(
-                                    "A job for this item is running - but "
-                                    "\u201e{plan}\u201c claims it too. ESI does not "
-                                    "say which build plan a job belongs to."
+                                    "Assign this job to a plan (button "
+                                    "\u201eJob assignments\u201c), otherwise it "
+                                    "counts for none: a job for this item is "
+                                    "running, but \u201e{plan}\u201c claims it too, "
+                                    "and ESI does not say which plan a job "
+                                    "belongs to."
                                 ).format(plan=_mit_anspruch))
                         # GEDIMMT, ABER LESBAR: alle Spalten auf MUTED,
                         # einschliesslich der Material-Unterzeilen (die sind
@@ -9671,6 +12268,44 @@ class BauplanTabs:
                         from collections import Counter as _Cnt2
                         _cnt2 = _Cnt2(parts)
                         _gruppen = sorted(_cnt2.items(), reverse=True)
+                        # GEDECKTE ZEILE: KNOEPFE AUSGEGRAUT (emm820,
+                        # Nutzer 01.11.2026 beim Nachrechnen seiner
+                        # Eris-Produktion). Die Runs-Zahl bleibt als
+                        # Rueckblick stehen (Ansage aus Sitzung 14, s.
+                        # `_zustand` oben) - aber die Blaupausen-Knoepfe
+                        # daneben sind eine HANDLUNGSANWEISUNG, und die
+                        # las sich bei einer laengst gedeckten Zeile
+                        # genauso dringlich wie bei einer offenen.
+                        # SEIN FALL: Plan 50 Eris, 16 laufen, 34 offen.
+                        # Daneben stand eine gedeckte Zeile mit "10" und
+                        # "3 blueprints 2x4 1x2" - wer die Liste als EINE
+                        # Bauliste abarbeitet (so arbeitet er), kopiert
+                        # 3 BPCs zu viel und baut 10 Eris ueber Plan.
+                        # Nutzer: "ja so leicht gedimmt/ausgegraut waere
+                        # gut, sobald ESI die bestaetigung gegeben hat".
+                        # TEILWEISE gedeckte Zeilen bleiben NORMAL - er
+                        # ausdruecklich: "Habe ich nicht alle runs wie
+                        # bsp Oneiros 8/12 Runs muss es natuerlich
+                        # bleiben und ich baue noch 2 blueprints a 4
+                        # Runs".
+                        # NICHT AN R FESTMACHEN (erster Versuch, von b820
+                        # gefangen): bei einer gedeckten Zeile wird R
+                        # weiter oben BEWUSST wieder auf R_plan gesetzt,
+                        # damit die Runs-Zahl als Rueckblick stehen
+                        # bleibt - `R <= 0` ist hier also nie wahr.
+                        # `_zustand` ist laut Code-Kommentar oben "die
+                        # EINE Wahrheit fuer diese Zeile": None = offen,
+                        # alles andere (fertig/laeuft/bestand/
+                        # nicht_noetig) = nichts mehr zu tun. Genau das
+                        # ist die Frage, die die Knoepfe beantworten.
+                        _ged820 = (_zustand is not None)
+                        _bp_rand820 = theme.MUTED if _ged820 else theme.AMBER_DIM
+                        _bp_text820 = theme.MUTED if _ged820 else theme.AMBER
+                        _bp_tip820 = ("\n" + _txt(
+                            "This line is already covered (delivered or in "
+                            "build) - nothing left to copy or start here. "
+                            "The run count stays as a record of what was "
+                            "planned.")) if _ged820 else ""
                         if _gruppen:
                             _cw = QWidget()
                             _cl = QHBoxLayout(_cw)
@@ -9705,7 +12340,8 @@ class BauplanTabs:
                                     "copy(ies) are left out: a job on a small copy "
                                     "would not start in game.").format(
                                         b=_aus538[0], k=_aus538[1]))
-                                   if _aus538 else ""))
+                                   if _aus538 else "")
+                                + _bp_tip820)
                             # GERAHMT WIE DIE RUN-ZAHLEN (Nutzer,
                             # 15.09.2026: "alle anderen blueprints die da
                             # vorkommen" sollen denselben kleinen Rahmen
@@ -9714,8 +12350,8 @@ class BauplanTabs:
                             # dass er ueberhaupt einer ist.
                             _kopf.setStyleSheet(
                                 f"QPushButton{{background:{theme.PANEL2}; "
-                                f"border:1px solid {theme.AMBER_DIM}; "
-                                f"color:{theme.AMBER}; border-radius:5px; "
+                                f"border:1px solid {_bp_rand820}; "
+                                f"color:{_bp_text820}; border-radius:5px; "
                                 f"padding:0px 8px;}}"
                                 f"QPushButton:hover{{border-color:"
                                 f"{theme.AMBER}; background:{theme.PANEL};}}")
@@ -9734,7 +12370,7 @@ class BauplanTabs:
                             for _r, _anz in _gruppen:
                                 _mal = QLabel(f"{_anz}\u00d7")
                                 _mal.setStyleSheet(
-                                    f"color:{theme.AMBER}; font-weight:700;")
+                                    f"color:{_bp_text820}; font-weight:700;")
                                 _cl.addWidget(_mal)
                                 _b = QPushButton(str(_r))
                                 _b.setCursor(Qt.PointingHandCursor)
@@ -9744,11 +12380,12 @@ class BauplanTabs:
                                      if _anz != 1 else
                                      _txt("{n} blueprint with {r} runs.")).format(n=_anz, r=_r)
                                     + _txt("\nClick copies {r} \u2013 paste it into the "
-                                           "\u201eRuns\u201c field in game (Ctrl+V).").format(r=_r))
+                                           "\u201eRuns\u201c field in game (Ctrl+V).").format(r=_r)
+                                    + _bp_tip820)
                                 _b.setStyleSheet(
                                     f"QPushButton{{background:{theme.PANEL2}; "
-                                    f"border:1px solid {theme.AMBER_DIM}; "
-                                    f"color:{theme.AMBER}; border-radius:5px; "
+                                    f"border:1px solid {_bp_rand820}; "
+                                    f"color:{_bp_text820}; border-radius:5px; "
                                     f"padding:0px 10px; font-weight:700;}}"
                                     f"QPushButton:hover{{border-color:"
                                     f"{theme.AMBER}; background:{theme.PANEL};}}")
@@ -9781,14 +12418,14 @@ class BauplanTabs:
                             # etwas Luft draufgeben. Damit passt es auch,
                             # wenn sich Schriftgroesse oder Knopf-Rahmen
                             # spaeter aendern.
-                            _cw.adjustSize()
                             # DRITTER ANLAUF (Nutzer, 15.09.2026: "der Rahmen
                             # ist an der Unterkante etwas abgeschnitten").
                             # Mehr Luft UND dieselbe Hoehe fuer Spalte 0 -
                             # dort sitzt seit heute der Rahmen um den
                             # Formel-Namen, und die Zeilenhoehe richtet sich
                             # nach der GROESSTEN Wunschhoehe der Zeile.
-                            _hoehe = max(34, _cw.sizeHint().height() + 10)
+                            # VIERTER ANLAUF (emm576): feste Knopfhoehe.
+                            _hoehe = self._knopf_hoehe_fest(_cw)
                             iit.setSizeHint(2, QSize(0, _hoehe))
                             iit.setSizeHint(0, QSize(0, _hoehe))
                             tbl.setItemWidget(iit, 2, _cw)
@@ -9813,9 +12450,52 @@ class BauplanTabs:
                         citem.setCheckState(0, Qt.Unchecked)
                     citem.setIcon(0, icons.lauf_punkt() if _c_laeuft
                                   else icons.gruener_punkt())
+                    # TOOLTIP AUF DEM PUNKT (emm697, Nutzer 25.10.2026: "ich
+                    # wuensche mir ebenfalls so ein Tooltipp wenn ein gruener
+                    # oder blauer Dot bei einem Charakter Namen erscheint") -
+                    # dieselbe Regel wie beim Haken einer Position eine Ebene
+                    # tiefer (Zeile ~10335): HANDLUNG ZUERST, nichts geraten -
+                    # die Zahlen kommen aus denselben Zaehlern, die den Punkt
+                    # selbst gesetzt haben (_c_items/_c_zustand/_c_laeuft).
+                    _c_fertig_n = _c_zustand - _c_laeuft
+                    _c_tip = _txt(
+                        "Nothing to do for {name} in this stage – all "
+                        "{n} position(s) are covered: {done} delivered or "
+                        "ticked, {run} still in the build queue. The "
+                        "checkbox above moves them all together."
+                    ).format(name=cmap.get(cid, str(cid)), n=_c_items,
+                             done=_c_fertig_n, run=_c_laeuft)
+                    _alt_c_tip = citem.toolTip(0)
+                    citem.setToolTip(0, (_alt_c_tip + "\n\n" + _c_tip)
+                                     if _alt_c_tip else _c_tip)
                     _dim_c = QColor(theme.MUTED)
                     for _c_cc in range(tbl.columnCount()):
                         citem.setForeground(_c_cc, _dim_c)
+                elif _c_items > 0:
+                    # SPERRE GEGEN VERFRUEHTEN HAKEN (emm698, Nutzer
+                    # 25.10.2026: "ein Charakter darf keinen gruenen Haken
+                    # von mir erhalten koennen solange er nicht alle seine
+                    # aufgefuehrten Runs mit gruenem oder blauem Dot ESI
+                    # gecheckt bekommen hat" - ausgeloest durch Fredy, der in
+                    # einer Stufe trotz zwei offener Positionen ohne Dot
+                    # einen Haken zeigte). Das Kaestchen oben (Zeile ~9751)
+                    # ist IMMER anklickbar gesetzt - das erlaubte einen
+                    # Haken, den die Positionen darunter gar nicht decken.
+                    # Jetzt: solange nicht JEDE Position einen Zustand hat
+                    # (ESI-Dot oder eigener Haken), bleibt die Charakter-
+                    # Zeile unbestaetigt UND nicht anklickbar - ein alter,
+                    # gespeicherter Haken aus der Zeit vor dieser Sperre
+                    # wird dabei ebenfalls zurueckgesetzt (er waere sonst
+                    # eine Zusage, die die Positionen darunter nicht halten).
+                    citem.setFlags(citem.flags() & ~Qt.ItemIsUserCheckable)
+                    citem.setCheckState(0, Qt.Unchecked)
+                    _c_offen_n = max(0, _c_items - _c_zustand)
+                    citem.setToolTip(0, _txt(
+                        "Cannot tick {name} yet – {offen} of {n} "
+                        "position(s) in this stage still need an ESI dot "
+                        "(green or blue) or your own tick first."
+                    ).format(name=cmap.get(cid, str(cid)), offen=_c_offen_n,
+                             n=_c_items))
                 stage_item.addChild(citem)
                 _stage_citems.append(citem)
             # ---- FERTIGE STUFE: ZUGEKLAPPT, ABER VOLLSTAENDIG -------------
@@ -9899,6 +12579,19 @@ class BauplanTabs:
                                 else QColor(theme.CYAN_RUN))
                 stage_item.setForeground(0, _stufe_farbe)
                 stage_item.setForeground(2, _stufe_farbe)
+                # GANZ GRAU NUR BEI "ERLEDIGT" (emm752, Nutzer 29.10.2026,
+                # woertlich): "ich habe mal gesagt Run Kathegorien ausgrauen
+                # wenn alle runs in produktion sind also laufende
+                # Bauschleifen,.. das finde ich jetzt doch doof, bitte erst
+                # ausgrauen wenn alles fertig geliefert". Das nimmt emm699
+                # (25.10.2026, "ja gerne") ZURUECK und stellt den
+                # emm433-Stand wieder her: eine Stufe im Bau behaelt ihren
+                # CYAN_RUN-Punkt und Text ("in build · n of m running"),
+                # grau wird sie erst, wenn alles GELIEFERT ist ("erledigt");
+                # "bereit" (gebaut, nicht abgeholt) bleibt farbig - da ist
+                # noch etwas zu tun. Die UserRole+11-Markierung war von
+                # emm699 nie beruehrt - b6374/b19910 pruefen die Bedeutung,
+                # nicht die Farbe.
                 if _stufe_status == "erledigt":
                     # ALLES GRAU: Text, Hintergrund, Symbol - keine Farbe mehr.
                     for _c_g in range(tbl.columnCount()):

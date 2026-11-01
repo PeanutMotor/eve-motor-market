@@ -252,6 +252,45 @@ class MultiBauplan:
         kurz = " + ".join(namen[:3]) + (" + …" if len(namen) > 3 else "")
         return t("Multi: {names}").format(names=kurz)
 
+    @classmethod
+    def _frozen_verkaufs_pm(cls, pm_live, frozen_prices, type_id, enden):
+        """Preistabelle eines EINGEFRORENEN Plans: Einkauf fest, Verkauf
+        live - in EINER Stelle (emm761).
+
+        Nutzer 29.10.2026 ("der zieht immernoch einen komischen ghost
+        betrag ab", T1 Battlecruisers: Fenster 626'160'550, Karte
+        428'222'820): beim BUENDEL wurde der "live" gehaltene Verkauf
+        NACH dem Ersetzen der Preistabelle neu summiert - also aus den
+        EINGEFRORENEN Preisen vom Einfrier-Tag. GEMESSEN an seiner
+        settings.json: die Summe der Einfrier-Preise ueber die 16 Enden
+        traf das Fenster-Brutto AUF DEN ISK (12'107'620'000), waehrend
+        die Karte live 11'900'571'938 rechnete - das Fenster lag 197,9M
+        drueber, obwohl der Knopf "profit live" verspricht. Der
+        EINZELPLAN hatte den Fehler nie (sein Live-Preis wurde VOR dem
+        Ersetzen festgehalten).
+
+        Regeln: Material-EINKAUF aus den Einfrier-Preisen; jedes ENDE
+        bekommt seinen LIVE-Preis (Rueckfall: Einfrier-Preis, wenn live
+        gerade keine Order da ist - dieselbe Vorsicht, die der
+        Einzelplan immer hatte); der Buendel-Gesamtverkauf ist die Summe
+        ueber DIESE Tabelle, damit Kopfzeile und Enden-Tabelle dieselbe
+        Zahl sagen. RANDFALL, BEWUSST: ist ein Ende zugleich Material
+        eines anderen Endes, rechnet auch dessen Einkauf live - exakt
+        das Verhalten, das der Einzelplan fuer sein Endprodukt hat.
+        """
+        out = {int(k): v for k, v in (frozen_prices or {}).items()}
+        _live = pm_live or {}
+        gesamt = _live.get(type_id)
+        if enden:
+            for _t, _q in enden:
+                _p = _live.get(int(_t))
+                if _p and _p > 0:
+                    out[int(_t)] = float(_p)
+            gesamt = cls._multi_buendel_verkauf(out, enden)
+        if gesamt and gesamt > 0:
+            out[type_id] = gesamt
+        return out
+
     @staticmethod
     def _multi_buendel_verkauf(pm, enden):
         """Verkaufswert EINES Buendels = Summe Preis x Menge ueber die Enden.
@@ -506,6 +545,16 @@ class MultiBauplan:
         der Blaupausen-Cache eigene Kopien kennt (Nutzer 26.09.2026). Ohne
         Cache (noch nicht geladen) ist nichts unklar - dann fehlt schlicht
         die Auskunft, und Nichtwissen erzeugt keine Warnung."""
+        # ERFUNDEN VOM PLAN SELBST (emm810, Nutzer 01.11.2026 zu genau
+        # dieser Warnung auf seinem gefrorenen Multiplan: "natuerlich sind
+        # es meine copys ich habe sie ja mit diesem Plan zusammen erfunden
+        # zu T2 Copys"): bei einem EINGEFRORENEN Plan ist der Weg
+        # Erfinden-oder-eigene-Kopien laengst entschieden, und die Kopien
+        # im Hangar sind der Invention-Ausstoss dieses Plans - die Frage
+        # stellt sich nur VOR dem Einfrieren. Danach waere die Warnung
+        # Dauerlaerm, der mit jedem erfundenen Stapel lauter wird.
+        if getattr(self, "_bd_frozen", None):
+            return []
         rec = getattr(self, "_bd_recipes", None)
         enden = self._bd_enden(industry.BUENDEL_ID, rec) \
             if getattr(self, "_bd_buendel_enden", None) else set()
@@ -562,6 +611,10 @@ class MultiBauplan:
         `eintrag` ist ein Multi-Plan-dict (gespeichert oder frisch gebaut);
         `plan_id` bindet den Dialog an den gespeicherten Eintrag (Speichern
         ueberschreibt ihn dann, Runplaner-Haken landen dort)."""
+        # SPERRE ZUERST (emm742): unten laufen _open_saved_plan_zustand und
+        # das Setzen der Buendel-Pendings - alles geteilte Felder.
+        if self._bauplan_sperre_meldung():
+            return
         enden = []
         for a, b in (eintrag.get("enden") or []):
             try:
@@ -908,7 +961,22 @@ class MultiBauplan:
         bisher). `lese(tbl, r)` liefert das dict einer Zeile oder None.
         Doppelte Items (gleiche type_id) zaehlen einmal."""
         try:
-            rows = sorted({ix.row() for ix in tbl.selectionModel().selectedRows()})
+            # NUR SICHTBARE ZEILEN (emm708, Nutzer 25.10.2026: "my blueprints
+            # selektiert immer noch mehr als angewaehlt" - Screenshot zeigte
+            # "Add 9 selected", obwohl deutlich weniger markiert waren).
+            # Qt behaelt die Markierung einer Zeile, wenn sie per
+            # `setRowHidden` ausgeblendet wird - genau das macht jeder
+            # Filter in diesen Tabellen (`_apply_bp_filter` in My
+            # Blueprints, ebenso Scanner und Capital-Liste). Wer also
+            # breit markierte und danach filterte, hatte unsichtbare
+            # Zeilen weiter in der Auswahl und baute sie ahnungslos mit
+            # in den Multi-Bauplan ein. Gemessen (6 markiert, 4 gefiltert:
+            # gemeldet wurden 6, sichtbar waren 2).
+            # HIER statt in den drei Aufrufern (Regel 9): bp_table,
+            # b_table und b_cap_table haben alle Filter und damit alle
+            # dasselbe Problem.
+            rows = sorted({ix.row() for ix in tbl.selectionModel().selectedRows()
+                           if not tbl.isRowHidden(ix.row())})
         except Exception:
             return []
         if row not in rows or len(rows) < 2:
@@ -2230,6 +2298,7 @@ class MultiBauplan:
         if type_id != industry.BUENDEL_ID:
             self._bd_multi_refresh = None
             self._bd_multi_tbl = None
+            self._bd_multi_karte = None
             # EINZELPLAN: dieselbe Karte, nur der Kopf - damit "+ Add build
             # plan" an DERSELBEN Stelle und im selben Stil steht wie beim
             # Buendel (Nutzer 27.09.2026).
@@ -2277,7 +2346,9 @@ class MultiBauplan:
         _kopf.addStretch()
         _klapp = QPushButton("")
         _klapp.setCheckable(True)
-        _klapp.setFixedWidth(34)
+        # MIT TEXT statt nur Pfeil (emm578, Nutzer: der kleine Knopf ist
+        # kaum zu finden).
+        _klapp.setMinimumWidth(34)
         _klapp.setCursor(Qt.PointingHandCursor)
         _klapp.setStyleSheet(
             f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:5px; "
@@ -2406,6 +2477,7 @@ class MultiBauplan:
         # `_gewinn_nachziehen`, Parameter `gesamt`).
         cv.addWidget(_body)
         parent_layout.addWidget(card)
+        self._bd_multi_karte = card                # Fokus-Modus (emm578)
         self._bd_multi_tbl = tbl
         self._bd_multi_body = _body
         self._bd_multi_klapp = _klapp
@@ -2415,7 +2487,8 @@ class MultiBauplan:
             # Layout (b8-Falle: vorher waere daraus ein eigenes Fenster
             # geworden).
             _body.setVisible(bool(offen))
-            _klapp.setText("\u25b4" if offen else "\u25be")
+            _klapp.setText(("\u25b4  " + t("Collapse")) if offen
+                           else ("\u25be  " + t("Expand")))
             _klapp.setToolTip(t("Hide the end products of this bundle")
                               if offen else
                               t("Show the end products of this bundle"))

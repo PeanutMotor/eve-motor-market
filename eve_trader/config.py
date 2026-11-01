@@ -33,6 +33,10 @@ GITHUB_REPO = "PeanutMotor/eve-motor-market"
 # Seitenleiste oeffnet ihn im Browser. Das Werkzeug verbindet sich NICHT
 # selbst dorthin (deshalb in aa293 bei den Ausnahmen).
 DISCORD_URL = "https://discord.gg/Atuqe6c2Rj"
+# VIDEO-TUTORIALS (emm572, Nutzer 17.10.2026: "auf Youtube 5 Videos ... dass man
+# mit einem Klick auf meinen Kanal kommt") - die Playlist in der richtigen
+# Reihenfolge. Nur im BROWSER geoeffnet wie Discord (aa293-Ausnahme).
+YOUTUBE_URL = "https://www.youtube.com/playlist?list=PLGq68NYj2yL8"
 
 # ---- EVE SSO / ESI endpoints ------------------------------------------------
 SSO_AUTHORIZE = "https://login.eveonline.com/v2/oauth/authorize/"
@@ -51,6 +55,14 @@ DEFAULT_SCOPES = [
 ]
 # Optional, only added when the user enables inventory import.
 ASSETS_SCOPE = "esi-assets.read_assets.v1"
+# MATERIAL IN OFFENEN VERTRAEGEN (emm760; Vorarbeit emm745). Haengt am
+# SELBEN Schalter wie ASSETS_SCOPE (use_assets): wer seinen Bestand von
+# ESI lesen laesst, will auch wissen, wo er GERADE NICHT liegt - ein
+# nicht angenommener Vertrag haelt die Ware fest, und ESI meldet sie
+# dann in KEINER /assets/-Antwort (Nutzer 28.10.2026: 18'240'750 Pyerite
+# "ploetzlich fehlend" nach einem Charakter-Tausch per Contract). Der
+# Nutzer hat den Scope am 28.10. in seiner EVE-Anwendung freigeschaltet.
+CONTRACTS_SCOPE = "esi-contracts.read_character_contracts.v1"
 # Optional, only added when the user enables player-structure markets.
 # EINE QUELLE FUER DIESEN EINEN SCOPE (Sitzung 19): die Struktur-Suche muss
 # pruefen koennen, ob ein Charakter ihn WIRKLICH erteilt hat - sonst kann sie
@@ -73,6 +85,20 @@ IMPLANT_SCOPE = "esi-clones.read_implants.v1"
 # Endpunkt /characters/{id}/location/ liefert solar_system_id (immer),
 # station_id bzw. structure_id (nur wenn angedockt).
 LOCATION_SCOPE = "esi-location.read_location.v1"
+# Optional, only added when the user enables the PI overview (emm801,
+# Discord-Wunsch 31.10.2026: "PI timers ... how much you have stored on a
+# planet ... not only isk value, but cargo space taken up"). Es gibt KEINEN
+# reinen Lese-Scope fuer PI - CCP bietet nur manage_planets an (so auch
+# ingame-Tools ueblich); das Tool LIEST trotzdem nur (GET /characters/
+# {id}/planets/ und .../planets/{planet_id}/).
+PI_SCOPE = "esi-planets.manage_planets.v1"
+# PI IST EINGELAGERT (emm803, Nutzer 31.10.2026: "wir verpacken das PI
+# erstmal komplett wieder ich moechte es nicht in EVE MoMa sehen ... PI
+# legen wir mal zur Seite. EVT machen wir nie weiter"). False = kein
+# PI-Reiter, kein Settings-Eintrag, der Scope wird NIE angefragt. Der
+# fertige Code (eve_trader/pi.py, _build_pi_tab) und seine Tests bleiben
+# konserviert - EIN True hier holt alles zurueck.
+PI_AKTIV = False
 # Optional, only added when the user enables corporation hangars (build only).
 # JEDER EINZELNE MIT NAMEN, nicht als Positionsindex (dieselbe Lehre wie bei
 # STRUCTURE_READ_SCOPE): der Bauplan muss je Charakter pruefen koennen, ob
@@ -855,6 +881,32 @@ def _nach_migrationen(data: dict) -> dict:
                                     for _n, _v in _pr.items() if isinstance(_v, dict)}
         data["bau_profile_bereinigt"] = True
         _migrated = True
+    # FUNFACT-STATISTIK NACHTRAGEN (emm570, 1.1.5): was beim ersten Start
+    # schon abgeschlossen ist - gespeicherte UND archivierte Plaene -, kommt
+    # EINMAL in settings["funfact"]. Ein unlesbares Archiv zaehlt einfach
+    # nicht mit (lieber zu wenig gezaehlt als eine Migration, die abbricht).
+    if not data.get("funfact_applied"):
+        try:
+            import time as _t_ff
+            from . import funfact as _ff
+            _arch = []
+            try:
+                with open(bauplan_archiv_path(), encoding="utf-8") as _f_ff:
+                    _arch = json.load(_f_ff) or []
+                if not isinstance(_arch, list):
+                    _arch = []
+            except Exception:
+                _arch = []
+            _stand = data.get("funfact")
+            if not isinstance(_stand, dict):
+                _stand = _ff.leer()
+            _ff.nachtragen(_stand, list(data.get("bau_saved_plans") or []) + _arch,
+                           _t_ff.time())
+            data["funfact"] = _stand
+            data["funfact_applied"] = True
+            _migrated = True
+        except Exception:
+            pass
     # ERLEDIGTE PLAENE ARCHIVIEREN (emm388, laeuft bei jedem Laden):
     # done_manual ohne Zeitstempel bekommt ihn JETZT (die 30 Tage zaehlen ab
     # heute - nie rueckwirkend raten), danach wandern faellige ins Archiv.

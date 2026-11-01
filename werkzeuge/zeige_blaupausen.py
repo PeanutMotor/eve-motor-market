@@ -1,6 +1,6 @@
 """Zeigt, WELCHE Blaupausen Eve MoMa von dir sieht - und welche der
 Blueprints-Reiter deshalb rot als "completely missing" meldet
-(Fassung 3, 11.10.2026).
+(Fassung 6, 28.10.2026).
 
 WOZU: Nutzer-Befund 11.10.2026 - der Blueprints-Reiter zeigte zehn
 Reaktionsformeln rot als "completely missing", dazu "mir fehlen keine
@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from eve_trader import config, corp, esi, industry, store   # noqa: E402
 
-FASSUNG = 3
+FASSUNG = 6
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BERICHT = os.path.join(WURZEL, "berichte", "blaupausen_bericht.txt")
 
@@ -236,6 +236,16 @@ def main():
         recipes = None
     plaene = [p for p in (settings.get("bau_saved_plans") or [])
               if isinstance(p, dict) and not p.get("done_manual")]
+    # BLAUPAUSEN DER PLAENE MERKEN (Fassung 5, 28.10.2026): Abschnitt 3b
+    # suchte bisher NUR unter den Typen, die ESI geschickt hat. Genau das
+    # verschweigt den entscheidenden Fall - eine Blaupause, die der Plan
+    # braucht und von der ESI GAR NICHTS schickt, war dort nicht auffindbar
+    # ("Kein Blaupausen-Typ mit ... im Namen gefunden"), und das liest sich
+    # wie ein Tippfehler statt wie ein Befund. Nutzer 28.10.2026: "die
+    # Blueprints sind nicht im Corp hangar, die sind auf einem normalen
+    # Charakter Hangar" - dann muss der Bericht genau das sagen koennen:
+    # ESI schickt von KEINEM verlinkten Charakter einen Eintrag dazu.
+    _plan_bp_namen = {}
     if recipes is not None and not plaene:
         z.append("Kein offener gespeicherter Plan.")
     for p in (plaene if recipes is not None else []):
@@ -276,6 +286,8 @@ def main():
             _zeilen.append((tid, bp_id, int(runs), _erf))
         namen = _namen([t for t, _b, _r, _e in _zeilen]
                        + [b for _t, b, _r, _e in _zeilen])
+        for _t5, _b5, _r5, _e5 in _zeilen:          # Fassung 5, s. oben
+            _plan_bp_namen.setdefault(int(_b5), namen.get(_b5) or f"#{_b5}")
         _fehlt = 0
         z.append(f"  {'Blaupause':38s} {'Runs':>6s}  Urteil")
         for tid, bp_id, runs, _erf in sorted(
@@ -307,7 +319,16 @@ def main():
     # nicht nachbauen) - damit steht nebeneinander, was ESI schickt, was
     # der Reiter daraus macht und was der Runplaner als Deckel bekommt.
     # SUCHWORT: Umgebungsvariable BP_SUCHE, Vorgabe "Hobgoblin".
-    suche = (os.environ.get("BP_SUCHE") or "Hobgoblin").strip()
+    # Fassung 4 (17.10.2026, emm582): mehrere Suchwoerter mit Komma; Vorgabe
+    # die T1-Vorlagen seines Gallente-Plans (Catalyst stand als "nur Kopien,
+    # 4 Runs" im Reiter, obwohl er das Original besitzt).
+    # Fassung 5 (28.10.2026): Vorgabe sind die Blaupausen, die in seinem
+    # Amarr-Plan rot als "completely missing" standen, obwohl er sie nach
+    # eigener Aussage auf einem normalen Charakter-Hangar hat.
+    suche = (os.environ.get("BP_SUCHE")
+             or "Fuel Block,R.A.M.,Magnate,Punisher,"
+                "Antimatter Reactor Unit").strip()
+    _woerter = [w.strip().lower() for w in suche.split(",") if w.strip()]
     z.append("")
     z.append(f"3b. EIN BLAUPAUSEN-TYP GANZ GENAU - Suchwort: {suche!r}")
     z.append("-" * 72)
@@ -317,16 +338,25 @@ def main():
     z.append("Zeigt der Runplaner eine ANDERE Zahl als hier, stammt sie aus")
     z.append("der Stufen-Ladung des offenen Bauplans (_bd_stage_bp_esi) -")
     z.append("die kennt dieses Werkzeug nicht, sie steht nur im Fenster.")
+    _ohne_esi = []
     try:
+        # AUCH DIE BLAUPAUSEN DER PLAENE DURCHSUCHEN (Fassung 5): sonst
+        # fehlt genau der Typ, um den es geht - der, von dem ESI nichts
+        # schickt.
         alle_bp = sorted({int(b.get("type_id") or 0)
                           for b in frei_alle} |
-                         {int(k) for k in (im_job or {})})
+                         {int(k) for k in (im_job or {})} |
+                         {int(k) for k in _plan_bp_namen})
         alle_bp = [t for t in alle_bp if t > 0]
         nm_bp = _namen(alle_bp)
+        for _b5, _n5 in _plan_bp_namen.items():     # Namen aus Abschnitt 3
+            nm_bp.setdefault(int(_b5), _n5)
         treffer = [t for t in alle_bp
-                   if suche.lower() in str(nm_bp.get(t) or "").lower()]
+                   if any(w in str(nm_bp.get(t) or "").lower()
+                          for w in _woerter)]
         if not treffer:
-            z.append(f"  Kein Blaupausen-Typ mit {suche!r} im Namen gefunden.")
+            z.append(f"  Kein Blaupausen-Typ mit {suche!r} im Namen gefunden "
+                     f"- weder bei ESI noch in den Ketten deiner Plaene.")
         # Produkt je Blaupause (Umkehrung von product_to_bp) - nur fuer die
         # Deckel-Rechnung; ohne Rezepte bleibt es bei der Roh-Liste.
         bp_zu_produkt = {}
@@ -345,7 +375,15 @@ def main():
                          if int(b.get("type_id") or 0) == bp_id]
             belegte = list((im_job or {}).get(bp_id) or [])
             if not eintraege and not belegte:
-                z.append("      (ESI schickt dazu gar nichts)")
+                # DER WICHTIGSTE SATZ DES BERICHTS (Fassung 5): hier endet
+                # das Raten. Entweder liegt die Blaupause bei einem
+                # Charakter, der NICHT verlinkt ist (dann sieht Eve MoMa
+                # sie nie), oder in einem Hangar, den sie nicht liest -
+                # beides steht oben in Abschnitt 1 und 2.
+                z.append(f"      (ESI schickt dazu NICHTS - von keinem der "
+                         f"{_z(len(chars))} verlinkten Charaktere, weder frei "
+                         f"noch im Job)")
+                _ohne_esi.append(bp_id)
             for b in eintraege + belegte:
                 art = "BPO" if b.get("is_bpo") else "BPC"
                 runs = b.get("runs")
@@ -376,6 +414,63 @@ def main():
     except Exception as e:
         z.append(f"  Abschnitt nicht rechenbar: {e}")
 
+    # ---- 3c. GEGENPROBE IM ASSET-ABRUF -----------------------------------
+    # WOZU (Fassung 6, 28.10.2026): Abschnitt 3b kann sagen "ESI schickt
+    # dazu NICHTS" - aber nicht, WARUM. Zwei Ursachen sehen dort gleich
+    # aus und haben voellig verschiedene Folgen:
+    #   (a) die Blaupause liegt bei einem Charakter, der hier nicht
+    #       verknuepft ist -> Eve MoMa kann sie nie sehen, der Nutzer muss
+    #       ihn verknuepfen;
+    #   (b) sie liegt bei einem VERKNUEPFTEN Charakter, und trotzdem nennt
+    #       /blueprints/ sie nicht -> dann hat Eve MoMa ein Problem, kein
+    #       Nutzer.
+    # Der Asset-Abruf (/assets/) ist eine ZWEITE, unabhaengige Quelle
+    # desselben Hangars. Taucht der Blaupausen-Typ dort auf, gilt (b) und
+    # wir haben den Besitzer schwarz auf weiss. Nutzer 28.10.2026: "ich
+    # schiebe halt vieles zwischen charakteren per Contracts oder
+    # Stationstausch hin und her" - genau dabei wandert Besitz, und genau
+    # dann muss nachpruefbar sein, wo etwas gelandet ist.
+    # NUR bei Bedarf: ein Asset-Abruf je Charakter ist teuer, er laeuft
+    # also nur, wenn 3b ueberhaupt etwas nicht finden konnte.
+    if _ohne_esi:
+        z.append("")
+        z.append("3c. GEGENPROBE IM ASSET-ABRUF (zweite, unabhaengige Quelle)")
+        z.append("-" * 72)
+        z.append("Fuer jeden Typ aus 3b, den der Blaupausen-Abruf NICHT")
+        z.append("kennt: steht er im Asset-Abruf desselben Charakters?")
+        _nm_oe = _namen(_ohne_esi)
+        _gefunden = False
+        for c in chars:
+            cid = c.get("character_id")
+            nm_c = str(c.get("character_name") or cid)
+            try:
+                _as = esi.fetch_assets(client_id, cid, only_hangar=False)
+            except Exception as e:
+                z.append(f"  {nm_c:24s} Asset-Abruf gescheitert: "
+                         f"{type(e).__name__}: {e}")
+                continue
+            _tr = [(b, int(_as.get(b, 0) or 0)) for b in _ohne_esi
+                   if int(_as.get(b, 0) or 0) > 0]
+            if not _tr:
+                continue
+            _gefunden = True
+            for b, q in _tr:
+                z.append(f"  {nm_c:24s} {str(_nm_oe.get(b) or b)[:38]:38s} "
+                         f"Stueck {_z(q):>6s}  <- in den ASSETS, aber NICHT "
+                         f"in /blueprints/")
+        if not _gefunden:
+            z.append("  Kein einziger dieser Typen steht in den Assets eines")
+            z.append("  verknuepften Charakters. Damit ist der Fall klar: sie")
+            z.append("  gehoeren einem Charakter, der hier NICHT verknuepft")
+            z.append("  ist (oder liegen in einem Hangar ohne Leserecht).")
+            z.append("  -> Reiter 'Characters': den Besitzer verknuepfen.")
+        else:
+            z.append("")
+            z.append("  BEFUND: dieselbe Blaupause steht in der einen Quelle")
+            z.append("  und fehlt in der anderen. Das ist ein Fehler von Eve")
+            z.append("  MoMa bzw. der ESI-Antwort - bitte diesen Bericht")
+            z.append("  melden, nicht selbst nachkaufen.")
+
     # ---- 4. Fehlerbudget ------------------------------------------------
     z.append("")
     z.append("4. ESI-FEHLERBUDGET (emm480)")
@@ -398,6 +493,10 @@ def main():
     z.append("3) Steht sie hier als FEHLT und du hast sie im Spiel: dann "
              "liegt sie in einem Hangar, den Eve MoMa nicht liest "
              "(Corp-Hangar ohne Haken/Rolle, anderer Account).")
+    z.append("4) Steht in Abschnitt 3b 'ESI schickt dazu NICHTS', hat "
+             "KEINER deiner verlinkten Charaktere sie - dann fehlt die "
+             "Verknuepfung des Charakters, bei dem sie liegt (Reiter "
+             "'Characters'), oder sie liegt auf einem anderen Account.")
     _schreib(z)
 
 

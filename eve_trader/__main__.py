@@ -174,6 +174,17 @@ def main():
     _lz.ui_zwischenzeit("main window built")
     win.show()
     _lz.ui_zwischenzeit("window shown")
+    # DIAGNOSE-AUFTRAEGE (emm643, Nutzer 24.10.2026: "kannst du nicht
+    # selber bats laufen lassen?"). Sieht im Takt nach, ob in
+    # `werkzeuge/_auftrag.txt` ein Diagnose-Werkzeug bestellt ist, und
+    # fuehrt GENAU DIESES aus - nichts sonst (die Regeln stehen in
+    # auftrag.py). Abschaltbar: settings["diagnose_auftraege"] = False.
+    try:
+        from . import auftrag as _auf
+        win._auftrag_wache = _auf.starte_wachen(
+            win, getattr(win, "settings", None))
+    except Exception:
+        pass            # Diagnose darf den Start nie verhindern
     if _lz.AN and _lz.ui_laeuft():
         # STARTMESSUNG ENDET, wenn das Fenster zum ersten Mal gezeichnet ist
         # und die Ereignisschleife laeuft - das ist die Wartezeit, die der

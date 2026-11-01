@@ -6,7 +6,7 @@ chcp 65001 >nul
 set "PYTHONIOENCODING=utf-8"
 rem Rotprobe UEBER NACHT, Paket 01 von 16 (emm551, Nutzer
 rem 14.10.2026: die volle Rotprobe in 2-Stunden-Pakete gepackt, danach
-rem faehrt der PC automatisch runter - mehrere Naechte hintereinander).
+rem bleibt der PC AN (emm781) - mehrere Pakete hintereinander, auch tagsueber.
 rem Die Nummer ist nur ein Merkzettel, welche Nacht das ist - der
 rem Fortschritt steht in berichte\rotprobe_fortschritt.txt und macht
 rem IMMER da weiter, wo die letzte Nacht aufgehoert hat. Ist alles schon
@@ -16,5 +16,5 @@ if exist ".venv\Scripts\activate.bat" call ".venv\Scripts\activate.bat"
 set EMM_ROTPROBE_BUDGET_S=7200
 echo Rotprobe Paket 01 von 16 laeuft - das dauert bis zu 2 Stunden ...
 echo Ergebnis steht in berichte\rotprobe_nacht.txt (Befunde zusaetzlich in
-echo berichte\rotprobe_nacht_BLIND.txt). Der PC faehrt danach herunter.
+echo berichte\rotprobe_nacht_BLIND.txt). Der PC bleibt danach AN.
 python werkzeuge\rotprobe_ueber_nacht.py

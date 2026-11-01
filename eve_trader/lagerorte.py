@@ -17,6 +17,8 @@ das, was der Bauplan als Bestand zaehlt - nur mit Adresse.
 """
 from __future__ import annotations
 
+import time as _time
+
 from . import corp as _corp
 
 ART_CHAR = "char"
@@ -103,7 +105,85 @@ def behaelter_typen(zeilen):
             if z.get("item_id") in ids}
 
 
-def gebaute_runs(plan, zuordnung=None, extra=None):
+def umstrittene_tids(plaene):
+    """{type_id, ...} - von MINDESTENS ZWEI der uebergebenen Plaene selbst
+    gebaut (emm626). Fuer sie darf ein GERATENER (nicht per job_zuordnung
+    bestaetigter) abgelieferter ESI-Job keinem der beiden gutgeschrieben
+    werden - ESI sagt nicht, welcher Plan ihn gestartet hat (dieselbe Regel
+    wie `_umstrittene_items` im Bauplan, hier aber ueber ALLE Plaene dieser
+    Seite auf einmal statt je einem offenen Dialog)."""
+    from .ui.mw_helpers import MainWindowHelpers as _MH
+    bauer = {}
+    for p in plaene or []:
+        for t in _MH.plan_baut_items(p):
+            try:
+                t = int(t)
+            except (TypeError, ValueError):
+                continue
+            bauer[t] = bauer.get(t, 0) + 1
+    return {t for t, n in bauer.items() if n > 1}
+
+
+def delivered_geraten(frozen_ts, plan_runs, delivered_jobs, recipes,
+                      vergeben=None, plan_id=None):
+    """{type_id: Runs} - ESI-Jobs, die seit `frozen_ts` abgeliefert wurden
+    und zu den Runs dieses Plans (`plan_runs`, aus `build_runs`) passen
+    (emm626, dieselbe Grundannahme wie `_frozen_auto_checked` im Bauplan -
+    NUR OHNE SCHEDULER-LAUF: die Aktivitaet des Produkts, Reaktion 9/11
+    oder Fertigung 1, kommt direkt aus den globalen Rezepten
+    (`recipes.product_to_bp[tid][1]`), nicht aus einer frisch gerechneten
+    Runplaner-Zuteilung - die kann diese Seite nicht fuer jeden ange-
+    zeigten Plan einzeln neu rechnen, ohne Charaktere/Slots/Blaupausen-
+    Deckel jedes Plans zu laden. GERATEN bleibt es trotzdem: welchem Plan
+    ein Job gehoert, weiss nur `delivered_sicher` ueber Deckel + Streit.
+
+    FREMD ZUGEORDNETE JOBS ZAEHLEN NICHT (emm791, Audit 31.10.2026 -
+    dieselbe Regel wie `_frozen_auto_checked`): `vergeben`
+    ({job_id: plan_id}) + `plan_id` sieben Jobs aus, die laut Zuordnung
+    einem ANDEREN Plan oder ausdruecklich KEINEM gehoeren."""
+    try:
+        _fts = float(frozen_ts)
+    except (TypeError, ValueError):
+        return {}
+    _runs = {int(t): int(r or 0) for t, r in (plan_runs or {}).items()}
+    if not _runs or recipes is None:
+        return {}
+    from .ui.mw_helpers import MainWindowHelpers as _MH
+    _p2b = getattr(recipes, "product_to_bp", None) or {}
+    _eig_id = None if plan_id is None else str(plan_id)
+    out = {}
+    for j in (delivered_jobs or []):
+        try:
+            tid = int(j.get("product_type_id"))
+        except (TypeError, ValueError):
+            continue
+        if _runs.get(tid, 0) <= 0:
+            continue
+        if vergeben is not None and j.get("job_id") is not None:
+            try:
+                _wem = vergeben.get(int(j.get("job_id")))
+            except (TypeError, ValueError):
+                _wem = None
+            if _wem is not None and str(_wem) != _eig_id:
+                continue
+        _rez = _p2b.get(tid)
+        _ist_react = bool(_rez) and _rez[1] in (9, 11)
+        _akt_job = j.get("activity_id")
+        if _ist_react:
+            if _akt_job not in (9, 11):
+                continue
+        elif _akt_job != 1:
+            continue
+        cts = _MH._iso_job_ts(j.get("completed_date"))
+        if cts is None or cts < _fts:
+            continue
+        out[tid] = out.get(tid, 0) + int(j.get("runs") or 0)
+    return out
+
+
+def gebaute_runs(plan, zuordnung=None, extra=None, delivered_jobs=None,
+                  recipes=None, umstritten=None, frozen_ts=None,
+                  plan_runs=None):
     """{type_id: schon gebaute Runs} eines gespeicherten Plans - OHNE ESI,
     nur aus dem, was lokal belegt ist (emm463).
 
@@ -114,6 +194,20 @@ def gebaute_runs(plan, zuordnung=None, extra=None):
         mit, ihr Material ist im Spiel laengst verbraucht (emm422),
       * die Hand-Haken des Runplaners (`checked_runplan_runs`,
         {"stufe|tid": Runs}).
+
+    DRITTE QUELLE, NUR WENN `delivered_jobs`/`recipes`/`frozen_ts`
+    mitgegeben werden (emm626, Nutzer: "ich hatte mal alle Materialien
+    gruen, dann fehlt immer wieder Zeug, fast so als ob der Runplaner
+    einfach manchmal quatsch angiebt"): GERATENE Ablieferungen seit dem
+    Einfrieren (`delivered_geraten`), gedeckelt auf die Plan-Runs und bei
+    `umstritten`-Items VERWORFEN, es sei denn `zuordnung`/`extra` haben sie
+    bereits BELEGT (`delivered_sicher`). Ohne diese Quelle blieb diese
+    Seite auf dem Stand des letzten Haekchens/der letzten eindeutigen
+    Job-Zuordnung stehen, waehrend der Bauplan selbst (ueber dieselbe
+    Grundannahme, nur mit einer frisch gerechneten Runplaner-Zuteilung
+    statt den globalen Rezepten) laengst mehr Fortschritt sah - zwei
+    Karten auf verschiedenem Stand sehen aus wie "mal gruen, mal rot ohne
+    Grund", obwohl beide fuer sich konsistent rechnen.
     """
     aus_jobs, aus_haken = {}, {}
     _pid = (plan or {}).get("id")
@@ -135,7 +229,70 @@ def gebaute_runs(plan, zuordnung=None, extra=None):
             continue
         if t > 0 and r > 0:
             aus_haken[t] = aus_haken.get(t, 0) + r
-    out = {t: max(aus_jobs.get(t, 0), aus_haken.get(t, 0))
+    # DER HAKEN GILT AUCH HIER NUR, BIS ESI WIDERSPRICHT (emm749).
+    # DRITTES VORKOMMEN DERSELBEN URSACHE. emm747 hat die Regel heute
+    # frueh fuer `_rest_geliefert_jetzt` gebaut, emm748 fuer den
+    # Nachlauf-Ofen - und DIESE Stelle, die Stock Locations speist,
+    # stand sogar woertlich in der emm747-Dokumentation ("`gebaute_runs`
+    # zaehlt einen Haken als GEBAUT (`max(aus_jobs, aus_haken)`)") und
+    # blieb trotzdem liegen. Arbeitsregel 9 heisst: alle Vorkommen.
+    #
+    # SEIN BEFUND (28.10.2026): "nur dafür habe ich tatsächlich zu wenig
+    # Material um es nachzubauen, aber Stock Location sieht es nicht und
+    # der Bauplan auch nicht" - und zuvor "warum hat mir stok locations
+    # gestern zu wenig material zu kaufen angegeben?".
+    # GEMESSEN an seiner settings.json, Plan "Minmatar 1": die Haken auf
+    # Fernite Carbide (319 Runs) und Fermionic Condensates sind 192
+    # STUNDEN alt - acht Tage. Die Haken-Frist betraegt 65 Minuten. Ohne
+    # Kappung zaehlte `max()` diese Runs unbefristet als gebaut, ihr
+    # Material fiel aus dem Bedarf, und die Einkaufsliste nannte zu
+    # wenig. Genau sein Catalyst-Fall vom 27./28.10. (3'459'456
+    # Tritanium), nur an der Stelle, die ihn wirklich verursacht hat.
+    #
+    # Gekappt wird nur, wenn der Plan Zeitstempel mitbringt
+    # (`checked_runplan_ts`). Fehlen sie - alte Plaene, fremde Aufrufer -,
+    # bleibt es beim bisherigen Verhalten (Regel 3: lieber das alte
+    # Ergebnis als gar keines).
+    _haken_wirk = dict(aus_haken)
+    _ts_roh = (plan or {}).get("checked_runplan_ts") or {}
+    if aus_haken and _ts_roh:
+        try:
+            from .ui.mw_helpers import (haken_pruefen as _hp749,
+                                        haken_wirksam as _hw749)
+            _ts749 = {}
+            for _k, _v in _ts_roh.items():
+                # Derselbe Schluessel-Schnitt wie oben bei `aus_haken`
+                # und wie in `_haken_stand_jetzt`: hinten steht die
+                # type_id. Zeilen der Bauart "char|stufe|char_id" tragen
+                # dort eine Charakter-Id - die ist keine Bau-Stufe
+                # dieses Plans und faellt beim Abgleich unten durch.
+                try:
+                    _t749 = int(str(_k).rpartition("|")[2])
+                    _f749 = float(_v)
+                except (TypeError, ValueError):
+                    continue
+                if _t749 in aus_haken:
+                    _ts749[_t749] = max(_ts749.get(_t749, 0.0), _f749)
+            # BELEG = die zugeordneten ESI-Jobs. `geliefert` und
+            # `laufend` sind in `aus_jobs` bereits zusammengefasst
+            # (emm422: ein laufender Job hat sein Material verbraucht),
+            # deshalb steht alles im ersten Topf - `haken_pruefen`
+            # addiert beide und kaeme sonst auf das Doppelte.
+            # Ein Haken OHNE Zeitstempel bekommt keinen Eintrag in
+            # `_ts749` und gilt damit als unbefristet gueltig, also wie
+            # bisher - die sichere Richtung fuer alte Plaene.
+            _st749 = _hp749({_t: _n for _t, _n in aus_haken.items()
+                             if _t in _ts749},
+                            _ts749, aus_jobs, {}, _time.time(),
+                            plan_runs=plan_runs)
+            _wk749, _ = _hw749(_st749)
+            for _t, _n in _wk749.items():
+                _haken_wirk[_t] = int(_n)
+        except Exception:
+            # Eine Kappung, die scheitert, darf die Seite nicht
+            # zerreissen - dann gilt der Haken wie vor emm749.
+            _haken_wirk = dict(aus_haken)
+    out = {t: max(aus_jobs.get(t, 0), _haken_wirk.get(t, 0))
            for t in set(aus_jobs) | set(aus_haken)}
     # NOCH NICHT ZUGEORDNETE, aber EINDEUTIGE Jobs (emm475): sie sind ein
     # zusaetzlicher Beleg, nicht derselbe - deshalb ADDIERT, nicht Maximum.
@@ -149,6 +306,25 @@ def gebaute_runs(plan, zuordnung=None, extra=None):
             continue
         if r > 0:
             out[t] = out.get(t, 0) + r
+    # GERATENE ABLIEFERUNGEN SEIT DEM EINFRIEREN (emm626) - MAXIMUM wie
+    # aus_jobs/aus_haken (dieselben Runs, nicht zusaetzliche): `belegt=out`
+    # gibt `delivered_sicher` genau das bereits BESTAETIGTE weiter, damit
+    # ein umstrittenes Item trotzdem zaehlt, sobald eine Job-Zuordnung oder
+    # ein Haken es diesem Plan eindeutig zuspricht.
+    if delivered_jobs is not None and recipes is not None and frozen_ts:
+        from .ui.mw_helpers import delivered_sicher as _delivered_sicher626
+        # emm791: Jobs, die laut Zuordnung einem anderen Plan (oder
+        # "keinem") gehoeren, raten wir hier gar nicht erst mit.
+        _vergeben791 = ({int(_j): (_e or {}).get("plan_id")
+                         for _j, _e in (zuordnung or {}).items()}
+                        if zuordnung else None)
+        _geraten = delivered_geraten(frozen_ts, plan_runs, delivered_jobs,
+                                      recipes, vergeben=_vergeben791,
+                                      plan_id=_pid)
+        _sicher = _delivered_sicher626(_geraten, plan_runs, umstritten,
+                                        belegt=out)
+        for t, r in _sicher.items():
+            out[t] = max(out.get(t, 0), r)
     return out
 
 
@@ -270,7 +446,8 @@ def zuteilbare_jobs(jobs, plaene, vergeben, fremde_bauer=None):
     return treffer, offen
 
 
-def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None, out_qty=None):
+def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None, out_qty=None,
+                        delivered_jobs=None, recipes=None, umstritten=None):
     """{type_id: [(plan_label, menge)]} - was die NOCH OFFENEN Runs der
     uebergebenen Plaene an Material brauchen (Zutaten aller Bau-Schritte +
     Datacores/Decryptoren), aus dem eingefrorenen Schnappschuss.
@@ -320,8 +497,22 @@ def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None, out_qty=None):
 
     `out_qty` wird nicht mehr gebraucht und bleibt nur, damit die Aufrufer
     unveraendert bleiben koennen.
+
+    emm626 (Nutzer: "einkaufsliste und stock locations behaupten
+    wiedermal etwas unterschiedliches" / Ziel: "ueber die
+    Gesamteinkaufsliste aller Baupläne im Stock Locations Tab einkaufen
+    kann ich alles auf einmal und es passt dann"): `delivered_jobs`,
+    `recipes`, `umstritten` sind NEU und optional - geben sie
+    `gebaute_runs()` eine DRITTE Quelle (gedeckelt-und-strittig-sichere
+    ESI-Ablieferung seit dem Einfrieren, dieselbe Bauart wie
+    `delivered_sicher()` im Bauplan selbst). Das ist KEIN anteiliges
+    Gutschreiben wie der zurueckgenommene Versuch in (b) oben - nur ein
+    staerkeres Signal fuer dieselbe, bereits bestehende max()-Kombination.
+    Wird keiner der drei Parameter uebergeben, verhaelt sich die Funktion
+    exakt wie vorher (reines `zuordnung`/`extra`).
     """
     from .ui.mw_helpers import MainWindowHelpers as _MH, restbedarf_map
+    _umstritten626 = umstritten if umstritten is not None else umstrittene_tids(plaene)
     out = {}
     for p in plaene or []:
         snap = ((p or {}).get("frozen") or {}).get("plan_snapshot")
@@ -334,8 +525,12 @@ def bedarf_aus_plaenen(plaene, zuordnung=None, extra_runs=None, out_qty=None):
         label = str(p.get("label") or p.get("item_name") or p.get("id") or "?")
         _runs = {int(t): int(r or 0)
                  for t, r in (plan.get("build_runs") or {}).items()}
-        _gebaut = gebaute_runs(p, zuordnung,
-                               (extra_runs or {}).get(str(p.get("id"))))
+        _gebaut = gebaute_runs(
+            p, zuordnung, (extra_runs or {}).get(str(p.get("id"))),
+            delivered_jobs=delivered_jobs, recipes=recipes,
+            umstritten=_umstritten626,
+            frozen_ts=((p.get("frozen") or {}).get("ts")),
+            plan_runs=_runs)
         _mats = {int(t): v for t, v in (plan.get("build_mats") or {}).items()}
         rem, summe = restbedarf_map(_runs, _mats, _gebaut)
         # WAS DIESER PLAN SELBST BAUT, MELDET ER NICHT (emm527 (a)+(b)):
@@ -433,7 +628,8 @@ def passt(name, begriffe):
 
 
 def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
-         bedarf=None, nur_tids=None, begriffe=None):
+         bedarf=None, nur_tids=None, begriffe=None, lag=None,
+         fremd_abzug=None, eigen_schutz=None):
     """Zeilen -> Baum fuer die Anzeige, Item zuerst (Nutzer: "Item zuerst").
 
     -> [{"tid", "name", "menge", "bedarf": [(plan, menge)], "short": n,
@@ -454,8 +650,21 @@ def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
     (`bedarf_aus_plaenen`), anteilig statt alles-oder-nichts. Was hier
     ankommt, ist bereits der NETTO-Bedarf - `short` ist wieder einfach
     "Bedarf minus Bestand".
-    """
+
+    `lag` (emm620, s. `_lager_laden`/`mw_helpers.lag_verbrauch`): {tid:
+    Menge}, die Jobs NACH dem letzten ESI-Bestandsstand schon verbraucht
+    haben - im Spiel weg, aber in `zeilen` (ESI, bis zu 1 h gecacht) noch
+    sichtbar. NUTZER: "Moma sagt ich haette genuegend Material aber ingame
+    kan ich die letzten 2 Runs von Tungsten Carbide wiedermal nicht
+    machen" - 3 von 5 Blaupausenkopien liefen schon, ihr Material war im
+    Hangar weg, der ESI-Bestand zeigte es (noch) voll. `short` zaehlte
+    gegen den VOLLEN `it_menge`, meldete also faelschlich "genug". Jetzt
+    wird vom Bestand abgezogen, was laut `lag` schon weg ist, bevor
+    verglichen wird - NUR fuer den Vergleich, `menge` in der Anzeige bleibt
+    der ehrliche ESI-Wert (Regel 8, Nutzer soll sehen, was ESI wirklich
+    meldet)."""
     bedarf = bedarf or {}
+    lag = lag or {}
     agg = {}
     for z in zeilen or []:
         tid = int(z["tid"])
@@ -477,12 +686,27 @@ def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
     for tid, orte in items.items():
         it_menge = 0
         orte_l = []
+        # WIE VIEL LIEGT NICHT LOSE IM HANGAR? (emm770) Nutzer 30.10.2026
+        # mit Spiel-Bildschirmfoto: "mir fehlt Tritanium obwohl Bauplan
+        # und Stocklocations sagt, ich habe alles". GEMESSEN an seinem
+        # Fall: Eve MoMa zaehlte 51'638'400 an Bau-Strukturen, das Spiel
+        # bot 48'656'779 an - die Differenz war AUF DIE EINHEIT der
+        # Inhalt EINES Containers (2'981'621 bei Peanut Motor auf
+        # Dockside). Ein Industry-Job zieht nur aus dem ITEM-HANGAR;
+        # was in einer Kiste liegt, muss erst ausgepackt werden. Die
+        # Zahl bleibt richtig (es IST sein Material), sie braucht nur
+        # die Fussnote. Ein nicht-leerer `pfad` heisst "in einem
+        # Behaelter" - das gilt auch fuer die synthetischen
+        # Vertrags-Behaelter aus emm760, und zwar zu Recht: Ware in
+        # einem offenen Vertrag kann ein Job genauso wenig nehmen.
+        it_verpackt = 0
         for ort, bes_map in orte.items():
             o_menge = 0
             bes_l = []
             for (art, besitzer), pf_map in bes_map.items():
                 bm = sum(pf_map.values())
                 o_menge += bm
+                it_verpackt += sum(q for pf, q in pf_map.items() if pf)
                 bes_l.append({"besitzer": besitzer, "art": art,
                               "name": besitzer_namen.get((art, besitzer))
                               or besitzer_namen.get(besitzer) or str(besitzer),
@@ -496,9 +720,23 @@ def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
         orte_l.sort(key=lambda x: (-x["menge"], x["name"]))
         bd = list(bedarf.get(tid) or [])
         ges = sum(q for _, q in bd)
+        # FREMDE ANSPRUECHE ZAEHLEN AUCH HIER (emm789, Audit 31.10.2026,
+        # KRITISCH K1/M1): `short` verglich gegen den vollen Rohbestand -
+        # mit Einzelplan-Dropdown meldete die Einkaufsliste "0 fehlt",
+        # obwohl ein zweiter Plan dieselben 100 Stueck beansprucht, und
+        # reservierte, nie eingefrorene Plaene fehlten der Seite komplett.
+        # DIESELBE faire Aufteilung wie bestand_nach_reservierungen
+        # (mw_helpers): verfuegbar = max(Basis - fremd, min(eigen, Basis)).
+        _basis789 = it_menge - int(lag.get(tid, 0) or 0)
+        _fr789 = int((fremd_abzug or {}).get(tid, 0) or 0)
+        _ei789 = int((eigen_schutz or {}).get(tid, 0) or 0)
+        _verfuegbar = max(0, max(_basis789 - _fr789, min(_ei789, _basis789)))
         out.append({"tid": tid, "name": namen.get(tid, f"#{tid}"),
                     "menge": it_menge, "bedarf": bd,
-                    "short": max(0, ges - it_menge) if bd else 0,
+                    "short": max(0, ges - _verfuegbar) if bd else 0,
+                    # emm770: davon in Behaeltern/Vertraegen - ein Job
+                    # im Spiel kann nur den losen Hangar-Anteil nehmen.
+                    "verpackt": it_verpackt,
                     "orte": orte_l})
     # Items mit Bedarf, aber OHNE Bestand sollen trotzdem erscheinen
     # (sonst sieht man nicht, dass etwas ganz fehlt).
@@ -510,7 +748,7 @@ def baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
             if ges > 0:
                 out.append({"tid": tid, "name": namen.get(tid, f"#{tid}"),
                             "menge": 0, "bedarf": list(bd),
-                            "short": ges, "orte": []})
+                            "short": ges, "verpackt": 0, "orte": []})
     out.sort(key=lambda x: (0 if x["bedarf"] else 1, -x["short"], x["name"]))
     return out
 
@@ -531,7 +769,8 @@ def orte_mit_bestand(zeilen, ort_namen=None):
 
 
 def karten(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
-           bedarf=None, nur_tids=None, begriffe=None, nur_orte=None):
+           bedarf=None, nur_tids=None, begriffe=None, nur_orte=None, lag=None,
+           fremd_abzug=None, eigen_schutz=None):
     """Dieselben Daten wie `baum`, aber JE ORT gebuendelt - eine Karte je
     Station/Struktur (emm461, Nutzer: "ich haette lieber die Locations als
     Karten ... meistens hat man nur 4-5 Baustrukturen").
@@ -554,7 +793,8 @@ def karten(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
         _nur = {int(o) for o in nur_orte}
         zeilen = [z for z in (zeilen or []) if int(z.get("ort") or 0) in _nur]
     b = baum(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
-             bedarf=bedarf, nur_tids=nur_tids, begriffe=begriffe)
+             bedarf=bedarf, nur_tids=nur_tids, begriffe=begriffe, lag=lag,
+             fremd_abzug=fremd_abzug, eigen_schutz=eigen_schutz)
     karten_map = {}
     fehlt_ganz = []
     for it in b:
@@ -572,6 +812,9 @@ def karten(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
             k["items"].append({"tid": it["tid"], "name": it["name"],
                                "menge": o["menge"], "gesamt": it["menge"],
                                "bedarf": it["bedarf"], "short": it["short"],
+                               # emm770: ueber ALLE Orte, nicht nur diesen -
+                               # die Fussnote gilt dem Item, nicht der Karte.
+                               "verpackt": it.get("verpackt", 0),
                                "besitzer": o["besitzer"]})
             k["menge"] += o["menge"]
             if it["short"] > 0:
@@ -671,9 +914,33 @@ def multibuy_text(posten):
 # gar nicht geurteilt (kleine Charaktere schwanken stark).
 SCHRUMPF_ANTEIL = 0.7
 SCHRUMPF_MIN = 50
+# WIE LANGE EIN EINBRUCH VERDAECHTIG BLEIBT (emm744, 28.10.2026). Vorher
+# galt "zweimal dieselbe kleinere Zahl = neue Wahrheit" - das reichte nicht:
+# ESI cacht Assets rund eine Stunde, zwei Aktualisierungen liegen also oft
+# nur Minuten auseinander und liefern zwangslaeufig DIESELBE zu kleine Zahl.
+# Die Warnung verstummte dadurch beim zweiten Abruf, und der gekuerzte Stand
+# wurde als `ok` festgeschrieben. Eine echte Hangar-Raeumung ueberdauert
+# zwei Stunden muehelos, eine CCP-Stoerung meist nicht - erst danach gilt
+# die kleinere Zahl.
+SCHRUMPF_BESTAETIGUNG_SEK = 7200
+# WIE WEIT DIE ZAHL WAEHREND DER BESTAETIGUNG SCHWANKEN DARF (emm762).
+# Ein gekuerzter Abruf liefert nicht jedes Mal exakt dieselbe Zeilenzahl -
+# der Charakter baut weiter, Jobs liefern ab, Stacks wachsen zusammen.
+# Innerhalb dieses Bandes um den Startwert der kleinen Phase laeuft die
+# Bestaetigungs-Uhr weiter; ausserhalb beginnt eine neue Phase. 10 %
+# faengt das normale Rauschen ab und liegt deutlich unter der
+# Erkennungsschwelle (30 % Einbruch), die unveraendert bleibt.
+SCHRUMPF_BAND = 0.1
+# ... MINDESTENS ABER SO VIELE ZEILEN (emm767). Ein rein relatives Band
+# ist bei kleinen Zahlen winzig: gemessen an seinem Stand vom 29.10.
+# (Leziris Lezflow, ok 1445 -> basis 34) waren 10 % genau 3,4 Zeilen -
+# ein einziger abgelieferter Job wirft die Bestaetigungs-Uhr damit
+# zurueck, und die Warnung bleibt ewig stehen. Unter rund 100 Zeilen
+# zaehlt deshalb diese absolute Schranke.
+SCHRUMPF_BAND_MIN = 10
 
 
-def bestand_schrumpf(neu, stand):
+def bestand_schrumpf(neu, stand, jetzt=None):
     """([(Name, vorher, jetzt)], neuer Stand) - WELCHER Abruf war wohl
     unvollstaendig, obwohl ESI keinen Fehler gemeldet hat (emm477).
 
@@ -687,14 +954,26 @@ def bestand_schrumpf(neu, stand):
 
     `neu`: {Name: Asset-Zeilen dieses Laufs} - nur GELUNGENE Abrufe.
     `stand`: {Name: {"ok": bestaetigte Zeilen, "letzte": Zeilen des
-             letzten Laufs}} aus den Einstellungen.
+             letzten Laufs, "seit": Zeitstempel des ersten kleinen Abrufs}}
+             aus den Einstellungen.
+    `jetzt`: Zeitstempel (nur zum Pruefen; sonst die Uhr).
 
-    Zweimal dieselbe kleinere Zahl gilt als neue Wahrheit (der Nutzer hat
-    dann wirklich geleert) - so bleibt die Warnung nicht fuer immer
-    stehen, meldet sich aber bei JEDEM schwankenden Abruf wieder.
+    DIE KLEINERE ZAHL MUSS SICH BEWAEHREN (emm744, s.
+    SCHRUMPF_BESTAETIGUNG_SEK). Bis dahin steht die Warnung bei JEDEM
+    Abruf - nicht nur beim ersten. Haelt der kleinere Stand laenger als
+    zwei Stunden, hat der Nutzer wirklich geraeumt, und er wird zur neuen
+    Wahrheit; die Warnung verschwindet dann von selbst.
+
+    NUTZER-BEFUND 28.10.2026 ("Stock Locations, ploetzlich fehlt ueberall
+    Material, ich habe nix gemacht"): ESI lieferte fuer einen Charakter
+    582 statt 1'859 Asset-Zeilen. Der erste Abruf warnte noch, der zweite
+    - Minuten spaeter, derselbe ESI-Cache, dieselbe gekuerzte Antwort -
+    schrieb 582 als `ok` fest. Danach zeigte die Seite Fehlbetraege von
+    18 Mio Pyerite und bot den Einkauf an, ohne ein Wort der Warnung.
     """
     warn, out = [], {}
     _alt = stand if isinstance(stand, dict) else {}
+    _jetzt = float(jetzt) if jetzt is not None else _time.time()
     for name, n in (neu or {}).items():
         try:
             n = int(n)
@@ -705,16 +984,52 @@ def bestand_schrumpf(neu, stand):
             ok = int(e.get("ok") or 0)
         except (TypeError, ValueError):
             ok = 0
+        # `letzte` wird nur noch GESCHRIEBEN (Diagnose: was der letzte
+        # Abruf lieferte, sichtbar in settings.json - genau daraus kam
+        # am 29.10. der Befund "Lezflow 172 statt 1445"). Gelesen wurde
+        # es bis emm762 fuer die Bedingung "exakt dieselbe Zahl"; die
+        # ist durch das Toleranzband um `basis` ersetzt.
         try:
-            letzte = int(e.get("letzte") or 0)
+            seit = float(e.get("seit") or 0.0)
         except (TypeError, ValueError):
-            letzte = 0
+            seit = 0.0
+        try:
+            basis = int(e.get("basis") or 0)
+        except (TypeError, ValueError):
+            basis = 0
         _klein = ok >= SCHRUMPF_MIN and n < ok * SCHRUMPF_ANTEIL
-        if _klein and letzte != n:
-            warn.append((name, ok, n))
-            out[name] = {"ok": ok, "letzte": n}
+        if not _klein:
+            out[name] = {"ok": max(n, 0), "letzte": n, "seit": 0.0,
+                         "basis": 0}
+            continue
+        # DIE UHR LAEUFT WEITER, SOLANGE DIE ZAHL IM SELBEN BEREICH BLEIBT
+        # (emm762). Bis dahin stand hier "letzte != n -> Uhr zurueck", also
+        # ZWEI STUNDEN LANG EXAKT DIESELBE Zeilenzahl. Nutzer 29.10.2026:
+        # "hart gesperrt ist okey, aber die warnung scheint selten nicht da
+        # zu sein". SIMULIERT (werkzeuge/sim_emm762.py) mit seinen Zahlen:
+        # ein RUHENDER Charakter (sein Lezflow, 1445 -> 172 weggeschoben)
+        # verstummt nach 2,5 h - ein ARBEITENDER (Peanut Motor 1859 -> 582
+        # vom 28.10., Abruf schwankt um +-2 Zeilen, weil Jobs abliefern und
+        # Stacks wachsen) warnte in 8 von 8 Abrufen auch nach 4 Stunden,
+        # weil JEDE einzelne Zeile Abweichung die Uhr auf null warf. Genau
+        # dort sitzt der gekuerzte Abruf aber - der Fall, fuer den die
+        # Bestaetigung gedacht war, konnte sie nie erreichen.
+        # `basis` ist die Zahl, mit der die kleine Phase begann; bleibt der
+        # Abruf in ihrem Band, laeuft die Uhr weiter. Ein WEITERER Einbruch
+        # (oder ein Sprung nach oben, der die Lage neu beurteilt) beginnt
+        # eine neue Phase - die Erkennungsschwelle SCHRUMPF_ANTEIL und die
+        # Sperre des Einkaufsknopfs bleiben unangetastet.
+        _band = max(basis * SCHRUMPF_BAND, SCHRUMPF_BAND_MIN)
+        if seit <= 0.0 or basis <= 0 or abs(n - basis) > _band:
+            seit = _jetzt
+            basis = n
+        if _jetzt - seit >= SCHRUMPF_BESTAETIGUNG_SEK:
+            out[name] = {"ok": max(n, 0), "letzte": n, "seit": 0.0,
+                         "basis": 0}
         else:
-            out[name] = {"ok": max(n, 0), "letzte": n}
+            warn.append((name, ok, n))
+            out[name] = {"ok": ok, "letzte": n, "seit": seit,
+                         "basis": basis}
     # Charaktere, die diesmal gar nicht geladen wurden (Fehler), behalten
     # ihren bestaetigten Wert - sonst faellt der naechste zu kleine Abruf
     # nicht mehr auf.

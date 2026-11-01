@@ -541,6 +541,102 @@ def freight_adjusted_price_fn(price_fn, volumes, rate_per_m3):
     return _fn
 
 
+# ---------------------------------------------------------------------------
+# MULTI-HUB-EINKAUF PRO BAUPLAN, Teil 2a (emm722, Nutzer 25.10.2026:
+# "1. ja genau auch Compresste Erze Logik muss greiffen / 2. marktiefe
+# orderstaerke sehr wichtig orderleiter / 3. Hubs muessen beide auf
+# aktuellen Preis stand gescannt weren koennen"). Drei PURE Funktionen -
+# die Daten (Orderbuecher je Hub) holt die UI ueber die laengst
+# vorhandenen Abruf-Wege (esi.fetch_type_orders je Item am NPC-Hub,
+# _structure_books fuer Spielerstrukturen); hier steht nur die
+# Aggregations-Logik, testbar ohne Netz (Regel 9: kein neuer Fetch-Code).
+# ---------------------------------------------------------------------------
+
+def multihub_leiter(buecher, tid, fracht_je_hub=None, vol=0.0):
+    """Zusammengelegte, hub-markierte VERKAUFS-Leiter fuer EIN Item.
+
+    buecher       = {hub_key: {type_id: [(preis, menge), ...]}}
+    fracht_je_hub = {hub_key: ISK/m3} - die hub-EIGENE Fracht (Nutzer-
+                    Vorgabe aus OFFENE_PUNKTE Punkt B: "die guenstigere
+                    Quelle inkl. hub-eigener Fracht"); fehlende Hubs = 0.
+    vol           = Volumen des Items (m3/Stueck).
+
+    Rueckgabe: [(landepreis, menge, hub_key, rohpreis), ...] AUFSTEIGEND
+    nach LANDEPREIS (rohpreis + vol x Fracht des Hubs) - wer die Leiter
+    von vorn abtraegt, kauft automatisch mengenbewusst am jeweils
+    guenstigeren Ort (Markttiefe statt Bestpreis-Falle: deckt die
+    billigste Order in Hub A nur 200 von 500 Stueck, uebernimmt ab da
+    die naechstguenstigere Order - egal aus welchem Hub)."""
+    eintraege = []
+    _vol = float(vol or 0.0)
+    for _hub, _book in (buecher or {}).items():
+        try:
+            _rate = float((fracht_je_hub or {}).get(_hub, 0) or 0)
+        except (TypeError, ValueError):
+            _rate = 0.0
+        for _preis, _menge in ((_book or {}).get(int(tid)) or []):
+            try:
+                _p = float(_preis)
+                _m = int(_menge)
+            except (TypeError, ValueError):
+                continue
+            if _p <= 0 or _m <= 0:
+                continue
+            eintraege.append((_p + _vol * _rate, _m, _hub, _p))
+    eintraege.sort(key=lambda e: (e[0], e[3]))
+    return eintraege
+
+
+def multihub_split(leiter, menge):
+    """Bedarf ueber die zusammengelegte Leiter abtragen (Markttiefe).
+
+    Rueckgabe: ({hub_key: (stueck, kosten_roh, kosten_mit_fracht)}, rest).
+    rest > 0 heisst: beide Hubs zusammen haben zu wenig auf dem Markt -
+    der Aufrufer sagt das SICHTBAR, statt still mit dem letzten Preis
+    weiterzurechnen (Regel 3/6)."""
+    offen = int(menge or 0)
+    out = {}
+    for _lp, _m, _hub, _roh in (leiter or []):
+        if offen <= 0:
+            break
+        _n = min(offen, _m)
+        _d = out.setdefault(_hub, [0, 0.0, 0.0])
+        _d[0] += _n
+        _d[1] += _n * _roh
+        _d[2] += _n * _lp
+        offen -= _n
+    return {h: (v[0], v[1], v[2]) for h, v in out.items()}, offen
+
+
+def multihub_pfn(basis_fn, buecher, fracht_je_hub=None, volumes=None,
+                 mit_fracht=False):
+    """Kaufpreis-Funktion ueber MEHRERE Hubs - fuer production_plan/
+    build_cost, dieselbe Schnittstelle wie `freight_adjusted_price_fn`.
+
+    Je Item der GUENSTIGSTE Einstieg der zusammengelegten Leiter
+    (Vergleich IMMER inkl. hub-eigener Fracht - das ist die Hub-WAHL);
+    `mit_fracht` entscheidet nur, ob der zurueckgegebene PREIS den
+    Frachtanteil traegt (True = Landepreis, wie der bestehende
+    "Frachtkosten entscheiden mit"-Schalter) oder der rohe Orderpreis
+    (False - die Fracht bleibt dann wie bisher eine Kostenposition auf
+    Plan-Ebene). Items OHNE Order an beiden Hubs fallen auf `basis_fn`
+    zurueck (der gescannte Hub) - kein Fehler, kein None-Crash; genau der
+    Fallback aus OFFENE_PUNKTE Punkt B. Leere `buecher` -> basis_fn
+    unveraendert (kein Wrapper, kein Verhaltensunterschied)."""
+    if not buecher:
+        return basis_fn
+    vols = volumes or {}
+
+    def _fn(tid):
+        _leiter = multihub_leiter(buecher, tid, fracht_je_hub,
+                                  vols.get(tid, 0) or 0)
+        if not _leiter:
+            return basis_fn(tid)
+        _lp, _m, _hub, _roh = _leiter[0]
+        return _lp if mit_fracht else _roh
+    return _fn
+
+
 def ships_with_unpackaged_volume(type_ids) -> set:
     """type_ids (aus category 6 Ship / 65 Structure) deren SDE-Zeile KEIN
     packaged_volume (invVolumes) hat — item_volume_map() musste dann auf die
@@ -1152,16 +1248,39 @@ _RIG_EFFECT_DOMAINS = [
     ("Equipment", "equipment"),
     ("CapShip", "capital_ship"),
     ("CapitalShip", "capital_ship"),
-    ("AdvLargeShip", "advanced_large_ship"),
-    ("AdvMediumShip", "advanced_medium_ship"),
-    ("AdvSmallShip", "advanced_small_ship"),
+    # emm719 (Nutzer 25.10.2026 "finde Wege es selber zu loesen", Punkt 1
+    # "Rig-Wirkung gegen echte SDE verifizieren"): GEMESSEN gegen die echten
+    # Effekt-Strings in sde_kompakt.db (Tabelle rigs, Spalte effects;
+    # SELECT name, effects FROM rigs WHERE name LIKE '%Set%Ship%') - nicht
+    # geraten. Die hier vorher stehenden Fragmente "AdvLargeShip",
+    # "AdvMediumShip", "AdvSmallShip", "LargeShip", "MediumShip", "SmallShip"
+    # matchten KEINEN einzigen realen Effekt-String: CCP verkuerzt/schreibt
+    # anders, z.B. echt "rigAdvLarShipManufactureMaterialBonus" (nicht
+    # "AdvLargeShip") und echt "rigLargeshipManufactureMaterialBonus"
+    # (kleines "s" in "ship", nicht "LargeShip"). Folge: ALLE 12
+    # Schiffsgroessen-Fertigungs-Rigs (Basic/Advanced x Small/Medium/Large,
+    # I/II, in L- UND M-Set) wirkten im Tool mit 0% Bonus, obwohl eingebaut -
+    # ein echter, bisher unbemerkter Kosten-Fehler. Korrigiert auf die
+    # GEMESSENEN echten Strings:
+    ("AdvLarShip", "advanced_large_ship"),
+    ("AdvMedShip", "advanced_medium_ship"),
+    ("AdvSmship", "advanced_small_ship"),
     ("AdvShip", "advanced_ship"),
     ("BasicLargeShip", "basic_large_ship"),
     ("BasicMediumShip", "basic_medium_ship"),
     ("BasicSmallShip", "basic_small_ship"),
-    ("LargeShip", "basic_large_ship"),
-    ("MediumShip", "basic_medium_ship"),
-    ("SmallShip", "basic_small_ship"),
+    ("Largeship", "basic_large_ship"),
+    ("Mediumship", "basic_medium_ship"),
+    ("Smallship", "basic_small_ship"),
+    # emm719: "Standup XL-Set Ship Manufacturing Efficiency I/II" nutzt
+    # eigene Effekte "rigAllShipManufactureMaterial/TimeBonus" - GEMESSEN,
+    # vorher in KEINEM Fragment vorhanden, also ebenfalls 0% Bonus. Dieses
+    # Rig wirkt laut CCP auf JEDES Schiff, egal Groesse/Tier - braucht daher
+    # BEIDE generischen Domaenen-Tags (ein Schiff trägt in item_domains()
+    # entweder "basic_ship" ODER "advanced_ship", nie beide), damit die
+    # Schnittmenge in jedem Fall trifft. Tupel-Wert statt String = mehrere
+    # Domaenen aus einem Fragment, s. rig_domains() unten.
+    ("AllShip", ("basic_ship", "advanced_ship")),
     ("Structure", "structure"),
     ("Ammo", "ammo"),
     ("Charge", "ammo"),
@@ -1196,7 +1315,13 @@ def rig_domains(effect_names) -> set:
             continue
         for frag, dom in _RIG_EFFECT_DOMAINS:
             if frag in e:
-                doms.add(dom)
+                # emm719: dom kann ein Tupel sein (z.B. AllShip -> beide
+                # generischen Ship-Domaenen), dann alle einzeln aufnehmen
+                # statt das Tupel selbst als ein Element einzufuegen.
+                if isinstance(dom, tuple):
+                    doms.update(dom)
+                else:
+                    doms.add(dom)
                 break
     return doms
 
@@ -1475,6 +1600,104 @@ def bp_kategorie_passt(want, cat_id, group_id, rig_ids) -> bool:
     if want == RIGS_KAT:
         return ist_rig
     return cat_id == want and not ist_rig
+
+
+# ---------------------------------------------------------------------------
+# KATEGORIE-/META-MEHRFACHAUSWAHL FUER DAYTRADE/SWING/REGIONAL (emm611,
+# Nutzer: "damit es zusaetzlich kathegorie und meta Dropdowns gibt um
+# spezifische Trades zu finden, wenn ich zbsp nur Materialien mineralien
+# ORes usw suchen will... standardmaessig alle Kathegorien auf ON"). Anders
+# als bp_kategorie_passt() (NUR baubare Items, My Blueprints) gilt hier
+# JEDES marktfaehige Item - Erze, SKINs, Commodities usw., die nie eine
+# Blaupause haben, muessen trotzdem auftauchen.
+
+def rig_group_ids_all() -> set:
+    """Wie rig_gruppen(), aber OHNE die Baubarkeits-Einschraenkung (kein
+    JOIN auf products/ACTIVITIES) - fuer den Handel zaehlt jede Rig-Gruppe,
+    die am Markt gehandelt wird, nicht nur die, die auch eine Blaupause
+    hat (bei Rigs in der Praxis ohnehin fast immer dieselbe Menge, aber
+    "fast immer" ist keine Garantie - lieber die vollstaendige Menge)."""
+    if not os.path.exists(_db_path()):
+        return set()
+    try:
+        with _conn() as c:
+            return {r["group_id"] for r in c.execute(
+                "SELECT group_id, name FROM group_name")
+                if ist_rig_gruppe(r["name"])}
+    except Exception:
+        return set()
+
+
+def kategorie_passt_mehrfach(want_set, cat_id, group_id, rig_ids) -> bool:
+    """Wie bp_kategorie_passt(), aber `want_set` ist eine MENGE erlaubter
+    Schluessel (Kategorie-IDs und/oder RIGS_KAT) statt eines einzelnen
+    Werts - fuer die Checkbox-Mehrfachauswahl. None = kein Filter (alle
+    Kategorien angehakt)."""
+    if want_set is None:
+        return True
+    ist_rig = group_id is not None and group_id in (rig_ids or ())
+    eff = RIGS_KAT if ist_rig else cat_id
+    return eff in want_set
+
+
+def market_category_options() -> list:
+    """Kategorie-Dropdown fuer Daytrade/Swing/Regional: wie category_options()
+    (ALLE am Markt vorkommenden Kategorien, nicht auf Baubares beschraenkt -
+    sonst fehlten Erze, SKINs, Commodities), aber mit Rigs als eigenem
+    konsolidierten Eintrag statt versteckt unter "Module" (dieselbe
+    RIGS_KAT-Logik wie bp_kategorien_zeigen in My Blueprints, Nutzer-Wunsch
+    29.09.2026 dort war derselbe: "Category Modules gewaehlt, da werden aber
+    Rigs aufgelistet")."""
+    opts = list(category_options())
+    if rig_group_ids_all():
+        opts.append((RIGS_KAT, "Rigs"))
+    return sorted(opts, key=lambda o: str(o[1]).lower())
+
+
+# Kanonische EVE-Metagruppen (dieselben IDs/Namen, die d_meta in Daytrade
+# schon lange benutzt - hier NICHT neu geraten, siehe dortige Liste:
+# 1 Tech I, 2 Tech II, 3 Storyline, 4 Faction, 5 Officer, 6 Deadspace,
+# 14 Tech III, plus 15/17/19 (Abyssal/Premium/Limited) und jede weitere,
+# seltenere Metagruppe gemeinsam unter "Other").
+_META_BEKANNT = {1: "Tech I", 2: "Tech II", 14: "Tech III", 4: "Faction",
+                 5: "Officer", 6: "Deadspace", 3: "Storyline"}
+META_SONSTIGE = "meta_sonstige"
+
+
+def meta_bucket_optionen() -> list:
+    """[(key, name)] fuer das Meta-Mehrfachauswahl-Dropdown, feste
+    Reihenfolge (nicht alphabetisch - "Tech I" zuerst ist intuitiver als
+    "Deadspace" zuerst)."""
+    # de_scan4: aus - BEGRUENDUNG: der "Other"-Text ist ein t()-SCHLUESSEL
+    # mit Katalogeintrag ("Sonstige (Abyssal/Premium/Limited …)");
+    # uebersetzt wird an den beiden Anzeige-Stellen (main_window,
+    # _h_meta_refresh/_rg_meta_refresh) - industry.py bleibt bewusst ohne
+    # UI-/Sprach-Import (emm696).
+    return [(1, "Tech I"), (2, "Tech II"), (14, "Tech III"),
+            (4, "Faction"), (5, "Officer"), (6, "Deadspace"),
+            (3, "Storyline"),
+            (META_SONSTIGE, "Other (Abyssal/Premium/Limited …)")]
+    # de_scan4: an
+
+
+def meta_bucket(meta_group_id) -> object:
+    """Ordnet eine rohe meta_group_id einem Dropdown-Schluessel zu. 0/None
+    (die SDE laesst die meisten T1-Items ohne invMetaTypes-Eintrag, s.
+    main_window.py-Kommentar bei _SELLABLE_CATEGORIES) zaehlt als Tech I,
+    jede unbekannte/seltene Gruppe (Abyssal, Premium, Limited, ...) faellt
+    in den Sammel-Eintrag META_SONSTIGE statt stillschweigend zu
+    verschwinden."""
+    m = meta_group_id or 0
+    if m == 0:
+        return 1
+    return m if m in _META_BEKANNT else META_SONSTIGE
+
+
+def meta_passt_mehrfach(want_set, meta_group_id) -> bool:
+    """Wie kategorie_passt_mehrfach(), fuer die Meta-Mehrfachauswahl."""
+    if want_set is None:
+        return True
+    return meta_bucket(meta_group_id) in want_set
 
 
 def bp_kategorien_zeigen(opts, zeilen, rig_ids, rigs_name) -> list:
@@ -4266,6 +4489,23 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
                 # verschachteltes Unter-Material gerade keinen Preis hat (dann eben
                 # mit 0 ISK für den unbepreisten Teil - besser als ein Item trotz
                 # "Alles selbst bauen: AN" munter zu kaufen).
+                # emm634 PRUEFTE HIER eine Ausnahme fuer "prefer_build_if_owned"
+                # (ZURUECKGEBAUT, Nutzer-Bestaetigung 23.10.2026: "wenn der
+                # markt das material nicht hergibt dann ist das okey und
+                # diese Regel macht dann auch Sinn") - gibt der Markt ein
+                # Material WIRKLICH nicht her (keine Sell-Order, kein
+                # Adjusted-Price), ist "dann kaufe ich eben die fertige
+                # Komponente" die richtige Antwort, nicht "bau mit einem
+                # Material, das ich so oder so nicht bekomme". Der vom
+                # Nutzer urspruenglich gemeldete Fall ("zu wenig
+                # Rohstoffmaterial, muss nachkaufen") betrifft einen
+                # Rohstoff, der am Markt SEHR WOHL einen Preis hat (nur sein
+                # eigener Bestand ist knapp) - dieser Fall landet nie in
+                # diesem Zweig (complete bleibt True, `eff()` findet den
+                # Kaufpreis), sondern im normalen Kostenvergleich unten, der
+                # "prefer_build_if_owned" schon immer respektiert. Kein Bug
+                # hier gefunden - nur der echte "Markt hat es nicht"-Fall,
+                # und der soll genau so bleiben.
                 do_build = False
             else:
                 # bauen nur, wenn es (inkl. günstigster Sub-Materialien) billiger ist -
@@ -4275,8 +4515,21 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
                 # eh schon hat, nicht künstlich liegen lassen, nur weil der Markt
                 # gerade minimal billiger wäre). Bei Besitze=0 bleibt der normale
                 # Kostenvergleich unverändert aktiv.
-                _prefer_owned = bool(opts.get("prefer_build_if_owned") and
-                                     stock_used.get(tid, 0) > 0)
+                # emm635 (Nutzer 23.10.2026: "sobald etwas in der
+                # Bauschleife ist, sollte es als ''Bestand'' zaehlen"):
+                # ein LAUFENDER Job zaehlt wie eigener Bestand. Das
+                # Material dafuer ist im Moment des Starts aus dem Hangar
+                # verschwunden - wer es jetzt noch einmal kauft, kauft es
+                # zweimal. `job_angefangen` kommt aus `_bd_active_jobs_map`
+                # (Bauplan-Fenster), also aus derselben Quelle wie das
+                # "laeuft schon"-Kennzeichen; hier wird nichts abgeleitet.
+                # emm644: DIESE HAELFTE FEHLTE auf dem Rechner des Nutzers -
+                # das Fenster setzte die Option, niemand las sie, und emm635
+                # war wirkungslos. aa644 pinnt jetzt BEIDE Seiten.
+                _prefer_owned = bool(
+                    opts.get("prefer_build_if_owned")
+                    and (stock_used.get(tid, 0) > 0
+                         or tid in (opts.get("job_angefangen") or ())))
                 # AM HUB NICHT KAUFBAR -> BAUEN (Nutzer, Sitzung 14: "der
                 # Bauplan will immer dass ich Ametat I kaufe,.. ja aber in
                 # Jita gibts gar keine. Auch wenns da einen
@@ -5816,7 +6069,20 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
                 # verteilen"): ein Item mit Runs-Deckel darf ALLE Slots aller
                 # angekreuzten Charaktere nutzen - die Kopien liegen ohnehin
                 # getrennt vor, der 2-Charaktere-Deckel gilt hier nicht.
-                return R if tid in _unit else max_reasonable
+                # REAKTIONEN SIND IMMER ORIGINALE (emm627, Nutzer 23.10.2026:
+                # "es kann nicht sein dass ein Reaction formula ploetzlich 20
+                # Tage dauert weil die freien Charaktere nicht genutzt
+                # werden"): Reaction-Formula-Blaupausen lassen sich laut
+                # Spielmechanik nie kopieren (Nutzer-Bestaetigung, s. emm625) -
+                # jede eigene Blaupause ist ein eigenes Original mit
+                # unbegrenzten Runs, genau wie ein BPC-Original oben. Der
+                # 2-Charaktere-Deckel unten ist fuer KOMPONENTEN gedacht, wo
+                # mehr Material auf mehr Charaktere verteilen ein echter
+                # Nachteil ist - bei Reaktionen nicht: mehr eigene
+                # Original-Blaupausen duerfen auch mehr Charaktere
+                # gleichzeitig nutzen, sonst bleiben freie Reaktionsslots
+                # ungenutzt stehen, waehrend die Stufe unnoetig lange dauert.
+                return R if (tid in _unit or is_reaction) else max_reasonable
             budget = {}
             for j in jobs_sorted:
                 R = int(j["runs"])
@@ -5968,6 +6234,13 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
                                key=lambda c: factor.get(c, 1.0))
             free_ptr = {c: 0 for c in char_cycle}
             ci = 0
+            # GESCHICHTE DIESER STELLE: emm625 (21.10.2026) verteilte die
+            # durch die Straffung gekuerzten 1-Slot-Items bewusst BREIT (Start
+            # auf dem Char mit den wenigsten Items), damit nicht alles auf
+            # Elrasier landet. emm737 (27.10.2026) dreht das auf Nutzer-Wunsch
+            # um ("Charakter-Slots sparen ist wichtig!") - die Startwahl steht
+            # jetzt IN der Schleife unten; dieser Absatz blieb nur als
+            # Begruendung, warum es die Zyklus-Reihenfolge allein nicht tut.
 
             def _next_free_track():
                 nonlocal ci
@@ -5986,6 +6259,44 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
                 if R < 1:
                     continue
                 s = budget[j["tid"]]
+                # SLOTS FUELLEN, NICHT STREUEN (emm737, Nutzer 27.10.2026,
+                # T1-Battlecruiser-Buendel: "von jedem Char wird nur 2 der
+                # Bauslots verwendet, anstatt alle 10 ... wenn ich 12
+                # verschiedene Schiffe habe, soll der Runplaner 10 BPOs auf
+                # Char 1 setzen und 2 auf Char 2 - Charakter-Slots sparen
+                # ist wichtig!"). Vorher (emm625) startete jedes Item auf dem
+                # Char mit den WENIGSTEN Items - das gab 12 Jobs auf 8
+                # Chars. Jetzt zaehlt die ZAHL DER BENUTZTEN CHARAKTERE:
+                #   1. ein schon ANGEFANGENER Char, der das Item (s Slots)
+                #      noch ganz aufnimmt - der knappste davon (eng packen);
+                #   2. sonst ein frischer Char: der mit den MEISTEN freien
+                #      Slots, denn auf den grossen passen auch die naechsten
+                #      Items noch (kleinste-zuerst benutzte bei 3/10/5 Slots
+                #      und sechs Schiffen ZWEI Chars, obwohl alle sechs auf
+                #      den 10er passen - gemessen, Fable-Nachpruefung);
+                #   3. passt es nirgends ganz, startet es auf dem ersten Char
+                #      mit freien Slots (char_cycle) und laeuft von dort auf
+                #      den naechsten ueber.
+                # Gleichstand -> Reihenfolge von char_cycle (schnellster
+                # zuerst). Die Zahl der Slots je Item (budget) bleibt
+                # unveraendert, also aendert sich die Stufendauer nicht.
+                _free_n = {c: len(tracks_by_char[c]) - free_ptr[c]
+                           for c in char_cycle}
+                _start_cands = [c for c in char_cycle if _free_n[c] > 0]
+                if _start_cands:
+                    _fit = [c for c in _start_cands if _free_n[c] >= s]
+                    _benutzt = [c for c in _fit if free_ptr[c] > 0]
+                    if _benutzt:
+                        _start_c = min(_benutzt,
+                                       key=lambda c: (_free_n[c],
+                                                      char_cycle.index(c)))
+                    elif _fit:
+                        _start_c = max(_fit,
+                                       key=lambda c: (_free_n[c],
+                                                      -char_cycle.index(c)))
+                    else:
+                        _start_c = _start_cands[0]
+                    ci = char_cycle.index(_start_c)
                 use = []
                 for _ in range(s):
                     ti = _next_free_track()
@@ -6130,6 +6441,163 @@ def schedule_build(jobs, chars, te_factor=1.0, mfg_bp=1, react_bp=1, end_bp=None
                 if not progressed:
                     break
             _place_on_tracks(picks, j["tid"], j["name"], R, tbase)
+
+        # ===== WAVE-2-BUENDELUNG (emm786, Nutzer 31.10.2026: "Wave 2 im
+        # runplaner koennte man alles auch auf 1 Charakter nehmen" /
+        # "charakterslots sollen gefuellt werden, wenn sie alle voll sind,
+        # dann 2ten charakter anfangen aufzufuellen"). Bis hierher streut
+        # die Wasserfuellung Ueberlauf-Jobs (mehr Starts als Slots) auf die
+        # am wenigsten belasteten Slots QUER ueber alle Charaktere - im
+        # Nutzer-Screenshot trugen drei Charaktere je 1-2 Wave-2-Jobs
+        # (2+1+1), obwohl alle vier auf einen gepasst haetten. Wer die
+        # zweite Welle startet, will dafuer EINEN Charakter einloggen.
+        # REGELN: (1) hat ein Charakter noch freie Erstwellen-Slots,
+        # wandern Ueberlauf-Jobs zuerst dorthin (fuellt Slots UND spart
+        # die Welle); (2) der restliche Ueberlauf fuellt je Ziel-Charakter
+        # erst dessen Slotzahl GANZ, bevor der naechste drankommt.
+        # Ziel-Reihenfolge: wer schon die meisten Ueberlauf-Jobs traegt
+        # (wenigste Umzuege), bei Gleichstand der schnellste (factor).
+        # Ein Umzug rechnet mit dem Zeitfaktor des NEUEN Charakters -
+        # die Stufe darf dadurch laenger werden (Nutzer-Entscheid:
+        # Einlogg-Aufwand schlaegt Minuten). Ein Item OHNE Runs-Deckel
+        # (eine Blaupause faehrt alle Runs) zieht auf einen Track, der
+        # dieses Item schon traegt - zwei Jobs desselben Items laufen
+        # dort NACHEINANDER auf derselben Blaupause, nie parallel auf
+        # einer Kopie, die es nicht gibt.
+        def _wave2_buendeln():
+            if len(cid_slots) < 2 or not tr_chunks:
+                return
+            _chunks_je_track = {i: 0 for i in range(len(tracks))}
+            _jobs_c = {c: [] for c in cid_slots}
+            for (_ti, _tid, _nm), _chl in tr_chunks.items():
+                _chunks_je_track[_ti] = _chunks_je_track.get(_ti, 0) + len(_chl)
+                _tvx = tv_by_track.get((_ti, _tid, _nm), 0.0)
+                for _cr in _chl:
+                    _jobs_c[tracks[_ti]].append((_cr * _tvx, _cr, _ti, _tid, _nm))
+            _cap_c = {c: max(1, len(char_tracks.get(c) or ())) for c in cid_slots}
+            _ueber = {c: len(_jobs_c[c]) - _cap_c[c] for c in cid_slots}
+            if sum(1 for v in _ueber.values() if v > 0) < 1:
+                return
+            if (sum(1 for v in _ueber.values() if v > 0) == 1
+                    and not any(v < 0 for v in _ueber.values())):
+                return     # schon gebuendelt, nichts frei - nichts zu tun
+            # Geber: je Charakter seine KUERZESTEN Ueberlauf-Jobs (die
+            # Wellen-Rechnung fuellt die erste Welle mit den laengsten).
+            _pool = []
+            for _c0, _n_ue in _ueber.items():
+                if _n_ue > 0:
+                    for _j0 in sorted(_jobs_c[_c0])[:_n_ue]:
+                        _pool.append((_c0,) + _j0)
+
+            def _sci(cid0, tid0):
+                return sci_factor.get((cid0, tid0), 1.0)
+
+            def _umzug(_rec, _ziel):
+                """True = umgezogen; False = bleibt (nicht erlaubt/moeglich).
+
+                KOPIEN-DECKEL (aa387-Befund beim Einbau): ein Item darf nie
+                auf mehr Tracks liegen, als es parallele Blaupausen hat
+                (_cap_for) - 13 Flycatcher-Kopien auf EINER Blaupause
+                (cap 1) laufen zwingend nacheinander auf einem Slot; sie
+                auf einen zweiten Charakter zu "buendeln" hiesse, eine
+                Blaupause zweimal gleichzeitig zu fahren."""
+                _von, _d1, _cr1, _ti1, _tid1, _nm1 = _rec
+                if _von == _ziel:
+                    return False
+                _key_s = (_ti1, _tid1, _nm1)
+                _tv_s = tv_by_track.get(_key_s, 0.0)
+                _chl = tr_chunks.get(_key_s) or []
+                if _cr1 not in _chl:
+                    return False
+                # Ziel-Track VOR dem Ausbau bestimmen und den Kopien-Deckel
+                # pruefen: ein Track, der das Item schon traegt, ist immer
+                # erlaubt (dort laeuft es nacheinander); ein NEUER Track nur,
+                # wenn die Traeger-Zahl unter dem Deckel bleibt (die Quelle
+                # zaehlt nicht mehr mit, wenn ihr letzter Chunk geht).
+                _zt = None
+                for _i2 in char_tracks.get(_ziel) or ():
+                    if tr_chunks.get((_i2, _tid1, _nm1)):
+                        _zt = _i2
+                        break
+                if _zt is None:
+                    _traeger = sum(
+                        1 for (_i4, _t4, _n4), _c4 in tr_chunks.items()
+                        if _t4 == _tid1 and _c4)
+                    if len(_chl) == 1:
+                        _traeger -= 1       # Quelle wird frei
+                    if _traeger >= _cap_for(_tid1):
+                        return False
+                    _frei2 = [i for i in (char_tracks.get(_ziel) or ())]
+                    if not _frei2:
+                        return False
+                    _zt = min(_frei2, key=lambda i: (_chunks_je_track.get(i, 0),
+                                                     load[i]))
+                _chl.remove(_cr1)
+                load[_ti1] -= _cr1 * _tv_s
+                tr_runs[_key_s] -= _cr1
+                _chunks_je_track[_ti1] -= 1
+                if not _chl:
+                    tr_chunks.pop(_key_s, None)
+                    tr_runs.pop(_key_s, None)
+                    tv_by_track.pop(_key_s, None)
+                # Zeit je Run beim ZIEL-Charakter (aus der Quell-Zeit
+                # zurueckgerechnet - tbase ist hier nicht mehr greifbar).
+                _f_s = factor.get(_von, 1.0) * _sci(_von, _tid1)
+                _f_z = factor.get(_ziel, 1.0) * _sci(_ziel, _tid1)
+                _tv_z = _tv_s * (_f_z / _f_s) if _f_s > 0 else _tv_s
+                _key_z = (_zt, _tid1, _nm1)
+                tr_chunks.setdefault(_key_z, []).append(_cr1)
+                tr_runs[_key_z] = tr_runs.get(_key_z, 0.0) + _cr1
+                if _key_z not in tv_by_track:
+                    tv_by_track[_key_z] = _tv_z
+                load[_zt] += _cr1 * tv_by_track[_key_z]
+                _chunks_je_track[_zt] = _chunks_je_track.get(_zt, 0) + 1
+                return True
+
+            # (1) Freie Erstwellen-Slots zuerst fuellen (schnellster zuerst).
+            for _cz in sorted((c for c, v in _ueber.items() if v < 0),
+                              key=lambda c: (factor.get(c, 1.0), str(c))):
+                _frei_z = -_ueber[_cz]
+                _rest1 = []
+                for _rec in _pool:
+                    if _frei_z > 0 and _umzug(_rec, _cz):
+                        _ueber[_rec[0]] -= 1
+                        _ueber[_cz] += 1
+                        _frei_z -= 1
+                    else:
+                        _rest1.append(_rec)
+                _pool = _rest1
+            # (2) Rest je Ziel-Charakter GANZ fuellen, dann der naechste.
+            # Ein Job, der nirgendwohin darf (Kopien-Deckel), bleibt einfach
+            # auf seinem Charakter stehen - lieber eine verteilte Welle als
+            # eine Blaupause, die es doppelt nicht gibt.
+            _ziele = sorted(_cap_c,
+                            key=lambda c: (-max(0, _ueber.get(c, 0)),
+                                           factor.get(c, 1.0),
+                                           -_cap_c[c], str(c)))
+            for _cz in _ziele:
+                if not _pool:
+                    break
+                _budget_z = _cap_c[_cz]
+                _rest = []
+                for _rec in _pool:
+                    if _budget_z <= 0:
+                        _rest.append(_rec)
+                    elif _rec[0] == _cz:
+                        _budget_z -= 1          # bleibt, zaehlt gegen das Budget
+                    elif _umzug(_rec, _cz):
+                        _budget_z -= 1
+                    else:
+                        _rest.append(_rec)      # zu DIESEM Ziel nicht erlaubt
+                _pool = _rest
+            # Dauer je (Charakter, Item) neu aus den Tracks ableiten -
+            # Umzuege haben Quelle UND Ziel veraendert.
+            item_dur.clear()
+            for (_ti3, _tid3, _nm3), _r3 in tr_runs.items():
+                _d3 = _r3 * tv_by_track.get((_ti3, _tid3, _nm3), 0.0)
+                _k3 = (tracks[_ti3], _tid3, _nm3)
+                item_dur[_k3] = max(item_dur.get(_k3, 0.0), _d3)
+        _wave2_buendeln()
         stage_times[stage] = max(load) if load else 0.0
         agg = defaultdict(lambda: [0.0, 0])          # (cid, tid, name) → [runs, #jobs]
         agg_parts = {}                               # (cid, tid, name) → Runs je Job (nur mit Deckel)

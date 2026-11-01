@@ -156,6 +156,12 @@ def init_db() -> None:
                 mod_count    INTEGER DEFAULT 0,
                 updated_at   REAL
             );
+            CREATE TABLE IF NOT EXISTS order_intervall (
+                order_id     INTEGER PRIMARY KEY,
+                last_issued  TEXT,
+                clock_ts     REAL,
+                seen_at      REAL
+            );
             """
         )
     _migrate_history_region()
@@ -565,7 +571,7 @@ def asset_fingerprint(bestand) -> str:
     return hashlib.sha256(teile.encode("utf-8")).hexdigest()
 
 
-def note_asset_snapshot(bestand, vollstaendig=True) -> dict:
+def note_asset_snapshot(bestand, vollstaendig=True, daten_ts=None) -> dict:
     """Einen erfolgreichen Bestands-Abruf vermerken. Gibt den Stand zurueck
     (dieselben Felder wie asset_snapshot_info()).
 
@@ -573,18 +579,31 @@ def note_asset_snapshot(bestand, vollstaendig=True) -> dict:
     NICHTS: aus einem unvollstaendigen Bestand wuerde sonst eine
     'Veraenderung' - genau die Sorte Falschmeldung, die die Anzeige wertlos
     macht. Lieber ein aelterer, ehrlicher Zeitpunkt als ein frischer falscher.
+
+    `daten_ts` (emm797, Audit 31.10.2026, M5): der Zeitpunkt, zu dem ESI
+    die DATEN gesehen hat (Last-Modified), nicht die Wanduhr des Abrufs.
+    ESI cached Assets bis ~1 h: ein Abruf um 12:05 kann Daten von 11:10
+    liefern - `checked_at` auf 12:05 zu setzen liess die ESI-Verzugs-
+    Sperre (`bestand_gesehen_bis` nimmt das MAXIMUM) Belege durch, deren
+    Verbrauch der benutzte Bestand noch gar nicht zeigt: dieselben
+    Einheiten zaehlten doppelt (freigegebener Anspruch UND alter Bestand).
+    Ohne `daten_ts` (None, alte Aufrufer) gilt die Wanduhr wie bisher.
     """
     import time
     if not vollstaendig:
         return asset_snapshot_info()
     fp = asset_fingerprint(bestand)
     jetzt = time.time()
+    try:
+        _stempel = min(jetzt, float(daten_ts)) if daten_ts else jetzt
+    except (TypeError, ValueError):
+        _stempel = jetzt
     with _conn() as c:
         row = c.execute(
             "SELECT v FROM scan_meta WHERE k='assets_fingerprint'").fetchone()
         alt = row["v"] if row else None
         c.execute("INSERT OR REPLACE INTO scan_meta(k,v) "
-                  "VALUES('assets_checked_at', ?)", (str(jetzt),))
+                  "VALUES('assets_checked_at', ?)", (str(_stempel),))
         if alt != fp:
             c.execute("INSERT OR REPLACE INTO scan_meta(k,v) "
                       "VALUES('assets_fingerprint', ?)", (fp,))
@@ -694,6 +713,87 @@ def get_order_mod_counts(order_ids: list) -> dict:
             f"SELECT order_id, mod_count FROM order_mod_counts "
             f"WHERE order_id IN ({qs})", order_ids).fetchall()
     return {r["order_id"]: r["mod_count"] for r in rows}
+
+
+# ORDER-UPDATE-INTERVALL (emm735, Nutzer 27.10.2026, Discord-Wunsch von
+# "Spaceballs 2"): "Next" soll Orders ueberspringen, die vor kurzem erst
+# angefasst wurden. Die UHR JE ORDER startet von selbst - beim ersten "Next"
+# auf diese Order ODER wenn sich ihr ESI-Zeitstempel `issued` aendert (=
+# im Spiel nachgebessert; `issued` springt bei jeder Aenderung). Sie endet,
+# wenn die Order nicht mehr existiert (die Zeile wird dann spaeter geloescht;
+# eine neue Order hat eine neue order_id und damit eine frische, leere Uhr).
+# Eine Order, die die App zum ERSTEN Mal sieht, hat KEINE Uhr (clock_ts None):
+# `issued` ist bei ihr nur das Erstelldatum, nicht "zuletzt angefasst" - sie
+# gilt als faellig, bis "Next" oder eine Aenderung im Spiel die Uhr startet.
+# Im Zweifel also faellig, nie faelschlich ueberspringen.
+_INTERVALL_VERGESSEN_S = 120 * 86400     # laenger gesehene-nicht: Zeile weg
+
+
+def _iso_ts(s):
+    """ESI-Zeitstempel ("2026-10-27T10:05:00Z") -> Epoche, None wenn unlesbar."""
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromisoformat(
+            str(s).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def order_intervall_sync(issued_by_oid: dict, now: float = None) -> dict:
+    """Gleicht die gesehenen Orders mit den gemerkten ab und gibt
+    {order_id: clock_ts oder None} zurueck. Eine geaenderte `issued` (im Spiel
+    nachgebessert) startet die Uhr beim Zeitpunkt der Aenderung neu."""
+    import time
+    now = time.time() if now is None else float(now)
+    if not issued_by_oid:
+        return {}
+    out = {}
+    with _conn() as c:
+        have = {r["order_id"]: (r["last_issued"], r["clock_ts"])
+                for r in c.execute(
+                    "SELECT order_id, last_issued, clock_ts "
+                    "FROM order_intervall").fetchall()}
+        for oid, iss in issued_by_oid.items():
+            if not oid:
+                continue
+            iss = str(iss) if iss else ""
+            row = have.get(oid)
+            if row is None:
+                c.execute("INSERT OR REPLACE INTO order_intervall "
+                          "(order_id, last_issued, clock_ts, seen_at) "
+                          "VALUES (?, ?, NULL, ?)", (oid, iss, now))
+                out[oid] = None
+                continue
+            last_iss, clock = row
+            if iss and iss != (last_iss or ""):
+                clock = _iso_ts(iss) or now          # im Spiel angefasst
+            # Ein fehlendes issued ueberschreibt das gemerkte NICHT - sonst
+            # zaehlte die Rueckkehr des Felds als "im Spiel geaendert".
+            c.execute("UPDATE order_intervall SET last_issued=?, clock_ts=?, "
+                      "seen_at=? WHERE order_id=?",
+                      (iss or (last_iss or ""), clock, now, oid))
+            out[oid] = clock
+        c.execute("DELETE FROM order_intervall WHERE seen_at < ?",
+                  (now - _INTERVALL_VERGESSEN_S,))
+    return out
+
+
+def order_intervall_start(order_id: int, issued: str = "",
+                          now: float = None) -> None:
+    """Startet die Uhr dieser Order jetzt ("Next" wurde benutzt). Eine spaeter
+    geaenderte `issued` (im Spiel nachgebessert) setzt sie auf den genauen
+    Zeitpunkt der Aenderung."""
+    import time
+    now = time.time() if now is None else float(now)
+    if not order_id:
+        return
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO order_intervall (order_id, last_issued, clock_ts,
+                   seen_at) VALUES (?, ?, ?, ?)
+               ON CONFLICT(order_id) DO UPDATE SET clock_ts = excluded.clock_ts,
+                   seen_at = excluded.seen_at""",
+            (order_id, str(issued or ""), now, now))
 
 
 def get_buy_mod_fee_raw_by_type() -> dict:
@@ -986,6 +1086,96 @@ def save_journal(character_id: int, entries) -> None:
             [(e["journal_id"], character_id, e.get("date"), e.get("ref_type"),
               float(e.get("amount") or 0.0))
              for e in entries if e.get("journal_id")])
+
+
+def init_order_history():
+    """Eigene Market-Orders, offen UND geschlossen (Funfact, emm570).
+
+    ESI liefert geschlossene Orders nur rund 90 Tage zurueck (UNGEPRUEFT);
+    Eve MoMa sammelt sie deshalb ab 1.1.5 dauerhaft, wie die Transaktionen.
+    PK order_id: derselbe Auftrag kommt erst offen und spaeter in der
+    Historie - der juengere Stand gewinnt (INSERT OR REPLACE), auch der
+    juengere Preis. `order_history_stand` merkt je Charakter den ERSTEN
+    Abruf: davor kennt Eve MoMa die Orders nur ab 90 Tagen vor diesem Tag."""
+    with _conn() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS order_history (
+            order_id INTEGER PRIMARY KEY,
+            character_id INTEGER NOT NULL,
+            type_id INTEGER,
+            location_id INTEGER,
+            is_buy_order INTEGER,
+            price REAL,
+            issued TEXT,
+            duration INTEGER,
+            volume_total INTEGER,
+            volume_remain INTEGER,
+            state TEXT)""")
+        c.execute("""CREATE INDEX IF NOT EXISTS idx_orderhist_char
+                     ON order_history (character_id, type_id)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS order_history_stand (
+            character_id INTEGER PRIMARY KEY,
+            erster_abruf TEXT)""")
+
+
+def save_orders(character_id: int, orders, jetzt_iso: str = None) -> int:
+    """Orders eines Charakters speichern (offen oder Historie). Rueckgabe:
+    Zahl der geschriebenen Zeilen. Der erste Aufruf je Charakter setzt
+    `erster_abruf` (INSERT OR IGNORE - spaetere aendern ihn nie)."""
+    import datetime as _dt
+    init_order_history()
+    rows = []
+    for o in (orders or []):
+        try:
+            oid = int(o["order_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        rows.append((oid, int(character_id), o.get("type_id"),
+                     o.get("location_id"),
+                     1 if o.get("is_buy_order") else 0,
+                     float(o.get("price") or 0.0), o.get("issued"),
+                     int(o.get("duration") or 0),
+                     o.get("volume_total"), o.get("volume_remain"),
+                     o.get("state") or "open"))
+    if jetzt_iso is None:
+        jetzt_iso = _dt.datetime.utcnow().replace(microsecond=0).isoformat()
+    with _conn() as c:
+        c.executemany(
+            "INSERT OR REPLACE INTO order_history VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            rows)
+        c.execute("INSERT OR IGNORE INTO order_history_stand VALUES (?,?)",
+                  (int(character_id), jetzt_iso))
+    return len(rows)
+
+
+def get_orders(cid=None) -> list:
+    """Gespeicherte Orders als dicts (Schluessel wie ESI, plus character_id)."""
+    init_order_history()
+    sql, params = "SELECT * FROM order_history", []
+    if cid not in (None, "all"):
+        sql += " WHERE character_id=?"; params.append(cid)
+    with _conn() as c:
+        out = []
+        for r in c.execute(sql, params):
+            d = dict(r)
+            d["is_buy_order"] = bool(d.get("is_buy_order"))
+            out.append(d)
+        return out
+
+
+def order_abdeckung(tage: int = 90) -> dict:
+    """{character_id: ISO-Datum}, ab dem die Orders vollstaendig bekannt
+    sind = erster Abruf minus `tage`. Ein Kauf davor ist "unbekannt"."""
+    import datetime as _dt
+    init_order_history()
+    out = {}
+    with _conn() as c:
+        for r in c.execute("SELECT character_id, erster_abruf FROM order_history_stand"):
+            try:
+                ab = _dt.datetime.fromisoformat(str(r["erster_abruf"]))
+            except (TypeError, ValueError):
+                continue
+            out[int(r["character_id"])] = (ab - _dt.timedelta(days=tage)).isoformat()
+    return out
 
 
 def journal_fee_sums(character_id=None, since: str = "") -> dict:

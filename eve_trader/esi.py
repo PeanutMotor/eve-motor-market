@@ -350,6 +350,25 @@ def fetch_character_orders(client_id: str, character_id: int) -> list:
     return r.json()
 
 
+def fetch_order_history(client_id: str, character_id: int) -> list:
+    """Geschlossene/abgelaufene Market-Orders des Charakters (ESI rund 90
+    Tage, UNGEPRUEFT). Gleicher Scope wie `fetch_character_orders`. Mit
+    Seiten (X-Pages) wie das Wallet-Journal. Grundlage der Day-/Swing-
+    Einteilung im Funfact (emm570): lief ein Kauf ueber die eigene
+    Buy-Order oder wurde aus fremden Sell-Orders gekauft?"""
+    base = f"{config.ESI_BASE}/characters/{character_id}/orders/history/"
+    headers = _auth_headers(client_id, character_id)
+    first = _get_with_retry(base, params={"page": 1}, headers=headers, timeout=30)
+    first.raise_for_status()
+    pages = int(first.headers.get("X-Pages", "1"))
+    rows = list(first.json() or [])
+    for p in range(2, pages + 1):
+        r = _get_with_retry(base, params={"page": p}, headers=headers, timeout=30)
+        r.raise_for_status()
+        rows.extend(r.json() or [])
+    return rows
+
+
 def _fetch_all_assets(client_id: str, character_id: int) -> list:
     base = f"{config.ESI_BASE}/characters/{character_id}/assets/"
     headers = _auth_headers(client_id, character_id)
@@ -370,6 +389,54 @@ def _fetch_all_assets(client_id: str, character_id: int) -> list:
         r.raise_for_status()
         assets.extend(r.json())
     return assets
+
+
+def fetch_character_contracts(client_id: str, character_id: int) -> list:
+    """Alle Vertraege, an denen dieser Charakter haengt (emm760).
+
+    ESI liefert hier AUCH erledigte Vertraege der letzten ~30 Tage mit -
+    das Filtern auf "haelt gerade Ware fest" macht `vertraege.
+    offene_vertraege` (Status outstanding/in_progress, Art mit Ware).
+    Seitenweise wie `_fetch_all_assets` (X-Pages). Braucht
+    config.CONTRACTS_SCOPE."""
+    base = f"{config.ESI_BASE}/characters/{character_id}/contracts/"
+    headers = _auth_headers(client_id, character_id)
+    first = _get_with_retry(base, params={"page": 1}, headers=headers,
+                            timeout=30)
+    first.raise_for_status()
+    pages = int(first.headers.get("X-Pages", "1"))
+    out = list(first.json() or [])
+    for p in range(2, pages + 1):
+        r = _get_with_retry(base, params={"page": p}, headers=headers,
+                            timeout=30)
+        r.raise_for_status()
+        out.extend(r.json() or [])
+    return out
+
+
+def fetch_character_contract_items(client_id: str, character_id: int,
+                                   contract_id: int) -> list:
+    """Die Positionen EINES Vertrags des Charakters (emm760):
+    [{type_id, quantity, is_included, ...}]. `is_included` True = der
+    Aussteller gibt es her - nur diese Haelfte zaehlt
+    `vertraege.posten_aus_items`. Abrufbar fuer jeden Beteiligten des
+    Vertrags; wir rufen ueber den Aussteller ab, weil nur Vertraege
+    eigener Aussteller gezaehlt werden.
+
+    NAME MIT `character_` (emm763): die erste Fassung hiess
+    `fetch_contract_items` - genau wie die laengst bestehende Funktion
+    fuer OEFFENTLICHE Contracts (/contracts/public/items/, vom Scanner
+    an drei Stellen benutzt). Python nahm die spaetere Definition, der
+    Aufruf mit drei Argumenten landete bei der einargumentigen und
+    scheiterte bei JEDEM Vertrag ("takes 1 positional argument but 3
+    were given", seine fehler.log 29.10. 18:28). pyflakes hatte es
+    gemeldet - "redefinition" stand auf unserer Ignorierliste."""
+    url = (f"{config.ESI_BASE}/characters/{character_id}"
+           f"/contracts/{int(contract_id)}/items/")
+    r = _get_with_retry(url, headers=_auth_headers(client_id, character_id),
+                        timeout=30)
+    r.raise_for_status()
+    return list(r.json() or [])
 
 
 def fetch_asset_names(client_id: str, character_id: int, item_ids: list) -> dict:
@@ -489,6 +556,36 @@ def hangar_und_container(assets, container_typen=None):
     return hangar, containers
 
 
+def container_wurzeln(assets) -> dict:
+    """{item_id: Wurzel-location_id} fuer JEDES Item einer rohen Assets-Liste
+    (emm807, Nutzer 01.11.2026: "blueprints in Bauplan steht bei allen
+    Location unknown" - seine BPOs liegen in Containern, und die
+    location_id eines Containers ist eine item_id, keine Station).
+
+    Die Assets-Liste kennt die ganze Kette selbst: ein Item, dessen
+    location_id WIEDER eine item_id der Liste ist, haengt in einem
+    Behaelter/Schiff - die Wurzel ist die erste location_id, die KEINE
+    item_id der Liste ist (Station, Struktur oder Sonnensystem).
+    Zyklussicher (ESI sollte keine liefern, aber ein Kreis haengt sonst
+    endlos). REIN, ohne Netz - aa807 misst sie."""
+    eltern = {}
+    for a in (assets or []):
+        try:
+            eltern[int(a["item_id"])] = int(a.get("location_id") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+    out = {}
+    for _iid in eltern:
+        _wurzel = eltern[_iid]
+        _gesehen = {_iid}
+        while _wurzel in eltern and _wurzel not in _gesehen:
+            _gesehen.add(_wurzel)
+            _wurzel = eltern[_wurzel]
+        if _wurzel and _wurzel not in eltern:
+            out[_iid] = _wurzel
+    return out
+
+
 def hangar_summe(assets, container_typen=None) -> dict:
     """{type_id: Menge} fuer ALLES im Hangar - lose Items, die Behaelter
     selbst und ihr Inhalt.
@@ -591,7 +688,8 @@ def fetch_assets_structured(client_id: str, character_id: int) -> dict:
     return {"hangar": hangar, "containers": containers}
 
 
-def fetch_assets(client_id: str, character_id: int, only_hangar: bool = True) -> dict:
+def fetch_assets(client_id: str, character_id: int, only_hangar: bool = True,
+                 orte_out=None) -> dict:
     """Return {type_id: total_quantity} for the character's assets.
 
     With only_hangar=True (default) counts items in a station hangar AND the
@@ -609,6 +707,9 @@ def fetch_assets(client_id: str, character_id: int, only_hangar: bool = True) ->
         r = _get_with_retry(base, params={"page": p}, headers=headers, timeout=30)
         r.raise_for_status()
         assets.extend(r.json())
+
+    if orte_out is not None:
+        orte_out.update(container_wurzeln(assets))   # emm807, s. dort
 
     if not only_hangar:
         totals = {}
@@ -978,11 +1079,23 @@ def blaupausen_in_jobs(blueprints, jobs, now=None):
     # 'cancelled' und 'reverted' haben die Blaupause schon zurueckgegeben.
     # 'paused' (Struktur ohne Strom) haelt sie weiter fest.
     belegt_von = {}
+    # GEISTER-BLAUPAUSEN (emm623, Nutzer: "Ion Blaster Cannon II Blueprint
+    # habe ich in der Bauschleife, der fehlt mich nicht" - der Blueprints-
+    # Reiter schrieb trotzdem rot "completely missing"). Fertigung sperrt
+    # NIE (JOB_SPERRT_NICHT_AKTIVITAET, s.u.) - ABER waehrend ein Fertigungs-
+    # Job wirklich laeuft, nimmt ESI die Blaupause manchmal KOMPLETT aus
+    # /blueprints/ (eingecheckt, nicht bloss "im Job markiert", anders als
+    # bei Research/Kopie/Invention oben beschrieben). Dann kennt sie weder
+    # `frei` noch `belegt` - der Reiter sah nichts und behauptete "komplett
+    # fehlend". Ein Geister-Eintrag NUR fuers Anzeigen (type_id aus dem Job
+    # selbst) loest das, ohne "Fertigung sperrt nie" anzutasten: er landet
+    # in `belegt`, niemals in `frei`.
+    _vorhandene_items = {b.get("item_id") for b in (blueprints or [])
+                         if b.get("item_id") is not None}
+    geister = []
     for j in jobs or []:
         bid = j.get("blueprint_id")
         if bid is None or j.get("status") not in JOB_SPERRT_BLAUPAUSE:
-            continue
-        if j.get("activity_id") in JOB_SPERRT_NICHT_AKTIVITAET:
             continue
         # ABHOLBEREIT ZAEHLT (Nutzer 30.09.2026: "wie schnell erkennt der
         # Bauplan, dass meine Blueprints fertig und abholbereit sind?" ->
@@ -990,6 +1103,17 @@ def blaupausen_in_jobs(blueprints, jobs, now=None):
         # 'active' mit abgelaufenem end_date (s. job_is_finished) - ohne diese
         # Zeile sperrte er die Blaupause bis zum Abholen + Job-Cache.
         if job_is_finished(j, now):
+            continue
+        if j.get("activity_id") in JOB_SPERRT_NICHT_AKTIVITAET:
+            if int(bid) not in _vorhandene_items and j.get("blueprint_type_id"):
+                geister.append({
+                    "item_id": bid, "type_id": j.get("blueprint_type_id"),
+                    "quantity": 1, "material_efficiency": 0,
+                    "time_efficiency": 0, "runs": -1, "is_bpo": None,
+                    "location_id": None,
+                    "in_job": {"job_id": j.get("job_id"),
+                               "activity_id": j.get("activity_id"),
+                               "end_date": j.get("end_date")}})
             continue
         belegt_von[int(bid)] = j
     frei, belegt = [], []
@@ -1003,6 +1127,7 @@ def blaupausen_in_jobs(blueprints, jobs, now=None):
                        "activity_id": j.get("activity_id"),
                        "end_date": j.get("end_date")}
         belegt.append(b)
+    belegt.extend(geister)
     return frei, belegt
 
 
@@ -1845,7 +1970,7 @@ def open_market_window(client_id: str, character_id: int, type_id: int):
 
 
 def assets_at_locations(client_id: str, character_id: int,
-                        location_ids, diag_out=None) -> dict:
+                        location_ids, diag_out=None, orte_out=None) -> dict:
     """{type_id: qty} für die Items des Charakters an MEHREREN Stationen/
     Strukturen auf einmal (inkl. verschachtelter Container-Inhalte). Ein
     einziger Assets-Durchlauf pro Charakter statt einem pro Struktur - für
@@ -1865,6 +1990,11 @@ def assets_at_locations(client_id: str, character_id: int,
         assets.extend(r.json())
     out, seen, _per_loc = bestand_an_orten(assets, location_ids,
                                            container_type_ids_safe())
+    if orte_out is not None:
+        # CONTAINER-WURZELN MITNEHMEN (emm807): dieselbe Rohliste, die hier
+        # ohnehin durchlaeuft - der Blueprints-Reiter loest damit die
+        # location_id einer Blaupause IM Container zur Station auf.
+        orte_out.update(container_wurzeln(assets))
     if diag_out is not None:
         # MESSUNG statt Vermutung (Aufgabe "Bestand erreicht den Bauplan
         # nicht"): unterscheidet "Charakter hat GAR keine Assets" (Abruf/
@@ -2031,6 +2161,78 @@ def average_prices() -> dict:
     doppelt so guenstig, wie er ist (Nutzer-Befund Sitzung 14).
     """
     return market_prices()["average"]
+
+
+# ============================================================================
+# PLANETARY INDUSTRY (PI, emm801 - Discord-Wunsch 31.10.2026: "PI timers ...
+# how much you have stored on a planet ... cargo space taken up"). Nur LESEN;
+# der Scope heisst trotzdem manage_planets, weil CCP keinen Lese-Scope bietet
+# (s. config.PI_SCOPE). POCO-INHALTE GIBT ESI NICHT HER - nur die Pins der
+# Kolonie selbst; das sagt die Oberflaeche offen, statt still zu schweigen.
+# ============================================================================
+
+def fetch_planets(client_id: str, character_id: int) -> list:
+    """Kolonien des Charakters: [{planet_id, planet_type, solar_system_id,
+    num_pins, last_update, upgrade_level}]. Braucht config.PI_SCOPE."""
+    url = f"{config.ESI_BASE}/characters/{int(character_id)}/planets/"
+    r = _get_with_retry(url, headers=_auth_headers(client_id, character_id),
+                        timeout=30)
+    r.raise_for_status()
+    return r.json() or []
+
+
+def fetch_planet_detail(client_id: str, character_id: int,
+                        planet_id: int) -> dict:
+    """Pins/Routen/Links EINER Kolonie. Fuers Tool zaehlen die pins[]:
+    type_id (Pin-Gebaeude), contents [{type_id, amount}] (Lagerinhalt),
+    extractor_details {product_type_id, cycle_time, qty_per_cycle} +
+    expiry_time (wann der Extraktor auslaeuft = "Planet resettet"),
+    schematic_id (was eine Fabrik herstellt). Braucht config.PI_SCOPE."""
+    url = (f"{config.ESI_BASE}/characters/{int(character_id)}"
+           f"/planets/{int(planet_id)}/")
+    r = _get_with_retry(url, headers=_auth_headers(client_id, character_id),
+                        timeout=30)
+    r.raise_for_status()
+    return r.json() or {}
+
+
+# Planeten-Stammdaten (Name/Ort) und PI-Rezepte sind STATISCH - einmal je
+# Sitzung holen reicht; der 15-Minuten-TTL-Cache waere hier Verschwendung.
+_PLANET_INFO_CACHE: dict = {}
+_SCHEMATIC_CACHE: dict = {}
+
+
+def planet_info(planet_id: int) -> dict:
+    """{name, type_id, system_id} eines Planeten (oeffentlicher Endpunkt
+    /universe/planets/ - /universe/names/ kennt die Kategorie Planet NICHT,
+    darum ein Einzelabruf mit Sitzungs-Cache)."""
+    pid = int(planet_id)
+    if pid in _PLANET_INFO_CACHE:
+        return _PLANET_INFO_CACHE[pid]
+    r = _session.get(f"{config.ESI_BASE}/universe/planets/{pid}/", timeout=20)
+    r.raise_for_status()
+    d = r.json() or {}
+    out = {"name": d.get("name") or str(pid),
+           "type_id": d.get("type_id"),
+           "system_id": d.get("system_id")}
+    _PLANET_INFO_CACHE[pid] = out
+    return out
+
+
+def schematic_info(schematic_id: int) -> dict:
+    """{name, cycle_time} eines PI-Rezepts (oeffentlich; Fabrik-Pins tragen
+    nur die schematic_id, der Name steht NICHT in der SDE-Kompakt-DB)."""
+    sid = int(schematic_id)
+    if sid in _SCHEMATIC_CACHE:
+        return _SCHEMATIC_CACHE[sid]
+    r = _session.get(f"{config.ESI_BASE}/universe/schematics/{sid}/",
+                     timeout=20)
+    r.raise_for_status()
+    d = r.json() or {}
+    out = {"name": d.get("schematic_name") or str(sid),
+           "cycle_time": d.get("cycle_time")}
+    _SCHEMATIC_CACHE[sid] = out
+    return out
 
 
 def structure_location_ids(client_id: str, character_id: int) -> set:

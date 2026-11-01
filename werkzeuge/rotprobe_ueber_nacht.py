@@ -16,17 +16,17 @@ Dinge dazu, die rotprobe.py selbst nicht kann:
    ~34 s nur die b-Suite, ~40 s nur die aa-Suite, ~74 s wenn beide
    laufen muessen). Eine feste Stueckzahl pro Paket waere geraten
    (Regel 2) - und auf dem eigenen PC laeuft es ohnehin anders schnell.
-3. Faehrt den PC danach herunter (`shutdown /s /t 60`), AUSSER es wurde
-   in diesem Lauf keine einzige Mutation mehr gemacht (schon fertig,
-   oder das Budget war beim Start schon aufgebraucht) - dann bleibt der
-   PC an.
+3. Laesst den PC danach AN (emm781, Nutzer 31.10.2026: er laesst die
+   Pakete jetzt tagsueber laufen). Das alte Ueber-Nacht-Verhalten
+   (`shutdown /s /t 60` nach dem Paket) gibt es nur noch ausdruecklich
+   mit EMM_ROTPROBE_SHUTDOWN=1.
 
 Alle BLIND-Befunde (Mutation wurde NICHT erkannt) stehen zusaetzlich in
 `berichte/rotprobe_nacht_BLIND.txt` - die Datei bleibt leer, wenn alles
 gut ging, und ist damit der erste Blick nach jeder Nacht.
 
-EMM_ROTPROBE_TEST=1: taeuscht das Herunterfahren nur vor (zum
-Ausprobieren, ohne dass der Rechner wirklich runterfaehrt).
+EMM_ROTPROBE_TEST=1: unterdrueckt auch ein per EMM_ROTPROBE_SHUTDOWN=1
+angefordertes Herunterfahren (zum Ausprobieren).
 
 Abbruch von Hand (Strg+C oder das Fenster schliessen): kein Herunterfahren.
 """
@@ -110,10 +110,22 @@ def main():
             _log(f"\n-- [{index}/{gesamt}] "
                  f"{time.strftime('%H:%M:%S')} --\n")
             try:
+                # NIEDRIGE PRIORITAET (emm811, Nutzer 01.11.2026: "wenn ich
+                # die Rotprobe Bats am laufen lassen habe, probleme mit
+                # internetdownloads und installationsprozessen" - Firefox-
+                # Installer kroch). Die Rotprobe kopiert je Mutation das
+                # ganze Projekt und faehrt beide Suiten: CPU und Platte
+                # voll, dazu scannt der Defender jede Kopie. BELOW_NORMAL
+                # laesst alles andere am PC vorgehen; die Probe dauert
+                # dadurch nur laenger, wenn der PC WIRKLICH benutzt wird -
+                # nachts ist sie gleich schnell. Nur unter Windows; sonst
+                # gibt es das Flag nicht (0 = unveraendert).
+                _prio = getattr(subprocess,
+                                "BELOW_NORMAL_PRIORITY_CLASS", 0)
                 r = subprocess.run(
                     [sys.executable, ROTPROBE, str(index), str(index + 1)],
                     cwd=WURZEL, capture_output=True, text=True,
-                    timeout=NOTAUS_EINZELLAUF_S)
+                    timeout=NOTAUS_EINZELLAUF_S, creationflags=_prio)
                 ausgabe = (r.stdout or "") + (r.stderr or "")
             except subprocess.TimeoutExpired:
                 ausgabe = (f"ZEITUEBERSCHREITUNG bei Mutation {index} - "
@@ -142,12 +154,19 @@ def main():
     if gemacht == 0:
         return 0  # nichts gemacht in diesem Lauf -> PC bleibt an
 
-    print("\nFaehrt in 60 Sekunden herunter. Zum Abbrechen in einem anderen "
-          "Fenster: shutdown /a")
-    if TEST:
-        print("(EMM_ROTPROBE_TEST=1 - faehrt in Wirklichkeit NICHT runter)")
-    else:
+    # KEIN HERUNTERFAHREN MEHR ALS STANDARD (emm781, Nutzer 31.10.2026:
+    # "ich moechte das der PC am laufen bleibt. weil ich jetzt das
+    # Tagsueber mache und nicht mehr ins Bett gehe waehrend es laeuft").
+    # Wer wieder ueber Nacht fahren will, setzt EMM_ROTPROBE_SHUTDOWN=1
+    # in der .bat - nur dann gilt der alte Weg (shutdown /s /t 60).
+    if os.environ.get("EMM_ROTPROBE_SHUTDOWN") == "1" and not TEST:
+        print("\nFaehrt in 60 Sekunden herunter (EMM_ROTPROBE_SHUTDOWN=1). "
+              "Zum Abbrechen in einem anderen Fenster: shutdown /a")
         subprocess.run(["shutdown", "/s", "/t", "60"])
+    else:
+        print("\nFERTIG - der PC bleibt an (emm781). Ergebnis: "
+              "berichte\\rotprobe_nacht.txt, Befunde: "
+              "berichte\\rotprobe_nacht_BLIND.txt")
     return 0
 
 

@@ -39,6 +39,28 @@ _BORDERLINE_MARGIN_WINDOW = 15.0
 # werden dort turnusmäßig aufgefrischt.
 _CACHE_ANALYZE_MAX_AGE_H = 168.0     # 7 Tage
 
+# emm592: IMMER aktiver Mindest-Tradability-Floor fuer Flip - unabhaengig
+# vom Preset oder einer eigenen Einstellung (auch wenn "Min. Tradability"
+# auf 0 steht). GEMESSEN an 4 echten, kaum gehandelten Officer-Modulen
+# (live ESI, s. find_deals): deren trade_score liegt in einem 28-Tage-
+# Fenster bei ~0-2, gegen 60-90+ bei einem taeglich gehandelten
+# Vergleichsitem - 5 trennt sicher dazwischen (s. Kommentar bei der
+# Pruefung selbst).
+# emm602 (Nutzer: "items mit tradabillity unter 35 kannst du direkt
+# rausfiltern, die will niemand traden"): 5 war zwar hart genug fuer die
+# komplett untradebaren Officer-Module-Ausreisser, liess aber alles
+# dazwischen (schwach, aber nicht ganz tot) weiter durch - genau die
+# Items, die der Nutzer im Daytrade-Tab haeufig als "schwache tradability"
+# sah. 35 war live gegen den echten Client gemessen zu aggressiv: beim
+# "Active at the PC · many quick flips"-Preset (emm599, extra niedrig
+# kalibriert, damit >=20 Treffer bleiben) waeren von 30 Treffern nur noch
+# ~10 uebrig geblieben - der Nutzer hat sich daraufhin bewusst fuer einen
+# niedrigeren, global greifenden Floor entschieden, der die >=20-Items-
+# Minimum (emm599) nicht wieder zunichtemacht; live gemessen blieben bei
+# 25 bei demselben Preset noch 28 von 30 Treffern (nur die schwaechsten 2
+# ab Tradability 23/24 fielen weg).
+_MIN_TRADE_SCORE_ALWAYS = 25.0
+
 
 def _realistic_build_qty(sell_price):
     """Grobe, preis-gestaffelte Schätzung, wie viel man von einem Item
@@ -305,6 +327,61 @@ def long_baseline(history: list) -> float:
     return avgs[len(avgs) // 2]
 
 
+def year_low(history: list) -> float:
+    """emm606 (Nutzer, nach emm605: "sowas brauche ich in allen presets und
+    strategies, schnaeppchen duerfen wir uns nicht entgehen lassen"). Der
+    ECHTE Donchian-Tiefstwert der letzten 365 Tage (das Tages-LOW, nicht der
+    Durchschnitt) - genau die Linie, die der Ingame-Preis-Chart als unteren
+    Rand des Donchian-Kanals zeigt. `trend_stats().normal` misst nur den
+    Abstand zum Fenster-MITTELWERT; ein Item kann 10 % unter seinem
+    Mittelwert UND trotzdem weit ueber seinem Jahrestief liegen (oder
+    umgekehrt: nahe am Jahrestief, aber nicht weit unter einem ohnehin
+    gedrueckten Fenster-Mittel). Mindestens 10 Tage mit echtem Low noetig,
+    sonst 0.0 (= nicht verfuegbar, Anzeige "-"). GESENKT von urspruenglich
+    30 auf 10 (emm614, Nutzer am Screenshot: "keine VS 1Y Low" - bei
+    "Bargain Radar (all prices)", dem Preset OHNE Volumen-/Preis-Gates,
+    zeigten praktisch ALLE Kandidaten "-" statt eines Wertes). URSACHE:
+    gerade dieses lockerste Preset laesst bevorzugt duenn gehandelte
+    Nischen-Items durch - genau die Items, bei denen ESI ueber ein ganzes
+    Jahr oft deutlich weniger als 30 Tage mit einem echten
+    Order-Tiefstwert liefert (Tage ohne jede Order fehlen in der History
+    komplett). Die 30-Tage-Schwelle sollte nur blanke Einzelausreisser
+    verhindern, hat in der Praxis aber genau das Preset lahmgelegt, das
+    ausdruecklich auf dieser Spalte aufbaut ("Click the 'vs 1Y low' column
+    header to sort..."). 10 Tage sind immer noch kein Einzelwert, aber
+    selten genug fuer die meisten real gehandelten Items."""
+    lows = [r["lowest"] for r in history[-365:] if r.get("lowest")]
+    if len(lows) < 10:
+        return 0.0
+    return min(lows)
+
+
+def months_at_bottom(history: list, low_365: float, band_pct: float = 15.0) -> float:
+    """emm609 (Nutzer: "Zeit am tief automatisch herausfiltern, seit X
+    Monaten am Boden bedeutet fuer mich der Preis faellt stetig, und wir
+    nehmen kein fallendes Messer auf"). Wie viele Monate AM STUECK - von
+    heute rueckwaerts gezaehlt, nicht irgendwann im Jahr verstreut - lag
+    der Tages-Tiefstpreis bereits innerhalb band_pct % des echten
+    365-Tage-Tiefs (year_low())? band_pct=15 deckt sich bewusst mit der
+    "nah am Jahrestief"-Gruenschwelle der emm608-Spaltenfarbe - dieselbe
+    Definition von "nah dran" an zwei Stellen. Tage ohne Messwert
+    (Luecken in der Historie) werden uebersprungen statt die Serie
+    abzubrechen. 0.0 bei fehlendem/ungueltigem low_365."""
+    if low_365 <= 0:
+        return 0.0
+    band = low_365 * (1.0 + band_pct / 100.0)
+    days = 0
+    for r in reversed(history):
+        lo = r.get("lowest")
+        if lo is None:
+            continue
+        if lo <= band:
+            days += 1
+        else:
+            break
+    return days / 30.0
+
+
 def recovery_days_estimate(history: list, normal: float, current: float) -> float:
     """Wie viele Tage brauchte das Item nach VERGLEICHBAREN Dips historisch
     zurück zum Normalpreis? Episoden: Tagesdurchschnitt fällt mindestens 60 %
@@ -542,6 +619,23 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
     min_buy_ratio = filters.get("min_buy_ratio", 40) or 0
     max_competitors = filters.get("max_competitors", 0) or 0
     cap = filters.get("max_items", 400)
+    # emm587: Tradability-Sperre gegen Margen-Artefakte. Nutzer-Fund: Items mit
+    # 123 %/260 % Marge, aber trade_score nur 25-35 (fast nie gehandelt) -
+    # keine echten Chancen, sondern Einzeltrades mit verzerrtem Tagespreis
+    # (vgl. Officer-Module: trade_score 0-1,2 bei echten ESI-Daten). Ab
+    # max_roi_for_trust % Marge wird zusaetzlich min_trade_above_trust
+    # verlangt - 0 = aus (Default, damit andere Modi/Aufrufer unberuehrt
+    # bleiben, nur Daytrade setzt die beiden Werte explizit).
+    max_roi_for_trust = filters.get("max_roi_for_trust", 0) or 0
+    min_trade_above_trust = filters.get("min_trade_above_trust", 0) or 0
+    # emm588: fuer den Auto-Nachscan (emm587) - Items, die eine FRUEHERE Runde
+    # in DIESEM Scan schon analysiert hat, werden hier komplett ausgeschlossen,
+    # noch VOR der Stichproben-Auswahl (_stratified_pick) unten. Ohne das zog
+    # jede weitere Runde praktisch dieselbe Top-Liquiditaets-Auswahl erneut
+    # (deterministische Sortierung nach sell_qty auf einem kaum veraenderten
+    # Topf) - der Nutzer hat genau das beobachtet ("nicht die selben Items
+    # doppelt und dreifach gescannt"). 0/leer = altes Verhalten (ein Scan).
+    exclude_ids = filters.get("exclude_type_ids") or ()
 
     # Preise IMMER aus der vollen Quelle (s. price_snapshot im Docstring):
     # die Kandidatenliste kann gefiltert sein, die Vorprodukte stehen dann
@@ -582,6 +676,9 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
         profit_unit = net - buy_cost
         roi = (profit_unit / buy * 100) if buy else 0
         pre.append((s, profit_unit, roi))
+
+    if exclude_ids:
+        pre = [x for x in pre if x[0]["type_id"] not in exclude_ids]
 
     # Pick which candidates to analyse. The market has ~13k items; fetching
     # history for all is slow, so we choose a subset — but the subset MUST span
@@ -696,6 +793,12 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
             diag["sampled_out"] = _pre_n - len(pre)
     if diag is not None:
         diag.setdefault("candidates", len(pre))
+
+    if diag is not None:
+        # emm588: die TATSAECHLICH analysierte Menge dieser Runde - der
+        # Auto-Nachscan (emm587) fuettert das als exclude_type_ids in die
+        # naechste Runde, damit die wirklich eine ANDERE Stichprobe bekommt.
+        diag["analyzed_ids"] = {x[0]["type_id"] for x in pre}
 
     results = []
     total = len(pre)
@@ -858,6 +961,26 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
             if min_trade_score and trade_score < min_trade_score:
                 _d("trade_score_low")
                 continue
+            # emm592: IMMER aktive Mindest-Huerde fuer Flip, unabhaengig davon,
+            # was der Nutzer bei "Min. Tradability" einstellt (auch 0 = aus).
+            # Nutzer-Befund (Discord): Officer-Module (Meta 17) kommen als
+            # "Ausschuss" durch den Daytrade-Scan - GEMESSEN an 4 echten,
+            # kaum gehandelten Officer-Modulen (live ESI, 60-Tage-Historie):
+            # 4-20 von 60 Tagen aktiv, oft nur 1 Trade alle paar Monate mit
+            # wild schwankenden Preisen (z.B. 476 Mio. -> 2,5 Mrd. ISK
+            # zwischen zwei Einzeltrades) - reines Rauschen, kein echter
+            # Spread. In einem 28-Tage-Scanfenster faellt das auf
+            # trade_score ~0-2 (fast nie ein aktiver Tag, und der eine
+            # zufaellig erfasste hat weder Tiefe noch echte Tagesspanne) -
+            # gegen 60-90+ bei einem taeglich gehandelten Vergleichsitem
+            # (Dark Blood Heat Sink, 60/60 Tage aktiv). _MIN_TRADE_SCORE_
+            # ALWAYS liegt klar darunter, schliesst also NUR die praktisch
+            # untradebaren Faelle aus - und zwar auch dann, wenn eine eigene
+            # Einstellung den sichtbaren Tradability-Regler auf 0 stellt
+            # (genau das macht diesen Floor hart statt nur ein Preset-Wert).
+            if mode == "flip" and trade_score < _MIN_TRADE_SCORE_ALWAYS:
+                _d("trade_score_floor")
+                continue
             both_sides = st.get("both_sides_ratio", 0.0)
             if min_both_sides and (both_sides * 100.0) < min_both_sides:
                 _d("both_sides_low")
@@ -923,6 +1046,8 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
             target_sell = 0.0
             exp_profit = 0.0
             exp_pct = 0.0
+            low_365 = 0.0          # emm606: echter 365-Tage-Donchian-Tiefstwert
+            vs_low_pct = None      # None = nicht genug Historie (<30 Tage Low)
 
             # Exit-Liquidität (nur Swing, nicht Flip): kannst du die angesammelte
             # Menge realistisch wieder VERKAUFEN? Dein Tagesanteil auf der Sell-Seite
@@ -943,6 +1068,10 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
                     continue
                 if roi < max(min_roi, min_margin):
                     _d("roi_low")
+                    continue
+                if max_roi_for_trust and roi > max_roi_for_trust \
+                        and trade_score < min_trade_above_trust:
+                    _d("roi_artifact_untradable")
                     continue
                 if min_profit_day and profit_day < min_profit_day:
                     _d("profit_day_low")
@@ -1113,6 +1242,36 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
                     score *= min(2.0, 14.0 / max(3.0, recovery_days))
                 if dump_risk:
                     score *= 0.4
+                # ---- S4 ECHTE JAHRESTIEF-NAEHE (emm606, Nutzer: "sowas
+                # brauche ich in allen presets und strategies, schnaeppchen
+                # duerfen wir uns nicht entgehen lassen"): under_pct oben
+                # misst nur den Abstand zum FENSTER-MITTELWERT. Ein Item
+                # direkt am 365-Tage-Donchian-Tief verdient einen Vorzug
+                # gegenueber einem Item, das zwar unter seinem (ohnehin
+                # gedrueckten) Fensterschnitt liegt, aber weit ueber seinem
+                # Jahrestief. Milder, additiver Nudge (0.85x-1.0x) statt
+                # harter Filter - gilt automatisch fuer ALLE 7 Swing-
+                # Presets, ohne jeden einzeln neu kalibrieren zu muessen.
+                # Kein Gate: fehlende 365-Tage-Daten (vs_low_pct bleibt
+                # None) aendern den Score schlicht nicht.
+                low_365 = year_low(hist)
+                if low_365 > 0 and sell > 0:
+                    vs_low_pct = (sell - low_365) / low_365 * 100.0
+                    _nearness = max(0.0, min(1.0, 1.0 - vs_low_pct / 50.0))
+                    score *= 0.85 + 0.15 * _nearness
+                    # ---- S5 FALLENDES MESSER (emm609, Nutzer: "seit X
+                    # Monaten am Boden bedeutet fuer mich der Preis faellt
+                    # stetig, und wir nehmen kein fallendes Messer auf").
+                    # Ein Item, das schon seit Monaten AM STUECK nahe seinem
+                    # Jahrestief klebt, ist kein frischer Dip mehr, sondern
+                    # strukturell gedrueckt/sterbend - HARTER Filter (anders
+                    # als der milde Score-Nudge oben), gilt automatisch in
+                    # ALLEN Presets, genau wie die emm606-Jahrestief-Naehe
+                    # selbst ("sowas brauche ich in allen presets").
+                    months_low = months_at_bottom(hist, low_365)
+                    if months_low >= 2.0:
+                        _d("long_bottom")
+                        continue
             elif mode == "underbuild":
                 # BUYER's view: das Item notiert UNTER dem Effizienz-Boden
                 # (Baukosten des Best-Case-Produzenten, s. UI-Helper
@@ -1320,6 +1479,8 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
                 "target_sell": target_sell,
                 "exp_profit": exp_profit,
                 "exp_pct": exp_pct,
+                "low_365": low_365,
+                "vs_low_pct": vs_low_pct,
                 "score": score,
             })
     finally:

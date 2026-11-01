@@ -458,6 +458,62 @@ def schritt_key(schritt) -> str:
     return f"repro|{int((schritt or {}).get('erz') or 0)}"
 
 
+def schritte_rest_portionen(schritte, need, stock) -> dict:
+    """{schritt_key: (rest_portionen, portionen)} - wie viele VOLLE Portionen
+    jedes Erz-Schritts der Mineral-Bestand noch NICHT deckt.
+
+    NUTZER 27.10.2026 (T1 Battlecruisers, emm738): "Im Materials Tab stehen
+    noch die alten Compressed Ores die ich natuerlich schon gekauft und zu
+    Mineralien verarbeitet habe - jetzt will die Shopping-Liste die wieder
+    kaufen". Die alte Regel (s. `schritte_durch_bestand`) war ganz oder gar
+    nicht: fehlten von 541 Mio Tritanium noch 20 Mio, stand das Erz wieder
+    mit der VOLLEN Menge auf der Liste (144 Mio statt der ~6 Mio, die den
+    Rest decken). Hier wird je Schritt gerechnet, wie viele Portionen fuer
+    das verbleibende Mineral-DEFIZIT (need minus stock) noch noetig sind -
+    aufgerundet auf volle Portionen (reprocesst wird in Bloecken; lieber
+    eine Portion zu viel als ein Mineral zu wenig, Regel 3).
+
+    Schritte in Eingabe-Reihenfolge; liefern zwei Erze dasselbe Mineral,
+    verbraucht der fruehere Schritt das Defizit zuerst (der spaetere braucht
+    dann entsprechend weniger). Unrefined-Schritte (Weg A, `built`) und
+    Gratis-Erz (Blacklist) fehlen im Ergebnis - fuer sie gilt wie bisher
+    die volle Menge."""
+    defizit = {}
+    out = {}
+    for st in (schritte or []):
+        if st.get("built") or st.get("gratis") or not st.get("erz"):
+            continue
+        deckt = st.get("deckt") or {}
+        if not deckt:
+            continue
+        try:
+            port = max(1, int(st.get("portionen") or 1))
+        except (TypeError, ValueError):
+            port = 1
+        rest = 0
+        for m, q in deckt.items():
+            m = int(m)
+            q = int(q or 0)
+            if q <= 0:
+                continue
+            if m not in defizit:
+                defizit[m] = max(0, int((need or {}).get(m, 0) or 0)
+                                 - int((stock or {}).get(m, 0) or 0))
+            fehlt_m = min(q, defizit[m])
+            if fehlt_m > 0:
+                # Portionen, die dieses Mineral noch braucht (aufgerundet).
+                rest = max(rest, -(-fehlt_m * port // q))
+        rest = min(rest, port)
+        if rest > 0:
+            for m, q in deckt.items():
+                m = int(m)
+                q = int(q or 0)
+                geliefert = q if rest >= port else q * rest // port
+                defizit[m] = max(0, defizit.get(m, 0) - geliefert)
+        out[schritt_key(st)] = (rest, port)
+    return out
+
+
 def schritte_durch_bestand(schritte, need, stock) -> set:
     """Schluessel der Erz-Schritte, deren Minerale der Bestand SCHON deckt.
 
@@ -465,50 +521,154 @@ def schritte_durch_bestand(schritte, need, stock) -> set:
     markiert, dabei habe ich das compressed ore zu Mineralien verarbeitet".
     Bisher galt ein Erz-Schritt nur durch den Hand-Haken in Stufe 0 als
     erledigt; ohne Haken stand das Erz als fehlend da, obwohl ALLE seine
-    Minerale laengst im Hangar lagen.
+    Minerale laengst im Hangar lagen. Seit emm738 der Sonderfall
+    rest_portionen == 0 der anteiligen Rechnung (`schritte_rest_portionen`,
+    EINE Formel - Regel 9); dadurch zaehlt jetzt auch ein Schritt als
+    erledigt, dessen Defizit ein FRUEHERER Schritt desselben Minerals schon
+    mitdeckt. Unrefined-Schritte (Weg A, `built`) und Gratis-Erz fallen
+    weiterhin nicht darunter (Regel 3)."""
+    return {k for k, (rest, _p) in
+            schritte_rest_portionen(schritte, need, stock).items()
+            if rest == 0}
 
-    REGEL: liegt von JEDEM Mineral, das der Schritt decken soll, mindestens
-    der ganze Restbedarf (`need`, ohne Erz-Gutschrift) im fuer diesen Plan
-    zaehlenden Bestand (`stock`), ist das Erz ueberfluessig - gleich, ob der
-    Nutzer es reprocesst oder die Minerale anders beschafft hat. Fehlt auch
-    nur eines, bleibt der Schritt offen (Regel 3). Unrefined-Schritte (Weg A,
-    `built`) und Gratis-Erz fallen nicht darunter."""
-    aus = set()
+
+def _teil_faktor(st, teil):
+    """(rest, portionen) eines Schritts aus der anteiligen Karte (emm738) -
+    None = keine Karte oder kein Eintrag, dann gilt die volle Menge."""
+    if not teil:
+        return None
+    v = teil.get(schritt_key(st))
+    if not v:
+        return None
+    try:
+        rest, port = int(v[0]), max(1, int(v[1]))
+    except (TypeError, ValueError, IndexError):
+        return None
+    if rest >= port or rest < 0:
+        return None
+    return rest, port
+
+
+def erz_deckung(schritte, erz_bestand, teil=None, abgehakt=()) -> list:
+    """Reicht das ERZ IM HANGAR fuer die noch offenen Reprocessing-Schritte?
+
+    NUTZER 27.10.2026 (T1 Battlecruisers, emm739). Vorgeschichte: am
+    25.10. wurde die Einkaufsliste gekauft, aber der Hub gab nicht alles
+    her - Compressed Veldspar II-Grade 139'803'200 statt 144'261'600
+    (-3.1 %), Zeolites -3.9 %, Hemorphite -3.0 %. Das Loch blieb
+    UNSICHTBAR: der eingefrorene Plan zeigt max(Einfrier-Bestand, live),
+    und solange das Erz noch nicht verarbeitet war, stand ueberall
+    "gedeckt". Erst zwei Tage spaeter, als die gestarteten Jobs den
+    Bestand real leergezogen hatten, fehlten ingame 16.7 Mio Tritanium -
+    nachgerechnet exakt die 16.3 Mio, die das fehlende Veldspar geliefert
+    haette. Dieselbe Rechnung, zwei Tage frueher, haette den Abend
+    gerettet. "pruefungen sind immer gut ja".
+
+    QUELLENUNABHAENGIG (Nutzer-Einwand: "ich habe noch Erze ueber
+    Contracts bekommen"): geprueft wird, was WIRKLICH IM HANGAR LIEGT -
+    nicht, was die Wallet an Kaeufen kennt. Erz aus Vertraegen, aus dem
+    eigenen Abbau oder von einem Corp-Kameraden zaehlt damit genauso
+    mit; die Charakter-Vertraege kann die App gar nicht lesen (der
+    ESI-Scope fehlt), eine Kauf-Quittung waere also systematisch blind.
+
+    `schritte`: plan["reprocess"]["schritte"], `erz_bestand`: {tid: Menge}
+    des LIVE-Hangars (nicht der eingefrorene Stand - der versteckt genau
+    diese Luecke), `teil`: {schritt_key: (rest, portionen)} aus
+    `schritte_rest_portionen` (emm738) - nur die noch offenen Portionen
+    brauchen Erz; `abgehakt`: erledigte Schritte.
+
+    Rueckgabe je UNTERDECKTEM Erz, groesste Luecke zuerst:
+      {"erz", "soll", "da", "luecke", "pct", "ausfall": {mineral: Menge}}
+    `ausfall` ist linear hochgerechnet (fehlt/soll x gedeckte Menge) und
+    deshalb eine SCHAETZUNG - sie sagt, was an Mineralen nicht ankommen
+    wird. Gratis-Erz (Blacklist) und Unrefined-Schritte (Weg A) bleiben
+    draussen: beides wird nicht gekauft. Ein Erz mit mehreren Schritten
+    wird zusammengefasst (ein Hangar, eine Antwort)."""
+    _ab = set(abgehakt or ())
+    soll_je = {}
+    da_je = {}
+    deckt_je = {}
     for st in (schritte or []):
         if st.get("built") or st.get("gratis") or not st.get("erz"):
             continue
-        deckt = st.get("deckt") or {}
-        if not deckt:
+        if schritt_key(st) in _ab:
             continue
-        if all(int((stock or {}).get(int(m), 0) or 0)
-               >= int((need or {}).get(int(m), 0) or 0) for m in deckt):
-            aus.add(schritt_key(st))
+        erz = int(st.get("erz") or 0)
+        _tf = _teil_faktor(st, teil)
+        if _tf is not None:
+            rest, port = _tf
+            if rest <= 0:
+                continue                 # Minerale liegen schon da
+            menge = rest * int(st.get("portion") or 0)
+            anteil = rest / float(port)
+        else:
+            v = (teil or {}).get(schritt_key(st))
+            if v:
+                try:
+                    if int(v[0]) <= 0:
+                        continue         # voll gedeckt (rest == 0)
+                except (TypeError, ValueError, IndexError):
+                    pass
+            menge = int(st.get("menge") or 0)
+            anteil = 1.0
+        if menge <= 0:
+            continue
+        soll_je[erz] = soll_je.get(erz, 0) + menge
+        da_je[erz] = int((erz_bestand or {}).get(erz, 0) or 0)
+        _d = deckt_je.setdefault(erz, {})
+        for m, q in (st.get("deckt") or {}).items():
+            _d[int(m)] = _d.get(int(m), 0) + int(round(int(q or 0) * anteil))
+    aus = []
+    for erz, soll in soll_je.items():
+        da = da_je.get(erz, 0)
+        fehlt = soll - da
+        if fehlt <= 0:
+            continue
+        ausfall = {m: int(round(q * fehlt / float(soll)))
+                   for m, q in (deckt_je.get(erz) or {}).items()
+                   if int(round(q * fehlt / float(soll))) > 0}
+        aus.append({"erz": erz, "soll": soll, "da": da, "luecke": fehlt,
+                    "pct": fehlt * 100.0 / float(soll), "ausfall": ausfall})
+    aus.sort(key=lambda r: -r["luecke"])
     return aus
 
 
-def rest_anpassen(need: dict, schritte, abgehakt) -> dict:
+def rest_anpassen(need: dict, schritte, abgehakt, teil=None) -> dict:
     """Restbedarf {tid: Menge} um NICHT abgehakte Schritte anpassen: die
     gedeckten Minerale sinken (nie unter 0, 0 faellt raus), das Erz kommt
-    mit seiner Blockmenge dazu. Abgehakte Schritte aendern nichts."""
+    mit seiner Blockmenge dazu. Abgehakte Schritte aendern nichts.
+
+    `teil` (emm738): {schritt_key: (rest, portionen)} aus
+    `schritte_rest_portionen` - fuer teilgedeckte Schritte kommt nur noch
+    `rest` Portionen Erz dazu, und nur die davon gelieferten Minerale
+    (abgerundet - die Gutschrift lieber zu klein, Regel 3) sinken; den
+    Rest deckt der Bestand, gegen den der Aufrufer vergleicht."""
     out = {int(k): int(v) for k, v in (need or {}).items()}
     abgehakt = set(abgehakt or ())
     for st in (schritte or []):
         if schritt_key(st) in abgehakt or st.get("built"):
             continue           # Weg A: das Unrefined-Produkt wird gebaut, nie gekauft
+        _tf = _teil_faktor(st, teil)
         for m, q in (st.get("deckt") or {}).items():
             m = int(m)
-            rest = out.get(m, 0) - int(q or 0)
+            q = int(q or 0)
+            if _tf is not None:
+                q = q * _tf[0] // _tf[1]
+            rest = out.get(m, 0) - q
             if rest > 0:
                 out[m] = rest
             else:
                 out.pop(m, None)
         erz = int(st.get("erz") or 0)
-        if erz and int(st.get("menge") or 0) > 0 and not st.get("gratis"):
-            out[erz] = out.get(erz, 0) + int(st["menge"])
+        menge = int(st.get("menge") or 0)
+        if _tf is not None:
+            menge = _tf[0] * int(st.get("portion") or 0)
+        if erz and menge > 0 and not st.get("gratis"):
+            out[erz] = out.get(erz, 0) + menge
     return out
 
 
-def anspruch_anpassen(anspruch: dict, schritte, abgehakt) -> dict:
+def anspruch_anpassen(anspruch: dict, schritte, abgehakt, teil=None) -> dict:
     """Material-ANSPRUCH {tid: Menge} eines eingefrorenen Plans um die
     ABGEHAKTEN Erz-Schritte anpassen - das Gegenstueck zu `rest_anpassen`.
 
@@ -541,15 +701,34 @@ def anspruch_anpassen(anspruch: dict, schritte, abgehakt) -> dict:
     out = {int(k): int(v or 0) for k, v in (anspruch or {}).items()}
     abgehakt = set(abgehakt or ())
     for st in (schritte or []):
-        if schritt_key(st) not in abgehakt or st.get("built"):
+        if st.get("built"):
             continue
+        _hakt = schritt_key(st) in abgehakt
+        _tf = None if _hakt else _teil_faktor(st, teil)
+        if not _hakt and _tf is None:
+            continue
+        # TEILGEDECKT (emm738, Nutzer: "reservationslogik checken"): deckt
+        # der Mineral-Bestand einen Teil des Schritts, KAUFT der Plan nur
+        # noch `rest` Portionen Erz - die uebrigen Minerale nimmt er aus dem
+        # Hangar. Genau die muss er BEANSPRUCHEN, sonst zaehlt jeder andere
+        # Plan sie als frei und die gefaehrliche Richtung aus emm523 ist
+        # zurueck (zwei Plaene rechnen mit denselben Mineralen). Umgebucht
+        # wird der NICHT mehr vom Erz gelieferte Anteil (aufgerundet -
+        # lieber zu viel beanspruchen, Regel 3); das Erz verliert die
+        # weggefallenen Portionen. Abgehakte Schritte: wie bisher alles.
         for m, q in (st.get("deckt") or {}).items():
             m = int(m)
-            out[m] = out.get(m, 0) + int(q or 0)
+            q = int(q or 0)
+            if _tf is not None:
+                q = q - (q * _tf[0] // _tf[1])
+            out[m] = out.get(m, 0) + q
         erz = int(st.get("erz") or 0)
+        menge = int(st.get("menge") or 0)
+        if _tf is not None:
+            menge = (_tf[1] - _tf[0]) * int(st.get("portion") or 0)
         # Gratis-Erz (Blacklist) steht gar nicht erst im Anspruch.
-        if erz and int(st.get("menge") or 0) > 0 and not st.get("gratis"):
-            rest = out.get(erz, 0) - int(st["menge"])
+        if erz and menge > 0 and not st.get("gratis"):
+            rest = out.get(erz, 0) - menge
             if rest > 0:
                 out[erz] = rest
             else:
@@ -557,23 +736,36 @@ def anspruch_anpassen(anspruch: dict, schritte, abgehakt) -> dict:
     return out
 
 
-def fehl_anpassen(fehl, schritte, abgehakt, live_stock=None) -> list:
+def fehl_anpassen(fehl, schritte, abgehakt, live_stock=None, teil=None) -> list:
     """Fehlbedarfs-Liste [(tid, fehlt, bedarf, da, prod), ...] um NICHT
     abgehakte Schritte anpassen: gedeckte Minerale fehlen entsprechend
     weniger (Zeile faellt bei 0 weg), fehlendes Erz kommt als eigene Zeile
     dazu (Blockmenge minus Bestand). Reihenfolge wie die Eingabe:
-    absteigend nach Fehlmenge."""
+    absteigend nach Fehlmenge.
+
+    `teil` (emm738) wie bei `rest_anpassen`: teilgedeckte Schritte bringen
+    nur noch `rest` Portionen Erz; die Mineral-Gutschrift ist hier
+    AUFGERUNDET, denn die Fehl-Zeilen sind bereits bestandsbereinigt und
+    `schritte_rest_portionen` hat den Rest gegen denselben Bestand
+    gerechnet - abgerundet bliebe eine 1-Stueck-Geisterzeile stehen."""
     abgehakt = set(abgehakt or ())
     kredit = {}
     erz_bedarf = {}
     for st in (schritte or []):
         if schritt_key(st) in abgehakt or st.get("built"):
             continue           # Weg A: siehe rest_anpassen
+        _tf = _teil_faktor(st, teil)
         for m, q in (st.get("deckt") or {}).items():
-            kredit[int(m)] = kredit.get(int(m), 0) + int(q or 0)
+            q = int(q or 0)
+            if _tf is not None:
+                q = -(-q * _tf[0] // _tf[1])
+            kredit[int(m)] = kredit.get(int(m), 0) + q
         erz = int(st.get("erz") or 0)
-        if erz and int(st.get("menge") or 0) > 0 and not st.get("gratis"):
-            erz_bedarf[erz] = erz_bedarf.get(erz, 0) + int(st["menge"])
+        menge = int(st.get("menge") or 0)
+        if _tf is not None:
+            menge = _tf[0] * int(st.get("portion") or 0)
+        if erz and menge > 0 and not st.get("gratis"):
+            erz_bedarf[erz] = erz_bedarf.get(erz, 0) + menge
     out = []
     for row in (fehl or []):
         tid = int(row[0])

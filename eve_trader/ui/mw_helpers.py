@@ -17,6 +17,52 @@ REGELN FUER DIESES MODUL:
 
 class MainWindowHelpers:
     @staticmethod
+    def bestand_gesehen_bis(p):
+        """Bis wann hat ESI den Bestand gesehen? (emm638)
+
+        NUTZER 23.10.2026: "meine vermutung mit der reservation vom bestand
+        stimmt etwas nicht". GEMESSEN an seiner settings.json, Plan
+        "Minmatar 1": `frozen.stock_seen_ts` stand auf 19:23:53, die fuenf
+        grossen Komponenten-Haken (59'648 / 25'420 / 8'911 / 5'011 / 2'255
+        Runs) wurden um 20:03-20:04 gesetzt. Die ESI-Verzugs-Sperre in
+        `_reserve_map_mitlaufend` liess sie damit durchfallen - und weil
+        `stock_seen_ts` NUR vorrueckt, wenn man GENAU DIESEN Plan oeffnet
+        und Assets laedt, blieb das so. Der Plan hielt 3'194'819 Fernite
+        Carbide und 7'266 Ferrogel fest, die er laengst verbraucht hatte;
+        "Gallente 1" bekam dafuer Kaufvorschlaege fuer Material, das im
+        Hangar lag.
+
+        DER DENKFEHLER WAR DER ORT, NICHT DIE REGEL: "wann hat ESI den
+        Bestand gesehen" ist eine Eigenschaft der ASSET-DATEN, nicht eines
+        einzelnen Plans. Der plan-eigene Stempel ist nur eine UNTERE
+        Schranke - der juengste Abruf zaehlt, egal welche Seite ihn
+        ausgeloest hat (Stock locations, ein anderer Bauplan, der
+        5-Minuten-Takt aus emm629). `store.asset_snapshot_info()`
+        ["checked_at"] haelt genau das fest, und zwar nur bei
+        VOLLSTAENDIGEN Abrufen (`note_asset_snapshot(vollstaendig=...)`) -
+        ein halber Abruf verschiebt den Stempel nicht.
+
+        Die Sperre selbst bleibt damit unveraendert scharf: frisch
+        Abgehaktes gibt weiterhin nichts frei, solange ESI es nicht
+        gesehen hat. Sie laeuft jetzt nur nicht mehr ins Unendliche.
+        """
+        werte = []
+        _lokal = ((p or {}).get("frozen") or {}).get("stock_seen_ts")
+        if _lokal is not None:
+            try:
+                werte.append(float(_lokal))
+            except (TypeError, ValueError):
+                pass
+        try:
+            from .. import store as _st638
+            _glob = (_st638.asset_snapshot_info() or {}).get("checked_at")
+            if _glob is not None:
+                werte.append(float(_glob))
+        except Exception:
+            pass          # kein Speicher/kein Eintrag -> nur der lokale Wert
+        return max(werte) if werte else None
+
+    @staticmethod
     def bp_besitz_zaehlen(owned_bp):
         """{bp_type_id: Stueck BPO}, {bp_type_id: Summe BPC-Runs} aus der
         FREIEN Blaupausen-Rohliste - die EINE Zaehlung des Blueprints-
@@ -164,9 +210,20 @@ class MainWindowHelpers:
                 kopien += q
         if nur_bpo:
             return bpo, 0             # Kopie fuers Erfinden, nicht fuers Bauen
-        if bpo:
-            return bpo, kopien
-        return kopien, 0
+        # ORIGINAL UND KOPIEN LAUFEN GLEICHZEITIG (emm624, Nutzer: "ich habe
+        # ingame 15 Blueprints, MoMa teilt aber nur 1 Blueprint zu" - 480
+        # Runs Terahertz Metamaterials landeten dadurch auf EINEM Slot statt
+        # auf bis zu 15, 28 echte Tage wurden im Planer zu 39, und ein
+        # 1-Run-Item (Sylramic Fibers, 1h24m real) stand mit 31 Tagen da,
+        # weil es hinter diesem einen Slot in der Warteschlange stand).
+        # VORHER (emm538) warf ein vorhandenes Original ALLE Kopien raus -
+        # das loeste zwar den Original+kleine-Kopien-Fall (unten), ging
+        # aber weit darueber hinaus: ein Original und 14 volle Kopien sind
+        # im Spiel 15 GLEICHZEITIG startbare Jobs, nicht einer. Die Kopien
+        # bleiben also mitgezaehlt; `_bpc_runs_by_tid` deckelt separat die
+        # Runs JE JOB auf die kleinste Kopie (emm624-Gegenstueck unten),
+        # damit kein Job mehr Runs bekommt, als seine Blaupause kann.
+        return bpo + kopien, 0
 
     @staticmethod
     def _bpc_runs_by_tid(owned_bp, build_runs, product_to_bp):
@@ -201,8 +258,18 @@ class MainWindowHelpers:
             except (TypeError, ValueError):
                 continue
             _bp = _p2b.get(t)
-            if not _bp or _bp[0] in bpo:
+            if not _bp:
                 continue
+            # emm624-GEGENSTUECK: ein vorhandenes Original schloss den
+            # Eintrag bisher KOMPLETT aus ("_bp[0] in bpo: continue") - dann
+            # bekam JEDE Kopie unbegrenzt viele Runs im selben Job zugeteilt,
+            # obwohl `bp_parallel_slots` die Kopien jetzt als eigene Slots
+            # mitzaehlt. `min_runs` traegt ohnehin NUR Kopien ein (Originale
+            # werden oben per `continue` uebersprungen) - gibt es also
+            # Kopien NEBEN dem Original, deckelt ihre kleinste weiterhin
+            # jeden Job dieses Items; gibt es NUR ein Original, bleibt
+            # `min_runs` fuer es leer und die Zeile unten faellt durch
+            # (kein Deckel, wie bisher).
             _m = min_runs.get(_bp[0])
             if _m:
                 out[t] = int(_m)
@@ -478,6 +545,14 @@ class MainWindowHelpers:
         self._bd_inv_esi_versuche = vers
         return mats
 
+    def _bd_bp_im_job_wirksam(self):
+        """`_bd_bp_im_job` plus die Blaupausen, die ein laufender ESI-Job
+        belegt (emm580, `bp_im_job_mit_jobs`) - EINE Stelle fuer
+        Blueprints-Reiter, Kopieranleitung und Runplaner (Regel 9)."""
+        return bp_im_job_mit_jobs(
+            getattr(self, "_bd_bp_im_job", None),
+            getattr(self, "_bd_active_jobs_alle", None))
+
     def _aktive_jobs_filtern(self):
         """Laufende Jobs NUR fuer den Plan, dem sie gehoeren (Nutzer
         28.09.2026, gemessen mit werkzeuge/szenario_prioritaet.py: lief ein
@@ -526,6 +601,35 @@ class MainWindowHelpers:
                         offen.setdefault(_t, []).append(_j)
         self._bd_active_jobs_map = mein
         self._bd_active_unzugeordnet = offen
+
+    def _jobs_karte_plan_gefiltert(self):
+        """True NUR, wenn `_bd_active_jobs_map` wirklich plan-gefiltert ist
+        (emm717, Nutzer 25.10.2026: "gespeichert aber noch nicht gefrohren /
+        reserviert funktioniert also nicht - koennen wir da was machen").
+
+        `_aktive_jobs_filtern` laeuft ausschliesslich im Einfrier-Zweig des
+        Zeitplan-Aufbaus (mw_bauplan_tabs, Bedingung: frozen mit
+        plan_snapshot UND ts). Ein GESPEICHERTER, aber noch NICHT
+        gefrorener Plan hat zwar eine Plan-Id, seine Karte traegt aber ALLE
+        laufenden Jobs aller Plaene - genau wie beim frischen Plan. Wer
+        dort nur auf die Plan-Id schaut (so taten es das Erledigt-Budget,
+        `_rest_geliefert_jetzt` und der Vorstufen-Block bis emm717), laesst
+        fremde Jobs als eigenen Fortschritt zaehlen - die GEFAEHRLICHE
+        Richtung aus emm715, nur einen Speicherstand spaeter.
+
+        EINE Funktion fuer alle drei Leser (Regel 9): zaehlen duerfen die
+        Karten-Jobs nur, wenn Plan-Id UND Einfrier-Stand (mit Snapshot und
+        Zeitstempel) da sind - dieselbe Bedingung, unter der der Aufbau die
+        Filterung wirklich faehrt. Sonst gilt die Umstritten-Regel wie beim
+        frischen Plan (harmlose Richtung: schlimmstenfalls zeigt der Plan
+        zu viel offen, nie zu wenig). Nachgefahren in
+        werkzeuge/sim_emm715_lebenszyklus.py (Szenario C), gepinnt in b216
+        (gespeichert-ungefroren) und aa717 (Verdrahtung)."""
+        _frz = getattr(self, "_bd_frozen", None)
+        return bool(getattr(self, "_bd_open_plan_id", None)
+                    and _frz
+                    and _frz.get("plan_snapshot")
+                    and _frz.get("ts"))
 
     def _prio_zuordnung_schreiben(self, jobs_geliefert):
         """Noch niemandem gehoerende gelieferte Jobs nach BAU-PRIORITAET
@@ -1040,73 +1144,77 @@ class MainWindowHelpers:
         aus Haken und Beleg, nie die Summe (derselbe Run kann in beiden
         stehen), gedeckelt auf die geplanten Runs.
 
+        DER HAND-HAKEN GIBT HIER NICHTS MEHR FREI (emm750, Nutzer
+        29.10.2026, woertlich): "der Handhacken von mir gesetzt sollte
+        keine Reservierten Materialien frei geben, weil eben verklicke
+        ich mich, wird material freigegeben und andere Pläne nutzen es
+        dann, das wäre falsch". Freigegeben wird nur noch, was ESI
+        wirklich belegt (`belegt`). Die beiden Haken-Zweige - der ueber
+        `checked_ts`/`assignments` und der ueber `haken_runs` - sind
+        damit still; `checked_ts` dient nur noch der ESI-Verzugs-Sperre
+        des Belegs und der Meldung, welche Haken ignoriert wurden.
+
+        WARUM DAS DIE ANDERE RICHTUNG IST ALS emm747/748/749: dort
+        versteckte ein unbelegter Haken BEDARF, hier gibt er ANSPRUCH
+        frei. Dort war Kappen die sichere Richtung, hier ist es
+        Nicht-Freigeben. Der Preis steht in emm638 (ein Plan haelt
+        Material fest, das er laengst verbraucht hat, und ein anderer
+        bekommt Kaufvorschlaege dafuer) - GEMESSEN an seinen Plaenen am
+        29.10.2026 betrifft das 16 Materialien, die groessten Helium
+        Isotopes 52'531, Liquid Ozone 40'872, Heavy Water 19'912. Diesen
+        Preis hat der Nutzer bewusst gewaehlt: ein Verklicker darf kein
+        Material an andere Plaene verschenken.
+
         Gibt eine NEUE Karte zurueck, die Eingaben bleiben unangetastet.
         """
         out = {int(t): int(q) for t, q in (reserve_map or {}).items()}
         _br_plan = (plan or {}).get("build_runs") or {}
         if (not checked_ts and not belegt) or (not assignments and not _br_plan):
             return out
-        # Geplante und erledigte Runs je Item aus den Zuteilungen.
+        # Geplante Runs je Item aus den Zuteilungen. ERLEDIGT kommt seit
+        # emm750 NUR noch aus `belegt` - der Haken zaehlt hier nicht mehr.
         geplant, erledigt = {}, {}
+        # DER NENNER KOMMT AUS DEM SCHNAPPSCHUSS (emm790, Audit 31.10.2026,
+        # KRITISCH "Nenner-Drift", per Nachstellung belegt): die unten
+        # freigegebenen Mengen stammen aus `build_mats` DES SCHNAPPSCHUSSES -
+        # Zaehler und Nenner muessen also aus DERSELBEN Wahrheit kommen
+        # (dieselbe Lehre wie emm523 fuer die reserve_map). Vorher kam
+        # `geplant` zuerst aus den AKTUELLEN assignments: wer den Plan nach
+        # dem Einfrieren neu speicherte (30 statt 50 Runs) und 30 baute,
+        # bekam anteil = 30/30 = 1.0 - die Freigabe gab 5'000/5'000
+        # Tritanium frei, verbraucht waren nur 3'000; die 2'000, die der
+        # Schnappschuss noch braucht, sah jeder andere Plan als frei.
+        # Die assignments bleiben NUR Rueckfall fuer Items, die der
+        # Schnappschuss nicht kennt (alte Plaene ohne build_runs; Befund
+        # 28.09.2026: 17 Plaene ganz ohne tid in den Zuteilungen).
+        _aus_snap = set()
+        for _t_b, _r_b in _br_plan.items():
+            try:
+                _t_b, _r_b = int(_t_b), int(_r_b or 0)
+            except (TypeError, ValueError):
+                continue
+            if _r_b > 0:
+                geplant[_t_b] = _r_b
+                _aus_snap.add(_t_b)
         for a in (assignments or []):
             _tid = a.get("tid", a.get("type_id"))
             if _tid is None:
                 continue
             _tid = int(_tid)
             _runs = int(a.get("runs", 0) or 0)
-            if _runs <= 0:
+            if _runs <= 0 or _tid in _aus_snap:
                 continue
             geplant[_tid] = geplant.get(_tid, 0) + _runs
-            _key = f"{a.get('stage', 'component')}|{a.get('char_id')}|{_tid}"
-            _ts = (checked_ts or {}).get(_key)
-            if _ts is None:
-                continue
-            if stock_seen_ts is None or float(_ts) > float(stock_seen_ts):
-                continue          # ESI hat den Verbrauch noch nicht gesehen
-            erledigt[_tid] = erledigt.get(_tid, 0) + _runs
-        # GESPEICHERTE ZUTEILUNGEN TRUGEN NIE EINE type_id (Befund 28.09.2026,
-        # GEMESSEN in der settings.json des Nutzers: alle 17 Plaene haben nur
-        # char/item/runs/jobs/seconds/stage/slots/char_done). `geplant` blieb
-        # dadurch leer, jeder Beleg fiel oben durch - Multiplan 1 hielt 129'375
-        # Phenolic reserviert, obwohl alle Verbraucher laengst gebaut waren
-        # (mit Beleg: 2'457), und der Basilisk sah seinen Hangar als leer.
-        # Rueckfall: die Plan-Runs aus dem Schnappschuss (`build_runs` ist
-        # die Summe der Zuteilungen je Item - dieselbe Zahl).
-        for _t_b, _r_b in _br_plan.items():
-            try:
-                _t_b, _r_b = int(_t_b), int(_r_b or 0)
-            except (TypeError, ValueError):
-                continue
-            if _r_b > 0 and _t_b not in geplant:
-                geplant[_t_b] = _r_b
-        # HAND-HAKEN ALTER PLAENE (Nutzer 28.09.2026, "ja genau"): ihre
-        # Zuteilungen tragen keine tid/char_id, der Schluessel-Abgleich oben
-        # findet also nichts. `haken_runs` (= `checked_runplan_runs`,
-        # {"stufe|tid": erledigte Runs}) kennt die Runs je Item; der Haken
-        # zaehlt erst, wenn der Bestand juenger ist als der JUENGSTE Haken
-        # dieses Items (dieselbe ESI-Sperre). Ohne Stempel: nichts.
-        _h_ts = {}
-        for _k_h, _ts_h in (checked_ts or {}).items():
-            _teile = str(_k_h).split("|")
-            if len(_teile) != 3:
-                continue
-            try:
-                _sch = (_teile[0], int(_teile[2]))
-                _h_ts[_sch] = max(_h_ts.get(_sch, 0.0), float(_ts_h))
-            except (TypeError, ValueError):
-                continue
-        for _k_h, _n_h in (haken_runs or {}).items():
-            _st_h, _, _t_h = str(_k_h).rpartition("|")
-            try:
-                _t_h, _n_h = int(_t_h), int(_n_h or 0)
-            except (TypeError, ValueError):
-                continue
-            _ts_h = _h_ts.get((_st_h, _t_h))
-            if _n_h <= 0 or _t_h not in geplant or _ts_h is None:
-                continue
-            if stock_seen_ts is None or _ts_h > float(stock_seen_ts):
-                continue          # ESI hat den Verbrauch noch nicht gesehen
-            erledigt[_t_h] = min(geplant[_t_h], max(erledigt.get(_t_h, 0), _n_h))
+        # HIER STAND DER ZWEITE HAKEN-ZWEIG (emm-Eintrag 28.09.2026, "HAND-
+        # HAKEN ALTER PLAENE"): `haken_runs` (= `checked_runplan_runs`)
+        # buchte die Zutaten ab, sobald der Bestand juenger war als der
+        # juengste Haken des Items. ENTFERNT mit emm750 - zusammen mit dem
+        # Haken-Teil des assignments-Zweigs oben. Beide Parameter
+        # (`checked_ts`, `haken_runs`) bleiben in der Signatur, damit die
+        # Aufrufer unveraendert bleiben; `checked_ts` traegt weiterhin den
+        # fruehen Ausstieg oben. KEIN TOTER RECHENBLOCK als Leiche: wer
+        # die Freigabe wieder will, baut sie neu - und fragt vorher den
+        # Nutzer, dessen Ansage woertlich in der Beschreibung steht.
         for _tid, _n in (belegt or {}).items():
             try:
                 _tid = int(_tid)
@@ -1129,7 +1237,17 @@ class MainWindowHelpers:
                 _m = int(_m)
                 if _m not in out:
                     continue
-                _weg = int(_q * _anteil)
+                # AUFRUNDEN (emm793, Audit 31.10.2026): int() liess den
+                # Anspruch je Material bis zu 1 Stueck GROESSER als die
+                # physisch verbliebene Eigenmenge - zusammen mit dem
+                # Eigenschutz in bestand_nach_reservierungen sah dann
+                # eigener+fremder Anspruch mehr Bestand, als da ist, und
+                # NIEMAND kaufte das fehlende Stueck (gemessen: 29'600
+                # Bestand, 29'601 Anspruch, 1 Tritanium fehlte am Ende).
+                # Mit ceil liegt der Rundungsrest auf der EIGENEN Liste
+                # dieses Plans - der kauft ihn beim naechsten Rechnen nach.
+                import math as _m793
+                _weg = int(_m793.ceil(float(_q) * _anteil - 1e-9))
                 out[_m] = max(0, out[_m] - _weg)
                 if out[_m] == 0:
                     out.pop(_m, None)
@@ -1233,6 +1351,30 @@ class MainWindowHelpers:
         return raus
 
     @staticmethod
+    def buendel_mitglieder_unreserviert(settings):
+        """ids der Einzelplaene in einem offenen Buendel OHNE Schloss
+        (emm795, Audit 31.10.2026, M6): die Reservierungs-Leser nahmen
+        JEDES Buendel-Mitglied aus ("reserviert nicht noch einmal neben
+        dem Buendel") - traegt aber das Buendel KEIN Schloss und das
+        Mitglied noch seines, reservierte am Ende NIEMAND (nachgestellt,
+        repro2.py: Anspruch = {}), obwohl auf der Mitglieds-Karte ein
+        Schloss sichtbar war. Diese Mitglieder zaehlen jetzt selbst;
+        sobald das Buendel reserviert, gilt wieder nur das Buendel
+        (kein Doppelanspruch). Rein, Rueckgabe: set von str(plan_id)."""
+        raus = set()
+        for p in ((settings or {}).get("bau_saved_plans") or []):
+            try:
+                if int(p.get("type_id", 0) or 0) != -1:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            if p.get("done_manual") or p.get("reserve"):
+                continue
+            for qid in (p.get("quellen") or []):
+                raus.add(str(qid))
+        return raus
+
+    @staticmethod
     def _fremde_reservierungen(settings, exclude_plan_id):
         """{Plan-Name: reserve_map} aller ANDEREN Plaene mit aktivem Schloss.
 
@@ -1242,11 +1384,14 @@ class MainWindowHelpers:
         """
         raus = {}
         _mitgl = MainWindowHelpers.buendel_mitglieder(settings)
+        _mitgl_frei = MainWindowHelpers.buendel_mitglieder_unreserviert(settings)
         for p in (settings.get("bau_saved_plans") or []):
             if not p.get("reserve"):
                 continue
-            # Buendel-Mitglied: sein Anspruch lebt im Buendel, nicht doppelt.
-            if str(p.get("id")) in _mitgl:
+            # Buendel-Mitglied: sein Anspruch lebt im Buendel, nicht doppelt
+            # - AUSSER das Buendel traegt kein Schloss (emm795), dann
+            # zaehlt das Mitglieds-Schloss selbst.
+            if str(p.get("id")) in _mitgl and str(p.get("id")) not in _mitgl_frei:
                 continue
             try:
                 if exclude_plan_id is not None and int(p.get("id") or 0) == int(exclude_plan_id):
@@ -1283,6 +1428,24 @@ class MainWindowHelpers:
                         raus.add(int(k))
                 except (TypeError, ValueError):
                     continue
+            return raus
+        # ZWEITER RUECKFALL (emm799, Audit 31.10.2026, G3): die beim
+        # Speichern abgelegten Zuteilungen tragen seit 28.09.2026 eine
+        # tid - sie nennen GENAU die Items, die der Plan baut. Der alte
+        # Rueckfall auf die reserve_map-SCHLUESSEL erklaerte auch reine
+        # KAUF-Posten (Tritanium!) zu "baut es selbst": fremde Jobs auf
+        # solchen Items wurden dauerhaft umstritten, ihr Fortschritt
+        # verschwand aus delivered_sicher, die Einkaufsliste wuchs, und
+        # der Frage-Dialog fragte ohne Ende.
+        _ass = (p or {}).get("assignments") or []
+        for _a in _ass:
+            try:
+                _t = int(_a.get("tid"))
+                if int(_a.get("runs", 0) or 0) > 0:
+                    raus.add(_t)
+            except (TypeError, ValueError, AttributeError):
+                continue
+        if raus:
             return raus
         for k in ((p or {}).get("reserve_map") or {}):
             try:
@@ -1514,7 +1677,8 @@ class MainWindowHelpers:
             return None
 
     @staticmethod
-    def _frozen_auto_checked(delivered_jobs, assignments, frozen_ts):
+    def _frozen_auto_checked(delivered_jobs, assignments, frozen_ts,
+                             vergeben=None, plan_id=None):
         """FORTSCHRITT AUS ESI-JOBS (pure Funktion, Nutzer-Spez Punkt 2):
         gelieferte Jobs seit dem Einfrier-Zeitpunkt je Plan-Item aufsummieren.
         Erreicht die Summe die Plan-Runs des Items, gelten ALLE Runplaner-
@@ -1525,7 +1689,17 @@ class MainWindowHelpers:
         verbraucht" ist im Bestand unsichtbar, in der Job-Historie nicht.
         Aktivitaet muss zur Stufe passen (Reaktion 9/11 vs. Fertigung 1),
         sonst zaehlte ein zufaellig gleichnamiger Fertigungs-Job eine
-        Reaktions-Zeile ab. Rueckgabe: (keys:set, geliefert:{tid: runs})."""
+        Reaktions-Zeile ab. Rueckgabe: (keys:set, geliefert:{tid: runs}).
+
+        FREMD ZUGEORDNETE JOBS ZAEHLEN NICHT (emm791, Audit 31.10.2026,
+        KRITISCH): `vergeben` ({job_id: plan_id} aus
+        store.job_zuordnung_alle) + `plan_id` sieben Jobs aus, die laut
+        Zuordnung einem ANDEREN Plan oder ausdruecklich KEINEM
+        (store.PLAN_KEINER) gehoeren. Vorher zaehlten die Jobs eines
+        abgeschlossenen oder geloeschten Plans voll als eigener
+        Fortschritt, sobald das Item aus `_umstrittene_items` fiel -
+        die Einkaufsliste schrumpfte um Fortschritt, den dieser Plan
+        nie gebaut hat. Ohne `vergeben` (None) rechnet alles wie bisher."""
         plan_runs = {}
         is_react = {}
         keys_by_tid = {}
@@ -1545,6 +1719,7 @@ class MainWindowHelpers:
             _fts = float(frozen_ts)
         except (TypeError, ValueError):
             return set(), {}
+        _eig_id = None if plan_id is None else str(plan_id)
         for j in (delivered_jobs or []):
             pid = j.get("product_type_id")
             try:
@@ -1553,6 +1728,15 @@ class MainWindowHelpers:
                 continue
             if tid not in plan_runs:
                 continue
+            # emm791: ein Job, der laut Zuordnung einem ANDEREN Plan oder
+            # KEINEM gehoert, ist kein Fortschritt dieses Plans.
+            if vergeben is not None and j.get("job_id") is not None:
+                try:
+                    _wem = vergeben.get(int(j.get("job_id")))
+                except (TypeError, ValueError):
+                    _wem = None
+                if _wem is not None and str(_wem) != _eig_id:
+                    continue
             act = j.get("activity_id")
             if is_react.get(tid):
                 if act not in (9, 11):
@@ -1692,13 +1876,31 @@ class MainWindowHelpers:
                 from .. import reprocess as _rp523
                 _basis = _rp523.anspruch_anpassen(
                     _basis, (_plan.get("reprocess") or {}).get("schritte"),
-                    p.get("checked_runplan"))
+                    p.get("checked_runplan"),
+                    # emm738 (Nutzer: "reservationslogik checken"): auch
+                    # BESTANDSGEDECKTE Erz-Schritte buchen um - der Plan
+                    # nimmt diese Minerale aus dem Hangar und muss sie
+                    # beanspruchen, sonst plant jeder andere Plan mit
+                    # ihnen. Der Stand kommt aus `_erz_bestand_lage` des
+                    # zuletzt offenen Plans (dort gesichert); fehlt er
+                    # (alte Plaene), bleibt alles wie bisher.
+                    teil=p.get("erz_bestand_stand"))
             except Exception:
                 pass
+            # emm638: der JUENGSTE Bestands-Abruf zaehlt, nicht nur der
+            # dieses Plans (s. `bestand_gesehen_bis`) - sonst wird ein
+            # Haken nie wirksam, solange man den Plan nicht wieder oeffnet.
+            # emm652 ZURUECKGENOMMEN: `haken_runs` hier wegzulassen
+            # ("Haken nur optisch") wurde umgesetzt und gemessen - rot
+            # wurden aa218, aa273, aa436, aa639 und b145. Der Hand-Haken
+            # ist an FUENF Stellen tragend. Wer es doch macht, stellt
+            # alle fuenf zusammen um; die Aufrufer einzeln abzuklemmen
+            # laesst frisch gestartete Runs minutenlang als "fehlt"
+            # erscheinen. Begruendung in MEMORY.md/CLAUDE.md emm652.
             return MainWindowHelpers._reserve_map_mitlaufend(
                 _plan, _basis, p.get("checked_runplan_ts") or {},
                 p.get("assignments") or [],
-                (p.get("frozen") or {}).get("stock_seen_ts"),
+                MainWindowHelpers.bestand_gesehen_bis(p),
                 belegt=MainWindowHelpers._belegt_fuer_plan(p),
                 haken_runs=p.get("checked_runplan_runs"))
         except Exception:
@@ -1712,7 +1914,8 @@ class MainWindowHelpers:
             from .. import store as _st
             return MainWindowHelpers.belegte_runs_seit(
                 _st.job_zuordnung_fuer_plan(p.get("id")),
-                (p.get("frozen") or {}).get("stock_seen_ts"))
+                # emm638: derselbe, juengste Stand wie oben.
+                MainWindowHelpers.bestand_gesehen_bis(p))
         except Exception:
             return {}
 
@@ -1770,8 +1973,13 @@ class MainWindowHelpers:
             _sein = _rang.get(str(p.get("id")))
             if _mein is not None and _sein is not None and _sein > _mein:
                 continue
-            # Buendel-Mitglied: reserviert nicht noch einmal neben dem Buendel.
-            if str(p.get("id")) in _mitgl:
+            # Buendel-Mitglied: reserviert nicht noch einmal neben dem
+            # Buendel - AUSSER das Buendel traegt selbst kein Schloss
+            # (emm795): dann zaehlt das Mitglieds-Schloss, sonst
+            # reserviert niemand.
+            if (str(p.get("id")) in _mitgl
+                    and str(p.get("id")) not in
+                    MainWindowHelpers.buendel_mitglieder_unreserviert(settings)):
                 continue
             # BEIDE RICHTUNGEN (Nutzer-Entscheid Sitzung 16, nach Verlust).
             #
@@ -2296,7 +2504,16 @@ def job_zuordnen_eindeutig(jobs, plan_runs, is_react, vergeben, umstritten,
             continue
         if fts < _seit:
             continue
-        if _schon.get(tid, 0) + runs > grenze:
+        # UEBERLIEFERUNG ZAEHLT MIT (emm792, Audit 31.10.2026, M4): ein
+        # 60-Run-Job bei 50 geplanten Runs ist bei einem EINDEUTIGEN Item
+        # (nur dieser Plan baut es) trotzdem dieser Plan - der Nutzer hat
+        # schlicht mehr gebaut. Vorher blieb so ein Job unzuordenbar
+        # haengen: die Reservierung fror ein, waehrend die Anzeige
+        # "fertig" sagte. Der Deckel bleibt fuer FOLGE-Jobs bestehen
+        # (erst wenn schon etwas zugeteilt ist, schuetzt er die
+        # Reihenfolge); die Mengen-Leser kappen ohnehin auf die
+        # Plan-Runs (delivered_sicher, _reserve_map_mitlaufend).
+        if _schon.get(tid, 0) and _schon.get(tid, 0) + runs > grenze:
             continue
         aus[jid] = (tid, runs)
         _schon[tid] = _schon.get(tid, 0) + runs
@@ -2339,6 +2556,69 @@ def science_verteilen(auftraege, chars):
                 out.append((cid, welle, liste))
         welle += 1
     return out
+
+
+def corp_bp_luecken(cres):
+    """Welche Corp-Lagen machen den BLAUPAUSEN-BESITZ UNVOLLSTAENDIG?
+    EINE Quelle fuer beide Abrufwege (Regel 9): den grossen Lade-Knopf
+    (`_bd_fetch_all_owned_blueprints`) und den Bestands-Worker.
+
+    emm743, Nutzer 28.10.2026: "Bauplan behauptet ploetzlich ich haette
+    blueprints nicht, ich habe sie aber alle". Sein Bericht
+    (werkzeuge/zeige_blaupausen.py) zeigte: KEIN Charakter-Abruf
+    gescheitert, aber "Angekreuzte Hangars: 1, 2, 3, 4, 5, 6, 7" und
+    "WipeOut Inc.: KEIN Charakter mit Director-Rolle - Corp-Blaupausen
+    werden nicht geholt". Acht Blaupausen standen trotzdem ROT als
+    "completely missing" und in "Buy Missing Blueprints".
+
+    emm517 hatte die fehlende Rolle bewusst als LAGE eingestuft (dezent,
+    nie rot) - damals hatte der Nutzer gar keine Corp-Hangars angekreuzt,
+    Eve MoMa schaute dort also gar nicht hin. ANGEKREUZT heisst aber: hier
+    SOLL nachgesehen werden. Gelingt das nicht, ist der Besitz
+    unvollstaendig - dieselbe Fehlerklasse wie ein 403 (emm479/516):
+    lieber laut sagen, dass die Daten unvollstaendig sind, als etwas
+    Falsches behaupten. Die Bedingung steckt schon in den Daten:
+    `ohne_rolle` fuellt sich nur bei aktivem Schalter UND gewaehlten
+    Divisions (s. `_corp_blaupausen` - ohne beides kehrt es vorher um).
+
+    LAGE BLEIBT LAGE: `keine_division` (Schalter an, kein Hangar
+    angekreuzt) steht weiter nur dezent da - dort hat der Nutzer selbst
+    gesagt, dass nicht nachgesehen werden soll.
+
+    `cres` = Rueckgabe von `_corp_blaupausen` (oder `_corp_bau_daten`,
+    gleiche Schluessel). Rueckgabe (luecken, lagen):
+      luecken  Texte fuer `_bd_bp_fehler` - leer heisst vollstaendig;
+               alles darin macht die Zeilen amber und sperrt die Kaufliste
+      lagen    Texte fuer `_bd_bp_corp_info` - nur dezent, nie rot
+    """
+    from ..sprache import t as _txt
+    luecken, lagen, bekannt = [], [], []
+    if not isinstance(cres, dict):
+        return luecken, lagen, bekannt
+    for _f in (cres.get("failed") or []):
+        luecken.append(str(_f))
+    for _r in (cres.get("relink") or []):
+        luecken.append(_txt("Corp hangar via {name} (re-link needed)")
+                       .format(name=_r))
+    for _o in (cres.get("ohne_rolle") or []):
+        # BEKANNTE LUECKE, KEIN ALARM (emm808, Nutzer 01.11.2026: "ich
+        # weiss das ich keine direktor rolle habe mit meinen chars ...
+        # die meldung ist etwas zu uebertrieben, die braucht es meiner
+        # meinung nach nicht"). Die fehlende Rolle BLEIBT eine Luecke im
+        # Besitz (emm743: Zeilen amber, keine Kaufliste - das ist die
+        # Sicherheit), aber sie ist ein DAUERZUSTAND, den der Nutzer
+        # kennt: die Statuszeile zeigt sie dezent (Lage-Stil), nicht rot.
+        # `bekannt` ist die Teilmenge von `luecken`, die der Reiter NICHT
+        # rot anschlagen soll; `lagen` bekommt die kurze Anzeige-Zeile.
+        luecken.append(_txt(
+            "Corp hangar {name}: no Director role – blueprints kept "
+            "there stay invisible").format(name=_o))
+        bekannt.append(luecken[-1])
+        lagen.append(_txt("Corp hangar {name} (no Director role)")
+                     .format(name=_o))
+    if cres.get("keine_division"):
+        lagen.append(_txt("Corp hangar (no hangar division ticked)"))
+    return luecken, lagen, bekannt
 
 
 def t1_original_lage(t1_bp, cache, im_job=None, fehler=None):
@@ -2391,6 +2671,69 @@ def t1_original_lage(t1_bp, cache, im_job=None, fehler=None):
     if bpc_runs:
         return ("copies_only", 0, bpc_runs)
     return ("none", 0, 0)
+
+
+# Aktivitaeten, deren Job die Blaupause selbst als Produkt fuehrt (Research
+# TE/ME, Kopieren) - und dafuer brauchen sie das ORIGINAL.
+JOB_BP_IST_PRODUKT = (3, 4, 5)
+# laufend, pausiert oder abholbereit: die Blaupause steckt noch im Job.
+JOB_BELEGT_STATUS = ("active", "paused", "ready")
+
+
+def bp_im_job_mit_jobs(im_job, jobs_alle):
+    """Ein laufender ESI-Job BEWEIST die Blaupause (emm580, Nutzer
+    17.10.2026: "blueprints werden als missing angezeigt aber sie sind in
+    der kopieren ingame bauschleife" - Exequror und Siren I standen rot
+    "completely missing", der Runplaner zeigte zu GENAU diesen den blauen
+    ESI-Punkt des Kopierjobs). Rein.
+
+    `im_job` = {bp: [Eintraege]} aus der Blaupausen-Liste (emm507, ueber die
+    item_id gegen die Jobs). Fehlt die Blaupause dort ganz, sieht sie der
+    Reiter als "nicht vorhanden" - obwohl ein Job mit ihr laeuft, und einen
+    Job startet man nur mit einer EIGENEN (oder Corp-)Blaupause. Hier kommt
+    deshalb je laufendem Research-/Kopierjob (3/4/5 - das Produkt IST die
+    Blaupause, und sie braucht das Original) ein Eintrag dazu; ein Job, der
+    schon ueber seine job_id in `im_job` steht, nie ein zweites Mal.
+    `jobs_alle` = {product_type_id: [{activity_id, status, job_id, char,
+    end_date, blueprint_type_id?}]} (`_bd_active_jobs_alle`).
+    Gibt eine NEUE Karte zurueck, `im_job` bleibt unberuehrt."""
+    out = {}
+    for k, v in (im_job or {}).items():
+        out[k] = list(v or [])
+    _schon = set()
+    for v in out.values():
+        for b in v:
+            try:
+                _jid = (b.get("in_job") or {}).get("job_id")
+            except AttributeError:
+                _jid = None
+            if _jid is not None:
+                _schon.add(_jid)
+    for _pid, js in (jobs_alle or {}).items():
+        for j in js or []:
+            try:
+                akt = int(j.get("activity_id") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if akt not in JOB_BP_IST_PRODUKT:
+                continue
+            if j.get("status") not in JOB_BELEGT_STATUS:
+                continue
+            try:
+                bp = int(j.get("blueprint_type_id") or _pid or 0)
+            except (TypeError, ValueError):
+                continue
+            jid = j.get("job_id")
+            if not bp or (jid is not None and jid in _schon):
+                continue
+            if jid is not None:
+                _schon.add(jid)
+            out.setdefault(bp, []).append({
+                "type_id": bp, "is_bpo": True, "quantity": 1,
+                "char": j.get("char"), "aus_job": True,
+                "in_job": {"job_id": jid, "activity_id": akt,
+                           "end_date": j.get("end_date")}})
+    return out
 
 
 def kopier_schritte(auftraege, t1_je_bp, originale):
@@ -2611,9 +2954,16 @@ def offene_job_fragen(jobs, plan_runs, is_react, vergeben, umstritten,
         Antwort "keiner" war (`store.PLAN_KEINER`);
       * Jobs, deren Aktivitaet nicht zur Stufe passt - die kann der Plan
         gar nicht gebaut haben;
-      * Jobs von vor dem Einfrieren;
-      * ein Job, dessen Runs ALLEIN schon mehr sind, als der Plan fuer das
-        Item ueberhaupt vorhat - der stammt sicher von woanders.
+      * Jobs von vor dem Einfrieren.
+    SEIT emm792 (Audit 31.10.2026) wird auch ein UEBERGROSSER Job gefragt
+    (60 Runs bei 50 geplanten): "stammt sicher von woanders" war geraten -
+    der Nutzer baut ausdruecklich auch mal mehr Runs als geplant. Vorher
+    war so ein Job NIRGENDS zuordenbar (Klick verlangt exakte Runs,
+    Signatur den exakten Rest, der Deckel uebersprang ihn): die
+    Reservierung fror dauerhaft ein, waehrend die Fortschritts-Anzeige
+    (ohne Job-Deckel) "fertig" sagte - zwei Wahrheiten. Die Mengen-Deckel
+    der Leser (delivered_sicher, _reserve_map_mitlaufend: min/max) kappen
+    eine Antwort ohnehin auf die Plan-Runs.
 
     Rein und ohne Fenster pruefbar. Rueckgabe: Liste
     [{job_id, type_id, runs, fertig_ts}], aelteste zuerst - damit die
@@ -2642,7 +2992,7 @@ def offene_job_fragen(jobs, plan_runs, is_react, vergeben, umstritten,
         if not job_umstritten(tid, j.get("start_ts"), _um, umstritten_seit):
             continue          # eindeutig - dafuer gibt es keine Frage
         grenze = _pr.get(tid, 0)
-        if grenze <= 0 or runs > grenze:
+        if grenze <= 0:
             continue
         akt = j.get("activity_id")
         if (is_react or {}).get(tid):
@@ -2680,8 +3030,13 @@ def delivered_sicher(geliefert, plan_runs, umstritten, belegt=None):
     ein Irrtum nichts. Sie darf NICHT den Restbedarf steuern: dort kostet
     ein Irrtum Material, weil die Einkaufsliste zu klein wird und der
     Nutzer vor dem Reaktor steht (Regel 3). Deshalb rechnet die
-    Einkaufsliste ab jetzt mit DIESER Karte, die Anzeige weiter mit der
-    vollen.
+    Einkaufsliste mit DIESER Karte.
+    UEBERHOLT SEIT STUFE C (26.09.2026), hier am 24.10.2026
+    nachgezogen: die ANZEIGE liest inzwischen EBENFALLS diese Karte
+    (`_bd_runplan_delivered = dict(_bd_runplan_delivered_sicher)`).
+    Es gibt also nur noch EINE Wahrheit auf dem Bildschirm. Der alte
+    Satz "die Anzeige weiter mit der vollen" stand hier bis heute und
+    hat prompt zu einer falschen Auskunft an den Nutzer gefuehrt.
 
     Zwei Sicherungen:
       1. DECKEL auf die Plan-Runs - kein Job kann mehr abbuchen, als der
@@ -2909,6 +3264,440 @@ def restbedarf_map(build_runs, build_mats, delivered=None):
         for m, jq in mats:
             need[m] = need.get(m, 0) + math.ceil(int(jq) * rem_t / runs_t)
     return rem, need
+
+
+# Wie lange ein Haken auf seinen ESI-Beleg warten darf, bevor er als
+# unbestaetigt gilt. ESI meldet JOBS binnen Minuten, den HANGAR erst nach
+# etwa einer Stunde - also ist eine Stunde plus Puffer die ehrliche
+# Grenze. Kuerzer waere ein Fehlalarm, laenger verschenkt das Signal.
+HAKEN_FRIST_S = 3900
+
+
+def haken_wirksam(stand):
+    """{tid: Runs, die der Haken WIRKLICH zaehlen darf} aus dem Ergebnis
+    von `haken_pruefen` - plus {tid: offene Differenz} fuer die Anzeige.
+
+    emm747, Nutzer 28.10.2026 (woertlich): "es kann ja sein das ich bsp
+    10 runs machen muss ich mache ingame nur 8 runs und meine ich habe 10
+    gemacht also ein fehler, ich hacke aber trotzdem ab. ESI müsste
+    prüfen, hacken lösen und 2 Runs hinschreiben für amber mit kopieren
+    wie wirs kennen. so muss das laufen".
+
+    BIS HIERHER GALT DER HAKEN UNBEFRISTET. emm650 hat den Fall zwar
+    ERKANNT und amber gewarnt, den Haken aber ausdruecklich stehen
+    lassen ("Hier wird nichts geaendert"). Damit blieb das Material der
+    nie gefahrenen Runs aus dem Bedarf - genau sein Catalyst-Fall vom
+    27./28.10.: 50 abgehakt, kein Job, die Einkaufsliste nannte
+    3'459'456 Tritanium zu wenig. Am naechsten Tag baute er sie
+    wirklich, das Material war weg, und die Liste sprang.
+
+    WARUM NICHT EINFACH "HAKEN NUR OPTISCH" (sein Vorschlag vom
+    24.10., s. emm652): gemessen und zurueckgenommen - er hakt SOFORT
+    nach dem Start ab, ESI sieht den Job erst Minuten spaeter. In
+    diesem Fenster stuende das Material des eben gestarteten Runs
+    wieder als "fehlt" im Wagen. Der Haken muss also kurzfristig
+    tragen und sich erst dann korrigieren, wenn ESI widersprochen hat.
+
+    DIE KORREKTUR LAEUFT IN BEIDE RICHTUNGEN (seine Nachfrage: "würde
+    aber nach 2 oder 3 stunden ESI merken, ah ist doch da muss es
+    korrigieren können"). Deshalb wird hier NICHTS gespeichert und
+    nichts aus `checked_runplan` geloescht: der Zustand entsteht bei
+    JEDEM Aufbau neu aus Haken + ESI. Kommt der Beleg spaeter doch,
+    zaehlt der Haken wieder voll - ohne dass der Nutzer etwas tun muss.
+
+    `stand` = Rueckgabe von `haken_pruefen` ({tid: (zustand, n, belegt)}).
+    Rueckgabe (wirksam, offen):
+      wirksam {tid: Runs} - "unbestaetigt" zaehlt nur noch das Belegte,
+              alles andere zaehlt voll (auch "wartet": die Frist laeuft
+              ja noch, und bis dahin gilt seine Angabe).
+      offen   {tid: Runs} - die Differenz, die der Runplaner amber
+              hinschreibt und zum Kopieren anbietet. Nur dort, wo
+              wirklich etwas fehlt.
+    """
+    wirksam, offen = {}, {}
+    for _t, _e in (stand or {}).items():
+        try:
+            _zustand, _n, _belegt = str(_e[0]), int(_e[1]), int(_e[2])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        if _zustand != "unbestaetigt":
+            wirksam[int(_t)] = _n
+            continue
+        wirksam[int(_t)] = max(0, min(_n, _belegt))
+        _diff = _n - _belegt
+        if _diff > 0:
+            offen[int(_t)] = _diff
+    return wirksam, offen
+
+
+def haken_pruefen(haken_runs, haken_ts, geliefert, laufend, jetzt,
+                  frist_s=HAKEN_FRIST_S, gedeckt=None, plan_runs=None):
+    """Deckt ESI deinen Haken? (emm650)
+
+    DAS ARBEITSMODELL DES NUTZERS, in seinen Worten (24.10.2026):
+    "ich gehe ingame führe einen run nach plan aus, und dann drücke ich
+    direkt den grünen hacken an, sieht für mich als erledigt aus und ich
+    vergesse nicht dass ich es gemacht habe, ESI zieht dann ca 1 stunde
+    später den grünen Icon Dot nach oder blau wenn ich bauschleife. Kann
+    es das nicht, ist mein run nicht komplett abgeschlossen und ich habe
+    ingame einen fehler gemacht oder nicht alle runs wie angegeben
+    gefahren".
+
+    DER HAKEN IST EINE BEHAUPTUNG, DER PUNKT IST DER BELEG - und die
+    DIFFERENZ ist das Wertvollste daran: sie findet Fehler, die sonst
+    erst Wochen spaeter als fehlendes Material auffallen. Bisher warf das
+    Programm dieses Signal weg.
+
+    Vier Antworten je Item:
+      "bestaetigt"   - ESI deckt den Haken (geliefert oder laufend).
+      "gedeckt"      - ESI deckt ihn NICHT, aber das Erzeugnis liegt in
+                       ausreichender Menge da (s. `gedeckt`). Dann ist
+                       der Haken folgenlos - KEINE Warnung.
+      "wartet"       - der Haken ist juenger als die Frist; ESI hinkt
+                       noch nach, das ist normal und KEINE Warnung.
+      "unbestaetigt" - die Frist ist um, ESI sieht nichts UND der
+                       Bestand deckt es nicht. Hier lohnt ein Blick ins
+                       Spiel.
+
+    `plan_runs` (emm670) = {tid: geplante Runs}. Ein Haken zaehlt nur bis
+    zur Planmenge - wer mehr faehrt, als der Plan vorsieht, soll dafuer
+    keine Dauerwarnung bekommen.
+
+    `gedeckt` (emm664, Nutzer-Frage 24.10.2026: "kann MoMa nicht pruefen
+    ob ueber alle Plaene hinweg gesehen genuegend Crystalline Carbonide
+    da ist? oder fehlt wirklich und tatsaechlich 1 Run?") = Menge der
+    type_ids, deren Bestand den offenen Bedarf schon deckt. SEIN FALL:
+    973 Runs abgehakt, ESI sieht 972 - Differenz EINS, bei 9'718'312
+    Stueck Crystalline Carbonide im Hangar. Die Warnung war wahr ("ESI
+    belegt diesen Haken nicht") und trotzdem wertlos: aus ihr folgt
+    nichts, weil das Material da ist. Eine Warnung, aus der nichts
+    folgt, trainiert den Nutzer darauf, Warnungen zu uebersehen - und
+    dann uebersieht er die eine, die zaehlt.
+
+    Rein und ohne Fenster pruefbar. `haken_ts` = {tid: Zeitpunkt des
+    Hakens}, `geliefert`/`laufend` = {tid: Runs} aus ESI.
+    """
+    aus = {}
+    for _t, _n in (haken_runs or {}).items():
+        try:
+            _t, _n = int(_t), int(_n or 0)
+        except (TypeError, ValueError):
+            continue
+        if _n <= 0:
+            continue
+        # MEHR ABGEHAKT ALS GEPLANT ZAEHLT NUR BIS ZUM PLAN (emm670).
+        # Gemessen bei Promethium Mercurite: 575 abgehakte Runs gegen 329
+        # geplante. Ohne Deckel vergleicht die Pruefung 575 gegen die 329,
+        # die ESI diesem Plan zuordnen KANN - und meldet auf Dauer
+        # "unbestaetigt", obwohl alles stimmt. Eine Warnung, die sich nie
+        # mehr abstellen laesst, ist schlimmer als keine: er gewoehnt sich
+        # an sie. Was er ueber den Plan hinaus gebaut hat, ist
+        # Mehrproduktion und kein Fortschritt DIESES Plans.
+        _soll = int((plan_runs or {}).get(_t, 0) or 0)
+        if _soll > 0:
+            _n = min(_n, _soll)
+        # GELIEFERT UND LAUFEND SIND ZWEI VERSCHIEDENE RUNS, ALSO SUMME
+        # (emm747, Nutzer 28.10.2026: "zwischen den beiden mineralien
+        # screenshots und dem catalist bau sind ueber 8h vergangen, ESI
+        # haette tracken muessen"). GEMESSEN in seinem diagnose_export
+        # vom 28.10., Plan "T1 Battlecruisers", Catalyst (16240):
+        #     Job 677140263 ->  2 Runs, Status delivered
+        #     Job 677188361 -> 48 Runs, Status active
+        # Beide sind diesem Plan zugeordnet. `max(2, 48) = 48` gegen 50
+        # abgehakte Runs ergab dauerhaft "unbestaetigt" - eine Warnung,
+        # die durch Warten NIE verschwindet, weil die fehlenden 2 Runs
+        # in einem Topf liegen, den `max` wegwirft. 2 + 48 = 50 stimmt.
+        # WARUM SUMMIEREN HIER ERLAUBT IST: ein ESI-Job hat GENAU EINEN
+        # Status. `geliefert` entsteht aus `_frozen_auto_checked` (nur
+        # status 'delivered'), `laufend` aus `_bd_active_jobs_map` (nur
+        # active/paused/ready) - dieselben Runs koennen also nicht in
+        # beiden stehen. Das ist der Unterschied zu `_hr_h[tid] = max(...)`
+        # in mw_bauplan_tabs (emm654): dort sind es dieselben Runs ueber
+        # mehrere STUFEN, da waere Summieren eine Doppelzaehlung.
+        _belegt = (int((geliefert or {}).get(_t, 0) or 0)
+                   + int((laufend or {}).get(_t, 0) or 0))
+        if _belegt >= _n:
+            aus[_t] = ("bestaetigt", _n, _belegt)
+            continue
+        # BESTAND SCHLAEGT BELEG (emm664): liegt genug davon da, ist der
+        # fehlende Beleg folgenlos - egal, ob der Run ausserhalb lief,
+        # das Erzeugnis zugekauft wurde oder die Job-Zuordnung ihn
+        # verloren hat. Am Ende zaehlt, was im Hangar liegt.
+        # de_scan4: aus - BEGRUENDUNG: "gedeckt" ist ein interner
+        # ZUSTANDSNAME dieser Funktion, keine Oberflaechen-Ausgabe. Er
+        # steht in derselben Reihe wie "bestaetigt", "wartet" und
+        # "unbestaetigt" und wird NIE angezeigt - gemalt wird allein
+        # der Fall "unbestaetigt" (s. aa657). Ohne diese Ausnahme waere
+        # die Ratsche von 5 auf 6 gestiegen, und zwar fuer einen Text,
+        # den kein Nutzer je sieht.
+        if gedeckt and _t in gedeckt:
+            aus[_t] = ("gedeckt", _n, _belegt)
+            continue
+        # de_scan4: an
+        _ts = (haken_ts or {}).get(_t)
+        try:
+            _alt = float(jetzt) - float(_ts)
+        except (TypeError, ValueError):
+            # OHNE ZEITSTEMPEL NICHT WARNEN (Regel 3): alte Haken aus der
+            # Zeit vor den Stempeln wuerden sonst alle rot.
+            aus[_t] = ("wartet", _n, _belegt)
+            continue
+        aus[_t] = (("wartet" if _alt < float(frist_s) else "unbestaetigt"),
+                   _n, _belegt)
+    return aus
+
+
+def offener_bedarf(build_runs, build_mats, erledigt):
+    """{type_id: Menge} - was die NOCH OFFENEN Runs brauchen. (emm648)
+
+    Herausgeloest, damit `nachlauf_runs` und der Zusammenlegen-Hinweis
+    DIESELBE Zahl benutzen (Arbeitsregel 9). `build_mats` traegt die
+    GESAMTmenge aller geplanten Runs - geteilt wird je Run und
+    aufgerundet (Regel 3: lieber ein Stueck zu viel verlangen).
+    """
+    aus = {}
+    for _t, _ges in (build_runs or {}).items():
+        try:
+            _t, _ges = int(_t), int(_ges or 0)
+        except (TypeError, ValueError):
+            continue
+        if _ges <= 0:
+            continue
+        _offen = max(0, _ges - int((erledigt or {}).get(_t, 0) or 0))
+        if _offen <= 0:
+            continue
+        for _m, _q in ((build_mats or {}).get(_t) or []):
+            try:
+                _pro = -(-int(_q or 0) // _ges)
+            except (TypeError, ValueError):
+                continue
+            aus[int(_m)] = aus.get(int(_m), 0) + _pro * _offen
+    return aus
+
+
+def nachlauf_runs(build_runs, build_mats, je_run, erledigt, lager,
+                  ofen=None, runden=12):
+    """Welche Runs muss der Plan NACHZIEHEN? (emm645)
+
+    DAS LOCH, DAS DEN NUTZER MONATE GEKOSTET HAT: die geplante Run-Zahl
+    einer Zwischenstufe ist eine EINMAL-ZAHL vom Einfrieren. Sind alle
+    diese Runs abgehakt, nimmt der Plan an, das Erzeugnis sei fuer immer
+    da. In Wirklichkeit hat die naechste Stufe es verbraucht - dafuer ist
+    es ja da - und braucht mehr. Ausdruecken kann der Plan das nicht:
+    Runs alle abgehakt, `buy` ist 0 (er baut es selbst), und Stock
+    Locations meldet selbstgebaute Posten grundsaetzlich nicht. Der
+    Posten steht stumm rot da, und der Nutzer steht vor dem leeren
+    Reaktor.
+
+    GEMESSEN an seinem Stand vom 24.10.2026: 351'435 Stueck in 16
+    solchen Posten, groesster Sulfuric Acid 134'361.
+
+    REKURSIV, weil die Antwort sonst nichts wert ist (seine Frage: "wie
+    soll ich die runs ausführen wenn mir material fehlt das ich niemals
+    nachkaufen kann?"): ein Nachlauf-Run braucht selbst Zutaten, die
+    wieder fehlen koennen. Es wird so lange aufgeloest, bis sich nichts
+    mehr aendert - bei ihm endete die Kette nach zwei Stufen (1 Run
+    Fernite Alloy -> 3 Runs Fernite Carbide), alle Zutaten im Hangar.
+    Jede Reaktionskette endet irgendwann bei kaufbarem Mondmaterial;
+    was dann noch fehlt, ist ein EINKAUF und steht in `fehlt_kauf`.
+
+    `je_run`   = {tid: Stueck je Run} - aus dem Plan selbst
+                 (`build_made` / `build_runs`), nicht aus der SDE: dort
+                 hat z.B. Tungsten Carbide ZWEI Rezepte (20 und 10'000
+                 je Run), und wer das falsche erwischt, rechnet um den
+                 Faktor 500 daneben (mir am 24.10. passiert).
+    `erledigt` = {tid: Runs} geliefert/laufend/abgehakt
+    `ofen`     = {tid: Stueck}, die laufende Jobs noch liefern
+
+    Liefert ({tid: zusaetzliche Runs}, {tid: zu kaufende Stueck}).
+    """
+    _br = {int(k): int(v or 0) for k, v in (build_runs or {}).items()}
+    _je = {int(k): max(1, int(v or 1)) for k, v in (je_run or {}).items()}
+    _erl = {int(k): int(v or 0) for k, v in (erledigt or {}).items()}
+    _vor = {int(k): int(v or 0) for k, v in (lager or {}).items()}
+    for _t, _q in (ofen or {}).items():
+        _vor[int(_t)] = _vor.get(int(_t), 0) + int(_q or 0)
+    extra, kauf = {}, {}
+
+    def _bedarf(zusatz):
+        """Materialbedarf aller OFFENEN Runs plus der Nachlauf-Runs.
+
+        emm648: dieselbe Zaehlung wie `offener_bedarf` - die Nachlauf-Runs
+        kommen als negativ Erledigtes dazu, damit es EINE Stelle bleibt.
+        """
+        _erl2 = {_t: _erl.get(_t, 0) - int(zusatz.get(_t, 0)) for _t in _br}
+        return offener_bedarf(_br, build_mats, _erl2)
+
+    for _ in range(max(1, int(runden))):
+        _b = _bedarf(extra)
+        _neu = False
+        for _m, _br_m in _b.items():
+            # Eigene Produktion dieses Materials (offene + Nachlauf-Runs).
+            _eigen = 0
+            if _br.get(_m):
+                _eigen = (max(0, _br[_m] - _erl.get(_m, 0))
+                          + int(extra.get(_m, 0))) * _je.get(_m, 1)
+            _luecke = _br_m - _vor.get(_m, 0) - _eigen
+            if _luecke <= 0:
+                continue
+            if _br.get(_m):
+                _dazu = -(-_luecke // _je.get(_m, 1))     # aufrunden
+                if _dazu > 0:
+                    extra[_m] = int(extra.get(_m, 0)) + _dazu
+                    _neu = True
+            else:
+                # Niemand baut es: das ist ein Einkauf, kein Run.
+                if kauf.get(_m) != _luecke:
+                    kauf[_m] = _luecke
+                    _neu = True
+        if not _neu:
+            break
+    return extra, kauf
+
+
+def run_zustand(geliefert, laeuft, abholbereit, aus_bestand, runs_plan):
+    """Welchen PUNKT bekommt eine fertige Runplaner-Zeile? (emm645)
+
+    HERAUSGELOEST, NICHT GEAENDERT. Die Entscheidung stand bisher als
+    Ausdruck mitten im Zeilenaufbau (mw_bauplan_tabs). Sie ist die
+    Sicherheit des Nutzers - seine Worte am 24.10.2026: "das ist ja meine
+    sicherheit um zu wissen 'ah okey' ich habe die Runs fertig
+    abgeschlossen und kann zu komponenten wechseln". Bevor der Runplaner
+    dynamische Nachlauf-Runs bekommt, gehoert diese Regel an eine Stelle,
+    die man ohne Fenster pruefen kann - sonst merkt niemand, wenn ein
+    Umbau sie verbiegt.
+
+    Die vier Zustaende und WARUM es sie gibt (alles Nutzer-Befunde):
+      "laeuft"       - ein Job laeuft wirklich (Status active). "ready"
+                       zaehlt NICHT dazu: fertig gebaut, nur noch nicht
+                       abgeholt (Entscheid Sitzung 14, nach dem Screenshot
+                       "da steckt aber schon lange nichts mehr in der
+                       Bauschleife").
+      "fertig"       - ESI hat geliefert ODER ein Job ist abholbereit. NUR
+                       hier gibt es den gruenen Punkt: gruen heisst im
+                       ganzen Werkzeug "ESI hat die Runs geliefert".
+      "bestand"      - kein Job, aber der Bestand deckt die Runs (emm518,
+                       "oxygen und hydrogen fuel blocks, habe ich nie
+                       gebaut aber dazu gekauft, warum zeigt ESI gruener
+                       Punkt = wurde gebaut?") - gedaempfter Punkt.
+      "nicht_noetig" - kein Beleg irgendeiner Art (emm521): frueher der
+                       Auffangzweig, der faelschlich gruen wurde.
+
+    `laeuft` kommt bereits bereinigt herein (ein Job, der nachweislich
+    einem ANDEREN Plan gehoert, wurde dort auf 0 gesetzt) - diese Frage
+    braucht die Job-Zuordnung und gehoert nicht in eine reine Funktion.
+    """
+    try:
+        _gel = int(geliefert or 0)
+        _lauf = int(laeuft or 0)
+        _fert = int(abholbereit or 0)
+        _best = int(aus_bestand or 0)
+        _plan = int(runs_plan or 0)
+    except (TypeError, ValueError):
+        return "nicht_noetig"
+    if _lauf > 0 and _gel < _plan:
+        return "laeuft"
+    # de_scan4: aus - BEGRUENDUNG: "fertig" ist ein interner ZUSTANDSNAME
+    # dieser Funktion, in derselben Reihe wie "laeuft"/"bestand"/
+    # "nicht_noetig" (die stehen nicht in der Scanner-Wortliste, darum
+    # schlug nur dieses eine Wort an). Angezeigt wird der Name NIE - die
+    # Oberflaeche malt Punkte und uebersetzte Statustexte (emm696).
+    if _gel > 0 or _fert > 0:
+        return "fertig"
+    # de_scan4: an
+    if _best > 0:
+        return "bestand"
+    return "nicht_noetig"
+
+
+def zusammenlegen_noetig(bedarf, je_besitzer):
+    """Wo reicht die SUMME, aber kein einzelner Charakter? (emm645)
+
+    NUTZER 24.10.2026: "charaktere sind quasi ein erweiterter hangar ...
+    Alle meine Accounts/Charaktere verwende ich wie 1 einziger riesiger
+    Mastercharakter". Genau so rechnet MoMa - und genau da liegt die
+    Falle: ein EVE-Job greift nur auf den Hangar SEINES Charakters zu.
+
+    GEMESSEN an seinem Fall: Ceramic Powder 26'150 insgesamt, davon
+    Berry Motor 22'400 und Peanut Motor 3'750. Fuer 255 Runs Sylramic
+    Fibers braucht er 24'990 - die Summe reicht, kein einzelner Slot
+    kann starten. MoMa meldete "covered", EVE zeigte "3'750 / 24'939".
+
+    `bedarf` = {type_id: Menge}, `je_besitzer` = {type_id: {Name: Menge}}.
+    Liefert NUR die echten Faelle:
+        {type_id: {"brauch", "gesamt", "bester", "bester_menge", "fehlt"}}
+    Nichts gemeldet wird, wenn schon die Summe nicht reicht - das ist ein
+    EINKAUFS-Fall und steht an anderer Stelle (Regel: eine Meldung je
+    Ursache, sonst stehen zwei Warnungen fuer dasselbe Material da).
+    Rein und ohne Fenster pruefbar.
+    """
+    aus = {}
+    for _t, _b in (bedarf or {}).items():
+        try:
+            _t, _b = int(_t), int(_b or 0)
+        except (TypeError, ValueError):
+            continue
+        if _b <= 0:
+            continue
+        _wer = {k: int(v or 0) for k, v in ((je_besitzer or {}).get(_t)
+                                            or {}).items() if int(v or 0) > 0}
+        if not _wer:
+            continue
+        _ges = sum(_wer.values())
+        _bester = max(_wer, key=lambda k: _wer[k])
+        if _ges < _b or _wer[_bester] >= _b:
+            continue           # zu wenig insgesamt / ein Slot reicht
+        # de_scan4: aus - BEGRUENDUNG: "fehlt" ist ein interner KARTEN-
+        # SCHLUESSEL (wie "brauch"/"gesamt"/"bester"); angezeigt wird die
+        # ZAHL dahinter, formatiert in uebersetzte t()-Texte
+        # ("consolidate {n} from {who}", mw_bauplan_tabs) (emm696).
+        aus[_t] = {"brauch": _b, "gesamt": _ges, "bester": _bester,
+                   "bester_menge": _wer[_bester], "fehlt": _b - _wer[_bester]}
+        # de_scan4: an
+    return aus
+
+
+def start_blocker(mats, build_runs, lager, virt=None):
+    """Warum kann dieser Job JETZT nicht starten? (emm645)
+
+    NUTZER 24.10.2026, nach einer langen Suche: "warum kann ich dann
+    keine Components bauen weil mir ingame sylramic Fibers fehlt?" -
+    Antwort: weil 4'236'000 Sylramic Fibers in laufenden Reaktionen
+    stecken, die erst am 27.10. fertig sind. Ihm fehlte kein Material,
+    ihm fehlte die ANZEIGE. Der Runplaner zeigte die Komponenten-Zeile
+    wie etwas, das man sofort starten koennte.
+
+    Gegenstueck zu `_baubereit` im Materialien-Reiter: dasselbe
+    Ja/Nein, aber MIT Begruendung. Gerechnet wird gegen `build_mats` -
+    die exakten Mengen des Plans (Regel 9), ohne Pipeline-Anteil
+    (`virt`): der Reaktor-Inhalt liegt nicht im Hangar.
+
+    Liefert [] (startbereit) oder eine Liste
+        [{"tid", "braucht", "da", "grund"}]
+    mit `grund` = "wird_gebaut" (die Zutat haengt selbst am Bau - erst
+    danach stimmt die Zusage) oder "zu_wenig".
+    """
+    aus = []
+    for _m, _q in (mats or []):
+        try:
+            _m, _q = int(_m), int(_q or 0)
+        except (TypeError, ValueError):
+            continue
+        if _q <= 0:
+            continue
+        _da = (int((lager or {}).get(_m, 0) or 0)
+               - int((virt or {}).get(_m, 0) or 0))
+        if int((build_runs or {}).get(_m, 0) or 0) > 0:
+            # Zutat wird selbst gebaut: startbereit ist sie erst, wenn sie
+            # WIRKLICH schon im Lager liegt (nicht in der Pipeline).
+            if _da < _q:
+                aus.append({"tid": _m, "braucht": _q, "da": max(0, _da),
+                            "grund": "wird_gebaut"})
+            continue
+        if _da < _q:
+            aus.append({"tid": _m, "braucht": _q, "da": max(0, _da),
+                        "grund": "zu_wenig"})
+    return aus
 
 
 def fehlbedarf_vorschau(build_runs, build_mats, out_qty_map, delivered,
@@ -3295,6 +4084,108 @@ def sell_preis_ziel_modus(ziel_preis, undercut_preis):
 # ---- Corp-Blaupausen in My Blueprints (1.1.0) -------------------------------
 # Discord-Wunsch 27.09.2026 ("Blueprints im Corp-Hangar"). Rein, ohne Qt -
 # die aa-Suite prueft sie direkt.
+
+# ---- Order-Update-Intervall (emm735) ----------------------------------------
+# Nutzer 27.10.2026 (Discord-Wunsch "Spaceballs 2", 22.10.): "Next" soll
+# Orders ueberspringen, die vor weniger als N Tagen angefasst wurden. Die Uhr
+# je Order startet von selbst (store.order_intervall_*); hier steht nur die
+# REINE Entscheidung - EINE Stelle fuer Anzeige UND "Next".
+
+def _intervall_paar(roh):
+    """(Tage, Stunden) aus einem gespeicherten Wert: Zahl = nur Tage (alte
+    Form), Liste/Tupel = (Tage, Stunden). Unlesbares/Negatives zaehlt als 0."""
+    try:
+        if isinstance(roh, (list, tuple)):
+            t = roh[0] if len(roh) > 0 else 0
+            h = roh[1] if len(roh) > 1 else 0
+        else:
+            t, h = roh, 0
+        return (max(0, int(round(float(t or 0)))),
+                max(0, int(round(float(h or 0)))))
+    except (TypeError, ValueError):
+        return (0, 0)
+
+
+def order_intervall_dauer(einstellungen, tid):
+    """Wirksames Intervall (Tage, Stunden) fuer ein Item: Ausnahme je Item,
+    sonst der Standard; (0, 0) = aus.
+
+    HAUPTSCHALTER (emm741): steht `ord_intervall_aktiv` in den
+    Einstellungen auf False, ist das Intervall UEBERALL aus - Standard UND
+    Ausnahmen je Item -, die Werte bleiben aber gespeichert. FEHLT der
+    Eintrag, gilt seit emm785 AUS (Nutzer 31.10.2026: "der Skip button
+    sollte standardmaessig nicht angehackt sein"); bis dahin galt AN.
+    EINE Stelle dafuer (Regel 9): alle Leser (Next-Filter, Statusspalte,
+    Stufe-0-Anzeige) fragen dieses Intervall hier ab."""
+    e = einstellungen or {}
+    _akt = e.get("ord_intervall_aktiv") if isinstance(e, dict) else None
+    if not _akt:
+        return 0, 0
+    try:
+        je_item = (e.get("ord_intervall_item") or {}).get(str(int(tid)))
+    except (TypeError, ValueError):
+        je_item = None
+    if je_item is not None:
+        return _intervall_paar(je_item)
+    return _intervall_paar([e.get("ord_intervall_tage", 0),
+                            e.get("ord_intervall_stunden", 0)])
+
+
+def order_intervall_faellig_ts(clock_ts, tage, stunden=0):
+    """Zeitpunkt (Epoche), AB DEM die Order wieder dran ist - oder None ohne
+    Uhr/Intervall.
+
+    NUR TAGE: Kalendertage, faellig um 00:01 (lokal) des N-ten Tags. Nutzer
+    27.10.2026: "ab dem 3. Tag kann man wieder modifizieren, also ab 00:01
+    Uhr morgens IMMER" - 1 Tag heisst einmal je Kalendertag (wer um 23:59
+    anfasst, ist um 00:01 wieder dran).
+    MIT STUNDEN: genau gerechnet, Uhr + Tage x 24 h + Stunden, ohne 00:01-
+    Ausrichtung (Nutzer: "auch eine Stunden-Eingabe" - der Weg zu einer
+    echten Mindestpause, z.B. 24 h statt "ein Kalendertag")."""
+    import datetime as _dt
+    tage, stunden = int(tage or 0), int(stunden or 0)
+    if not clock_ts or (tage <= 0 and stunden <= 0):
+        return None
+    if stunden > 0:
+        return float(clock_ts) + tage * 86400.0 + stunden * 3600.0
+    tag = (_dt.datetime.fromtimestamp(float(clock_ts)).date()
+           + _dt.timedelta(days=tage))
+    return _dt.datetime.combine(tag, _dt.time(0, 1)).timestamp()
+
+
+def order_intervall_status(clock_ts, tage, jetzt, stunden=0):
+    """(faellig, rest_sekunden). Ohne Uhr oder ohne Intervall IMMER faellig -
+    im Zweifel nachbessern, nie faelschlich ueberspringen."""
+    ab = order_intervall_faellig_ts(clock_ts, tage, stunden)
+    if ab is None:
+        return True, 0.0
+    rest = ab - float(jetzt)
+    return (rest <= 0), max(0.0, rest)
+
+
+def order_intervall_tage_bis(clock_ts, tage, jetzt):
+    """Ganze Kalendertage von HEUTE bis zum Faelligkeitstag (nur Tage-Modus;
+    0 = heute faellig oder keine Uhr)."""
+    import datetime as _dt
+    ab = order_intervall_faellig_ts(clock_ts, tage, 0)
+    if ab is None:
+        return 0
+    return max(0, (_dt.datetime.fromtimestamp(ab).date()
+                   - _dt.datetime.fromtimestamp(float(jetzt)).date()).days)
+
+
+def order_intervall_dauer_kurz(sek):
+    """Restzeit knapp: '2 d 4 h' / '5 h 10 min' / '12 min'."""
+    s = max(0, int(sek or 0))
+    d, r = divmod(s, 86400)
+    h, r = divmod(r, 3600)
+    m = r // 60
+    if d:
+        return f"{d} d {h} h"
+    if h:
+        return f"{h} h {m} min"
+    return f"{max(1, m)} min"
+
 
 def eigener_preis_live(order_id, preis, buch):
     """Preis der EIGENEN Order, wie das Orderbuch ihn gerade zeigt (emm321).
@@ -3805,16 +4696,25 @@ def prio_jobs_zuteilen(jobs, plaene, vergeben, ist_reaktion):
                 continue
         elif _act != 1:
             continue
-        for p in plaene or []:
-            if float(j["_ts"]) < float(p.get("seit") or 0.0):
-                continue
-            cap = rest[p["id"]].get(tid, 0)
-            if cap < n:
-                continue
-            out[p["id"]][tid] = out[p["id"]].get(tid, 0) + n
-            rest[p["id"]][tid] = cap - n
-            verteilt[jid] = p["id"]
-            break
+        # NUR BEI EINDEUTIGKEIT ZUORDNEN (emm792, Audit 31.10.2026,
+        # KRITISCH "stille Prio-Fehlzuordnung"): passt der Job in MEHRERE
+        # Plaene, ist die Rangfolge nur eine Vermutung - der Nutzer baut
+        # ausdruecklich "kreuz und quer, ohne sich an die Runs zu halten".
+        # 7 Runs fuer Plan #2 gebaut landeten still bei Rang 1, der
+        # daraufhin unverbrauchte Zutaten freigab (nachgestellt,
+        # repro.py F3). Jetzt: genau EIN Kandidat -> zuordnen wie bisher;
+        # mehrere -> Job bleibt unvergeben und laeuft in den Frage-Dialog
+        # (offene_job_fragen), wie es der Nutzer-Entscheid vom 24.09.2026
+        # ("einmal fragen und die Antwort an der job_id merken") vorsieht.
+        _kand = [p for p in (plaene or [])
+                 if float(j["_ts"]) >= float(p.get("seit") or 0.0)
+                 and rest[p["id"]].get(tid, 0) >= n]
+        if len(_kand) != 1:
+            continue
+        p = _kand[0]
+        out[p["id"]][tid] = out[p["id"]].get(tid, 0) + n
+        rest[p["id"]][tid] = rest[p["id"]][tid] - n
+        verteilt[jid] = p["id"]
     return out, verteilt
 
 
@@ -4082,6 +4982,133 @@ def corp_jobs_verteilen(corp_jobs, cids, bekannte_job_ids):
         else:
             uebrig.append(j)
     return je_cid, uebrig
+
+
+def jobs_hand_spalten(chars, anordnung, max_spalten=5, folge=None):
+    """Die SELBST GEZOGENE Anordnung der Charakter-Karten (emm775).
+
+    Nutzer 30.10.2026: "Eigentlich könnten wir die karten auch selber
+    anordnen wie wir es schon in my blueprints machen ... Bis maximal
+    5 Rows und die tiefe darf natürlich quasi unendlich laufen."
+    Er hat sich dafuer entschieden, dass das die Account-Nummern
+    ERSETZT (emm772) - ein Mechanismus statt zwei.
+
+    `anordnung`: [[cid, ...], ...] wie zuletzt gespeichert (je Spalte
+    eine Liste). -> dieselbe Form, aber abgeglichen mit der Wirklichkeit:
+
+      * Charaktere, die es NICHT MEHR gibt (entlinkt, ausgeblendet),
+        fallen heraus - sonst zeigte die Seite Luecken oder stuerzte.
+      * NEUE Charaktere, die in der Anordnung fehlen, haengen hinten an
+        der kuerzesten Spalte - niemand wird unsichtbar, und die Spalten
+        bleiben halbwegs gleich lang, bis er sie selbst hinzieht.
+      * Mehr als `max_spalten` Spalten werden zusammengelegt: der
+        Ueberhang wandert an die kuerzeste der erlaubten Spalten.
+      * Leere Spalten fallen weg.
+
+    Ohne gespeicherte Anordnung (erster Aufruf) wird `folge` auf
+    `max_spalten` Spalten verteilt - reihum, damit alle etwa gleich
+    lang sind. Corp-Karten (negative Schluessel) zaehlen wie jede
+    andere Karte; sie lassen sich genauso ziehen. Rein, ohne Qt.
+    """
+    chars = chars or {}
+    _da = {int(c) for c in chars}
+    _reihe = [int(c) for c in (folge if folge is not None
+                               else jobs_karten_folge(chars))]
+    try:
+        _mx = max(1, int(max_spalten or 1))
+    except (TypeError, ValueError):
+        _mx = 5
+    spalten, gesehen = [], set()
+    for _g in (anordnung or []):
+        _sp = []
+        for cid in (_g or []):
+            try:
+                c = int(cid)
+            except (TypeError, ValueError):
+                continue
+            if c in _da and c not in gesehen:
+                _sp.append(c)
+                gesehen.add(c)
+        if _sp:
+            spalten.append(_sp)
+    # Zu viele Spalten: den Ueberhang auf die erlaubten verteilen.
+    while len(spalten) > _mx:
+        _ueber = spalten.pop()
+        _kurz = min(range(_mx), key=lambda i: len(spalten[i]))
+        spalten[_kurz].extend(_ueber)
+    # Neue oder bisher unverteilte Charaktere einsortieren.
+    _neu = [c for c in _reihe if c not in gesehen]
+    if _neu and not spalten:
+        spalten = [[] for _ in range(min(_mx, max(1, len(_neu))))]
+    for c in _neu:
+        _kurz = min(range(len(spalten)), key=lambda i: len(spalten[i]))
+        spalten[_kurz].append(c)
+    return [g for g in spalten if g]
+
+
+def jobs_account_spalten(chars, zuordnung, max_spalten=4, folge=None):
+    """Charakter-Karten nach ACCOUNT in Spalten (emm772).
+
+    Nutzer 30.10.2026: "Sortiere die charaktere in industrie jobs nach
+    Account -> charaktere. Also alle charaktere von Account 1 sitzen
+    links untereinander, Alle charaktere von Account 2 sitzen mittig
+    unter einander ... nicht mehr als 4 Accounts neben einander. wer
+    mehr Accounts hat rutscht dann Account 5 mit seinen charakteren
+    nach unten."
+
+    WARUM VON HAND: ESI gibt die Account-Zugehoerigkeit NICHT heraus -
+    CCP veroeffentlicht sie bewusst nicht (sonst waere Multiboxing von
+    aussen nachweisbar). Es gibt keinen Endpunkt, aus dem man sie
+    ableiten koennte; geraten wird hier nichts. `zuordnung` ist deshalb
+    die Hand-Eingabe des Nutzers: {character_id: Account-Nummer}.
+
+    -> [[cid, ...], ...] - eine Liste je SPALTE, in Anzeige-Reihenfolge
+    (erst die ersten `max_spalten` Accounts nebeneinander, dann die
+    naechsten darunter). Charaktere OHNE Zuordnung kommen in eine
+    eigene letzte Spalte, damit niemand unsichtbar wird; sie
+    verschwinden, sobald alle zugeordnet sind.
+
+    Innerhalb einer Spalte gilt `folge` (Vorgabe: `jobs_karten_folge`,
+    also Handlungsbedarf zuerst) - die Account-Einteilung ersetzt die
+    Dringlichkeits-Sortierung nicht, sie gruppiert sie nur. Corp-Karten
+    (negative Schluessel) haengen hinten an, sie gehoeren zu keinem
+    Account. Rein, ohne Qt.
+    """
+    chars = chars or {}
+    _reihe = list(folge if folge is not None else jobs_karten_folge(chars))
+    _zu = {}
+    for k, v in (zuordnung or {}).items():
+        try:
+            _zu[int(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
+    _gruppen = {}
+    _ohne, _corp = [], []
+    for cid in _reihe:
+        if int(cid) < 0:
+            _corp.append(cid)
+            continue
+        acc = _zu.get(int(cid))
+        if acc is None or acc <= 0:
+            _ohne.append(cid)
+        else:
+            _gruppen.setdefault(acc, []).append(cid)
+    spalten = [_gruppen[a] for a in sorted(_gruppen)]
+    if _ohne:
+        spalten.append(_ohne)
+    if _corp:
+        spalten.append(_corp)
+    if not spalten:
+        return []
+    try:
+        _mx = max(1, int(max_spalten or 1))
+    except (TypeError, ValueError):
+        _mx = 4
+    # Bloecke zu je `_mx` Spalten: Account 5 rutscht unter Account 1.
+    out = []
+    for _i in range(0, len(spalten), _mx):
+        out.extend(spalten[_i:_i + _mx])
+    return out
 
 
 def jobs_karten_folge(chars):
@@ -4368,7 +5395,7 @@ def _iso_ts(s):
 
 
 def haken_ohne_job(haken_ts, aktiv_tids, geliefert, abruf_ts,
-                   frist=HAKEN_FRIST, rueck=HAKEN_RUECK):
+                   frist=HAKEN_FRIST, rueck=HAKEN_RUECK, plan_runs=None):
     """Hand-Haken im Runplaner, zu denen ESI KEINEN Job kennt -> Fehlklick
     (emm350, Nutzer: "habe ich selbst abgehakt und ESI trackt keinen Job zu
     diesem Item, darf der Bauplan meinen Haken wieder entfernen, dann habe
@@ -4402,19 +5429,45 @@ def haken_ohne_job(haken_ts, aktiv_tids, geliefert, abruf_ts,
        das Fenster richtig (man hakt ab, waehrend man baut), bei Science
        ist es systematisch falsch.
 
+    EIN KOMPLETT GEBAUTES ITEM IST NIE EIN FEHLKLICK (emm751, Nutzer
+    29.10.2026): "Probe und Breacher habe ich schon mehrmals angehackt
+    und sie lösen sich immer wieder von selbst. ich weiss nicht warum,
+    ausserdem hat ESI schon lange gegengechecket und bestätigt dass sie
+    da sind und/oder gebaut wurden". GEMESSEN an seiner settings.json,
+    Plan "Minmatar 1": die Probe-/Breacher-Jobs (je 50 Runs) stehen in
+    der Job-Zuordnung, geliefert um den 18.10.; abgehakt hat er die
+    Zeilen neu am 28.10. 18:37 (nach einer Umverteilung trug die Zeile
+    einen anderen Charakter). 10 Tage > `rueck` (3 Tage) - der Beleg
+    fiel aus dem Fenster, der Haken flog, bei jedem neuen Haken wieder.
+    DERSELBE SYSTEMATISCHE FEHLER WIE emm526 bei Science, nur bei
+    Bau-Zeilen: das Rueckblick-Fenster passt nicht, wenn man eine Zeile
+    erst lange nach dem Bau abhakt. Das Fenster selbst bleibt (es
+    verhindert, dass ein Uralt-Job eines FRUEHEREN Plans einen frischen
+    Fehlklick deckt) - aber decken die gelieferten Runs eines Items die
+    GEPLANTEN Runs (`plan_runs`) VOLLSTAENDIG, ist das Item nachweislich
+    fertig gebaut, und sein Haken bleibt, egal wie alt die Jobs sind.
+    Sein eigenes emm350-Modell sagt genau das: "ESI trackt keinen Job zu
+    diesem Item" trifft hier nicht zu - ESI trackt ihn, er ist nur alt.
+
     Regel 3: im Zweifel die sichere Seite - und sicher ist hier, den Haken
     des Nutzers stehen zu lassen."""
     if abruf_ts is None:
         return []
-    gel = {}
+    gel, gel_runs = {}, {}
     for j in geliefert or []:
         try:
             pid = int(j.get("product_type_id") or 0)
         except (TypeError, ValueError, AttributeError):
             continue
+        if not pid:
+            continue
+        try:
+            gel_runs[pid] = gel_runs.get(pid, 0) + int(j.get("runs") or 0)
+        except (TypeError, ValueError):
+            pass
         ts = _iso_ts(j.get("completed_date")) or _iso_ts(j.get("end_date")) \
             or _iso_ts(j.get("start_date"))
-        if pid and ts is not None:
+        if ts is not None:
             gel.setdefault(pid, []).append(ts)
     aktiv = set()
     for t in aktiv_tids or ():
@@ -4437,6 +5490,14 @@ def haken_ohne_job(haken_ts, aktiv_tids, geliefert, abruf_ts,
             continue
         tid = int(teile[2])
         if tid in aktiv:
+            continue
+        # emm751: alle geplanten Runs geliefert -> fertig gebaut, kein
+        # Fehlklick - unabhaengig davon, wie alt die Jobs sind.
+        try:
+            _soll751 = int((plan_runs or {}).get(tid, 0) or 0)
+        except (TypeError, ValueError):
+            _soll751 = 0
+        if _soll751 > 0 and gel_runs.get(tid, 0) >= _soll751:
             continue
         if any(g >= ts - float(rueck) for g in gel.get(tid, [])):
             continue
@@ -4870,7 +5931,7 @@ def struktur_me_karten(ende, stufe_fn, rig_ec_fn, basis, me_vorgabe):
 
 
 
-def einkauf_posten(rows, feld, baut):
+def einkauf_posten(rows, feld, baut, nur_tids=None):
     """Die Posten, die der Einkaufs-Dialog wirklich kopiert bzw. in den
     Wagen legt - EINE Stelle (Regel 9).
 
@@ -4892,6 +5953,14 @@ def einkauf_posten(rows, feld, baut):
     die Menge ist die ROHMENGE ohne Puffer (den rechnet der Aufrufer mit
     `_buy_surplus_qty`, auch das nur an einer Stelle).
 
+    `nur_tids` (emm783, Nutzer-Screenshot 31.10.2026: Megacyte trotz
+    entferntem Haken mitkopiert): None = alle Zeilen wie bisher; eine
+    Menge = NUR diese type_ids kommen in die Liste. Der Kopier-Dialog
+    reicht hier seine ANGEHAKTEN Zeilen durch - ein von Hand entfernter
+    Haken heisst "nicht kaufen", und der gilt vor allen anderen Regeln
+    (eine abgewaehlte Zeile zaehlt auch nicht als "ohne Namen" oder
+    "wird gebaut").
+
     Rueckgabe: (posten, ohne_namen, gebaut_raus) -
     posten = [(tid, name, rohmenge)] in der Reihenfolge von `rows`.
     """
@@ -4907,12 +5976,27 @@ def einkauf_posten(rows, feld, baut):
             tid = int(r.get("tid"))
         except Exception:
             continue
+        if nur_tids is not None and tid not in nur_tids:
+            continue
         name = (r.get("name") or "").strip()
-        if tid in _baut:
+        # "TROTZDEM KAUFEN" GILT (emm796, Audit 31.10.2026, M7): drei
+        # Tooltips des Kopier-Dialogs versprechen, dass ein BEWUSST
+        # gesetzter Haken ein plan-gebautes Item kauft ("ticking there
+        # explicitly means 'buy anyway'") - der Filter hier warf es
+        # trotzdem raus; der einzige Nachkauf-Weg fuer verlorene
+        # Eigenbau-Zwischenprodukte war damit tot. Mit Haken-Filter
+        # (`nur_tids` gesetzt) heisst ein angehaktes Bau-Item also KAUFEN;
+        # ohne Haken-Filter (None, z.B. "Einkauf jetzt") bleibt die alte
+        # Schutzregel: Selbstgebautes wird nie still mitgekauft.
+        if tid in _baut and nur_tids is None:
             gebaut.append(name or f"#{tid}")
             continue
         try:
-            q = int(r.get(feld) or 0)
+            # AUFRUNDEN, NIE ABSCHNEIDEN (emm796, Audit 31.10.2026, G5):
+            # Plan-Mengen sind floats; int() haette aus 4'799.999 still
+            # 4'799 gemacht - 1 Stueck zu wenig gekauft (Regel 3).
+            import math as _m796
+            q = int(_m796.ceil(float(r.get(feld) or 0) - 1e-9))
         except Exception:
             q = 0
         if q <= 0:
@@ -4922,3 +6006,130 @@ def einkauf_posten(rows, feld, baut):
             continue
         posten.append((tid, name, q))
     return posten, ohne_namen, gebaut
+
+
+# ----------------------------------------------------------------------
+# BLAUPAUSEN-STAND EINES EINGEFRORENEN PLANS (emm681)
+# ----------------------------------------------------------------------
+# Nutzer 24.10.2026: "Aber der Plan sollte nicht staendig neu verteilen
+# denn durch dass das meine ingame bauschleifen einfach mal mehrere
+# Stunde oder Tage laufen, sollte ja klar sein was in Zukunft im Hangar
+# landet und was nicht."
+#
+# GEMESSEN (seine echte Planer-Diagnose vom 23.10.2026, Plan -1, 26 Jobs,
+# 7 Charaktere):
+#   * `schedule_build` ist bei IDENTISCHER Eingabe deterministisch -
+#     zweimal derselbe Lauf gibt zweimal dieselbe Zuteilung.
+#   * Von allen Eingaben bewegen sich nur ZWEI von selbst:
+#     `per_item_cap` (wie viele eigene Blaupausen-Kopien) und
+#     `per_item_runs_cap` (Runs je Kopie). Beide kommen aus dem
+#     ESI-Blaupausen-Cache - und der schrumpft, waehrend er baut, weil
+#     verbrauchte Kopien im Spiel verschwinden.
+#   * Folge, nachgerechnet: drei verbrauchte Kopien auf vier Reaktionen
+#     reichen, damit Ferrogel von "Leziris Getflow" zu "Fredy" springt,
+#     188 Runs Crystalline Carbonide den Charakter wechseln und die
+#     Gesamtdauer von 20,84 auf 22,75 Tage steigt. Angebrochene
+#     Endprodukt-Kopien verschieben ebenfalls Runs zwischen Charakteren.
+#
+# DESHALB WIRD NICHT DIE ZUTEILUNG GESPEICHERT, SONDERN IHRE EINGABE.
+# Das ist die kleinere und die ehrlichere Aenderung: die Zuteilung
+# entsteht weiterhin jedes Mal aus demselben Planer - sie faellt nur
+# gleich aus, weil er dieselbe Frage gestellt bekommt. Eine gespeicherte
+# Zuteilung muesste dagegen gegen den uebrigen Ablauf (Stufenzeiten,
+# Teile, Kalender) konsistent gehalten werden; jede Luecke darin waere
+# ein neuer stiller Fehler.
+
+def bp_stand_packen(cap, runs_cap, build_runs, frost_ts):
+    """Den Blaupausen-Stand JSON-fest machen (Regel: alles, was durch
+    settings.json geht, kommt als STRING zurueck - emm672 hat gezeigt,
+    was ein uebersehener Zahlenschluessel kostet).
+
+    ZWEI GUELTIGKEITS-SCHLUESSEL werden mitgespeichert:
+      * `tids` - die Items des Plans. Aendert der Nutzer den Plan, passt
+        der Stand nicht mehr und wird neu genommen.
+      * `frost_ts` - der Zeitpunkt des Einfrierens. Wer auftaut, etwas
+        aendert und neu einfriert, bekommt einen neuen Stand, ohne dass
+        dafuer irgendwo ein Loeschen stehen muss. Eine Gueltigkeit, die
+        sich von selbst ergibt, kann man nicht vergessen."""
+    def _m(d):
+        out = {}
+        for _k, _v in (d or {}).items():
+            try:
+                _ki, _vi = int(_k), int(_v or 0)
+            except (TypeError, ValueError):
+                continue
+            if _vi >= 1:
+                out[str(_ki)] = _vi
+        return out
+    _tids = []
+    for _t in (build_runs or {}):
+        try:
+            _tids.append(int(_t))
+        except (TypeError, ValueError):
+            continue
+    try:
+        _ft = float(frost_ts or 0)
+    except (TypeError, ValueError):
+        _ft = 0.0
+    # STAND-FASSUNG (emm684). Die erste Fassung entstand mit einer zu
+    # schwachen Bremse und konnte einen Stand festhalten, in dem der
+    # ESI-Blaupausen-Cache gar nichts beigesteuert hatte. Solche Staende
+    # liegen jetzt in echten settings.json - sie muessen verworfen
+    # werden, und zwar ohne dass irgendwo ein Aufraeum-Schritt noetig
+    # ist, den man vergessen kann. Die Fassungsnummer erledigt das: wer
+    # sie nicht traegt, gilt als ungueltig.
+    return {"cap": _m(cap), "runs_cap": _m(runs_cap),
+            "tids": sorted(_tids), "frost_ts": _ft, "v": 2}
+
+
+def bp_stand_lesen(stand, build_runs, frost_ts):
+    """(cap, runs_cap) mit ZAHLEN-Schluesseln, oder (None, None).
+
+    (None, None) heisst "nimm den Live-Stand": entweder gibt es noch
+    keinen gespeicherten, oder er beschreibt einen anderen Plan oder ein
+    anderes Einfrieren. Im Zweifel lieber neu rechnen als mit einem
+    fremden Stand planen (Regel 3)."""
+    if not isinstance(stand, dict):
+        return None, None
+    # Fassung 1 stammt aus der zu schwachen Bremse (emm684) - verwerfen.
+    if int(stand.get("v") or 0) < 2:
+        return None, None
+    try:
+        _ft = float(frost_ts or 0)
+    except (TypeError, ValueError):
+        _ft = 0.0
+    try:
+        _ft_alt = float(stand.get("frost_ts") or 0)
+    except (TypeError, ValueError):
+        _ft_alt = 0.0
+    # Ein Stand ohne Einfrier-Zeitpunkt ist kein gueltiger Stand: er
+    # koennte aus einem frueheren Einfrieren stammen, und das waere die
+    # Art von stiller Altlast, die spaeter niemand mehr zuordnet.
+    if _ft <= 0 or _ft_alt <= 0 or abs(_ft - _ft_alt) > 1.0:
+        return None, None
+    _soll = []
+    for _t in (build_runs or {}):
+        try:
+            _soll.append(int(_t))
+        except (TypeError, ValueError):
+            continue
+    _hat = []
+    for _t in (stand.get("tids") or ()):
+        try:
+            _hat.append(int(_t))
+        except (TypeError, ValueError):
+            continue
+    if sorted(_soll) != sorted(_hat):
+        return None, None
+
+    def _m(d):
+        out = {}
+        for _k, _v in (d or {}).items():
+            try:
+                _ki, _vi = int(_k), int(_v or 0)
+            except (TypeError, ValueError):
+                continue
+            if _vi >= 1:
+                out[_ki] = _vi
+        return out
+    return _m(stand.get("cap")), _m(stand.get("runs_cap"))

@@ -1,0 +1,14 @@
+Auftrag: exportiere_diagnose.py 
+Beendet: 2026-10-24 09:45:08 (Ortszeit)
+Laufzeit: 8.7 s
+Rueckgabewert: 0
+----------------------------------------------------------------------
+Diagnose-Export
+  Charaktere: 9
+  Corporations abgerufen: 1
+  Hangar: 1349 Materialien, 25,399,734 Stueck
+  Bauschleife: 26 Erzeugnisse, 89 Jobs
+  Job-Zuordnung: 13 Plaene
+  Kaeufe seit 2026-08-25: 619 Posten
+  Namen: 1768 von 1768 type_ids
+Fertig: E:\Eve Online\Bots\EVE Motor Market\eve-motor-market\berichte\diagnose_export.json (215,966 Bytes)

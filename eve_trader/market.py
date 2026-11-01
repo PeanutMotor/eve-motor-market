@@ -158,7 +158,8 @@ def fracht_je_item(transactions, hub_orte, satz, volumen, ohne=(),
 
 
 def realized_trades(transactions, tax: float = 0.0, broker: float = 0.0,
-                    paar=None, fracht_satz=0.0, volumen=None, ohne=()) -> list:
+                    paar=None, fracht_satz=0.0, volumen=None, ohne=(),
+                    herkunft=None) -> list:
     """Match each sell against FIFO buy lots to get realised profit per sale.
     tax/broker are fractions (e.g. 0.045). Returns events sorted by date.
     Sells whose buy lot isn't in the data are matched only for the known part.
@@ -184,7 +185,16 @@ def realized_trades(transactions, tax: float = 0.0, broker: float = 0.0,
     unbekanntes Volumen oder Rechtsklick "keine Fracht" -> keine. Das
     Ereignis traegt "fracht", `net` ist um sie gemindert. Der Satz ist der
     HEUTIGE (welcher damals galt, weiss niemand).
+
+    HERKUNFT (Funfact, emm570): mit `herkunft` = {(transaction_id,
+    character_id): True | False | None} aus `funfact.kauf_herkunft` traegt
+    jedes Ereignis ZUSAETZLICH, wie viele seiner Stueck ueber die eigene
+    Buy-Order (`kauf_eigen`), aus fremden Sell-Orders (`kauf_markt`) oder
+    unbekannt (`kauf_unbekannt`) gekauft wurden, und die mengengewichtete
+    Haltedauer `halte_h`. OHNE `herkunft` ist das Ergebnis Zahl fuer Zahl
+    das alte - kein neuer Schluessel, keine andere Rechnung.
     """
+    _mit_h = herkunft is not None
     try:
         fracht_satz = max(0.0, float(fracht_satz or 0))
     except (TypeError, ValueError):
@@ -203,7 +213,10 @@ def realized_trades(transactions, tax: float = 0.0, broker: float = 0.0,
                tid)                            # FIFO je Charakter getrennt halten,
         if t["is_buy"]:                         # sonst matchen Verkäufe von Char A gegen
             lots[key].append([t["quantity"], t["unit_price"],    # Käufe von Char B →
-                              int(t.get("location_id") or 0)])
+                              int(t.get("location_id") or 0),
+                              t.get("date"),
+                              (herkunft.get((t.get("transaction_id"), _cid))
+                               if _mit_h else None)])
         else:                                   # falscher, aufgeblähter Umsatz bei „Alle“.
             qty = t["quantity"]
             sell = t["unit_price"]
@@ -214,11 +227,21 @@ def realized_trades(transactions, tax: float = 0.0, broker: float = 0.0,
             _vort = int(t.get("location_id") or 0)
             _m3 = (float((volumen or {}).get(tid) or 0)
                    if (fracht_satz > 0 and tid not in ohne) else 0.0)
+            _h_eigen = _h_markt = _h_unbek = 0
+            _h_std = 0.0
             while qty > 0 and dq:
                 lot = dq[0]
                 take = min(qty, lot[0])
                 matched_qty += take
                 matched_cost += take * lot[1]
+                if _mit_h:
+                    if lot[4] is True:
+                        _h_eigen += take
+                    elif lot[4] is False:
+                        _h_markt += take
+                    else:
+                        _h_unbek += take
+                    _h_std += take * _stunden_zwischen(lot[3], t.get("date"))
                 if _m3 > 0 and _vort and lot[2] and lot[2] != _vort:
                     fracht += take * _m3 * fracht_satz
                 lot[0] -= take
@@ -241,7 +264,24 @@ def realized_trades(transactions, tax: float = 0.0, broker: float = 0.0,
                 "revenue": sell * matched_qty,
                 "fracht": fracht,
             })
+            if _mit_h:
+                events[-1].update({
+                    "kauf_eigen": _h_eigen, "kauf_markt": _h_markt,
+                    "kauf_unbekannt": _h_unbek,
+                    "halte_h": _h_std / matched_qty})
     return events
+
+
+def _stunden_zwischen(a, b) -> float:
+    """Stunden von Kauf `a` bis Verkauf `b` (ISO-Zeitstempel). Unlesbar ->
+    0 (zaehlt dann als kurz gehalten - nur fuer die Funfact-Einteilung)."""
+    import datetime as _dt
+    try:
+        x = _dt.datetime.fromisoformat(str(a).replace("Z", "+00:00"))
+        y = _dt.datetime.fromisoformat(str(b).replace("Z", "+00:00"))
+        return max(0.0, (y - x).total_seconds() / 3600.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def realized_summary(events, days: int = 0):

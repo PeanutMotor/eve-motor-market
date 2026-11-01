@@ -97,8 +97,8 @@ MUTATIONEN = [
      'geteilte Widgets werden ausgeklinkt'),
     ('Zusatzkosten fehlen in der Kartenschaetzung',
      'eve_trader/ui/main_window.py',
-     '"profit": net_sell_total - total_cost - _extra,',
-     '"profit": net_sell_total - total_cost,',
+     '                    "profit": net_sell_total - total_cost - _extra - _trip,',
+     '                    "profit": net_sell_total - total_cost - _trip,   # MUTATION',
      'Schnellschaetzung zieht die Zusatzkosten ab'),
     ('Messskript baut die Optionen selbst nach',
      'werkzeuge/messung_bau_vs_bauplan.py',
@@ -272,7 +272,7 @@ MUTATIONEN = [
      'der aktive Reiter ist AMBER, nicht Cyan'),
     ('Zeilenhoehe wieder geraten statt gemessen (Knopf beschnitten)',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     """                            _hoehe = max(34, _cw.sizeHint().height() + 10)""",
+     """                            _hoehe = self._knopf_hoehe_fest(_cw)""",
      '                            _hoehe = 30   # MUTATION',
      'die Zeile ist hoch genug fuer den Knopf'),
     # BAUPLAN-POPUP (Sitzung 8, zweimal gemeldet): kehrt der Dialog zurueck,
@@ -390,13 +390,7 @@ MUTATIONEN = [
     # Capslock?"): faellt die Begruendung weg, ist die Wahl wieder Blackbox.
     ('Struktur-Wahl merkt sich keine Begruendung mehr',
      'eve_trader/ui/main_window.py',
-     """            self._bd_struct_choice[activity] = (
-                ([(t("{name} (fixed assignment)").format(
-                       name=_fest.get('name', '?')),
-                   round(benefit(_fest), 2))] if _fest is not None else [])
-                + [(x.get("name", "?"), round(benefit(x), 2))
-                   for x in ranked
-                   if _fest is None or x.get("id") != _fest.get("id")])""",
+     '            self._bd_struct_choice[activity] = (\n                ([(t("{name} (this plan)" if _fest_plan\n                     else "{name} (fixed assignment)").format(\n                       name=_fest.get(\'name\', \'?\')),\n                   round(benefit(_fest), 2))] if _fest is not None else [])\n                + [(x.get("name", "?"), round(benefit(x), 2))\n                   for x in ranked\n                   if _fest is None or x.get("id") != _fest.get("id")])',
      '            self._bd_struct_choice[activity] = []   # MUTATION',
      'merkt sich die Rangliste MIT Nutzen-Werten'),
     # KOPIEN FUERS BAUEN (Sitzung 8): die Aufteilung MUSS der des
@@ -721,22 +715,23 @@ MUTATIONEN = [
     # nicht starten koennen.
     ('Sofort-Start-Zusage zaehlt den Reaktor-Inhalt wieder als Hangar',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     """                _lager = (int(stock.get(m, 0) or 0)
-                          - int(_virt.get(m, 0) or 0))""",
-     '                _lager = int(stock.get(m, 0) or 0)   # MUTATION',
+     '                _lager = (int(_lag_s.get(m, 0) or 0)\n                          - int(_virt.get(m, 0) or 0))',
+     '                _lager = int(_lag_s.get(m, 0) or 0)   # MUTATION',
      'Sofort-Start-Zusage zieht die Pipeline vom Bestand AB'),
     # BLAUPAUSEN-REFRESH (Sitzung 8): die zwei stillen Rueckbauten.
     ('Neue Blaupausen erreichen den Runplaner wieder nicht',
      'eve_trader/ui/mw_bauplan_fenster.py',
      """                if result.get("owned_bp") is not None:
                     self._bd_owned_bp_cache = result["owned_bp"]""",
-     '                pass   # MUTATION',
+     '                if False:   # MUTATION\n                    pass',
      'der done-Pfad erneuert den Cache nur bei vollem Erfolg'),
     ('Teilliste ersetzt bei Fehlschlag den vollen Cache',
      'eve_trader/ui/mw_bauplan_fenster.py',
      '''return {"agg": agg, "assets": _assets_only,
+                            "bp_orte": _bp_orte807,
                             "owned_bp": owned_bp_fresh if bp_fetch_ok else None,''',
      '''return {"agg": agg, "assets": _assets_only,
+                            "bp_orte": _bp_orte807,
                             "owned_bp": owned_bp_fresh,   # MUTATION''',
      'gescheiterter Charakter ersetzt den Cache NICHT'),
     # ESI-AUSBLENDUNG (Sitzung 8, "nur ich darf streichen"): die zwei
@@ -751,17 +746,8 @@ MUTATIONEN = [
      'laufende Jobs zaehlen zur Deckung'),
     ('ESI-Deckung setzt keinen Zustand (Zeile sieht wieder nach Arbeit aus)',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     # ANKER ZWEIMAL UMGEZOGEN (Sitzung 14). Erst zeigte diese Mutation auf
-     # die Zaehl-Zeile (mit dem Ausblenden weggefallen), dann auf einen
-     # zweiten Zustands-Block, der sich als redundant herausstellte. Jetzt
-     # auf den EINEN verbliebenen Weg.
-     '''                        _zustand = ("laeuft"''',
-     '''                        _zustand = (None or "" and "laeuft"   # MUTATION''',
-     # ERWARTUNG NACHGEZOGEN (Sitzung 14, Umfeld-Rotprobe): die Mutation
-     # WIRD erkannt, aber von den Textproben, nicht von der funktionalen.
-     # Grund: der Ersatzausdruck liefert bei geliefertem Material weiterhin
-     # "fertig", der gruene Punkt kommt also. Scharf ist sie fuer die
-     # Zusage, DASS der Zustand hier ueberhaupt bestimmt wird.
+     '                        _zustand = _mwh_run_zustand(_gel_r, _lauf_r, _fert_r,\n                                                    _best_r, R_plan)',
+     '                        _zustand = "nicht_noetig"   # MUTATION',
      'aa164 stattdessen bekommt die Zeile einen ZUSTAND'),
     # ESI-SICHTBARKEIT IM RUNPLANER (Sitzung 8): die zwei stillen
     # Rueckbauten - Teilfortschritt verschwindet / Geliefert-Stand wird
@@ -1040,8 +1026,8 @@ MUTATIONEN = [
      'Kinder werden mitgezogen'),
     ('Der gestrichene Alle-Materialien-Knopf kehrt zurueck',
      'eve_trader/ui/main_window.py',
-     '            _b_miss = QPushButton(_txt("Copy missing materials"))',
-     '            _b_all = QPushButton("\\U0001F4CB Alle Materialien kopieren")   # MUTATION\n            _b_all.clicked.connect(lambda: _copy_rows("vollkauf", "x"))\n            row.insertWidget(0, _b_all)\n            _b_miss = QPushButton("\\U0001F4CB Fehlende Materialien kopieren")',
+     '            _b_miss.clicked.connect(\n                lambda: _copy_rows("missing", _txt("missing item(s)")))',
+     '            _b_miss.clicked.connect(\n                lambda: _copy_rows("vollkauf", _txt("missing item(s)")))   # MUTATION',
      'kein Knopf kopiert mehr den Vollkauf'),
     ('Asset-Fehlschlaege verschlucken den Grund wieder',
      'eve_trader/ui/mw_bauplan_fenster.py',
@@ -1062,7 +1048,7 @@ MUTATIONEN = [
      'eve_trader/ui/main_window.py',
      '            _frozen_plan = self._frozen_snapshot_plan() if _frozen else None',
      '            _frozen_plan = None   # MUTATION',
-     'genau EIN job() nutzt den Schnappschuss'),
+     'aa146 dort haengt er an der Einfrier-Bedingung'),
     ('Snapshot-Unpack laesst die JSON-String-Keys stehen',
      'eve_trader/ui/mw_helpers.py',
      '                if _k.isdigit():\n                    return int(k)',
@@ -1085,7 +1071,7 @@ MUTATIONEN = [
      'missing=0 + gebaut -> gruen mit Grund'),
     ('Kopier-Ergebnis verschwindet wieder hinterm Dialog',
      'eve_trader/ui/main_window.py',
-     '                    _copy_note.setText(_txt(\n                        "Nothing copied \\u2013 the plan has 0 {what} (everything is built "\n                        "or covered from stock/jobs, see status per row).").format(what=was)',
+     '                    _copy_note.setText(_txt(\n                        "Nothing copied \\u2013 the plan has 0 {what} (everything is built "\n                        "or covered from stock/jobs, see status per row).").format(what=was)\n                        + (_txt(" {n} position(s) are made by the plan itself.").format(\n                            n=len(_gebaut_raus)) if _gebaut_raus else "")\n                        + (_txt(" \\u2013 {n} unticked, not copied").format(\n                            n=_n_ab783) if _n_ab783 else ""))',
      '                    pass   # MUTATION',
      'auch der Null-Fall nennt den GRUND im Dialog'),
     ('Runplaner ignoriert die echte Blaupausen-Zahl wieder',
@@ -1254,7 +1240,7 @@ MUTATIONEN = [
      'eve_trader/ui/main_window.py',
      '        outer.addWidget(_side, 0)',
      '        pass   # MUTATION',
-     'rechts steht jeder Plan mit einer Gewinn-Zeile'),
+     'b2t die Gewinn-Uebersicht haengt im selben Container'),
     ('Kopfzeile haengt wieder direkt an der Seite (Geister-Kopfzeilen)',
      'eve_trader/ui/main_window.py',
      '        lv.addLayout(head_row)',
@@ -1374,10 +1360,8 @@ MUTATIONEN = [
     # --- aa192: Reihenfolge-Falle der Stufen-Karte ---
     ('Bauplan-Oeffner faellt wieder auf den spaeten Instanz-Zustand zurueck',
      'eve_trader/ui/main_window.py',
-     '''                    list(ids), groups, recipes.reaction_products, cat_me_map,
-                    type_id, recipes=recipes)''',
-     '''                    list(ids), groups, recipes.reaction_products, cat_me_map,
-                    type_id)   # MUTATION''',
+     '        me_map, me_map_reaction, rig_me_map, used, ec_me_map = self._bau_me_maps(\n            list(ids), groups, recipes.reaction_products, cat_me_map,\n            type_id, recipes=recipes, override=override)',
+     '        me_map, me_map_reaction, rig_me_map, used, ec_me_map = self._bau_me_maps(\n            list(ids), groups, recipes.reaction_products, cat_me_map,\n            type_id, override=override)   # MUTATION',
      'alle drei Aufrufer reichen recipes durch'),
     # --- aa193: eingefrorene Plaene in der Listen-Schaetzung ---
     ('Listen-Schaetzung rechnet eingefrorene Plaene wieder zu Live-Preisen',
@@ -1417,7 +1401,7 @@ MUTATIONEN = [
      'eve_trader/ui/main_window.py',
      '''        self._icon_prefetch_pending(_icons_nach)''',
      '''        pass   # MUTATION''',
-     'GENAU 13 Stellen sind am Icon-Nachtrag angeschlossen'),
+     'GENAU 14 Stellen sind am Icon-Nachtrag angeschlossen'),
     ('Scanner verliert den Icon-Nachtrag',
      'eve_trader/ui/main_window.py',
      '''        self._icon_prefetch_pending(
@@ -1457,7 +1441,7 @@ MUTATIONEN = [
                 if _att <= 0 or v <= 1:
                     return v
                 return math.ceil(_att / math.ceil(_att / min(v, _att)))''',
-     'Regler ueber der Versuchszahl schnappt zurueck (10 -> 4)'),
+     'b2w Plateau-Stufe schnappt (3 -> 2)'),
     ('Kopieranleitung: das Ingame-Feld "Job Runs" verschwindet',
      'eve_trader/ui/mw_bauplan_tabs.py',
      '                        f\'Job Runs: <span style="{_zahl}">{_auf["kopien"]}</span>\'\n',
@@ -1713,13 +1697,8 @@ MUTATIONEN = [
      """            build_made[tid] = build_made.get(tid, 0) + int(runs)   # MUTATION""",
      'build_made sind STUECK'),
 
-    ('ESI-Verzug wird ignoriert (Zutaten zu frueh freigegeben)',
-     'eve_trader/ui/mw_helpers.py',
-     """            if stock_seen_ts is None or float(_ts) > float(stock_seen_ts):
-                continue          # ESI hat den Verbrauch noch nicht gesehen""",
-     """            if False:   # MUTATION
-                continue""",
-     'Haken juenger als der ESI-Stand gibt NICHTS frei'),
+    # ENTFERNT 31.10.2026 (emm782): 'ESI-Verzug wird ignoriert (Zutaten zu frueh freigegeben)' - die Zusage
+    # wurde bewusst abgeschafft/umgekehrt (emm750 (MEMORY.md:9541): beide Haken-Zweige in _reserve_map_mitlaufend ENTFERNT, Hand-Hake)
 
     ('Abhaken bucht alles ab statt anteilig',
      'eve_trader/ui/mw_helpers.py',
@@ -2402,11 +2381,9 @@ MUTATIONEN = [
 
     ('Rest-Rechnung nimmt wieder den ROHEN Live-Bestand (Reservierungen ignoriert)',
      'eve_trader/ui/main_window.py',
-     '        live = ((getattr(self, "_bd_opts", None) or {}).get("stock")\n'
-     '                or getattr(self, "_bd_live_stock", None) or {})',
-     '        live = (getattr(self, "_bd_live_stock", None)\n'
-     '                or (getattr(self, "_bd_opts", None) or {}).get("stock") or {})',
-     'der rohe Live-Stand ist nur der Rueckfall'),
+     '        self._reservierungen_anwenden(_stock, anzeige=False)\n        return _stock',
+     '        return _stock',
+     'die zieht die Reservierungen anderer Plaene ab'),
 
     ('"Fertig" ist wieder eine Einbahnstrasse',
      'eve_trader/ui/main_window.py',
@@ -2474,8 +2451,8 @@ MUTATIONEN = [
 
     ('Laeuft-Merker bleibt im Fehlerfall haengen',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '                self._bd_esi_busy = False\n                _dlg_overlay_hide()\n                QMessageBox.warning',
-     '                _dlg_overlay_hide()\n                QMessageBox.warning',
+     '                self._bd_esi_busy = False\n                _dlg_overlay_hide()',
+     '                _dlg_overlay_hide()',
      'der Laeuft-Merker wird in BEIDEN Ausgaengen freigegeben'),
 
 
@@ -3037,15 +3014,13 @@ Source: "settings.json"; DestDir: "{app}"''',
     # bewachte. Jetzt faellt b40.
     ('Sperre still abgeschaltet (if False and ...)',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '        _offen = self._offener_bauplan()\n        if _offen is not None:\n',
-     '        _offen = self._offener_bauplan()\n        if False and _offen is not None:   # MUTATION\n',
+     '        _offen = self._offener_bauplan()\n        if _offen is None:\n            return False',
+     '        _offen = self._offener_bauplan()\n        return False   # MUTATION',
      'die Sperre greift, bevor irgendetwas gebaut wird'),
     ('Sperre ohne Hinweis - stilles Nichts-passiert',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '''            _QMB.information(
-                _offen, _txt("Only one build plan at a time"),''',
-     '''            (lambda *a, **k: None)(   # MUTATION
-                _offen, _txt("Only one build plan at a time"),''',
+     '        _QMB.information(\n            _offen, _txt("Only one build plan at a time"),',
+     '        (lambda *a, **k: None)(   # MUTATION\n            _offen, _txt("Only one build plan at a time"),',
      'der Nutzer bekommt einen Hinweis'),
 
     # --- (b41) ERLEDIGTE RUNS BLEIBEN STEHEN, GEDIMMT (Sitzung 14) ---
@@ -3101,30 +3076,18 @@ Source: "settings.json"; DestDir: "{app}"''',
      'in Bau: es ist der LAUF-Punkt, nicht der gruene'),
     ('Erledigte Zeile zeigt wieder die Rest-Null statt der Plan-Runs',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '                                    else "nicht_noetig")\n                        # de_scan4: an\n                        R = R_plan',
-     '                                    else "nicht_noetig")   # MUTATION\n                        # de_scan4: an',
+     '                        _zustand = _mwh_run_zustand(_gel_r, _lauf_r, _fert_r,\n                                                    _best_r, R_plan)\n                        R = R_plan',
+     '                        _zustand = _mwh_run_zustand(_gel_r, _lauf_r, _fert_r,\n                                                    _best_r, R_plan)',
      'in Bau: die Zeile zeigt die PLAN-Runs, nicht 0'),
     ('Laufender Job gilt pauschal als gebaut (gedeckt = fertig)',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     # DIE FEHLERKLASSE, die die Rotprobe in dieser Sitzung gefunden hat:
-     # `mw_helpers.fertig_menge` zaehlt geliefert UND laufend zusammen. Wer
-     # daraus pauschal "fertig" macht, setzt einen GRUENEN Punkt auf eine
-     # Position, die noch in der Bauschleife steckt.
-     '''                        _zustand = ("laeuft"
-                                    if (_lauf_r > 0 and _gel_r < R_plan)
-                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)
-                                    else "bestand" if _best_r > 0
-                                    else "nicht_noetig")''',
-     '''                        _zustand = "fertig"   # MUTATION''',
+     '                        _zustand = _mwh_run_zustand(_gel_r, _lauf_r, _fert_r,\n                                                    _best_r, R_plan)',
+     '                        _zustand = "fertig"   # MUTATION',
      'in Bau: es ist der LAUF-Punkt, nicht der gruene'),
     ('Fertige, nicht abgeholte Jobs gelten wieder als laufend',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     # DER GEMELDETE FEHLER (Nutzer-Screenshot, Sitzung 14): "da steckt aber
-     # schon lange nichts mehr in der Bauschleife". `_bd_active_jobs_map`
-     # fuehrt "active" UND "ready" - ohne die Trennung bekommt laengst
-     # Gebautes den Lauf-Punkt.
-     '                            if _j.get("status") != "ready")',
-     '                            )   # MUTATION',
+     '                        _lauf_r = sum(\n                            int(_j.get("runs") or 0) for _j in\n                            ((getattr(self, "_bd_active_jobs_map", None)\n                              or {}).get(_tid_a) or [])\n                            if _j.get("status") != "ready")',
+     '                        _lauf_r = sum(\n                            int(_j.get("runs") or 0) for _j in\n                            ((getattr(self, "_bd_active_jobs_map", None)\n                              or {}).get(_tid_a) or []))   # MUTATION',
      'ready: fertig Gebautes zeigt den GRUENEN Punkt'),
     ('Charakter-Zeile zieht nicht mit (leeres Kaestchen ueber Punkt-Zeilen)',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -3530,18 +3493,22 @@ Source: "settings.json"; DestDir: "{app}"''',
         frow.addWidget(self.bp_myb_group)''',
      'Gruppen-Dropdown gibt es nicht mehr'),
     # --- b47: Spalten-Knopf in Swing und Regional (Sitzung 16) ---
+    # emm814: der alte obere Split ist weg, der Knopf haengt jetzt in der
+    # eigenen Reihe ueber der Liste - die Mutation laesst ihn ungebaut.
     ('Swing-Spalten-Knopf haengt nicht mehr an der Liste',
      'eve_trader/ui/main_window.py',
-     '''        self._assemble_top_and_table(root, h_boxes, self.hold_table, "swing",
-                                     box_ratio=60,
-                                     spalten_btn=self._hold_spalten_btn)''',
-     '''        self._assemble_top_and_table(root, h_boxes, self.hold_table, "swing",
-                                     box_ratio=60)   # MUTATION''',
+     '''        _sprow814.addWidget(self._hold_spalten_btn)
+        root.addLayout(_sprow814, 0)
+''',
+     '        root.addLayout(_sprow814, 0)   # MUTATION (Knopf haengt nirgends)\n',
      'Swing: der Knopf haengt wirklich im Fenster'),
+    # emm815: + Spalte 10 ("vs Ø Ziel") und 11 (Rating), dafuer faellt 8
+    # aus der Vorgabe. Die Mutationsliste behaelt ACHT Eintraege, damit
+    # nur die Auswahl-Pruefung anschlaegt, nicht die Anzahl.
     ('Regional zeigt andere Spalten als gewaehlt',
      'eve_trader/ui/main_window.py',
-     '        _REG_STD = [0, 1, 2, 5, 4, 8, 9]',
-     '        _REG_STD = [0, 3, 4, 6, 7, 1, 2]   # MUTATION',
+     '        _REG_STD = [0, 1, 2, 5, 4, 9, 10, 11]',
+     '        _REG_STD = [0, 3, 4, 6, 7, 1, 2, 8]   # MUTATION',
      'Regional: und es sind die vorgesehenen'),
     ('Regional-Reihenfolge wird nicht mehr gesetzt',
      'eve_trader/ui/main_window.py',
@@ -3552,10 +3519,12 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        pass   # MUTATION',
      'Regional: Reihenfolge stimmt'),
     # --- Swing: Auswahl UND Reihenfolge (Sitzung 16, zweite Runde) ---
+    # emm814: + Spalte 12 (Rating) - die Mutationsliste behaelt SIEBEN
+    # Eintraege, damit nur die Auswahl-Pruefung anschlaegt.
     ('Swing zeigt andere Spalten als gewaehlt',
      'eve_trader/ui/main_window.py',
-     '        _SWING_STD = [0, 1, 4, 8, 3, 6]',
-     '        _SWING_STD = [0, 1, 3, 6, 10, 2]   # MUTATION',
+     '        _SWING_STD = [0, 1, 4, 8, 3, 6, 12]',
+     '        _SWING_STD = [0, 1, 3, 6, 10, 2, 12]   # MUTATION',
      'Swing: und es sind die vorgesehenen'),
     ('Swing-Reihenfolge wird nicht mehr gesetzt',
      'eve_trader/ui/main_window.py',
@@ -3588,9 +3557,11 @@ Source: "settings.json"; DestDir: "{app}"''',
      'zugeschaltete Spalte ueberlebt das Neuzeichnen'),
     # ANDERE SECHS: die ANZAHL stimmt weiter, nur tragen zwei davon nicht in
     # jedem Modus - genau der Unsinn, den die Rechnung verhindern sollte.
+    # emm812: + Spalte 19 (Rating) in der Vorgabe - die Mutationsliste
+    # behaelt ACHT Eintraege, damit nur die Auswahl-Pruefung anschlaegt.
     ('Daytrade zeigt andere Spalten als gewaehlt',
      'eve_trader/ui/main_window.py',
-     '        _DAY_STD = [0, 1, 2, 7, 8, 10, 4, 17]',
+     '        _DAY_STD = [0, 1, 2, 7, 8, 4, 17, 19]',
      '        _DAY_STD = [0, 2, 4, 8, 9, 10, 11, 12]   # MUTATION',
      'es sind die vom Nutzer gewaehlten'),
     # DIE REIHENFOLGE geht still verloren, wenn moveSection wegfaellt: die
@@ -4320,12 +4291,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa319 leerer Cache -> 0/0 (Nichtwissen darf nichts verguenstigen)'),
     ('Der Rueckfall greift bei JEDEM Rebuild und ueberschreibt die Eingabe',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '                    if not me_spin.isEnabled() and not me_spin.property("emm_frost"):\n'
-     '                        me_spin.setEnabled(True)\n'
-     '                        me_spin.blockSignals(True)',
-     '                    if True:   # MUTATION\n'
-     '                        me_spin.setEnabled(True)\n'
-     '                        me_spin.blockSignals(True)',
+     '                    if not me_spin.isEnabled() and not me_spin.property("emm_frost"):\n                        me_spin.setEnabled(True)\n                        me_spin.setToolTip(_txt("Material efficiency of the FINAL product only."))',
+     '                    if True:   # MUTATION\n                        me_spin.setEnabled(True)\n                        me_spin.setToolTip(_txt("Material efficiency of the FINAL product only."))',
      'aa319 der Rueckfall haengt an der Sperre, nicht am Rebuild'),
     ('Der Hinweis zur eigenen BPC verschwindet',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -4378,7 +4345,7 @@ Source: "settings.json"; DestDir: "{app}"''',
     # --- aa294: Versionsnummer lesbar und vor der Freigabe sichtbar ---
     ('Die Versionsnummer ist fuer die Update-Pruefung unlesbar',
      'eve_trader/__init__.py',
-     '__version__ = "1.1.4"',
+     '__version__ = "1.1.5"',
      '__version__ = "unbekannt"',
      'aa294 die Versionsnummer ist lesbar und hat drei Teile'),
     ('pruefe.py zeigt die Programmversion nicht mehr',
@@ -4394,8 +4361,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa270 jedes Label in _DEAL_DIAG_LABELS hat eine deutsche Uebersetzung'),
     ('Ein deutscher Anzeigetext kehrt ueber eine Variable zurueck',
      'eve_trader/ui/main_window.py',
-     '                    status_txt = t("enough \\u2713")',
-     '                    status_txt = "genug \\u2713"   # MUTATION',
+     '                status_txt = t("enough \\u2713")',
+     '                status_txt = "genug \\u2713"   # MUTATION',
      'aa271 de_scan3.py steigt nicht ueber die Ratsche'),
     # --- aa271: de_scan4 und Katalog-Konstanten (Sitzung 17) ---
     ('Eine Fehlermeldung im Hintergrund-Modul ist wieder deutsch',
@@ -4518,6 +4485,78 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        self.discord_btn.clicked.connect(self._open_discord)\n        sv.addWidget(self.discord_btn)\n',
      '        self.discord_btn.clicked.connect(self._open_discord)\n',
      'b63 er sitzt DIREKT ueber dem Spenden-Knopf'),
+    # --- aa580/b196: laufender Kopierjob beweist die Blaupause (emm580) ---
+    ('Ein laufender Kopierjob beweist die Blaupause nicht mehr',
+     'eve_trader/ui/mw_helpers.py',
+     '            if akt not in JOB_BP_IST_PRODUKT:\n                continue',
+     '            if True:   # MUTATION\n                continue',
+     'aa580 Kopierjob -> Blaupause 501 \'im Job\', als Original'),
+    ('Blueprints-Reiter liest wieder nur die Blaupausen-Liste',
+     'eve_trader/ui/main_window.py',
+     '        im_job = self._bd_bp_im_job_wirksam()\n',
+     '        im_job = getattr(self, "_bd_bp_im_job", None) or {}   # MUTATION\n',
+     "b196 emm580 Kopierjob ohne Listeneintrag: NICHT 'completely "),
+    # --- aa581: ein Original genuegt (emm581) ---
+    ('Ein einzelnes Original zaehlt wieder als zu wenig',
+     'eve_trader/ui/main_window.py',
+     '                status_txt = t("enough \\u2713")\n                status_col = theme.GREEN\n',
+     '                n_low += 1   # MUTATION\n                status_txt = t("enough \\u2713")\n                status_col = theme.GREEN\n',
+     "aa581 ein Original zaehlt nie als 'zu wenig'"),
+    # --- b196: Original im Job schlaegt die Kopie (emm582) ---
+    ('Freie Kopie verdeckt wieder das Original im Job',
+     'eve_trader/ui/main_window.py',
+     '            elif bpc_runs > 0 and not any(\n',
+     '            elif bpc_runs > 0 and not 0 * any(   # MUTATION\n',
+     'b196 emm582 Original im Job schlaegt die Kopie'),
+    # --- b215: Fokus-Modus im Bauplan (emm578) ---
+    ('Fokus-Modus klappt nichts weg',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '            w.setVisible(not an)',
+     '            pass   # MUTATION',
+     'b215 Fokus klappt Endprodukte- und Kopf-Karte weg'),
+    ('Esc im Fokus-Modus schliesst wieder das Fenster',
+     'eve_trader/ui/mw_basis.py',
+     '        if (event.key() == Qt.Key_Escape and callable(self.esc_vorher)\n                and self.esc_vorher()):',
+     '        if False:   # MUTATION',
+     'b215 Esc beendet den Fokus und schliesst das Fenster NICHT'),
+    # --- b214: Runplaner-Knoepfe feste Hoehe (emm576) ---
+    ('Runplaner-Knoepfe wachsen wieder mit der Schrift',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '            _b.setFixedHeight(self.KNOPF_H_RUNPLAN)',
+     '            pass   # MUTATION',
+     'b214 Knopf hat die feste Hoehe trotz grosser Schrift'),
+    # --- aa573/b212: Funfact-Bau-Gewinn (emm573) ---
+    ('Ein gemerkter Bau-Gewinn wird von heutigen Preisen ueberschrieben',
+     'eve_trader/funfact.py',
+     '        if not isinstance(e, dict) or e.get("gewinn") is not None:\n            continue',
+     '        if not isinstance(e, dict):   # MUTATION\n            continue',
+     'aa573 ... meldet False, wenn sich nichts aendert'),
+    ('Funfact rechnet den Handelsgewinn wieder ohne Fracht',
+     'eve_trader/funfact.py',
+     '                                    fracht_satz=fracht_satz, volumen=volumen,',
+     '                                    fracht_satz=0.0, volumen=volumen,   # MUTATION',
+     'aa575 Handrechnung: 10 x (200-100) - Fracht 10 x 2 m3 x 5 = 900'),
+    ('Gewinne verlieren ihre Farbe',
+     'eve_trader/ui/main_window.py',
+     '        return theme.GREEN if w > 0 else (theme.RED if w < 0 else None)',
+     '        return None   # MUTATION',
+     'b212 Bau-Gewinn und Handels-Gewinn sind gruen'),
+    ('Der nachgeschaetzte Bau-Gewinn wird nie gemerkt',
+     'eve_trader/ui/main_window.py',
+     '                if isinstance(_st_ff, dict) and funfact.gewinn_setzen(\n                        _st_ff, d["gewinn_neu"]):',
+     '                if False:   # MUTATION',
+     'b212 nachgeschaetzter Gewinn wird im UI-Faden gemerkt'),
+    # --- b213: Video-Knopf (emm572) ---
+    ('Der Video-Knopf oeffnet nichts mehr',
+     'eve_trader/ui/main_window.py',
+     '        QDesktopServices.openUrl(QUrl(config.YOUTUBE_URL))',
+     '        pass   # MUTATION',
+     'b213 ein Klick oeffnet genau die Playlist'),
+    ('Der Video-Knopf faellt aus der Seitenleiste',
+     'eve_trader/ui/main_window.py',
+     '        self.youtube_btn.clicked.connect(lambda: self._open_youtube())\n        sv.addWidget(self.youtube_btn)\n',
+     '        self.youtube_btn.clicked.connect(lambda: self._open_youtube())\n',
+     'b213 er sitzt DIREKT unter dem Tutorial-Knopf'),
     # --- b64: Bauplan-Seitenleiste offen, Endprodukt-Zeile uebersetzt (Sitzung 17) ---
     ('Build or buy startet wieder zugeklappt',
      'eve_trader/ui/mw_bauplan_fenster.py',
@@ -5259,17 +5298,15 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa343 gebaute Posten werden nicht vorangekreuzt'),
     ('Der Kopf zaehlt Gebautes wieder als fehlend',
      'eve_trader/ui/main_window.py',
-     '                          if int(_r["tid"]) not in _baut_kopf',
-     '                          if True',
+     '            _n_miss = sum(1 for _r in rows\n                          if int(_r["tid"]) not in _baut_kopf\n                          and (_r.get("missing") or 0) > 0)\n        else:\n            # GEBAUTES ZAEHLT NICHT ALS FEHLEND (Sitzung 20) - sonst sagt der\n            # Kopf "dir fehlen 9 von 9", waehrend der Materialien-Reiter\n            # "0 zu kaufen" meldet. Dieselbe Menge, zwei Aussagen.\n            _n_miss = sum(1 for _r in rows\n                          if int(_r["tid"]) not in _baut_kopf\n                          and ((_r.get("missing") or 0) > 0\n                               or _r.get("own", 0) <= 0))\n',
+     '            _n_miss = sum(1 for _r in rows\n                          if True\n                          and (_r.get("missing") or 0) > 0)\n        else:\n            # GEBAUTES ZAEHLT NICHT ALS FEHLEND (Sitzung 20) - sonst sagt der\n            # Kopf "dir fehlen 9 von 9", waehrend der Materialien-Reiter\n            # "0 zu kaufen" meldet. Dieselbe Menge, zwei Aussagen.\n            _n_miss = sum(1 for _r in rows\n                          if True\n                          and ((_r.get("missing") or 0) > 0\n                               or _r.get("own", 0) <= 0))\n',
      'aa343 der Kopf zaehlt Gebautes nicht als fehlend'),
     # NEU VERANKERT (emm546): der Filter steht jetzt in
     # mw_helpers.einkauf_posten - EINE Liste fuer Kopie und Volumen-Zeile.
     ('Multibuy kopiert wieder, was der Plan selbst baut',
      'eve_trader/ui/mw_helpers.py',
-     '        if tid in _baut:\n            gebaut.append(name or f"#{tid}")\n'
-     '            continue\n',
-     '        if False and tid in _baut:   # MUTATION\n'
-     '            gebaut.append(name or f"#{tid}")\n            continue\n',
+     '        if tid in _baut and nur_tids is None:\n            gebaut.append(name or f"#{tid}")\n            continue\n',
+     '        if False and tid in _baut:   # MUTATION\n            gebaut.append(name or f"#{tid}")\n            continue\n',
      'aa344 gebaute Posten werden uebersprungen'),
     ('Das Weglassen wird verschwiegen',
      'eve_trader/ui/main_window.py',
@@ -5944,14 +5981,14 @@ Source: "settings.json"; DestDir: "{app}"''',
     # Das Erz muss in den Restbedarf.
     ('rest_anpassen vergisst das Erz',
      'eve_trader/reprocess.py',
-     '        if erz and int(st.get("menge") or 0) > 0 and not st.get("gratis"):\n            out[erz] = out.get(erz, 0) + int(st["menge"])\n',
+     '        if erz and menge > 0 and not st.get("gratis"):\n            out[erz] = out.get(erz, 0) + menge\n',
      '        pass   # MUTATION\n',
      'aa366 Restbedarf nicht abgehakt: Erz rein, gedecktes Mineral raus'),
     # Ein abgehakter Schritt darf nichts mehr gutschreiben.
     ('fehl_anpassen ignoriert den Haken',
      'eve_trader/reprocess.py',
-     '    for st in (schritte or []):\n        if schritt_key(st) in abgehakt or st.get("built"):\n            continue           # Weg A: siehe rest_anpassen\n        for m, q in (st.get("deckt") or {}).items():\n            kredit[int(m)]',
-     '    for st in (schritte or []):\n        if st.get("built"):   # MUTATION\n            continue\n        for m, q in (st.get("deckt") or {}).items():\n            kredit[int(m)]',
+     '    for st in (schritte or []):\n        if schritt_key(st) in abgehakt or st.get("built"):\n            continue           # Weg A: siehe rest_anpassen\n        _tf = _teil_faktor(st, teil)\n',
+     '    for st in (schritte or []):\n        if st.get("built"):   # MUTATION\n            continue\n        _tf = _teil_faktor(st, teil)\n',
      'aa366 Fehlbedarf abgehakt: kein Kredit, kein Erz'),
     # Der Fehlbedarf des Dialogs muss den Tausch kennen.
     ('_fehlbedarf_jetzt kennt das Reprocessing nicht',
@@ -5962,8 +5999,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     # Der Restbedarf der Einkaufsliste ebenso.
     ('_restbedarf_jetzt kennt das Reprocessing nicht',
      'eve_trader/ui/main_window.py',
-     '        return reprocess.rest_anpassen(\n            need, ((plan.get("reprocess") or {}).get("schritte") or []),\n            set(_checked) | self._erz_durch_bestand())\n',
-     '        return need   # MUTATION\n',
+     '        return reprocess.rest_anpassen(\n            need, ((plan.get("reprocess") or {}).get("schritte") or []),\n            set(_checked) | self._erz_durch_bestand(),\n',
+     '        return need   # MUTATION\n        return reprocess.rest_anpassen(\n            need, ((plan.get("reprocess") or {}).get("schritte") or []),\n            set(_checked) | self._erz_durch_bestand(),\n',
      'b7u Restbedarf: 100 Erz + 40 Testmat (100 Bedarf - 60 gedeckt), kein Kauf'),
     # Gedeckte Minerale muessen im Reiter stehen.
     ('Gedeckte Minerale fehlen im Materialien-Reiter',
@@ -6088,8 +6125,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     # Der Runplaner muss den Deckel auch UEBERGEBEN.
     ('Runplaner uebergibt keinen Runs-Deckel',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '            per_item_runs_cap=self._resolve_per_item_runs_cap(type_id))',
-     '            per_item_runs_cap={})   # MUTATION',
+     '            per_item_runs_cap=_rcap_item)\n',
+     '            per_item_runs_cap={})   # MUTATION\n',
      'b7w Runplaner mit Limit 4 je Job, 1 Slot: Welle 1 = eine Kopie mit 4 Runs'),
     # Die kleinste eigene Kopie zaehlt (Regel 3), nicht die groesste.
     ('BPC-Deckel nimmt die groesste Kopie',
@@ -6149,7 +6186,7 @@ Source: "settings.json"; DestDir: "{app}"''',
     # Ganze Kopien duerfen ALLE Slots aller Charaktere nutzen.
     ('Kopien bleiben auf zwei Charaktere gedeckelt',
      'eve_trader/industry.py',
-     '                return R if tid in _unit else max_reasonable\n',
+     '                return R if (tid in _unit or is_reaction) else max_reasonable\n',
      '                return max_reasonable   # MUTATION\n',
      'aa368 310 Runs auf 9+10+5 Slots: alle 24 Slots voll, Rest 7 als zweite Welle bei Leziris'),
 
@@ -6188,8 +6225,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa369 mit EC 1 %: 57'620 Plates (statt 58'200), 740 Fusion, 2'180 Ion"),
     ('Dialog reicht ec_me_map nicht weiter',
      'eve_trader/ui/main_window.py',
-     '                opts["ec_me_map"] = ec_me_map          # EC-Rollenbonus fuer invented Items\n',
-     '                pass   # MUTATION\n',
+     '        opts["ec_me_map"] = ec_me_map          # EC-Rollenbonus fuer invented Items\n',
+     '        pass   # MUTATION\n',
      'aa369 drei Aufrufer setzen ec_me_map in die opts'),
     # Corp-Orte in der Ortssuche (Tester-Befund 19.09.2026).
     ('corp.orte laeuft nicht zur Wurzel hoch',
@@ -6292,8 +6329,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'b7u ... und der Runplaner hat KEINE Stufe 0'),
     ('Gratis-Erz landet im Restbedarf',
      'eve_trader/reprocess.py',
-     '        if erz and int(st.get("menge") or 0) > 0 and not st.get("gratis"):\n            out[erz] = out.get(erz, 0) + int(st["menge"])\n',
-     '        if erz and int(st.get("menge") or 0) > 0:   # MUTATION\n            out[erz] = out.get(erz, 0) + int(st["menge"])\n',
+     '        if erz and menge > 0 and not st.get("gratis"):\n            out[erz] = out.get(erz, 0) + menge\n',
+     '        if erz and menge > 0:   # MUTATION\n            out[erz] = out.get(erz, 0) + menge\n',
      'b7u ... Restbedarf ohne Erz, Testmat gedeckt'),
     ('Der Rezept-Baum hat keinen Erz-Kopf',
      'eve_trader/ui/mw_bauplan_fenster.py',
@@ -6902,7 +6939,7 @@ Source: "settings.json"; DestDir: "{app}"''',
     ('Das Auftauen greift auf ALLE Plaene, nicht nur auf die Quellen',
      'eve_trader/config.py',
      '        if x.get("id") not in _q:\n            continue\n',
-     '        if False:   # MUTATION\n            continue\n',
+     '        if False:   # MUTATION\n',
      'aa418 ... A aufgetaut und entsperrt, B aufgetaut, C unberuehrt'),
     ('Ein Plan im Buendel wird wieder nach der Reservierung gefragt',
      'eve_trader/ui/mw_helpers.py',
@@ -7523,10 +7560,12 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        b = getattr(self, "hold_gold_btn" if swing else "gold_btn", None)\n',
      '        b = self.hold_gold_btn if swing else self.gold_btn   # MUTATION\n',
      "aa238 ... der Zugriff auf den verschwundenen Knopf ist abgesichert"),
+    # emm814: die Bedingung deckt jetzt auch Swing ab ("ja unsichtbar
+    # machen") - die Mutation schaltet das Verstecken komplett ab.
     ('Die Order-Leiter steht wieder im Daytrade',
      'eve_trader/ui/main_window.py',
-     '        if self._ladder_is_buy_side(key):\n            table.setVisible(False)\n',
-     '        pass   # MUTATION\n',
+     '        if self._ladder_is_buy_side(key) or key == "swing":\n',
+     '        if False:   # MUTATION (Leiter ueberall sichtbar)\n',
      "aa394 im Daytrade ist die Leiter versteckt"),
     ('Das Mengenfeld heisst wieder abgekuerzt',
      'eve_trader/ui/main_window.py',
@@ -7931,9 +7970,9 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa198 der angefangene Satz ist im Quelltext verankert"),
     ('Die Zeile sagt nicht mehr, WIE VIEL schon laeuft',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '                                _txt("(building {n}/{m})").format(\n',
-     '                                _txt("(building)").format(   # MUTATION\n',
-     "aa405 die Zeile nennt die laufenden Runs samt Ziel"),
+     '                                    _txt("(building {n}/{m} runs)").format(\n',
+     '                                    _txt("(building)").format(   # MUTATION\n',
+     'aa405 die Zeile nennt die laufenden Runs samt Ziel'),
     ('So lange wie noetig kommt als Null beim Planer an',
      'eve_trader/ui/mw_bauplan_tabs.py',
      '                _out[_st] = float("inf")\n',
@@ -7970,16 +8009,14 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa407 ein umstrittenes Item wird nicht festgeschrieben"),
     ('Stufe C: auch Jobs von VOR dem Einfrieren werden festgeschrieben',
      'eve_trader/ui/mw_helpers.py',
-     '        if fts < _seit:\n            continue\n'
-     '        if _schon.get(tid, 0) + runs > grenze:\n',
-     '        if _schon.get(tid, 0) + runs > grenze:   # MUTATION\n',
-     "aa407 ein Job von VOR dem Einfrieren zaehlt nicht"),
+     '        if fts < _seit:\n            continue\n        # UEBERLIEFERUNG ZAEHLT MIT (emm792, Audit 31.10.2026, M4): ein\n',
+     '        # MUTATION (seit-Regel weg)\n        # UEBERLIEFERUNG ZAEHLT MIT (emm792, Audit 31.10.2026, M4): ein\n',
+     'aa407 ein Job von VOR dem Einfrieren zaehlt nicht'),
     ('Stufe C: der Deckel auf die Plan-Runs faellt weg',
      'eve_trader/ui/mw_helpers.py',
-     '        if _schon.get(tid, 0) + runs > grenze:\n            continue\n'
-     '        aus[jid] = (tid, runs)\n',
+     '        if _schon.get(tid, 0) and _schon.get(tid, 0) + runs > grenze:\n            continue\n        aus[jid] = (tid, runs)\n',
      '        aus[jid] = (tid, runs)   # MUTATION\n',
-     "aa407 Deckel: 100 Plan-Runs nehmen nur zwei 40er-Jobs"),
+     'aa407 Deckel: 100 Plan-Runs nehmen nur zwei 40er-Jobs'),
     ('Stufe C: die Jobs werden in Listenreihenfolge zugeordnet',
      'eve_trader/ui/mw_helpers.py',
      '    for j in sorted(jobs or [], key=_sk):\n'
@@ -8025,11 +8062,7 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        if runs <= 0 or jid in (vergeben or {}):\n            continue\n',
      '        if runs <= 0:   # MUTATION\n            continue\n',
      "aa408 ein schon beantworteter Job wird nicht wieder gefragt"),
-    ('Stufe C: auch zu grosse Jobs werden gefragt',
-     'eve_trader/ui/mw_helpers.py',
-     '        if grenze <= 0 or runs > grenze:\n',
-     '        if grenze <= 0:   # MUTATION\n',
-     "aa408 ein Job, der allein groesser ist als der ganze Plan, gehoert woanders hin"),
+    # ENTFERNT 31.10.2026 (emm792): 'Stufe C: auch zu grosse Jobs werden gefragt' - die Zusage 'uebergrosse Jobs werden NIE gefragt' wurde mit emm792 bewusst umgekehrt (neuer Anker 'Uebergrosse Jobs werden wieder nie gefragt' am Listenende)
     ('Stufe C: die Frage-Liste behaelt die Reihenfolge von ESI',
      'eve_trader/ui/mw_helpers.py',
      '    raus.sort(key=lambda d: (d["fertig_ts"], d["job_id"]))\n',
@@ -8160,18 +8193,14 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa414 ... und ohne ihn ist TC EINDEUTIG"),
     ('Buendel-Mitglieder reservieren wieder neben dem Buendel (einzeln)',
      'eve_trader/ui/mw_helpers.py',
-     '            # Buendel-Mitglied: sein Anspruch lebt im Buendel, nicht doppelt.\n'
-     '            if str(p.get("id")) in _mitgl:\n'
-     '                continue\n',
+     '            if str(p.get("id")) in _mitgl and str(p.get("id")) not in _mitgl_frei:\n                continue\n',
      '            pass   # MUTATION\n',
-     "aa414 fremde Reservierungen: das Mitglied Flycatcher fehlt"),
+     'aa414 fremde Reservierungen: das Mitglied Flycatcher fehlt'),
     ('Buendel-Mitglieder reservieren wieder neben dem Buendel (Summe)',
      'eve_trader/ui/mw_helpers.py',
-     '            # Buendel-Mitglied: reserviert nicht noch einmal neben dem Buendel.\n'
-     '            if str(p.get("id")) in _mitgl:\n'
-     '                continue\n',
+     '            if (str(p.get("id")) in _mitgl\n                    and str(p.get("id")) not in\n                    MainWindowHelpers.buendel_mitglieder_unreserviert(settings)):\n                continue\n',
      '            pass   # MUTATION\n',
-     "aa414 summierte Fremd-Reservierung: nur der Vagabond"),
+     'aa414 summierte Fremd-Reservierung: nur der Vagabond'),
     ('Buendel-Mitglieder stehen wieder im Frage-Dialog zur Wahl',
      'eve_trader/ui/mw_helpers.py',
      '            # Buendel-Mitglied: zur Wahl steht das Buendel, nicht sein Teil.\n'
@@ -8262,10 +8291,7 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa417 10 von 20 Runs belegt, kein Haken"),
     ('Die Fremd-Reservierung liest den Beleg nicht mehr',
      'eve_trader/ui/mw_helpers.py',
-     '                (p.get("frozen") or {}).get("stock_seen_ts"),\n'
-     '                belegt=MainWindowHelpers._belegt_fuer_plan(p),\n'
-     '                haken_runs=p.get("checked_runplan_runs"))\n',
-     '                (p.get("frozen") or {}).get("stock_seen_ts"),\n'
+     '                belegt=MainWindowHelpers._belegt_fuer_plan(p),\n                haken_runs=p.get("checked_runplan_runs"))\n',
      '                haken_runs=p.get("checked_runplan_runs"))   # MUTATION\n',
      "aa417 BEIDE Reservierungs-Leser reichen den Beleg weiter"),
     ('Der Runplaner zeigt wieder die geratene Karte',
@@ -8372,7 +8398,7 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa419 nur active und paused sperren"),
     ('Blaupausen: ein laufender Fertigungs-Job sperrt wieder',
      'eve_trader/esi.py',
-     '        if j.get("activity_id") in JOB_SPERRT_NICHT_AKTIVITAET:\n            continue\n',
+     '        if j.get("activity_id") in JOB_SPERRT_NICHT_AKTIVITAET:\n',
      '        if False:   # MUTATION\n            continue\n',
      "aa419 laufende FERTIGUNG sperrt nie"),
     ('Planer-Diagnose: der Fortschritts-Anhang wird nicht mehr geschrieben',
@@ -8953,8 +8979,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     # Nutzer 27.09.2026 (emm235): Order update sortierbar, Next folgt.
     ('Order update: Next ignoriert die Sortierung',
      'eve_trader/ui/main_window.py',
-     '        rows = [r for r in self._ord_zeilen_sortiert(src, buy)\n',
-     '        rows = [r for r in sorted(src, key=lambda r: r["name"])   # MUTATION\n',
+     '        _alle735 = [r for r in self._ord_zeilen_sortiert(src, buy)\n',
+     '        _alle735 = [r for r in sorted(src, key=lambda r: r["name"])   # MUTATION\n',
      "b123 Work-through 'Next' folgt der Sortierung"),
     ('Order update: Zeilen ohne Wert oben',
      'eve_trader/ui/main_window.py',
@@ -9386,8 +9412,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa463 erst Abliefern'),
     ('Karten-Folge: Zeichnen wieder alphabetisch',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '        for cid in jobs_karten_folge(_chars):\n',
-     '        for cid in sorted(_chars, key=lambda c: str(_chars[c]["name"]).lower()):   # MUTATION\n',
+     '            max_spalten=5, folge=jobs_karten_folge(_chars))\n',
+     '            max_spalten=5, folge=sorted(_chars, key=lambda c: str(_chars[c]["name"]).lower()))   # MUTATION\n',
      'aa463 die Karten werden in dieser Reihenfolge'),
     # INDUSTRY JOBS ALS KARTEN (emm330, 02.10.)
     ('Job-Gruppen: verschiedene Items landen in einer Gruppe',
@@ -9765,13 +9791,15 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa139 jeder Plan sieht die Ansprueche der Plaene VOR ihm'),
     ('Prioritaet: Jobs werden wieder zerteilt/uebergross vergeben',
      'eve_trader/ui/mw_helpers.py',
-     '            if cap < n:\n                continue\n',
-     '            if cap <= 0:   # MUTATION\n                continue\n',
-     'aa433 ein Job, der in keinen Plan ganz passt'),
+     '                 and rest[p["id"]].get(tid, 0) >= n]\n',
+     '                 and rest[p["id"]].get(tid, 0) > 0]   # MUTATION\n',
+     'aa792 nur Plan 1 hat Platz (Plan 2 fast voll)'),
     ('Prioritaet: Jobs vor dem Einfrieren zaehlen mit',
      'eve_trader/ui/mw_helpers.py',
-     '            if float(j["_ts"]) < float(p.get("seit") or 0.0):\n                continue\n',
-     '            if False:   # MUTATION\n                continue\n',
+     '        _kand = [p for p in (plaene or [])\n'
+     '                 if float(j["_ts"]) >= float(p.get("seit") or 0.0)\n',
+     '        _kand = [p for p in (plaene or [])\n'
+     '                 if True   # MUTATION (emm792: seit-Regel weg)\n',
      'aa433 ein Job VOR dem Einfrieren'),
     ('Vorstufen: nur frisch erkannte Items heben das Runplaner-Budget',
      'eve_trader/ui/mw_helpers.py',
@@ -9780,8 +9808,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa433 Phenolic-Fall'),
     ('Reservierung: kein Rueckfall auf die Plan-Runs (alte Zuteilungen)',
      'eve_trader/ui/mw_helpers.py',
-     '            if _r_b > 0 and _t_b not in geplant:\n                geplant[_t_b] = _r_b\n',
-     '            if False:   # MUTATION\n                geplant[_t_b] = _r_b\n',
+     '            if _r_b > 0:\n                geplant[_t_b] = _r_b\n                _aus_snap.add(_t_b)\n',
+     '            if False:   # MUTATION (Schnappschuss-Nenner weg)\n                geplant[_t_b] = _r_b\n                _aus_snap.add(_t_b)\n',
      'aa433 Zuteilung im alten Speicherformat'),
     # LAUFENDE JOBS BEIM START ZUORDNEN (emm263, 28.09.)
     ('Laufende Jobs werden wieder erst beim Abliefern zugeordnet',
@@ -9816,16 +9844,10 @@ Source: "settings.json"; DestDir: "{app}"''',
      '                             )}   # MUTATION',
      'aa435 umgehaengt im Frage-Dialog'),
     # HAKEN ALTER PLAENE + WARNUNG AN DER NUMMER (emm265, 28.09.)
-    ('Hand-Haken alter Plaene geben wieder nichts frei',
-     'eve_trader/ui/mw_helpers.py',
-     '            erledigt[_t_h] = min(geplant[_t_h], max(erledigt.get(_t_h, 0), _n_h))\n',
-     '            pass   # MUTATION\n',
-     'aa436 alter Plan, 5 von 10 Runs abgehakt'),
-    ('Haken alter Plaene ohne ESI-Sperre',
-     'eve_trader/ui/mw_helpers.py',
-     '            if stock_seen_ts is None or _ts_h > float(stock_seen_ts):\n',
-     '            if False:   # MUTATION\n',
-     'aa436 Haken juenger als der Bestand'),
+    # ENTFERNT 31.10.2026 (emm782): 'Hand-Haken alter Plaene geben wieder nichts frei' - die Zusage
+    # wurde bewusst abgeschafft/umgekehrt (Zusage abgeschafft: emm750 (Nutzer 29.10.2026) hat den Hand-Haken-Freigabe-Zweig entfernt;)
+    # ENTFERNT 31.10.2026 (emm782): 'Haken alter Plaene ohne ESI-Sperre' - die Zusage
+    # wurde bewusst abgeschafft/umgekehrt (Derselbe emm750-Rueckbau: der haken_runs-Zweig samt ESI-Verzugs-Sperre fuer Haken ist entf)
     ('Keine Warnung bei Plan ohne Schloss',
      'eve_trader/ui/main_window.py',
      '                if not _p.get("reserve"):\n                    _warn.append(t(\n',
@@ -9881,17 +9903,17 @@ Source: "settings.json"; DestDir: "{app}"''',
     # ERZ DURCH BESTAND (emm270, 28.09.)
     ('Erz bleibt noetig, obwohl die Minerale da sind',
      'eve_trader/reprocess.py',
-     '            aus.add(schritt_key(st))\n',
-     '            pass   # MUTATION\n',
+     '        rest = min(rest, port)\n',
+     '        rest = max(1, min(rest, port))   # MUTATION\n',
      'aa438 alle Minerale im Bestand'),
     ('Erz gilt schon bei EINEM gedeckten Mineral als erledigt',
      'eve_trader/reprocess.py',
-     '        if all(int((stock or {}).get(int(m), 0) or 0)\n',
-     '        if any(int((stock or {}).get(int(m), 0) or 0)   # MUTATION\n',
+     '            fehlt_m = min(q, defizit[m])\n',
+     '            fehlt_m = 0 if defizit[m] < q else defizit[m]   # MUTATION\n',
      'aa438 genau ein Stueck zu wenig'),
     ('Einkaufsliste kennt die Erz-Regel nicht',
      'eve_trader/ui/main_window.py',
-     '            set(_checked) | self._erz_durch_bestand())\n',
+     '            set(_checked) | self._erz_durch_bestand(),\n            # TEILGEDECKT (emm738): nur noch der Erz-Rest kommt dazu; der\n            # bestandsgedeckte Mineral-Anteil bleibt im Restbedarf stehen\n            # und wird vom Aufrufer gegen den Bestand gerechnet.\n            teil=self._erz_bestand_lage())\n',
      '            set(_checked))   # MUTATION\n',
      'aa438 Einkaufsliste, Fehlbedarf'),
     # KOPIER-MATERIAL (emm271, 29.09.)
@@ -10057,14 +10079,14 @@ Source: "settings.json"; DestDir: "{app}"''',
      "aa444 Rig NICHT mehr"),
     ('Rigs-Eintrag fehlt im Dropdown',
      'eve_trader/ui/main_window.py',
-     '                    opts, zeilen, getattr(self, "_bp_rig_gruppen", None), t("Rigs")):\n',
-     '                    opts, zeilen, None, t("Rigs")):   # MUTATION\n',
-     "b137 Dropdown hat den Eintrag Rigs"),
+     '            opts, zeilen, getattr(self, "_bp_rig_gruppen", None), t("Rigs"))))\n',
+     '            opts, zeilen, None, t("Rigs"))))   # MUTATION\n',
+     'b137 Dropdown hat den Eintrag Rigs'),
     ('Tabellen-Filter kennt Rigs nicht',
      'eve_trader/ui/main_window.py',
-     '            if visible and not industry.bp_kategorie_passt(\n                    want_cat, cell.data(Qt.UserRole + 4),\n                    cell.data(Qt.UserRole + 6),\n                    getattr(self, "_bp_rig_gruppen", None)):\n                visible = False\n',
-     '            if visible and want_cat is not None and cell.data(Qt.UserRole + 4) != want_cat:   # MUTATION\n                visible = False\n',
-     "b137 Rigs zeigt das Rig"),
+     '            if visible and not industry.kategorie_passt_mehrfach(\n                    want_cat, cell.data(Qt.UserRole + 4),\n                    cell.data(Qt.UserRole + 6),\n                    getattr(self, "_bp_rig_gruppen", None)):\n                visible = False\n',
+     '            if visible and not industry.kategorie_passt_mehrfach(\n                    want_cat, cell.data(Qt.UserRole + 4),\n                    cell.data(Qt.UserRole + 6),\n                    None):   # MUTATION\n                visible = False\n',
+     'b137 Rigs zeigt das Rig'),
     # FREMDE HAKEN IM NEUEN PLAN (emm285, 29.09.)
     ('Neuer Plan erbt erledigte Runs des alten',
      'eve_trader/ui/main_window.py',
@@ -10219,13 +10241,9 @@ Source: "settings.json"; DestDir: "{app}"''',
      "b13 Reset-Knopf gesperrt"),
     ('Frost-Sperre loest den Invention-Rueckfall aus (TE)',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '                    if not te_spin.isEnabled() and not te_spin.property("emm_frost"):\n'
-     '                        te_spin.setEnabled(True)\n'
-     '                        te_spin.blockSignals(True)',
-     '                    if not te_spin.isEnabled():   # MUTATION\n'
-     '                        te_spin.setEnabled(True)\n'
-     '                        te_spin.blockSignals(True)',
-     "aa319 eine FROST-Sperre loest den Rueckfall nicht aus"),
+     '                    if not te_spin.isEnabled() and not te_spin.property("emm_frost"):\n                        te_spin.setEnabled(True)\n                        te_spin.setToolTip(_txt(\n                            "Time efficiency of the FINAL product only – for the build "\n                              "time."))\n                    # DIE WERTE DAGEGEN NICHT MEHR (emm709, Nutzer 25.10.2026:\n',
+     '                    if not te_spin.isEnabled():   # MUTATION\n                        te_spin.setEnabled(True)\n                        te_spin.setToolTip(_txt(\n                            "Time efficiency of the FINAL product only – for the build "\n                              "time."))\n                    # DIE WERTE DAGEGEN NICHT MEHR (emm709, Nutzer 25.10.2026:\n',
+     'aa319 eine FROST-Sperre loest den Rueckfall nicht aus'),
     ('Auftauen gibt jedes Feld frei (auch Invention-gesperrte)',
      'eve_trader/ui/mw_bauplan_fenster.py',
      '                    _w.setEnabled(bool(_w.property("emm_frost_war_an")))\n',
@@ -11044,9 +11062,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'b171 Science-Block-Aufruf'),
     ('Saved-Plan-Laden behaelt fremde Invention-Zahlen',
      'eve_trader/ui/main_window.py',
-     '        self._bd_invention_needs = {}\n'
-     '        self._bd_prefer_owned = bool(p.get("prefer_build_if_owned", False))\n',
-     '        self._bd_prefer_owned = bool(p.get("prefer_build_if_owned", False))\n',
+     '        self._bd_invention_needs = {}\n        self._bd_inv_gedeckt = set()        # emm637, s. oben\n',
+     '        self._bd_inv_gedeckt = set()        # emm637, s. oben\n',
      'b171 Saved-Plan-Laden leert'),
     ('Science-Block vergisst den Klappzustand',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -11106,8 +11123,10 @@ Source: "settings.json"; DestDir: "{app}"''',
      'b173 Firesales-Tab gebaut'),
     ('Navigation vergisst firesales - alle Tabs dahinter verrutschen',
      'eve_trader/ui/main_window.py',
-     '        keys = ["portfolio", "deals", "swing", "build", "region", "firesales",\n',
-     '        keys = ["portfolio", "deals", "swing", "build", "region",   # MUTATION\n',
+     '        keys = ["portfolio", "deals", "swing", "build", "region",\n'
+     '                "firesales", "shopping", "sell", "orders", "profit",\n',
+     '        keys = ["portfolio", "deals", "swing", "build", "region",\n'
+     '                "shopping", "sell", "orders", "profit",   # MUTATION\n',
      'b173 Navigation kennt firesales'),
 
     # emm415: Contract per Rechtsklick ingame oeffnen
@@ -11210,13 +11229,9 @@ Source: "settings.json"; DestDir: "{app}"''',
      'b179 gespeichert: Restbedarf der Zutaten sinkt'),
     ('Laufende Jobs zaehlen auch im ungespeicherten Plan (fremde Jobs!)',
      'eve_trader/ui/main_window.py',
-     '        if getattr(self, "_bd_open_plan_id", None):\n'
-     '            for _t, _js in (getattr(self, "_bd_active_jobs_map", None) or {}).items():\n'
-     '                _lauf = ',
-     '        if True:   # MUTATION\n'
-     '            for _t, _js in (getattr(self, "_bd_active_jobs_map", None) or {}).items():\n'
-     '                _lauf = ',
-     'b179 ungespeichert: laufender Job aendert'),
+     '                _lauf = sum(int(_j.get("runs") or 0) for _j in (_js or []))\n                if _lauf > 0:\n                    geliefert[int(_t)] = int(geliefert.get(int(_t), 0) or 0) + _lauf\n',
+     '                _lauf = 0   # MUTATION\n                if _lauf > 0:\n                    geliefert[int(_t)] = int(geliefert.get(int(_t), 0) or 0) + _lauf\n',
+     'b179 gespeichert: Restbedarf der Zutaten sinkt durch den laufenden Job'),
 
     # emm423: Firesales-Spalten von Hand ziehbar
     ('Firesales-Spalten wieder gesperrt (an den Inhalt gebunden)',
@@ -11727,8 +11742,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     # emm454: gespeicherter T1-Plan behaelt seine ME/TE
     ('Gespeicherter T1-Plan: Blaupause ueberschreibt gespeicherte ME/TE',
      'eve_trader/ui/mw_bauplan_fenster.py',
-     '                and getattr(self, "_bd_open_plan_id", None) is None):\n',
-     '                and True):\n',
+     '        if (_me_te_in_header and not getattr(self, "_bd_me_manuell", False)\n                and getattr(self, "_bd_open_plan_id", None) is None):\n',
+     '        if (_me_te_in_header and not getattr(self, "_bd_me_manuell", False)\n                and True):   # MUTATION\n',
      'b192 gespeicherter Plan oeffnet mit SEINER'),
     # emm455: Runplaner-Zufallsprobe
     ('Runplaner: Blaupausen-Anzahl je Item ignoriert',
@@ -11776,8 +11791,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa507 Plaene fuer die Seite'),
     ('Stock locations: Seite fehlt in der Leiste',
      'eve_trader/ui/main_window.py',
-     '        b_lager = page_btn(t("Stock locations (Beta)"), 6, icon="map")\n',
-     '        b_lager = page_btn(t("Stock locations (Beta)"), 5, icon="map")\n',
+     '        b_lager = page_btn(t("Stock locations"), 6, icon="map")\n',
+     '        b_lager = page_btn(t("Stock locations"), 5, icon="map")\n',
      'b194 Klick zeigt Seite 6'),
     ('Stock locations: Frachtraum des Schiffs zaehlt (Seite)',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -11808,8 +11823,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa509 Ortsliste fuer die Legende'),
     ('Karten-Raster: alte Karten bleiben sichtbar',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '            k.setParent(None)\n            k.deleteLater()\n',
-     '            k.deleteLater()\n',
+     '            k.setParent(None)\n            k.deleteLater()\n        self._karten = list(karten)\n        self._gruppen = []          # emm772: zeilenweise, keine Spalten\n        self._anordnen(neu=True)\n\n    def lage(self):\n        """[(Reihe, Spalte)] je Karte, aus dem echten Layout."""\n        out = []\n        for k in self._karten:\n            i = self._gitter.indexOf(k)\n            if i >= 0:\n                r, c, _rs, _cs = self._gitter.getItemPosition(i)\n                out.append((r, c))\n            else:\n                out.append(None)\n        return out\n\n    def setze_spalten(self, spalten):\n        """Karten SPALTENWEISE setzen (emm772): `spalten` ist eine Liste\n        von Listen, jede innere Liste wird eine Spalte untereinander.\n\n        Nutzer 30.10.2026: "alle charaktere von Account 1 sitzen links\n        untereinander ... nicht mehr als 4 Accounts neben einander".\n        Das normale `setze` fuellt zeilenweise und kann das nicht; die\n        Breiten-Logik (`spalten()`) bleibt daneben unangetastet, sie\n        gilt weiter fuer alle anderen Raster.\n        """\n        self._abhaengen()\n        for k in self._karten:\n            k.setParent(None)\n            k.deleteLater()\n',
+     '            k.deleteLater()\n        self._karten = list(karten)\n        self._gruppen = []          # emm772: zeilenweise, keine Spalten\n        self._anordnen(neu=True)\n\n    def lage(self):\n        """[(Reihe, Spalte)] je Karte, aus dem echten Layout."""\n        out = []\n        for k in self._karten:\n            i = self._gitter.indexOf(k)\n            if i >= 0:\n                r, c, _rs, _cs = self._gitter.getItemPosition(i)\n                out.append((r, c))\n            else:\n                out.append(None)\n        return out\n\n    def setze_spalten(self, spalten):\n        """Karten SPALTENWEISE setzen (emm772): `spalten` ist eine Liste\n        von Listen, jede innere Liste wird eine Spalte untereinander.\n\n        Nutzer 30.10.2026: "alle charaktere von Account 1 sitzen links\n        untereinander ... nicht mehr als 4 Accounts neben einander".\n        Das normale `setze` fuellt zeilenweise und kann das nicht; die\n        Breiten-Logik (`spalten()`) bleibt daneben unangetastet, sie\n        gilt weiter fuer alle anderen Raster.\n        """\n        self._abhaengen()\n        for k in self._karten:\n            k.deleteLater()\n',
      'aa509 das Karten-Raster haengt alte Karten SOFORT ab'),
     ('Stock locations: abgeschalteter Ort behaelt seine Karte',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -11844,8 +11859,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'aa510 150 von 200 Runs gebaut'),
     ('Lagerorte: Haken und Job zaehlen doppelt',
      'eve_trader/lagerorte.py',
-     '    out = {t: max(aus_jobs.get(t, 0), aus_haken.get(t, 0))\n',
-     '    out = {t: aus_jobs.get(t, 0) + aus_haken.get(t, 0)\n',
+     '    out = {t: max(aus_jobs.get(t, 0), _haken_wirk.get(t, 0))',
+     '    out = {t: aus_jobs.get(t, 0) + _haken_wirk.get(t, 0)',
      'aa510 Haken und Job meinen DIESELBEN Runs'),
     ('Lagerorte: Jobs eines FREMDEN Plans zaehlen mit',
      'eve_trader/lagerorte.py',
@@ -11970,8 +11985,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     ('Runplaner: die Science-Struktur wird behauptet, ohne dass eine '
      'angelegt ist',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '        if not self.settings.get("bau_structures"):\n            return None\n        try:\n            _s = self._struct_for_activity("invention")\n',
-     '        try:\n            _s = self._struct_for_activity("invention")\n',
+     '        if not self.settings.get("bau_structures"):\n            return None\n',
+     '',
      'aa546 ohne angelegte Struktur bleibt es UNBEKANNT'),
     ('Einkaufsliste: Items ohne aufgeloesten Namen kommen mit',
      'eve_trader/lagerorte.py',
@@ -12263,8 +12278,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     # emm476: unvollstaendige Daten sind keine Einkaufsliste
     ('Stock locations: Einkaufs-Knopf bleibt trotz fehlender Daten frei',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '            btn.setEnabled(not grund)\n',
-     '            btn.setEnabled(True)\n',
+     'btn.setEnabled(not _sperr)',
+     'btn.setEnabled(True)',
      "b194 ... und 'Copy shopping list' ist gesperrt"),
     ('Stock locations: rote Warnzeile bleibt versteckt',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -12284,19 +12299,16 @@ Source: "settings.json"; DestDir: "{app}"''',
     # emm477: still zu kleiner Asset-Abruf
     ('Stock locations: zu kleiner Abruf wird nicht gemeldet',
      'eve_trader/lagerorte.py',
-     '        if _klein and letzte != n:\n',
-     '        if False:\n',
+     '        _klein = ok >= SCHRUMPF_MIN and n < ok * SCHRUMPF_ANTEIL',
+     '        _klein = False   # MUTATION (Schrumpf-Erkennung abgeschaltet)',
      'aa516 ein stark gesunkener Abruf wird gemeldet'),
     ('Stock locations: auch kleine Charaktere schlagen Alarm',
      'eve_trader/lagerorte.py',
      '        _klein = ok >= SCHRUMPF_MIN and n < ok * SCHRUMPF_ANTEIL\n',
      '        _klein = n < ok * SCHRUMPF_ANTEIL\n',
      'aa516 kleine Charaktere schwanken'),
-    ('Stock locations: Dauerwarnung, die nie verschwindet',
-     'eve_trader/lagerorte.py',
-     '        if _klein and letzte != n:\n',
-     '        if _klein:\n',
-     'aa516 zweimal dieselbe kleinere Zahl = neue Wahrheit'),
+    # ENTFERNT 31.10.2026 (emm782): 'Stock locations: Dauerwarnung, die nie verschwindet' - die Zusage
+    # wurde bewusst abgeschafft/umgekehrt (Zusage 'zweimal dieselbe kleinere Zahl = neue Wahrheit' am 28.10.2026 abgeschafft (emm744,)
     ('Stock locations: gescheiterter Charakter verliert seinen Vorwert',
      'eve_trader/lagerorte.py',
      '        if name not in out and isinstance(e, dict):\n',
@@ -12393,9 +12405,11 @@ Source: "settings.json"; DestDir: "{app}"''',
     ('BFS-Leer-Hinweis: nach dem Laden wird nicht neu gezeichnet',
      'eve_trader/ui/mw_bauplan_tabs.py',
      '        def _fertig(_ok, _msg=""):\n'
+     '            self._bfs_mb_laeuft = False\n'
      '            try:\n'
      '                self._bfs_zeichnen()\n',
      '        def _fertig(_ok, _msg=""):\n'
+     '            self._bfs_mb_laeuft = False\n'
      '            try:\n'
      '                pass\n',
      'b198 Rueckruf gefeuert: die Zeile ist da, mit Gewinn'),
@@ -12496,11 +12510,10 @@ Source: "settings.json"; DestDir: "{app}"''',
      '            elif im_job.get(r["bp_id"]):\n',
      '            elif False:\n',
      "b196 im Kopierjob: NICHT 'completely missing'"),
-    ('Kaufliste nimmt Blaupausen im Job wieder auf (er kauft, was er '
-     'besitzt)',
+    ('Kaufliste nimmt Blaupausen im Job wieder auf (er kauft, was er besitzt)',
      'eve_trader/ui/main_window.py',
-     '            and not im_job.get(r.get("bp_id"))])\n',
-     '            ])\n',
+     '            and not im_job.get(r.get("bp_id"))',
+     '            and True   # MUTATION (emm507-Filter abgeschaltet)',
      'b196 ... und die Kaufliste ist LEER'),
     # emm510: aus einer Kopie kann man nicht kopieren - je T1-Original
     # laufen hoechstens so viele Kopierjobs gleichzeitig wie BPOs da sind.
@@ -12601,38 +12614,31 @@ Source: "settings.json"; DestDir: "{app}"''',
      '            _pl.setContentsMargins(4, 2, 4, 2); _pl.addWidget(_pill)\n',
      'aa533 die Pillen-Huelle'),
     # emm516: ein leise gescheiterter CORP-Abruf ist kein "du hast sie nicht".
-    ('Ein gescheiterter Corp-Blaupausen-Abruf wird wieder verschluckt '
-     '(die Zeile behauptet "completely missing")',
-     'eve_trader/ui/main_window.py',
-     '                for _ft516 in (_cres516.get("failed") or []):\n',
-     '                for _ft516 in []:   # MUTATION\n',
+    ('Ein gescheiterter Corp-Blaupausen-Abruf wird wieder verschluckt (die Zeile behauptet "completely missing")',
+     'eve_trader/ui/mw_helpers.py',
+     '    for _f in (cres.get("failed") or []):\n        luecken.append(str(_f))',
+     '    for _f in []:   # MUTATION (failed verschluckt)\n        luecken.append(str(_f))',
      'b196 Corp: der gescheiterte Abruf steht in _bd_bp_fehler'),
     ('Eine Corp ohne Director-Rolle wird nicht mehr gemeldet',
-     'eve_trader/ui/main_window.py',
-     '                for _or516 in (_cres516.get("ohne_rolle") or []):\n',
-     '                for _or516 in []:   # MUTATION\n',
+     'eve_trader/ui/mw_helpers.py',
+     '    for _o in (cres.get("ohne_rolle") or []):',
+     '    for _o in []:   # MUTATION (ohne_rolle verschluckt)',
      'b196 Corp: fehlende Director-Rolle'),
     ('Ein nicht angekreuzter Corp-Hangar wird nicht mehr gemeldet',
-     'eve_trader/ui/main_window.py',
-     '                if _cres516.get("keine_division"):\n',
-     '                if False:   # MUTATION\n',
+     'eve_trader/ui/mw_helpers.py',
+     '    if cres.get("keine_division"):\n        lagen.append(_txt("Corp hangar (no hangar division ticked)"))',
+     '    if False:   # MUTATION (keine_division verschluckt)\n        lagen.append(_txt("Corp hangar (no hangar division ticked)"))',
      'b196 Corp: kein angekreuzter Hangar'),
     # emm518: aus Bestand gedeckt ist nicht gebaut.
-    ('Bestandsgedeckte Runs bekommen wieder den gruenen ESI-Punkt '
-     '("wurde gebaut", obwohl es nie einen Job gab)',
-     'eve_trader/ui/mw_bauplan_tabs.py',
-     '                                    else "bestand" if _best_r > 0\n',
-     '                                    else "fertig" if _best_r > 0   # MUTATION\n',
-     # Erwartung nachgezogen: nach der emm521-Umstellung bleibt
-     # "kennt den Zustand" gruen (das Wort steht weiter im Code) - rot
-     # wird der Zweig-Check. BLIND-Fund der Rotprobe, 11.10.2026.
+    ('Bestandsgedeckte Runs bekommen wieder den gruenen ESI-Punkt ("wurde gebaut", obwohl es nie einen Job gab)',
+     'eve_trader/ui/mw_helpers.py',
+     '    if _best > 0:\n        return "bestand"',
+     '    if _best > 0:\n        return "fertig"   # MUTATION (Bestand = gebaut)',
      'aa535 ... nur OHNE gelieferten und OHNE laufenden Job'),
     ('Die Bestands-Deckung draengt sich vor den gelieferten Job',
-     'eve_trader/ui/mw_bauplan_tabs.py',
-     '                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)\n'
-     '                                    else "bestand" if _best_r > 0\n',
-     '                                    else "bestand" if _best_r > 0\n'
-     '                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)\n',
+     'eve_trader/ui/mw_helpers.py',
+     '    if _gel > 0 or _fert > 0:\n        return "fertig"\n    # de_scan4: an\n    if _best > 0:\n        return "bestand"',
+     '    if _best > 0:\n        return "bestand"   # MUTATION (Bestand draengt sich vor den Job)\n    if _gel > 0 or _fert > 0:\n        return "fertig"\n    # de_scan4: an',
      'aa535 ... nur OHNE gelieferten und OHNE laufenden Job'),
     ('Der Bestands-Punkt wird wieder gruen gemalt',
      'eve_trader/ui/icons.py',
@@ -12663,11 +12669,10 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        pass   # MUTATION\n',
      'aa538 der Job-Zuordnungs-Dialog sperrt das Mausrad'),
     # emm521: kein gruener Punkt ohne Job.
-    ('Der Auffangzweig heisst wieder "fertig" - gruener ESI-Punkt auf '
-     'eine Position, zu der es nie einen Job gab',
-     'eve_trader/ui/mw_bauplan_tabs.py',
-     '                                    else "nicht_noetig")\n',
-     '                                    else "fertig")   # MUTATION\n',
+    ('Der Auffangzweig heisst wieder "fertig" - gruener ESI-Punkt auf eine Position, zu der es nie einen Job gab',
+     'eve_trader/ui/mw_helpers.py',
+     '    if _best > 0:\n        return "bestand"\n    return "nicht_noetig"',
+     '    if _best > 0:\n        return "bestand"\n    return "fertig"   # MUTATION (Auffangzweig wieder gruen)',
      'aa537 der Auffangzweig ist nicht mehr'),
     ('Die Zeile ohne Job bekommt wieder einen anderen Punkt',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -12676,8 +12681,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      'b41 ohne Job: sondern den gedaempften Punkt'),
     ('Abholbereite Jobs ("ready") zaehlen nicht mehr als Beleg',
      'eve_trader/ui/mw_bauplan_tabs.py',
-     '                                    else "fertig" if (_gel_r > 0 or _fert_r > 0)\n',
-     '                                    else "fertig" if _gel_r > 0   # MUTATION\n',
+     '                        _fert_r = sum(\n                            int(_j.get("runs") or 0) for _j in\n                            ((getattr(self, "_bd_active_jobs_map", None)\n                              or {}).get(_tid_a) or [])\n                            if _j.get("status") == "ready")',
+     '                        _fert_r = 0   # MUTATION (ready zaehlt nicht mehr als Beleg)',
      'b41 ready: fertig Gebautes zeigt den GRUENEN Punkt'),
     ('Der Grund der Deckung wird nicht mehr gemerkt (der Tooltip raet)',
      'eve_trader/ui/mw_bauplan_tabs.py',
@@ -12719,29 +12724,14 @@ Source: "settings.json"; DestDir: "{app}"''',
     ('Abgehakte Erz-Schritte buchen den Anspruch NICHT um (der Plan gibt '
      'die Minerale frei, die er selbst braucht)',
      'eve_trader/reprocess.py',
-     '        if schritt_key(st) not in abgehakt or st.get("built"):\n'
-     '            continue\n'
-     '        for m, q in (st.get("deckt") or {}).items():\n'
-     '            m = int(m)\n'
-     '            out[m] = out.get(m, 0) + int(q or 0)\n',
-     '        if schritt_key(st) not in abgehakt or st.get("built"):\n'
-     '            continue\n'
-     '        for m, q in (st.get("deckt") or {}).items():   # MUTATION\n'
-     '            m = int(m)\n',
+     '            out[m] = out.get(m, 0) + q\n',
+     '            pass   # MUTATION\n',
      "aa541 Nutzer-Zahlen: Tritanium 33'386'579 -> 55'384'600"),
     ('Das verarbeitete Erz bleibt im Anspruch stehen (reserviert Erz, '
      'das es nicht mehr gibt)',
      'eve_trader/reprocess.py',
-     '            rest = out.get(erz, 0) - int(st["menge"])\n'
-     '            if rest > 0:\n'
-     '                out[erz] = rest\n'
-     '            else:\n'
-     '                out.pop(erz, None)\n',
-     '            rest = out.get(erz, 0)   # MUTATION\n'
-     '            if rest > 0:\n'
-     '                out[erz] = rest\n'
-     '            else:\n'
-     '                out.pop(erz, None)\n',
+     '            rest = out.get(erz, 0) - menge\n',
+     '            rest = out.get(erz, 0)   # MUTATION\n',
      'aa541 ... und die Blockmenge des Erzes faellt raus'),
     # emm525: die Zeile nennt WER reserviert und WIE VIEL.
     ('Die Zeile nennt den Halter nicht mehr beim Namen',
@@ -12781,8 +12771,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     ('Auch NICHT abgehakte Erz-Schritte werden umgebucht (Erz liegt da, '
      'wird aber als Mineral beansprucht)',
      'eve_trader/reprocess.py',
-     '        if schritt_key(st) not in abgehakt or st.get("built"):\n',
-     '        if False:   # MUTATION\n',
+     '        if not _hakt and _tf is None:\n            continue\n',
+     '        if False:   # MUTATION (jeder Schritt wird umgebucht)\n            continue\n',
      'aa541 ohne Haken bleibt der Anspruch unveraendert'),
     ('Der Anspruch eines eingefrorenen Plans kennt die Erz-Haken nicht',
      'eve_trader/ui/mw_helpers.py',
@@ -12827,13 +12817,8 @@ Source: "settings.json"; DestDir: "{app}"''',
      '        return True\n',
      'aa550 nur der Besitzer schreibt in den Balken'),
     # emm538: neben einem Original zaehlen nur die Originale
-    ('Neben einem Original zaehlen die kleinen Kopien wieder mit',
-     'eve_trader/ui/mw_helpers.py',
-     '        if bpo:\n'
-     '            return bpo, kopien\n',
-     '        if bpo:\n'
-     '            return bpo + kopien, 0   # MUTATION\n',
-     'aa551 1 Original + 2 kleine Kopien -> 1 Job, 2 bleiben liegen'),
+    # ENTFERNT 31.10.2026 (emm782): 'Neben einem Original zaehlen die kleinen Kopien wieder mit' - die Zusage
+    # wurde bewusst abgeschafft/umgekehrt (Zusage 'Original wirft Kopien raus' mit emm624 abgeschafft (mw_helpers.py:213-226: 'Die Ko)
     ('Die liegen gebliebenen Kopien werden nicht gemeldet',
      'eve_trader/ui/mw_helpers.py',
      '                if _aus and ignoriert is not None:\n'
@@ -12946,7 +12931,8 @@ Source: "settings.json"; DestDir: "{app}"''',
     ('Die Volumen-Zeile trifft ihre eigene Auswahl',
      'eve_trader/ui/main_window.py',
      '                _p, _, _ = einkauf_posten(\n'
-     '                    rows, "missing", getattr(self, "_bd_plan_builds", None))\n'
+     '                    rows, "missing", getattr(self, "_bd_plan_builds", None),\n'
+     '                    nur_tids=_haken_tids())\n'
      '                return [(_t, _q) for _t, _n, _q in _p]\n',
      '                return [(int(_r["tid"]), int(_r.get("missing") or 0))   # MUTATION\n'
      '                        for _r in rows]\n',
@@ -13106,6 +13092,1220 @@ Source: "settings.json"; DestDir: "{app}"''',
      'ORDNER = ("werkzeuge", "release", "tests")\n',
      'ORDNER = ("release", "tests")   # MUTATION\n',
      'aa564 genau die zwei LF-.bat werden repariert'),
+    # emm567: Warnzeile "kein Verkaufscharakter"
+    ('Kein Verkaufscharakter: die Warnzeile bleibt immer stumm',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '        if s.get("char_fees"):\n            return ""\n',
+     '        return ""   # MUTATION\n',
+     'aa567 ohne Daten: Warnung'),
+    ('Kein Verkaufscharakter: die Zeile folgt dem Nachladen nicht mehr',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '                        _gw.setVisible(bool(_gw.text()))\n',
+     '                        pass   # MUTATION\n',
+     'b5c ... mit Daten: still der guenstigste'),
+    # emm570: Funfact
+    ('Funfact: ueber das Buendel abgeschlossenes Mitglied zaehlt doppelt',
+     'eve_trader/funfact.py',
+     '    if p.get("done_durch_buendel"):\n        return False\n',
+     '    pass   # MUTATION\n',
+     'aa570 ... ueber das Buendel abgeschlossenes Mitglied'),
+    ('Funfact: Kauf vor der Order-Reichweite gilt still als Marktkauf',
+     'eve_trader/funfact.py',
+     '            False if (grenze is not None and z >= grenze) else None)',
+     '            False)   # MUTATION',
+     'aa570 Herkunft: eigene Order / Markt'),
+    ('Funfact: Reopen nimmt auch den per ESI fertig gemeldeten heraus',
+     'eve_trader/funfact.py',
+     '    if e is None or e.get("quelle") == "esi":',
+     '    if e is None:   # MUTATION',
+     'aa570 ... den per ESI fertig gemeldeten NICHT'),
+    ('Funfact: ESI-fertig traegt nicht mehr ein',
+     'eve_trader/ui/main_window.py',
+     '                        if self._funfact_erfassen(_p_ff, "esi"):',
+     '                        if False:   # MUTATION',
+     'b212 ESI-fertig traegt ein'),
+    # emm587: Marge-Artefakt-Sperre (Daytrade)
+    ('Marge-Artefakt-Sperre: die Tradability-Pruefung faellt weg',
+     'eve_trader/scanner.py',
+     '                if max_roi_for_trust and roi > max_roi_for_trust \\\n'
+     '                        and trade_score < min_trade_above_trust:\n'
+     '                    _d("roi_artifact_untradable")\n'
+     '                    continue\n',
+     '                if False:   # MUTATION\n'
+     '                    _d("roi_artifact_untradable")\n'
+     '                    continue\n',
+     'aa582 Marge-Artefakt (trade_score ~0) fliegt trotz 200 % Marge raus'),
+    # emm588: Auto-Nachscan - bereits analysierte Items werden ausgeschlossen
+    ('Auto-Nachscan: exclude_type_ids wirkt nicht mehr',
+     'eve_trader/scanner.py',
+     '    if exclude_ids:\n'
+     '        pre = [x for x in pre if x[0]["type_id"] not in exclude_ids]\n',
+     '    if False:   # MUTATION\n'
+     '        pre = [x for x in pre if x[0]["type_id"] not in exclude_ids]\n',
+     'aa588 Runde 2 analysiert NICHTS mehr aus Runde 1'),
+    # emm589: Geister-Order-Schwelle 15 -> 45
+    ('Geister-Order-Schwelle faellt zurueck auf die alte, zu niedrige 15',
+     'eve_trader/ui/main_window.py',
+     '            "min_trade_above_trust": 45,\n',
+     '            "min_trade_above_trust": 15,   # MUTATION\n',
+     'aa589 main_window.py setzt die Daytrade-Schwelle wirklich auf 45'),
+    # emm590: "Days of stock" (Index 10) schleicht sich zurueck in die
+    # Daytrade-Standardansicht
+    ('Days-of-stock-Spalte schleicht sich zurueck in die Daytrade-Vorgabe',
+     'eve_trader/ui/main_window.py',
+     '        _DAY_STD = [0, 1, 2, 7, 8, 4, 17, 19]\n',
+     '        _DAY_STD = [0, 1, 2, 7, 8, 10, 4, 17, 19]   # MUTATION\n',
+     "aa590 'Days of stock' (Index 10) ist NICHT mehr in der "
+     "Daytrade-Vorgabe"),
+    # emm591: Bulk-commodities-Preset faellt auf die alte 12-%-ROI-Schwelle
+    # zurueck - genau die Schwelle, die Munition/Masse-Items ueberhaupt
+    # erst ausgesperrt hat
+    ('Bulk-commodities-Preset faellt auf die alte 12-%-ROI-Schwelle zurueck',
+     'eve_trader/ui/main_window.py',
+     '         {"rank": "spanne", "window": 20, "vol": 10_000, "roi": 2, "profit": 0,',
+     '         {"rank": "spanne", "window": 20, "vol": 10_000, "roi": 12, "profit": 0,   # MUTATION',
+     'aa591 roi steht wirklich auf 2'),
+    # emm592/emm602: der immer aktive Tradability-Floor fuer Flip wird
+    # abgeschaltet (zurueck auf 0) - Officer-Module/Einzeltrades schlueppen
+    # wieder durch
+    ('Immer-aktiver Tradability-Floor (Flip) abgeschaltet',
+     'eve_trader/scanner.py',
+     '_MIN_TRADE_SCORE_ALWAYS = 25.0\n',
+     '_MIN_TRADE_SCORE_ALWAYS = 0.0   # MUTATION\n',
+     'aa592 Officer-Modul mit 1 Einzeltrade in 28 Tagen fliegt raus'),
+    # emm602: der Floor rutscht wieder auf den alten emm592-Wert (5.0)
+    # zurueck - der Nutzer hat sich aber bewusst fuer 25 entschieden
+    # (s. Kommentar in scanner.py), 5 war zu schwach gegen schwache,
+    # aber nicht ganz tote Items im Daytrade-Tab.
+    ('_MIN_TRADE_SCORE_ALWAYS faellt auf den alten emm592-Wert (5.0) '
+     'zurueck statt dem vom Nutzer gewaehlten 25.0',
+     'eve_trader/scanner.py',
+     '_MIN_TRADE_SCORE_ALWAYS = 25.0\n',
+     '_MIN_TRADE_SCORE_ALWAYS = 5.0   # MUTATION\n',
+     'aa592 _MIN_TRADE_SCORE_ALWAYS steht auf 25.0'),
+    # emm593: Bulk-commodities-Preset faellt auf den alten, zu scharfen
+    # 50'000er-Volumen-Floor zurueck (Nutzer-Trichter: 1'384 von 2063
+    # Kandidaten fielen allein daran)
+    ('Bulk-commodities-Preset faellt auf den alten 50k-Volumen-Floor zurueck',
+     'eve_trader/ui/main_window.py',
+     '         {"rank": "spanne", "window": 20, "vol": 10_000, "roi": 2, "profit": 0,',
+     '         {"rank": "spanne", "window": 20, "vol": 50_000, "roi": 2, "profit": 0,   # MUTATION',
+     'aa593 vol steht wirklich auf 10_000'),
+    # emm594: Bulk-commodities-Preset faellt auf die alte, zu scharfe
+    # 35er-Tradability-Schwelle zurueck (Nutzer-Trichter nach emm593:
+    # "schwer handelbar"/"nicht beidseitig" stiegen auf 309/569, Treffer
+    # blieben bei 9 - die neu zugelassenen 10k-50k-Items hingen an
+    # trade:35 fest)
+    ('Bulk-commodities-Preset faellt auf die alte 35er-Tradability-Schwelle zurueck',
+     'eve_trader/ui/main_window.py',
+     '          "profitday": 2_000_000, "buyratio": 30, "maxcomp": 0, "trade": 20,\n',
+     '          "profitday": 2_000_000, "buyratio": 30, "maxcomp": 0, "trade": 35,   # MUTATION\n',
+     'aa594 trade steht wirklich auf 20'),
+    # emm595: Rig-Katalog verliert wieder den group_name-Zweig -> die
+    # M-Reprocessing-Rigs des Athanor ("...Ore Grading Processor...", ohne
+    # "reprocessing" im Namen) fallen wieder komplett aus dem Katalog
+    # (Discord-Bugreport "Robust": Athanor zeigte nur Reaktionen)
+    ('Rig-Katalog erkennt Athanor-Reprocessing-Rigs (Ore Grading Processor) nicht mehr',
+     'eve_trader/ui/main_window.py',
+     '                elif "reprocessing" in low or "reprocessing" in low_group:\n',
+     '                elif "reprocessing" in low:   # MUTATION (group_name-Zweig entfernt)\n',
+     "aa595 Athanor bekommt jetzt seine beiden M-Ore-Grading-Rigs"),
+    # emm596: ein Daytrade-Preset faellt auf das alte 28-Tage-Fenster zurueck
+    # (Nutzer: "dann daytrade lieber 20 Tage" - nachdem geklaert war, dass
+    # "% Above normal"/Trend 1:1 aus diesem window kommen)
+    ('Daytrade-Preset ("Recommended") faellt auf das alte 28-Tage-Fenster zurueck',
+     'eve_trader/ui/main_window.py',
+     '{"rank": "spanne", "window": 20, "vol": 40, "roi": 12, "profit": 0,\n',
+     '{"rank": "spanne", "window": 28, "vol": 40, "roi": 12, "profit": 0,   # MUTATION\n',
+     'aa596 main_window.py hat jetzt 12x'),
+    # emm597: ein alter gespeicherter Header-Zustand (Spaltenbreiten-Merken,
+    # Sitzung 17) darf die Sichtbarkeits-Vorgabe des Columns-Dropdowns
+    # (Sitzung 16) nicht mehr ueberschreiben koennen (Nutzer-Screenshot:
+    # "days of stock immernoch da obwohl im dropdown nicht angehackt")
+    ('Spalten-Wiederherstellung schuetzt die Dropdown-Sichtbarkeit nicht mehr '
+     'vor einem alten gespeicherten Header-Zustand',
+     'eve_trader/ui/main_window.py',
+     '            if _acts597 and _versteckt_vorher597 is not None:\n',
+     '            if False and _acts597 and _versteckt_vorher597 is not None:   # MUTATION\n',
+     'b597 nach _spalten_wiederherstellen() bleibt Spalte 10 versteckt'),
+    # emm598: Order-Update rechnet die Redo-Gebuehren wieder fest mit
+    # Jita-Standings, egal welcher Hub oben aktiv ist (Nutzer-Frage: "wird
+    # das wirklich im Redo counter obendrauf gerechnet und zeigt MoMa das
+    # tatsaechlich an")
+    ('Order-Update Redo-Gebuehren rechnen wieder fest mit Jita-Standings '
+     'statt mit dem aktiven Hub',
+     'eve_trader/ui/main_window.py',
+     '                    _t9, _b9, _ = self._fees_for_hub(\n                        self.settings, _cid9, _hubkey9)\n',
+     '                    _t9, _b9, _ = self._fees_for_hub(\n                        self.settings, _cid9, "jita")   # MUTATION\n',
+     'aa598 _load_order_mods ruft _fees_for_hub nicht mehr mit fest'),
+    # emm599: das "many quick flips"-Preset ("Aktiv am PC") faellt auf die
+    # alte, viel zu scharfe vol-Schwelle (150 statt 20) zurueck - lieferte
+    # live nur 3 statt mindestens 20 Treffer (Nutzer: "wir brauchen
+    # mindestens jeweils 20 verschiedene Items ... loese dieses Problem
+    # selbstaendig, mache Tests, denke nach, pruefe")
+    ('Daytrade-Preset "Active at the PC - many quick flips" faellt auf die '
+     'alte, zu scharfe vol-Schwelle (150) zurueck',
+     'eve_trader/ui/main_window.py',
+     '        ("⚡ Active at the PC · many quick flips",\n'
+     '         {"rank": "stunden", "window": 14, "vol": 20, "roi": 12, "profit": 0,\n',
+     '        ("⚡ Active at the PC · many quick flips",\n'
+     '         {"rank": "stunden", "window": 14, "vol": 150, "roi": 12, "profit": 0,   # MUTATION\n',
+     'aa599 70 Stk./Tag kommt bei der NEUEN 20er-vol-Schwelle durch'),
+    # emm600: Daytrade/Swing sortieren wieder nur bei aktivem "Top 15"-
+    # Schalter nach der kombinierten Qualitaet, sonst in der scanner-
+    # internen (tradability-blinden) Reihenfolge (Nutzer: "ich sehe sehr
+    # oft eine schwache tradability ... er soll nichts selber einstellen
+    # muessen um gute profitable handelbare trades zu finden")
+    ('Daytrade (_render_deals) sortiert nur noch bei aktivem "Top 15"-'
+     'Schalter nach der kombinierten Qualitaet, nicht mehr IMMER',
+     'eve_trader/ui/main_window.py',
+     '        deals = ranked\n        tint = QColor(theme.AMBER); tint.setAlpha(28)\n\n        self.deals_table.setSortingEnabled(False)',
+     '        if highlight:\n            deals = ranked   # MUTATION: wieder bedingt\n        tint = QColor(theme.AMBER); tint.setAlpha(28)\n\n        self.deals_table.setSortingEnabled(False)',
+     'aa600 Daytrade (_render_deals) sortiert IMMER nach der kombinierten '
+     'Qualitaet'),
+    # emm600: Regional verliert die neue _arb_quality-Grundsortierung und
+    # faellt auf reine profit_m3-Reihenfolge zurueck (Handelbarkeit am
+    # Ziel wird dann wieder nicht gewichtet)
+    ('Regional (_render_arbitrage) verliert die _arb_quality-'
+     'Grundsortierung und faellt auf reines profit_m3 zurueck',
+     'eve_trader/ui/main_window.py',
+     '        deals = sorted(deals, key=lambda d: self._arb_quality(d, _sofort_rg),\n                       reverse=True)\n        top_ids = set()',
+     '        top_ids = set()   # MUTATION: _arb_quality-Grundsortierung entfernt',
+     'aa600 Regional (_render_arbitrage) sortiert IMMER nach _arb_quality'),
+    # emm600b: _arb_quality behandelt den instant-Modus ("Immediate to buy
+    # order") wieder wie relist und nutzt tgt_sell_reach (das bei instant
+    # IMMER 0.0 ist, nie gemessen) statt target_demand (Nutzer-Rueckfrage:
+    # "swing trade und regional trade funktionieren in der handelbarkeit
+    # anders, weil da von sell to sell verkauft wird und die buy orders
+    # keine rolle spielen, hast du das bedacht?")
+    ('_arb_quality bewertet den instant-Modus wieder ueber tgt_sell_reach '
+     'statt ueber die Ziel-Buy-Order-Tiefe (target_demand)',
+     'eve_trader/ui/main_window.py',
+     '        if instant:\n            dem = d.get("target_demand", 0) or 0\n            reach_f = 0.5 + 0.5 * min(1.0, dem / 50.0)\n        else:\n            reach = d.get("tgt_sell_reach", None)\n            reach_f = 0.5 + 0.5 * reach if reach is not None else 0.85',
+     '        reach = d.get("tgt_sell_reach", None)   # MUTATION: instant-Pfad entfernt\n        reach_f = 0.5 + 0.5 * reach if reach is not None else 0.85',
+     'aa600b _arb_quality behandelt instant ueber target_demand'),
+    # emm601: Swing-Scan (compute_hold) filtert frisch fallende Items
+    # wieder hart raus (Nutzer: "swings breakouts nach unten jedoch sind
+    # eigentlich geil zum einkaufen, die sollte man unbedingt mitnehmen!")
+    ('compute_hold() sendet avoid_falling wieder hart True - Swing-Scan '
+     'filtert frische Ruecksetzer wieder komplett raus',
+     'eve_trader/ui/main_window.py',
+     '            "avoid_falling": False,\n            "min_expected_pct": self.h_exp.value(),',
+     '            "avoid_falling": True,   # MUTATION\n            "min_expected_pct": self.h_exp.value(),',
+     'aa601 compute_hold() (Swing-Scan) sendet avoid_falling nicht mehr hart True'),
+    # emm603 (Nutzer: "Prioritaet hat mehr handelbare Items zu finden ...
+    # nimm dir alles was du brauchst"): Regional Trading faellt auf den
+    # alten, viel zu kleinen Pauschal-Deckel zurueck.
+    ('Regional Trading faellt auf den alten max_items=400-Deckel zurueck',
+     'eve_trader/ui/main_window.py',
+     '"max_items": 2500,',
+     '"max_items": 400,   # MUTATION',
+     'aa603 Regional Trading: max_items auf 2500 angehoben'),
+    # emm603: das eigene Fetch-Budget fuer Regional-Ziel-Historien faellt
+    # weg - der ThreadPoolExecutor holt wieder ALLE (bis zu 2500) Historien
+    # auf einmal statt sie gegen den Cache/Fetch-Split abzugrenzen.
+    ('Regional Trading: Fetch-Budget-Split fuer Ziel-Historien entfernt - '
+     'holt wieder alle Historien ungebremst',
+     'eve_trader/ui/main_window.py',
+     '_ids_fetch = _have_ids + _fresh_ids[:_FETCH_BUDGET_RG]',
+     '_ids_fetch = ids   # MUTATION: Budget-Split umgangen',
+     'aa603 Regional Trading: bereits frisch gecachte Ziel-Historien '
+     'laufen IMMER mit'),
+    # emm603: Regional Trading verliert den neu nachgeruesteten
+    # RateLimited-Schutz in _dv() wieder - genau der Schutz, der das
+    # hoehere Fetch-Budget (1000 statt 350) erst absichert.
+    ('Regional Trading: RateLimited-Zaehler in _dv() entfernt - '
+     'hoeheres Fetch-Budget nicht mehr abgesichert',
+     'eve_trader/ui/main_window.py',
+     '                    except esi.RateLimited:\n                        with _rl_lock:\n                            _rl_state["hits"] += 1\n                            if _rl_state["hits"] >= 5:\n                                _rl_state["stop"] = True\n                        return tid, 0, 0.0\n                    except Exception:',
+     '                    except Exception:   # MUTATION: RateLimited-Zweig entfernt',
+     'aa603 Regional Trading: _dv() hat jetzt einen eigenen '
+     'RateLimited-Zaehler'),
+    # emm603: Daytrade faellt auf die alten, kleineren Cache/Fetch-Toepfe
+    # zurueck (6000/350 statt 20000/1000).
+    ('Daytrade faellt auf die alten Cache/Fetch-Toepfe (6000/350) zurueck',
+     'eve_trader/ui/main_window.py',
+     '"max_cached_items": 20000,',
+     '"max_cached_items": 6000,   # MUTATION',
+     'aa603 Daytrade: max_cached_items 6000 -> 20000'),
+    # emm603: Swing("under") faellt ebenso zurueck.
+    ('Swing("under") faellt auf den alten Fetch-Topf (350) zurueck',
+     'eve_trader/ui/main_window.py',
+     'filters["max_new_history"] = 1000',
+     'filters["max_new_history"] = 350   # MUTATION',
+     "aa603 Swing('under'): dieselbe Anhebung"),
+    # emm603: Build-Tab faellt auf den alten Deckel (400) zurueck.
+    ('Build-Tab faellt auf den alten max_items=400-Deckel zurueck',
+     'eve_trader/ui/main_window.py',
+     '"max_items": 800,',
+     '"max_items": 400,   # MUTATION',
+     'aa603 Build-Tab: max_items 400 -> 800'),
+    # emm603: Swing-Basis (fuer 'underbuild') faellt auf 300 zurueck.
+    ('Swing-Basis (underbuild) faellt auf max_items=300 zurueck',
+     'eve_trader/ui/main_window.py',
+     '"max_items": 600,\n        }\n        hold_mode = self.h_mode.currentData()',
+     '"max_items": 300,   # MUTATION\n        }\n        hold_mode = self.h_mode.currentData()',
+     "aa603 Swing-Basis (fuer 'underbuild'): max_items 300 -> 600"),
+    # emm604: entfernte Presets kommen per Mutation wieder zurueck - jede
+    # einzelne muss die passende aa604-Pruefung (und die Zaehl-Pruefung)
+    # roeten.
+    ('Daytrade-Preset "cheap only (up to 300k)" kommt per Mutation zurueck',
+     'eve_trader/ui/main_window.py',
+     '# statt nur dokumentiert, siehe MEMORY.md/CLAUDE.md emm604.\n'
+     '        ("Recommended · mid range (300k–20M)",',
+     '# statt nur dokumentiert, siehe MEMORY.md/CLAUDE.md emm604.   # MUTATION\n'
+     '        ("Recommended · cheap only (up to 300k)",\n'
+     '         {"rank": "spanne", "window": 20, "vol": 300, "roi": 12, "profit": 0,\n'
+     '          "profitday": 500_000, "buyratio": 25, "maxcomp": 0, "trade": 45,\n'
+     '          "twosided": 35, "bestdepth": 25, "maxover": 35, "minqty": 20, "dos": 8,\n'
+     '          "pmin": 0, "pmax": 300_000,\n'
+     '          "sym": "coins", "tip": "x"}),\n'
+     '        ("Recommended · mid range (300k–20M)",',
+     "aa604 Daytrade 'cheap only (up to 300k)' entfernt"),
+    ('Daytrade-Preset "maximum turnover (cheap)" kommt per Mutation zurueck',
+     'eve_trader/ui/main_window.py',
+     '# Entfernt, siehe MEMORY.md/CLAUDE.md emm604.\n'
+     '        ("⚡ Active at the PC · mid range",',
+     '# Entfernt, siehe MEMORY.md/CLAUDE.md emm604.   # MUTATION\n'
+     '        ("⚡ Active at the PC · maximum turnover (cheap)",\n'
+     '         {"rank": "stunden", "window": 14, "vol": 80, "roi": 12, "profit": 0,\n'
+     '          "profitday": 400_000, "buyratio": 30, "maxcomp": 0, "trade": 15,\n'
+     '          "twosided": 12, "bestdepth": 40, "maxover": 25, "minqty": 40, "dos": 4,\n'
+     '          "pmin": 0, "pmax": 500_000, "tip": "x"}),\n'
+     '        ("⚡ Active at the PC · mid range",',
+     "aa604 Daytrade 'maximum turnover (cheap)' entfernt"),
+    ('Daytrade-Preset "solid margin" kommt per Mutation zurueck',
+     'eve_trader/ui/main_window.py',
+     '# tot. Entfernt, siehe MEMORY.md/CLAUDE.md emm604.\n'
+     '        ("Little time · expensive single items",',
+     '# tot. Entfernt, siehe MEMORY.md/CLAUDE.md emm604.   # MUTATION\n'
+     '        ("Little time · solid margin",\n'
+     '         {"rank": "konkurrenz", "window": 20, "vol": 40, "roi": 12, "profit": 0,\n'
+     '          "profitday": 250_000, "buyratio": 25, "maxcomp": 15, "trade": 30,\n'
+     '          "twosided": 20, "bestdepth": 3, "maxover": 40, "minqty": 2, "dos": 15,\n'
+     '          "pmin": 0, "pmax": 0, "tip": "x"}),\n'
+     '        ("Little time · expensive single items",',
+     "aa604 Daytrade 'solid margin' entfernt"),
+    ('Daytrade-Preset "higher margin" kommt per Mutation zurueck',
+     'eve_trader/ui/main_window.py',
+     '# hinter "overlooked mid range" (18) desselben Modus zurueck.\n'
+     '        # Entfernt, siehe MEMORY.md/CLAUDE.md emm604.\n'
+     '        # 💎 Viel Kapital (rank: kapital)',
+     '# hinter "overlooked mid range" (18) desselben Modus zurueck.\n'
+     '        # Entfernt, siehe MEMORY.md/CLAUDE.md emm604.   # MUTATION\n'
+     '        ("Hidden gems · higher margin",\n'
+     '         {"rank": "nische", "window": 20, "vol": 10, "roi": 15, "profit": 0,\n'
+     '          "profitday": 250_000, "buyratio": 25, "maxcomp": 10, "trade": 30,\n'
+     '          "twosided": 25, "bestdepth": 2, "maxover": 35, "minqty": 1, "dos": 15,\n'
+     '          "pmin": 0, "pmax": 0, "tip": "x"}),\n'
+     '        # 💎 Viel Kapital (rank: kapital)',
+     "aa604 Daytrade 'higher margin' entfernt"),
+    ('Regional-Preset "Instant sale (out fast)" kommt per Mutation zurueck',
+     'eve_trader/ui/main_window.py',
+     '# liq:100) wurde entfernt. Siehe MEMORY.md/CLAUDE.md emm604.\n    ]',
+     '# liq:100) wurde entfernt. Siehe MEMORY.md/CLAUDE.md emm604.   # MUTATION\n'
+     '        ("Instant sale (out fast)",\n'
+     '         {"mode": "instant", "margin": 12, "profit": 50_000, "liq": 100, '
+     '"vol": 20,\n'
+     '          "m3": 0, "pmin": 0, "pmax": 0}),\n    ]',
+     "aa604 Regional 'Instant sale (out fast)' entfernt"),
+    ('Swing-Preset "Capitals & structures · yearly low" verschwindet aus dem Quelltext',
+     'eve_trader/ui/main_window.py',
+     '        ("Capitals & structures · yearly low",',
+     '        ("Capitals & structures · yearly low REMOVED",   # MUTATION',
+     "aa605 Swing-Preset \"Capitals & structures · yearly low\" im "
+     "Quelltext vorhanden"),
+    ('Jahrestief-Score-Nudge (emm606) verschwindet aus scanner.py',
+     'eve_trader/scanner.py',
+     '                    score *= 0.85 + 0.15 * _nearness',
+     '                    score *= 1.0   # MUTATION (emm606-Nudge entfernt)',
+     "aa606 Score-Nudge (0.85x-1.0x Jahrestief-Naehe) im Quelltext"),
+    # emm814: Tabelle hat jetzt 13 Spalten (12 = Rating) - die Mutation
+    # faellt entsprechend auf 12 zurueck.
+    ('Swing-Spalte "vs 1Y low" (emm606) verschwindet aus main_window.py '
+     '(Spaltenzahl faellt zurueck)',
+     'eve_trader/ui/main_window.py',
+     '        self.hold_table = QTableWidget(0, 13)',
+     '        self.hold_table = QTableWidget(0, 12)   # MUTATION',
+     "aa606 neue Swing-Spalte 'vs 1Y low'"),
+    ('Preset "Bargain Radar" (emm607) verschwindet aus dem Quelltext',
+     'eve_trader/ui/main_window.py',
+     '        ("Bargain Radar · nearest to 1Y low (all prices)",',
+     '        ("Bargain Radar · nearest to 1Y low (all prices) REMOVED",'
+     '   # MUTATION',
+     'aa607 Preset "Bargain Radar · nearest to 1Y low (all prices)" im '
+     'Quelltext vorhanden'),
+    ('500%-Deckel der "vs 1Y low"-Spalte (emm608) verschwindet aus '
+     'main_window.py',
+     'eve_trader/ui/main_window.py',
+     '        capped = min(vs_low_pct, 500.0)',
+     '        capped = vs_low_pct   # MUTATION (emm608-Deckel entfernt)',
+     'aa608 Deckel bei 500 % im Quelltext vorhanden'),
+    ('Farb-Schwellen der "vs 1Y low"-Spalte (emm608) verschwinden aus '
+     'main_window.py',
+     'eve_trader/ui/main_window.py',
+     '                        it.setForeground(QColor(theme.GREEN if _vlp <= 15 else\n'
+     '                                                (theme.AMBER if _vlp <= 50 else theme.RED)))',
+     '                        it.setForeground(QColor(theme.MUTED))   # MUTATION (emm608-Farbe entfernt)',
+     'aa608 Farb-Schwellen (<=15 gruen, <=50 amber) im Quelltext vorhanden'),
+    ('Fallendes-Messer-Filter (emm609) verschwindet aus scanner.py '
+     '(2-Monats-Schwelle entfernt)',
+     'eve_trader/scanner.py',
+     '                    if months_low >= 2.0:',
+     '                    if months_low >= 999999.0:   # MUTATION (emm609-Filter entschaerft)',
+     'aa609 harter 2-Monats-Filter (continue, kein Score-Abzug) im Quelltext vorhanden'),
+    ('scanner.months_at_bottom() (emm609) verschwindet aus scanner.py',
+     'eve_trader/scanner.py',
+     'def months_at_bottom(history: list, low_365: float, band_pct: float = 15.0) -> float:',
+     'def months_at_bottom_REMOVED(history: list, low_365: float, band_pct: float = 15.0) -> float:   # MUTATION',
+     'aa609 scanner.months_at_bottom() mit emm609-Markierung vorhanden'),
+    ('"vs 1Y low" Default-An bei Bargain Radar (emm610) verschwindet aus '
+     'main_window.py',
+     'eve_trader/ui/main_window.py',
+     '            if _acts610 and 11 in _acts610 and p.get("sym") == "satellite":',
+     '            if False:   # MUTATION (emm610-Default entfernt)',
+     'p.get("sym") == "satellite"'),
+    ('Rig-Sonderfall (emm611) verschwindet aus industry.kategorie_passt_mehrfach()',
+     'eve_trader/industry.py',
+     '    ist_rig = group_id is not None and group_id in (rig_ids or ())\n'
+     '    eff = RIGS_KAT if ist_rig else cat_id',
+     '    ist_rig = False   # MUTATION (emm611 Rig-Sonderfall entfernt)\n'
+     '    eff = cat_id',
+     'aa611 kategorie_passt_mehrfach({7}, cat_id=7, ABER Rig-Gruppe) -> False'),
+    ('meta_bucket() (emm611) behandelt 0/None nicht mehr als Tech I',
+     'eve_trader/industry.py',
+     '    m = meta_group_id or 0\n'
+     '    if m == 0:\n'
+     '        return 1',
+     '    m = meta_group_id or 0\n'
+     '    if m == 0:\n'
+     '        return 0   # MUTATION (emm611 Tech-I-Default entfernt)',
+     'aa611 meta_bucket(0) -> Tech I'),
+    ('Swing-Trade Kategorie-Knopf (emm611) verschwindet aus main_window.py',
+     'eve_trader/ui/main_window.py',
+     '        self.h_cat_btn, self._h_cat_refresh, self._h_cat_selected = '
+     'self._filter_mehrfach_knopf(',
+     '        self.h_cat_btn_REMOVED, self._h_cat_refresh, self._h_cat_selected = '
+     'self._filter_mehrfach_knopf(   # MUTATION (emm611)',
+     'aa611 Swing Trade: Category/Meta-Knoepfe gebaut und in hcontrols eingereiht'),
+    ('Regional-Trading Kategorie-Knopf (emm611) verschwindet aus main_window.py',
+     'eve_trader/ui/main_window.py',
+     '        self.rg_cat_btn, self._rg_cat_refresh, self._rg_cat_selected = '
+     'self._filter_mehrfach_knopf(',
+     '        self.rg_cat_btn_REMOVED, self._rg_cat_refresh, self._rg_cat_selected = '
+     'self._filter_mehrfach_knopf(   # MUTATION (emm611)',
+     'aa611 Regional Trading: Category/Meta-Knoepfe gebaut und in controls eingereiht'),
+    ('_apply_rg_view() (emm611) filtert nicht mehr ueber kategorie_passt_mehrfach()',
+     'eve_trader/ui/main_window.py',
+     '                if cat_sel is not None and not industry.kategorie_passt_mehrfach(\n'
+     '                        cat_sel, c_id, g_id, _rg_rig_ids):',
+     '                if cat_sel is not None and not industry.kategorie_passt_mehrfach_AUS(\n'
+     '                        cat_sel, c_id, g_id, _rg_rig_ids):   # MUTATION (emm611)',
+     'aa611 Regional Trading: _apply_rg_view()'),
+    ('compute_hold() (emm611) filtert nicht mehr ueber kategorie_passt_mehrfach()',
+     'eve_trader/ui/main_window.py',
+     '                if cat_sel is not None and not industry.kategorie_passt_mehrfach(\n'
+     '                        cat_sel, c_id, g_id, rig_ids):',
+     '                if cat_sel is not None and not industry.kategorie_passt_mehrfach_AUS(\n'
+     '                        cat_sel, c_id, g_id, rig_ids):   # MUTATION (emm611)',
+     'aa611 Swing Trade: compute_hold() filtert das Snapshot ueber'),
+    ('QWidgetAction-Checkbox (emm612) wird nicht mehr ins Menue eingehaengt',
+     'eve_trader/ui/main_window.py',
+     '        menu.addAction(wa)',
+     '        pass   # MUTATION (emm612, Eintrag nicht mehr eingehaengt)',
+     'aa612 _filter_mehrfach_knopf() baut Eintraege als QCheckBox'),
+    ('"Only this" (emm612) loest keinen Isolier-Aufruf mehr aus',
+     'eve_trader/ui/main_window.py',
+     '            nur.triggered.connect(lambda: _nur_dieses(key))',
+     '            pass   # MUTATION (emm612 Only-this-Verdrahtung entfernt)',
+     'aa612 Kontextmenue bietet "Only this"'),
+    ('Icon-Schleife (emm612) verschwindet aus d_meta',
+     'eve_trader/ui/main_window.py',
+     '        for _i612 in range(self.d_meta.count()):\n'
+     '            self.d_meta.setItemIcon(_i612, icons.icon("columns"))',
+     '        pass   # MUTATION (emm612 d_meta-Icon-Schleife entfernt)',
+     'aa612 Icon wird auf jeden d_meta-Eintrag gesetzt'),
+    ('Icon-Schleife (emm612) verschwindet aus d_cat',
+     'eve_trader/ui/main_window.py',
+     '        for _i612 in range(self.d_cat.count()):\n'
+     '            self.d_cat.setItemIcon(_i612, icons.icon("columns"))',
+     '        pass   # MUTATION (emm612 d_cat-Icon-Schleife entfernt)',
+     'aa612 Icon wird bei JEDEM Neuaufbau von d_cat erneut gesetzt'),
+    ('Zielbudget (emm613) skaliert nicht mehr herunter',
+     'eve_trader/ui/main_window.py',
+     '            if geschaetzt > budget:',
+     '            if False:   # MUTATION (emm613, Budget-Deckelung ausgehebelt)',
+     'aa613 wird nur HERUNTERskaliert'),
+    ('year_low() (emm614) Mindestschwelle wieder auf 30 statt 10',
+     'eve_trader/scanner.py',
+     '    if len(lows) < 10:',
+     '    if len(lows) < 30:   # MUTATION (emm614, alte Schwelle zurueck)',
+     'aa614 year_low() senkt die Mindestschwelle'),
+    ('IskKompaktEdit.value_aktuell() (emm615) liest den Feldtext nicht mehr '
+     'neu ein',
+     'eve_trader/ui/mw_basis.py',
+     '        self._kompakt_anzeigen()\n        return self._wert',
+     '        return self._wert   # MUTATION (emm615, kein Neu-Einlesen mehr)',
+     'aa615 IskKompaktEdit hat value_aktuell()'),
+    ('Zielbudget (emm616) beachtet Fixkosten nicht mehr',
+     'eve_trader/ui/main_window.py',
+     '            fest_kosten = sum(\n                self._sh_kosten_fuer_menge(r["type_id"], r.get("qty") or 0)\n                for r in rows if r["id"] not in vorschlag)',
+     '            fest_kosten = 0.0   # MUTATION (emm616, Fixkosten ignoriert)',
+     'aa616 Fixkosten (Zeilen OHNE Mengen-Vorschlag) fliessen in die'),
+    ('"Enorm teuer"-Markierung (emm616) verschwindet aus der Einkaufsliste',
+     'eve_trader/ui/main_window.py',
+     '            if _teuer:\n                tag = "❗ " + tag',
+     '            if False:   # MUTATION (emm616, Teuer-Markierung entfernt)\n'
+     '                tag = "❗ " + tag',
+     'aa616 _render_shopping() markiert teure Zeilen'),
+    ('Work-through mode (emm617) folgt wieder der rohen DB-Reihenfolge '
+     'statt der sichtbaren Tabellensortierung',
+     'eve_trader/ui/main_window.py',
+     '        for r in self._sh_zeilen_sortiert():',
+     '        for r in store.list_shopping():   # MUTATION (emm617)',
+     'aa617 _sh_step_next() ruft NICHT mehr'),
+    ('Tiefendeckel (emm618) gegen Orderbuch-Tiefe faellt weg - Suggested '
+     'quantity gruebt sich wieder ungebremst ins Orderbuch',
+     'eve_trader/ui/main_window.py',
+     '                    sq = self._sh_tiefen_deckel(r["type_id"], sq)',
+     '                    pass   # MUTATION (emm618, Tiefendeckel entfernt)',
+     'aa618 _apply_suggested_qty() deckelt die Tagesvolumen-Menge'),
+    ('Multi-Hub-Einkauf (emm619, Teil 1) laedt buy_hub_a/buy_hub_b beim '
+     'Plan-Oeffnen nicht mehr aus dem Save-Dict',
+     'eve_trader/ui/main_window.py',
+     '        self._bd_buy_hub_a = p.get("buy_hub_a") or None',
+     '        self._bd_buy_hub_a = None   # MUTATION (emm619)',
+     "aa619 Plan-Laden setzt _bd_buy_hub_a/_bd_buy_hub_b"),
+    ('ESI-Verzugskorrektur (emm620) auf der Stock-locations-Seite faellt weg - "0 missing" trotz schon verbrauchtem Material laufender Jobs',
+     'eve_trader/lagerorte.py',
+     '        _basis789 = it_menge - int(lag.get(tid, 0) or 0)\n',
+     '        _basis789 = it_menge   # MUTATION (emm620, Verzug ignoriert)\n',
+     'aa620 baum() zieht `lag`'),
+    ('"Haben/Brauchen" in Stock locations (emm621) verschwindet wieder aus '
+     'Spalte 1 - Bedarf steht nur noch im Hover-Tooltip',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '''            _menge_txt = (f"{_z(it['menge'])} / {_z(_ges_b)}" if it.get("bedarf")
+                         else _z(it["menge"]))''',
+     '            _menge_txt = _z(it["menge"])   # MUTATION (emm621)',
+     'aa621 _lager_karte() zeigt'),
+    ('Bauplan-Zuordnung je fehlendem Posten (emm622) verschwindet wieder - '
+     'nur noch der Hover-Tooltip verrät, welcher Bauplan es braucht',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                    top.addChild(_pi622)',
+     '                    pass   # MUTATION (emm622, Bauplan-Zeile verworfen)',
+     'aa622 fehlende Items bekommen je Bauplan'),
+    ('Blaupausen, die ESI waehrend eines laufenden Fertigungsjobs komplett '
+     'aus /blueprints/ nimmt (emm623), stehen wieder faelschlich rot '
+     '"completely missing" statt amber "im Job"',
+     'eve_trader/esi.py',
+     '            if int(bid) not in _vorhandene_items and j.get("blueprint_type_id"):',
+     '            if False:   # MUTATION (emm623, Geister-Erkennung abgeschaltet)',
+     'aa623 Geister-Blaupause bei Fertigung'),
+    ('Ein vorhandenes Original wirft wieder ALLE Kopien aus der '
+     'Parallelzaehlung (emm624) - 15 Blaupausen landen wieder auf 1 Slot',
+     'eve_trader/ui/mw_helpers.py',
+     '        return bpo + kopien, 0',
+     '        return (bpo, kopien) if bpo else (kopien, 0)   # MUTATION '
+     '(emm624, alte Original-wirft-Kopien-raus-Regel)',
+     'aa624 Original + 14 volle Kopien zaehlen als 15 parallele Slots'),
+    # ENTFERNT 31.10.2026 (emm782): 'Gekuerzte 1-Slot-Items haeufen sich wieder auf EINEM Charakt' - die Zusage
+    # wurde bewusst abgeschafft/umgekehrt (Zusage 'Reaktions-Stufe nutzt mehr als einen Charakter' mit emm737 umgedreht (tests/test_b)
+    ('Stock Locations sieht laengst gelieferte ESI-Jobs wieder nicht '
+     '(emm626) - voller Materialbedarf bleibt stehen, obwohl der Bauplan '
+     'selbst laengst 0 meldet',
+     'eve_trader/lagerorte.py',
+     '    if delivered_jobs is not None and recipes is not None and frozen_ts:',
+     '    if False:   # MUTATION (emm626, dritte Quelle abgeschaltet)',
+     'aa626 mit dritter Quelle'),
+    ('Reaktions-Formeln werden wieder auf ~2 Charaktere gedeckelt (emm627) '
+     '- freie Reaktionsslots bleiben ungenutzt, Stufen dauern unnoetig lange',
+     'eve_trader/industry.py',
+     '                return R if (tid in _unit or is_reaction) else max_reasonable',
+     '                return R if tid in _unit else max_reasonable   # MUTATION '
+     '(emm627, Reaktions-Ausnahme entfernt)',
+     'aa627 16 eigene Reaktions-Originale nutzen mehr als 2 Charaktere'),
+    # emm783: ein entfernter Haken heisst "nicht kaufen" - auch beim Kopieren
+    ('Kopier-Knopf ignoriert die Haken wieder (Megacyte-Fall)',
+     'eve_trader/ui/main_window.py',
+     '                _posten, _skipped, _gebaut_raus = einkauf_posten(\n'
+     '                    rows, feld, getattr(self, "_bd_plan_builds", None),\n'
+     '                    nur_tids=_haken783)\n',
+     '                _posten, _skipped, _gebaut_raus = einkauf_posten(\n'
+     '                    rows, feld, getattr(self, "_bd_plan_builds", None),\n'
+     '                    nur_tids=None)   # MUTATION\n',
+     'b783 Megacyte abgewaehlt: kommt NICHT mehr mit'),
+    ('einkauf_posten laesst abgewaehlte Zeilen wieder durch',
+     'eve_trader/ui/mw_helpers.py',
+     '        if nur_tids is not None and tid not in nur_tids:\n'
+     '            continue\n',
+     '        if False:   # MUTATION (emm783, Haken-Filter abgeklemmt)\n'
+     '            continue\n',
+     'aa783 nur_tids filtert auf die Haken'),
+    # emm785: Skip-Haken im Order update ist standardmaessig AUS
+    ('Skip-Haken ist ohne Eintrag wieder standardmaessig AN',
+     'eve_trader/ui/mw_helpers.py',
+     '    _akt = e.get("ord_intervall_aktiv") if isinstance(e, dict) else None\n'
+     '    if not _akt:\n',
+     '    _akt = e.get("ord_intervall_aktiv") if isinstance(e, dict) else None\n'
+     '    if _akt is not None and not _akt:   # MUTATION (alter emm741-Standard)\n',
+     'aa741 ohne Eintrag: AUS (emm785 - Standard ist nicht angehakt)'),
+    ('Skip-Checkbox startet ohne Eintrag wieder angehakt',
+     'eve_trader/ui/main_window.py',
+     '        self._ord_int_cb.setChecked(False if _akt741 is None else bool(_akt741))\n',
+     '        self._ord_int_cb.setChecked(True if _akt741 is None else bool(_akt741))   # MUTATION\n',
+     'b741 ohne gespeicherten Eintrag ist der Schalter AUS'),
+    # emm786: Wave-2-Jobs auf moeglichst EINEN Charakter
+    ('Ueberlauf-Jobs streuen wieder ueber alle Charaktere (Wave 2)',
+     'eve_trader/industry.py',
+     '        _wave2_buendeln()\n'
+     '        stage_times[stage] = max(load) if load else 0.0\n',
+     '        stage_times[stage] = max(load) if load else 0.0   # MUTATION (emm786 abgeklemmt)\n',
+     'aa786 8 Posten auf 3x2 Slots: der Ueberlauf (2 Jobs) liegt auf EINEM Charakter'),
+    # emm789: Stock Locations rechnet fremde Ansprueche mit
+    ('Stock Locations vergleicht wieder gegen den vollen Rohbestand',
+     'eve_trader/lagerorte.py',
+     '        _verfuegbar = max(0, max(_basis789 - _fr789, min(_ei789, _basis789)))\n',
+     '        _verfuegbar = max(0, _basis789)   # MUTATION (emm789 abgeklemmt)\n',
+     'aa789 fremder Anspruch 100 -> es fehlen 100'),
+    # emm790: Nenner der mitlaufenden Freigabe aus dem Schnappschuss
+    ('Mitlaufende Freigabe rechnet wieder mit dem assignments-Nenner',
+     'eve_trader/ui/mw_helpers.py',
+     '            if _r_b > 0:\n'
+     '                geplant[_t_b] = _r_b\n'
+     '                _aus_snap.add(_t_b)\n',
+     '            if _r_b > 0:\n'
+     '                geplant[_t_b] = _r_b   # MUTATION (emm790: Schnappschuss-Vorrang weg)\n',
+     'aa790 30 von 50 Schnappschuss-Runs belegt: genau 3\'000 von 5\'000 freigegeben'),
+    # emm791: fremd zugeordnete Jobs zaehlen nicht als eigener Fortschritt
+    ('Fremde Jobs zaehlen wieder als eigener Fortschritt',
+     'eve_trader/ui/mw_helpers.py',
+     '            if vergeben is not None and j.get("job_id") is not None:\n'
+     '                try:\n'
+     '                    _wem = vergeben.get(int(j.get("job_id")))\n'
+     '                except (TypeError, ValueError):\n'
+     '                    _wem = None\n'
+     '                if _wem is not None and str(_wem) != _eig_id:\n'
+     '                    continue\n',
+     '            if False:   # MUTATION (emm791, Zuordnungs-Sieb abgeklemmt)\n'
+     '                pass\n',
+     'aa791 Job des ANDEREN Plans zaehlt nicht mehr'),
+    # emm792: krumme Run-Zahlen fragen statt still an Rang 1
+    ('Mehrdeutige Jobs gehen wieder still an Rang 1',
+     'eve_trader/ui/mw_helpers.py',
+     '        _kand = [p for p in (plaene or [])\n'
+     '                 if float(j["_ts"]) >= float(p.get("seit") or 0.0)\n'
+     '                 and rest[p["id"]].get(tid, 0) >= n]\n'
+     '        if len(_kand) != 1:\n'
+     '            continue\n',
+     '        _kand = [p for p in (plaene or [])\n'
+     '                 if float(j["_ts"]) >= float(p.get("seit") or 0.0)\n'
+     '                 and rest[p["id"]].get(tid, 0) >= n]\n'
+     '        if not _kand:   # MUTATION (emm792: erster Treffer statt Eindeutigkeit)\n'
+     '            continue\n',
+     'aa433 Jobs 11+12 passen in BEIDE Plaene: nichts wird still vergeben'),
+    ('Uebergrosse Jobs werden wieder nie gefragt',
+     'eve_trader/ui/mw_helpers.py',
+     '            continue          # eindeutig - dafuer gibt es keine Frage\n        grenze = _pr.get(tid, 0)\n        if grenze <= 0:\n            continue\n',
+     '            continue          # eindeutig - dafuer gibt es keine Frage\n        grenze = _pr.get(tid, 0)\n        if grenze <= 0 or runs > grenze:   # MUTATION (emm792 M4 zurueck)\n            continue\n',
+     'aa408 ein Job groesser als der ganze Plan wird seit emm792 GEFRAGT'),
+    # emm793: Freigabe rundet auf
+    ('Mitlaufende Freigabe schneidet wieder ab (1 Stueck Uebersubskription)',
+     'eve_trader/ui/mw_helpers.py',
+     '                import math as _m793\n'
+     '                _weg = int(_m793.ceil(float(_q) * _anteil - 1e-9))\n',
+     '                _weg = int(_q * _anteil)   # MUTATION (emm793 zurueckgedreht)\n',
+     'aa793 1 von 3 Runs belegt: ceil(10/3) = 4 freigegeben'),
+    # emm795: Buendel-Schloss-Loch
+    ('Buendel ohne Schloss verschluckt wieder das Mitglieds-Schloss',
+     'eve_trader/ui/mw_helpers.py',
+     '            if str(p.get("id")) in _mitgl and str(p.get("id")) not in _mitgl_frei:\n'
+     '                continue\n',
+     '            if str(p.get("id")) in _mitgl:   # MUTATION (emm795 abgeklemmt)\n'
+     '                continue\n',
+     'aa795 _fremde_reservierungen: Mitglieds-Schloss zaehlt'),
+    # emm796: "Trotzdem kaufen" + Aufrunden
+    ('Angehakte Bau-Items fallen wieder aus der Kopie',
+     'eve_trader/ui/mw_helpers.py',
+     '        if tid in _baut and nur_tids is None:\n',
+     '        if tid in _baut:   # MUTATION (emm796: Haken wirkungslos)\n',
+     'aa796 MIT Haken-Filter heisst ein angehaktes Bau-Item KAUFEN'),
+    ('Einkaufsmengen werden wieder abgeschnitten statt aufgerundet',
+     'eve_trader/ui/mw_helpers.py',
+     '            import math as _m796\n'
+     '            q = int(_m796.ceil(float(r.get(feld) or 0) - 1e-9))\n',
+     '            q = int(r.get(feld) or 0)   # MUTATION (emm796 G5 zurueck)\n',
+     'aa796 ohne Haken-Filter bleibt die Schutzregel'),
+    # emm797: Asset-Stempel = Datenalter
+    ('Asset-Stempel nimmt wieder die Abruf-Wanduhr',
+     'eve_trader/store.py',
+     '    try:\n'
+     '        _stempel = min(jetzt, float(daten_ts)) if daten_ts else jetzt\n'
+     '    except (TypeError, ValueError):\n'
+     '        _stempel = jetzt\n',
+     '    _stempel = jetzt   # MUTATION (emm797 abgeklemmt)\n',
+     'aa797 checked_at traegt das Datenalter'),
+    # emm798: Auftau-Warnung nennt den Fortschritt
+    ('Auftau-Warnung verschweigt den verfallenden Fortschritt wieder',
+     'eve_trader/ui/main_window.py',
+     '        if _fort798 > 0:\n',
+     '        if False:   # MUTATION (emm798 abgeklemmt)\n',
+     'b798 Auftau-Warnung nennt die 5 verfallenden Runs'),
+    # emm799: fremde Pipeline deckt die Planrechnung nicht
+    ('Planrechnung zaehlt fremde Pipeline wieder als Bestand',
+     'eve_trader/ui/main_window.py',
+     '        try:\n'
+     '            for _t799, _u799 in (self._fremde_pipeline_umstritten() or {}).items():\n'
+     '                if _t799 in stock:\n'
+     '                    stock[_t799] = max(0, int(stock[_t799] or 0) - int(_u799))\n'
+     '                    if stock[_t799] <= 0:\n'
+     '                        stock.pop(_t799, None)\n'
+     '        except Exception as _e799:\n'
+     '            self._log_exception("Fremde Pipeline abziehen", str(_e799))\n',
+     '        pass   # MUTATION (emm799 abgeklemmt)\n',
+     'aa799 umstrittene fremde Pipeline faellt aus dem Plan-Bestand'),
+    # emm801: PI-Uebersicht (Timer + Planeten-Lager)
+    ('PI: m3 rechnet wieder ohne die Menge',
+     'eve_trader/pi.py',
+     '                    _m3 = _menge * float(volumen.get(_ctid) or 0.0)\n',
+     '                    _m3 = float(volumen.get(_ctid) or 0.0)   # MUTATION\n',
+     'aa801 m3-Summe der Karte: Menge x Volumen ueber ALLE Pins'),
+    ('PI: Extraktor-Rate vergisst die Stunden-Umrechnung',
+     'eve_trader/pi.py',
+     '                        _je_h = _qty * 3600.0 / _ct\n',
+     '                        _je_h = _qty / _ct   # MUTATION\n',
+     'aa801 Extraktor-Rate je Stunde: qty * 3600 / cycle'),
+    ('PI: Charaktere ohne Scope werden wieder gefragt (403-Lawine)',
+     'eve_trader/pi.py',
+     '        if _sc is not None and config.PI_SCOPE not in _sc:\n',
+     '        if False:   # MUTATION (emm801 Scope-Sieb abgeklemmt)\n',
+     'aa801 ohne PI-Scope -> fehlt, ohne ESI-Abruf'),
+    ('PI: der fruehste Ablauf wird wieder der spaeteste',
+     'eve_trader/pi.py',
+     '            "naechster_ablauf_ts": min(_enden) if _enden else None,\n',
+     '            "naechster_ablauf_ts": max(_enden) if _enden else None,   # MUTATION\n',
+     'aa801 fruehester Ablauf = der ABGELAUFENE Extraktor'),
+    ('PI: der Schalter haengt den Scope nicht mehr an den Login',
+     'eve_trader/ui/main_window.py',
+     '        if config.PI_AKTIV and self.settings.get("use_pi"):\n'
+     '            scopes.append(config.PI_SCOPE)        # PI-Uebersicht (emm801/803)\n',
+     '        if False:   # MUTATION (emm801)\n'
+     '            pass\n',
+     'b801 use_pi=an fragt den PI-Scope an'),
+    ('PI: abgelaufene Timer melden sich wieder als laufend',
+     'eve_trader/ui/main_window.py',
+     '        return (t("EXPIRED {dur} ago ({at})").format(dur=_dauer, at=_abs), True)\n',
+     '        return (t("EXPIRED {dur} ago ({at})").format(dur=_dauer, at=_abs), False)   # MUTATION\n',
+     'b801 abgelaufener Ablauf steht ROT im Kopf-Timer'),
+    # emm802: PI-Karten wie Industry Jobs (Schalter + Anordnung)
+    ('PI: verschwundene Karten bleiben in der gezogenen Anordnung',
+     'eve_trader/pi.py',
+     '        _sp = [str(k) for k in (_g or [])\n'
+     '               if str(k) in _da_set and str(k) not in gesehen]\n',
+     '        _sp = [str(k) for k in (_g or [])]   # MUTATION (Filter weg)\n',
+     'aa802 gespeicherte Spalten bleiben, Verschwundenes faellt raus'),
+    ('PI: der Charakter-Schalter blendet nichts mehr aus',
+     'eve_trader/ui/main_window.py',
+     '        sichtbar = [k for k in karten\n'
+     '                    if str(int(k.get("char_id") or 0)) not in aus]\n',
+     '        sichtbar = list(karten)   # MUTATION (emm802 Schalter tot)\n',
+     'b801 Charakter aus blendet seine Kolonie aus'),
+    # emm805: Build from stock holt Gewinn/90d selbst
+    ('BFS: die Blaupausen-Wirtschaft laedt sich nicht mehr selbst',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '        if _econ805 is None:\n'
+     '            self._bfs_mb_laden()\n',
+     '        pass   # MUTATION (emm805 Auto-Laden tot)\n',
+     'b805 ohne Blaupausen-Wirtschaft laedt die Seite sie selbst'),
+    ('BFS: fehlende Historien werden nicht mehr nachbestellt',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '            if _ohne805:\n'
+     '                self._absatz_nachladen(_ohne805, fertig=self._bfs_trend_neu)\n',
+     '            if False:   # MUTATION (emm805 Historien tot)\n'
+     '                pass\n',
+     'b805 fehlende Historien werden nachbestellt (nur die ohne)'),
+    # emm806: Cyan nur bei eigenem Beleg
+    ('Runplaner: fremde Jobs faerben frische Plaene wieder cyan',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                        if _jobs_zaehlen_715 or a["tid"] not in _umstritten_715:\n',
+     '                        if True:   # MUTATION (emm806 Sieb abgeklemmt)\n',
+     'b806 fremd-umstrittener Lauf faerbt den frischen Plan NICHT cyan'),
+    # emm807: Blaupausen im Container - Wurzel-Aufloesung
+    ('Container-Kette wird nicht mehr bis zur Station verfolgt',
+     'eve_trader/esi.py',
+     '        while _wurzel in eltern and _wurzel not in _gesehen:\n',
+     '        while False:   # MUTATION (emm807 Kette gekappt)\n',
+     'aa807 Item im Container: Wurzel ist die Station'),
+    ('Blueprints-Reiter loest Container-Orte nicht mehr auf',
+     'eve_trader/ui/main_window.py',
+     '''            if _loc is not None:
+                try:
+                    _loc = int((getattr(self, "_bd_bp_orte", None)
+                                or {}).get(_loc, _loc))
+                except (TypeError, ValueError):
+                    pass
+''',
+     '            pass   # MUTATION (emm807 Aufloesung tot)\n',
+     'b807 Container an der Bau-Struktur zaehlt als vor Ort'),
+    # emm808: Director-Meldung dezent statt rot
+    ('Die Rolle-Luecke verliert ihre bekannt-Markierung (wieder roter Alarm)',
+     'eve_trader/ui/mw_helpers.py',
+     '        bekannt.append(luecken[-1])\n',
+     '        pass   # MUTATION (emm808 bekannt-Markierung weg)\n',
+     'aa743/aa808 die Rolle-Luecke ist als bekannt markiert'),
+    ('Das Blueprints-Banner schlaegt fuer bekannte Luecken wieder rot an',
+     'eve_trader/ui/mw_bauplan_fenster.py',
+     '            _bek808 = set(getattr(self, "_bd_bp_fehler_bekannt", None) or [])\n'
+     '            _bpf = [f for f in _bpf if f not in _bek808]\n',
+     '            pass   # MUTATION (emm808 Banner-Filter tot)\n',
+     'aa808 das Banner filtert bekannte Luecken heraus'),
+    # emm809: Abholbereit springt ins Auge
+    ('Jobs-Karte verliert den gruenen Abholbereit-Rahmen',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '''            card.setStyleSheet(
+                f"QFrame#Card{{background:{theme.PANEL}; "
+                f"border:2px solid {theme.GREEN}; border-radius:8px;}}")
+''',
+     '            pass   # MUTATION (emm809 Rahmen weg)\n',
+     'b809 Karte mit Abholbereitem traegt den gruenen Rahmen'),
+    ('READY-Kachel verliert die gruene Umrandung',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '''        kc["ready"]["rahmen"].setStyleSheet(
+            f"QFrame#Card{{background:{theme.PANEL2}; "
+            f"border:2px solid {theme.GREEN}; border-radius:6px;}}"
+            if su["ready"] else
+            f"QFrame#Card{{background:{theme.PANEL2}; "
+            f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
+''',
+     '        pass   # MUTATION (emm809 Kachel-Rahmen weg)\n',
+     'b809 READY-Kachel ist gruen umrandet, sobald etwas bereit ist'),
+    # emm810: Unklar-Warnung schweigt nach dem Einfrieren
+    ('Die Eigene-Kopien-Warnung nervt wieder auf gefrorenen Plaenen',
+     'eve_trader/ui/mw_multi_bauplan.py',
+     '''        if getattr(self, "_bd_frozen", None):
+            return []
+        rec = getattr(self, "_bd_recipes", None)
+''',
+     '        rec = getattr(self, "_bd_recipes", None)   # MUTATION (emm810)\n',
+     'b113/b810 eingefroren: die Unklar-Warnung schweigt'),
+    # ------------------------------------------------------- emm812:
+    # Bauplan-Kur fuer Daytrade (Balken, kurze Statuszeile, gedaempfte
+    # Farben, Seitenspalte, 4er-Filterraster).
+    ('Rating-Balken fliegt aus der Daytrade-Vorgabe',
+     'eve_trader/ui/main_window.py',
+     '        _DAY_STD = [0, 1, 2, 7, 8, 4, 17, 19]\n',
+     '        _DAY_STD = [0, 1, 2, 7, 8, 4, 17]   # MUTATION (emm812)\n',
+     'b48 acht Spalten sichtbar'),
+    ('Daytrade-Bewertung baut eine zweite Qualitaetsformel',
+     'eve_trader/ui/main_window.py',
+     '        q = self._deal_quality(d, mode)\n',
+     '        q = (d.get("roi", 0) or 0) / 25.0   # MUTATION (emm812)\n',
+     'aa812 die Bewertung liest _deal_quality'),
+    ('Der Handelbarkeits-Vorbehalt der Bewertung faellt weg',
+     'eve_trader/ui/main_window.py',
+     '''        if mode != "build" and _ts < self.DEAL_TRADE_SCHWACH:
+            return _pct, t("too hard to trade"), theme.AMBER
+''',
+     '        pass   # MUTATION (emm812 Vorbehalt weg)\n',
+     'b812 Vorbehalt schlaegt gute Zahl'),
+    # GEMESSEN (01.11.2026, Blindprobe-Befund): das aktuelle Qt bewegt
+    # Zell-Widgets beim Sortieren MIT - der Nachsortier-Haken allein ist
+    # doppelter Boden (bleibt fuer andere Qt-Versionen drin, aa812 haelt
+    # ihn im Quelltext fest), eine Haken-weg-Mutation kann deshalb nicht
+    # ehrlich rot werden. Stattdessen faellt das Anhaengen SELBST weg.
+    ('Daytrade-Balken werden gar nicht mehr angehaengt',
+     'eve_trader/ui/main_window.py',
+     '''        self._haenge_balken(self.deals_table,
+                            getattr(self, "_deal_bar_rows", None) or {}, 19)
+''',
+     '        pass   # MUTATION (emm812 Balken weg)\n',
+     'b812 jede Zeile traegt einen Balken'),
+    ('Daytrade-Statuszeile wird wieder zum Bandwurm',
+     'eve_trader/ui/main_window.py',
+     '''        if deals:
+            self.deal_status.setText(
+                t("{n} hits ({label}). ").format(n=len(deals), label=label).strip()
+                + "  \\u24d8")
+        else:
+            self.deal_status.setText(_voll812)
+''',
+     '        self.deal_status.setText(_voll812)   # MUTATION (emm812)\n',
+     'b812 Statuszeile ist kurz'),
+    ('Die 0-Treffer-Ausnahme der Statuszeile faellt weg',
+     'eve_trader/ui/main_window.py',
+     '''        if deals:
+            self.deal_status.setText(
+                t("{n} hits ({label}). ").format(n=len(deals), label=label).strip()
+                + "  \\u24d8")
+        else:
+            self.deal_status.setText(_voll812)
+''',
+     '''        self.deal_status.setText(
+            t("{n} hits ({label}). ").format(n=len(deals), label=label).strip()
+            + "  \\u24d8")   # MUTATION (emm812 Ausnahme weg)
+''',
+     'b812 bei 0 Treffern bleibt die volle Meldung sichtbar'),
+    ('Daytrade-Gewinnzellen leuchten wieder flaechig gruen',
+     'eve_trader/ui/main_window.py',
+     '''                    if d["profit_unit"] <= 0:
+                        it.setForeground(red)
+                    elif _bcol812 == theme.GREEN:
+                        it.setForeground(green)
+                    else:
+                        it.setForeground(QColor(theme.MUTED))
+''',
+     '                    it.setForeground(green if d["profit_unit"] > 0 else red)   # MUTATION\n',
+     'b812 solide Zeile ist gedaempft, nicht gruen'),
+    ('Der Item-Name leuchtet wieder bei jeder profitablen Zeile',
+     'eve_trader/ui/main_window.py',
+     '''            if _bcol812 == theme.GREEN:
+                self.deals_table.item(i, 0).setForeground(green)
+''',
+     '''            if d["profit_unit"] > 0:   # MUTATION (emm812)
+                self.deals_table.item(i, 0).setForeground(green)
+''',
+     'b812 Item-Name gruen nur beim Gruen-Tier'),
+    # emm813 (Nutzer-Screenshot: Liste beschnitten): aus der Seitenspalte
+    # wurde eine Kopfzeile NEBENEINANDER - die Mutation stapelt die Karten
+    # wieder untereinander (kostet genau die Hoehe, die er sparen will).
+    ('Die Einstell-Karten stapeln sich wieder untereinander',
+     'eve_trader/ui/main_window.py',
+     '''        _kh813.addWidget(d_strat_card, 1, Qt.AlignTop)
+        _kh813.addWidget(d_filter_card, 1, Qt.AlignTop)
+        root.addWidget(_kopf813, 0)
+''',
+     '''        root.addWidget(d_strat_card)   # MUTATION (emm813 untereinander)
+        root.addWidget(d_filter_card)
+''',
+     'b813 beide Karten teilen sich EINE Kopfzeile'),
+    ('Das Feinfilter-Raster quetscht wieder alles in zwei Reihen',
+     'eve_trader/ui/main_window.py',
+     '        cols = 4\n',
+     '        cols = max(1, (len(order) + 1) // 2)   # MUTATION (emm812)\n',
+     'b812 Feinfilter-Raster hoechstens 4 je Reihe'),
+    # ------------------------------------------------------- emm814:
+    # Bauplan-Kur fuer Swing (Balken aus _swing_quality, Vorbehalte
+    # fallender Trend + Dump, kurze Statuszeile, gedaempfte Farben,
+    # flache Kopfzeile, Order-Tiefe unsichtbar, 4er-Filterraster).
+    ('Rating-Balken fliegt aus der Swing-Vorgabe',
+     'eve_trader/ui/main_window.py',
+     '        _SWING_STD = [0, 1, 4, 8, 3, 6, 12]\n',
+     '        _SWING_STD = [0, 1, 4, 8, 3, 6]   # MUTATION (emm814)\n',
+     'Swing: 7 Spalten sichtbar'),
+    ('Swing-Bewertung baut eine zweite Qualitaetsformel',
+     'eve_trader/ui/main_window.py',
+     '        q = self._swing_quality(d)\n',
+     '        q = (d.get("under_pct", 0) or 0) / 40.0   # MUTATION (emm814)\n',
+     'aa814 die Swing-Bewertung liest _swing_quality'),
+    ('Der Fallender-Trend-Vorbehalt der Swing-Bewertung faellt weg',
+     'eve_trader/ui/main_window.py',
+     '''        if d.get("trend") == "falling":
+            return _pct, t("still falling"), theme.AMBER
+''',
+     '        pass   # MUTATION (emm814 Trend-Vorbehalt weg)\n',
+     'b814 Vorbehalt: fallender Trend schlaegt gute Zahlen'),
+    ('Der Dump-Vorbehalt der Swing-Bewertung faellt weg',
+     'eve_trader/ui/main_window.py',
+     '''        if d.get("dump_risk"):
+            return _pct, t("suspected dump (volume spike)"), theme.AMBER
+''',
+     '        pass   # MUTATION (emm814 Dump-Vorbehalt weg)\n',
+     'b814 Vorbehalt: Dump-Verdacht schlaegt gute Zahlen'),
+    ('Swing-Balken werden gar nicht mehr angehaengt',
+     'eve_trader/ui/main_window.py',
+     '''        self._haenge_balken(self.hold_table,
+                            getattr(self, "_hold_bar_rows", None) or {}, 12)
+''',
+     '        pass   # MUTATION (emm814 Balken weg)\n',
+     'b814 jede Zeile traegt einen Balken'),
+    ('Swing-Statuszeile wird wieder zum Bandwurm',
+     'eve_trader/ui/main_window.py',
+     '''        if deals:
+            self.hold_status.setText(
+                t("{n} hold candidates. ").format(n=len(deals)).strip()
+                + "  \\u24d8")
+        else:
+            self.hold_status.setText(_voll814)
+''',
+     '        self.hold_status.setText(_voll814)   # MUTATION (emm814)\n',
+     'b814 Statuszeile ist kurz'),
+    ('Die 0-Treffer-Ausnahme der Swing-Statuszeile faellt weg',
+     'eve_trader/ui/main_window.py',
+     '''        if deals:
+            self.hold_status.setText(
+                t("{n} hold candidates. ").format(n=len(deals)).strip()
+                + "  \\u24d8")
+        else:
+            self.hold_status.setText(_voll814)
+''',
+     '''        self.hold_status.setText(
+            t("{n} hold candidates. ").format(n=len(deals)).strip()
+            + "  \\u24d8")   # MUTATION (emm814 Ausnahme weg)
+''',
+     'b814 bei 0 Treffern bleibt die volle Meldung sichtbar'),
+    ('Swing-Gewinnzellen leuchten wieder flaechig gruen',
+     'eve_trader/ui/main_window.py',
+     '''                    if d.get("exp_profit", 0) <= 0:
+                        it.setForeground(red)
+                    elif _bcol814 == theme.GREEN:
+                        it.setForeground(green)
+                    else:
+                        it.setForeground(QBrush(QColor(theme.MUTED)))
+''',
+     '                    it.setForeground(green if d.get("exp_profit", 0) > 0 else red)   # MUTATION\n',
+     'b814 solide Zeile ist gedaempft, nicht gruen'),
+    ('Die Swing-Einstell-Karten stapeln sich wieder untereinander',
+     'eve_trader/ui/main_window.py',
+     '''        _kh814.addWidget(h_strat_card, 1, Qt.AlignTop)
+        _kh814.addWidget(h_filter_card, 1, Qt.AlignTop)
+        root.addWidget(_kopf814, 0)
+''',
+     '''        root.addWidget(h_strat_card)   # MUTATION (emm814 untereinander)
+        root.addWidget(h_filter_card)
+''',
+     'b814 beide Karten teilen sich EINE Kopfzeile'),
+    # ALT umfasst auch die addWidget-Zeilen: nur das r zu mutieren liesse
+    # die Spalten-Pruefung gruen (i % 4 bliebe) - das waere eine Blindprobe.
+    ('Das Swing-Filterraster quetscht wieder 6 in die Reihe',
+     'eve_trader/ui/main_window.py',
+     '''            r = (i // 4) * 2
+            g.addWidget(lab, r, i % 4)
+            g.addWidget(wdg, r + 1, i % 4)
+''',
+     '''            r = (i // 6) * 2   # MUTATION (emm814)
+            g.addWidget(lab, r, i % 6)
+            g.addWidget(wdg, r + 1, i % 6)
+''',
+     'b814 Feinfilter-Raster hoechstens 4 je Reihe'),
+    ('Die Order-Tiefe steht wieder im Swing',
+     'eve_trader/ui/main_window.py',
+     '        if self._ladder_is_buy_side(key) or key == "swing":\n',
+     '        if self._ladder_is_buy_side(key):   # MUTATION (Swing sichtbar)\n',
+     'b95 ... im Swing Trade ist er seit emm814 ebenfalls versteckt'),
+    # ------------------------------------------------------- emm815:
+    # Bauplan-Kur fuer Regional (Zielpreis-Realismus statt Quell-Volumen
+    # - Nutzer-Korrektur "das volumen am einkaufshub ist irrellevant
+    # wenn ich per sell to sell mache"), Balken aus der Marge, kurze
+    # Statuszeile, gedaempfte Farben, flache Kopfzeile, 3er-Raster.
+    ('Rating-Balken fliegt aus der Regional-Vorgabe',
+     'eve_trader/ui/main_window.py',
+     '        _REG_STD = [0, 1, 2, 5, 4, 9, 10, 11]\n',
+     '        _REG_STD = [0, 1, 2, 5, 4, 9, 10]   # MUTATION (emm815)\n',
+     'Regional: 8 Spalten sichtbar'),
+    ('Der Unrealistisch-Vorbehalt der Regional-Bewertung faellt weg',
+     'eve_trader/ui/main_window.py',
+     '''        if _ueber is not None and _ueber >= self.RG_ZIEL_UNREAL:
+            return _pct, t("destination price unrealistic"), theme.AMBER
+''',
+     '        pass   # MUTATION (emm815 Zielpreis-Vorbehalt weg)\n',
+     'b815 Vorbehalt: unrealistischer Zielpreis schlaegt jede Marge'),
+    ('Der Ziel-Volumen-Vorbehalt der Regional-Bewertung faellt weg',
+     'eve_trader/ui/main_window.py',
+     '''        if _tv is not None and _tv < self.RG_VOL_DUENN:
+            return _pct, t("destination hardly traded"), theme.AMBER
+''',
+     '        pass   # MUTATION (emm815 Ziel-Volumen-Vorbehalt weg)\n',
+     'b815 Vorbehalt: Ziel kaum gehandelt'),
+    ('Die Reihung daempft den aufgeblasenen Zielpreis nicht mehr',
+     'eve_trader/ui/main_window.py',
+     '''        _ueber = self.arb_ziel_ueber(d)
+        if _ueber is not None and _ueber >= self.RG_ZIEL_UNREAL:
+            liq *= self.RG_ZIEL_UNREAL / _ueber
+''',
+     '        pass   # MUTATION (emm815 Daempfung weg)\n',
+     'b815 Reihung: realistischer Treffer schlaegt die Fantasie-Order'),
+    ('Der Vergleich bestaetigt wieder sich selbst (geschaetzter Zielpreis)',
+     'eve_trader/ui/main_window.py',
+     '''        if d.get("leerer_markt") or d.get("sell_geschaetzt"):
+            return None
+''',
+     '        pass   # MUTATION (emm815 Schein-Vergleich zurueck)\n',
+     "b815 geschaetzter Zielpreis zeigt"),
+    ('Der Ziel-Durchschnittspreis wird nicht mehr mitgenommen',
+     'eve_trader/ui/main_window.py',
+     '                        tgt_avg[tid] = _ws815.get("avg", 0.0) or 0.0\n',
+     '                        pass   # MUTATION (emm815 Ziel-Ø weg)\n',
+     'aa815 Ziel-Ø kommt aus derselben Historien-Auswertung'),
+    ('Regional-Balken werden gar nicht mehr angehaengt',
+     'eve_trader/ui/main_window.py',
+     '''        self._haenge_balken(self.rg_table,
+                            getattr(self, "_rg_bar_rows", None) or {}, 11)
+''',
+     '        pass   # MUTATION (emm815 Balken weg)\n',
+     'b815 jede Zeile traegt einen Balken'),
+    ('Regional-Statuszeile wird wieder zum Bandwurm',
+     'eve_trader/ui/main_window.py',
+     '''        if deals:
+            self.rg_status.setText(
+                t("{n} arbitrage hits. ").format(n=len(deals)).strip()
+                + "  \\u24d8")
+        else:
+            self.rg_status.setText(_voll815)
+''',
+     '        self.rg_status.setText(_voll815)   # MUTATION (emm815)\n',
+     'b815 Statuszeile ist kurz'),
+    ('Die 0-Treffer-Ausnahme der Regional-Statuszeile faellt weg',
+     'eve_trader/ui/main_window.py',
+     '''        if deals:
+            self.rg_status.setText(
+                t("{n} arbitrage hits. ").format(n=len(deals)).strip()
+                + "  \\u24d8")
+        else:
+            self.rg_status.setText(_voll815)
+''',
+     '''        self.rg_status.setText(
+            t("{n} arbitrage hits. ").format(n=len(deals)).strip()
+            + "  \\u24d8")   # MUTATION (emm815 Ausnahme weg)
+''',
+     'b815 bei 0 Treffern bleibt die volle Meldung sichtbar'),
+    ('Regional-Margen leuchten wieder flaechig gruen',
+     'eve_trader/ui/main_window.py',
+     '''                    if d["profit_unit"] <= 0:
+                        it.setForeground(QColor(theme.RED))
+                    elif _bcol815 == theme.GREEN:
+                        it.setForeground(QColor(theme.GREEN))
+                    else:
+                        it.setForeground(QColor(theme.MUTED))
+''',
+     '                    it.setForeground(QColor(theme.GREEN if d["profit_unit"] > 0 else theme.RED))   # MUTATION\n',
+     'b815 die Fantasie-Marge ist gedaempft, nicht gruen'),
+    ('Der Regional-Item-Name leuchtet wieder bei jeder Marge',
+     'eve_trader/ui/main_window.py',
+     '''            if _bcol815 == theme.GREEN:
+                self.rg_table.item(i, 0).setForeground(QColor(theme.GREEN))
+''',
+     '''            if d["profit_unit"] > 0:   # MUTATION (emm815)
+                self.rg_table.item(i, 0).setForeground(QColor(theme.GREEN))
+''',
+     'b815 ... und ihr Item-Name ebenfalls nicht gruen'),
+    ('Die Regional-Einstell-Karten stapeln sich wieder untereinander',
+     'eve_trader/ui/main_window.py',
+     '''        _kh815.addWidget(rg_strat_card, 2, Qt.AlignTop)
+        _kh815.addWidget(rg_fracht_card, 1, Qt.AlignTop)
+        _kh815.addWidget(rg_filter_card, 2, Qt.AlignTop)
+        root.addWidget(_kopf815, 0)
+''',
+     '''        root.addWidget(rg_strat_card)   # MUTATION (emm815)
+        root.addWidget(rg_fracht_card)
+        root.addWidget(rg_filter_card)
+''',
+     'b815 alle drei Karten teilen sich EINE Kopfzeile'),
+    ('Das Regional-Filterraster quetscht wieder 5 in die Reihe',
+     'eve_trader/ui/main_window.py',
+     '''            r = (i // 3) * 2
+            g.addWidget(lab, r, i % 3)
+            g.addWidget(wdg, r + 1, i % 3)
+''',
+     '''            r = (i // 5) * 2   # MUTATION (emm815)
+            g.addWidget(lab, r, i % 5)
+            g.addWidget(wdg, r + 1, i % 5)
+''',
+     'b815 Feinfilter-Raster hoechstens 3 je Reihe'),
+    # ------------------------------------------------------- emm816:
+    # Regional passt wieder ins Fenster (Nutzer-Screenshot mit
+    # waagerechtem Rollbalken). Jede Mutation stellt EINE der drei
+    # gemessenen Ursachen wieder her.
+    # emm818: Soll ist 3 Spalten x 2 Reihen - die Mutation stellt alle
+    # sechs in eine Reihe (gemessen 1172 statt 842 px Mindestbreite).
+    ('Die Route-Felder stehen wieder alle in einer Reihe',
+     'eve_trader/ui/main_window.py',
+     '''            _r816 = 1 + (i816 // 3) * 2
+            _c816 = i816 % 3
+''',
+     '''            _r816 = 1   # MUTATION (emm818 alle in einer Reihe)
+            _c816 = i816
+''',
+     'b816 die Route-Felder stehen zu dritt je Reihe'),
+    # emm818: die Felder sollen die Karte FUELLEN - die Mutation holt
+    # die Hoechstbreite aus emm816 zurueck und laesst rechts wieder
+    # Leerraum stehen (genau der Screenshot, den der Nutzer monierte).
+    ('Die Route-Felder fuellen die Karte nicht mehr aus',
+     'eve_trader/ui/main_window.py',
+     '''            self.popup_breiter(wdg, self.RG_POPUP_BREIT)
+            _r816 = 1 + (i816 // 3) * 2
+''',
+     '''            wdg.setMaximumWidth(self.RG_FELD_BREIT)   # MUTATION (emm818)
+            self.popup_breiter(wdg, self.RG_POPUP_BREIT)
+            _r816 = 1 + (i816 // 3) * 2
+''',
+     'b816 kein Route-Feld ist mehr in der Breite gedeckelt'),
+    ('Die langen Fracht-Beschriftungen brechen nicht mehr um',
+     'eve_trader/ui/main_window.py',
+     '''            l.setWordWrap(True)
+            wdg.setMinimumHeight(32)
+            wdg.setMinimumWidth(80); wdg.setMaximumWidth(240)
+''',
+     '''            wdg.setMinimumHeight(32)   # MUTATION (emm816 kein Umbruch)
+            wdg.setMinimumWidth(80); wdg.setMaximumWidth(240)
+''',
+     'b816 die Regional-Kopfzeile bleibt schmal genug fuers Fenster'),
+    # Die Dropdown-Voreinstellung zurueck: WIRKT (872 statt 792 px) -
+    # die erste Fassung dieser Mutation blieb nur blind, weil die
+    # Schranke in b816 mit 900 zu locker war.
+    ('Die Dropdowns fordern wieder die Breite ihres laengsten Eintrags',
+     'eve_trader/ui/main_window.py',
+     '''            wdg.setSizeAdjustPolicy(
+                _QCB816.AdjustToMinimumContentsLengthWithIcon)
+            wdg.setMinimumContentsLength(4)
+''',
+     '',
+     'b816 die Regional-Kopfzeile bleibt schmal genug fuers Fenster'),
+    # ------------------------------------------------------- emm817:
+    # die aufgeklappte Liste darf breiter sein als das schmale Feld.
+    ('Die Auswahlliste ist wieder so schmal wie das Feld',
+     'eve_trader/ui/main_window.py',
+     '            combo.view().setMinimumWidth(min(max_px, _br))\n',
+     '            pass   # MUTATION (emm817 Listenbreite weg)\n',
+     'b817 mindestens eine Liste ist breiter als das Feld'),
+    ('Nachgetragene Eintraege verbreitern die Liste nicht mehr',
+     'eve_trader/ui/main_window.py',
+     '''        _mod.rowsInserted.connect(_neu)
+        _mod.modelReset.connect(_neu)
+''',
+     '        pass   # MUTATION (emm817 Modell-Haken weg)\n',
+     'b817 ein nachgetragener langer Eintrag verbreitert die Liste'),
+    # ------------------------------------------------------- emm819:
+    # Buyer unter Buy in, Seller unter Sell in - die Zuordnung steht
+    # NUR in der Reihenfolge dieser Liste und waere sonst beim
+    # naechsten Umbau still vertauscht.
+    ('Buyer und Seller stehen wieder unter den falschen Spalten',
+     'eve_trader/ui/main_window.py',
+     '''                    (t("Buyer"), self.rg_buyer), (t("Seller"), self.rg_seller),
+                    ("Preset", self.rg_preset)]''',
+     '''                    ("Preset", self.rg_preset),   # MUTATION (emm819)
+                    (t("Buyer"), self.rg_buyer), (t("Seller"), self.rg_seller)]''',
+     'b819 Buyer steht unter Buy in'),
+    # ------------------------------------------------------- emm820:
+    # Blaupausen-Knoepfe einer gedeckten Runplan-Zeile sind ausgegraut.
+    # Die Runs-Zahl bleibt als Rueckblick - die Knoepfe sind eine
+    # Handlungsanweisung und luden zum Doppelbauen ein.
+    ('Die Knoepfe einer gedeckten Zeile leuchten wieder amber',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                        _ged820 = (_zustand is not None)\n',
+     '                        _ged820 = False   # MUTATION (emm820)\n',
+     'b820 gedeckte Zeile: Blaupausen-Knoepfe sind ausgegraut'),
+    # GEGENRICHTUNG: alles grau zu faerben waere genauso falsch - dann
+    # saehe die offene Arbeit erledigt aus (die gefaehrlichere Seite).
+    ('Auch offene Zeilen werden ausgegraut',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                        _ged820 = (_zustand is not None)\n',
+     '                        _ged820 = True   # MUTATION (emm820)\n',
+     'b820 Gegenprobe: die offene Zeile hat AMBER Blaupausen-Knoepfe'),
+    # TEILWEISE gedeckt muss amber bleiben (Nutzer: Oneiros 8/12).
+    ('Teilweise gedeckte Zeilen werden faelschlich ausgegraut',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '''                        _bp_rand820 = theme.MUTED if _ged820 else theme.AMBER_DIM
+                        _bp_text820 = theme.MUTED if _ged820 else theme.AMBER
+''',
+     '''                        _bp_rand820 = theme.MUTED   # MUTATION (emm820)
+                        _bp_text820 = theme.MUTED
+''',
+     'b820 teilweise gedeckt: die Knoepfe bleiben amber'),
+    # Und der Erz-Zweig daneben (Arbeitsregel 9, dieselbe Ursache).
+    ('Der Mengen-Knopf gedeckter Erz-Zeilen leuchtet wieder amber',
+     'eve_trader/ui/mw_bauplan_tabs.py',
+     '                        _ged820e = bool(_hakt0 or _key0 in _erz_bestand0)\n',
+     '                        _ged820e = False   # MUTATION (emm820)\n',
+     'aa820 der Erz-Mengenknopf folgt derselben Regel'),
 ]
 
 
