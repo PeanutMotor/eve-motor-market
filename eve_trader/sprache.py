@@ -308,6 +308,118 @@ KATALOG = {
         # ---- Zustaende ----
         "● SELL": "● VERKAUFEN",
         "● Hold": "● Halten",
+        # emm913: eigener Zustand statt "Halten".
+        "● no purchase price": "● ohne Einkaufspreis",
+        "MoMa does not know what you paid for this item (bought "
+        "before MoMa, built, looted or from a contract) - so there "
+        "is no margin and no advice, and on its own this item can "
+        "never switch to SELL. As soon as a purchase of this item "
+        "shows up in your wallet, this changes by itself.":
+            "MoMa kennt deinen Einkaufspreis f\u00fcr dieses Item nicht (vor "
+            "MoMa gekauft, gebaut, gelootet oder aus einem Vertrag) - darum "
+            "keine Marge und kein Rat, und von allein kann dieser Posten nie "
+            "auf VERKAUFEN wechseln. Sobald ein Kauf dieses Items in deiner "
+            "Wallet auftaucht, \u00e4ndert sich das von selbst.",
+        # emm933: Doctrines - Verlauf und Bau-Rangliste.
+        "Press „Fetch market“ first.":
+            "Zuerst „Fetch market“ drücken.",
+        "Coverage history: {first} % \u2192 {last} % over {n} market fetches.":
+            "Deckungs-Verlauf: {first} % \u2192 {last} % \u00fcber {n} Marktabrufe.",
+        "Build ranking": "Bau-Rangliste",
+        "All items of all doctrines, ranked by build profit per unit times "
+        "the missing quantity - what earns most when you fill the hub. "
+        "Needs \u201eFetch market\u201c.":
+            "Alle Items aller Doctrines, sortiert nach Baugewinn je St\u00fcck "
+            "mal fehlender Menge - was am meisten bringt, wenn du den Hub "
+            "auff\u00fcllst. Braucht \u201eFetch market\u201c.",
+        "Nothing missing with a build profit number.":
+            "Nichts fehlt, das eine Baugewinn-Zahl hat.",
+        "Total profit": "Gewinn gesamt",
+        "{n} missing \u00d7 {gw} build profit per unit":
+            "{n} fehlend \u00d7 {gw} Baugewinn je St\u00fcck",
+        # emm932: Doctrines - eine Zeile je Doctrine.
+        "{name} \u00b7 {n} ship(s)": "{name} \u00b7 {n} Schiff(e)",
+        "weakest ship: {fits}/{ziel} ships":
+            "schw\u00e4chstes Schiff: {fits}/{ziel} Schiffe",
+        # emm931: Doctrines - Anzahl je Schiff.
+        "per ship": "pro Schiff",
+        "How many of this item ONE ship of the doctrine needs (all fits "
+        "added up) - the build profit per ship counts it this many times.":
+            "Wie viele davon EIN Schiff der Doctrine braucht (alle Fits "
+            "zusammen) - der Baugewinn je Schiff z\u00e4hlt es so oft.",
+        # emm930: Doctrines - Baugewinn je Schiff.
+        "build profit per ship: {isk}": "Baugewinn je Schiff: {isk}",
+        "Build profit/unit times quantity per ship, summed. {n} "
+        "position(s) without a number (not buildable, no build cost or no "
+        "sell order at the hub) are NOT in it.":
+            "Baugewinn/Stk mal Menge je Schiff, aufsummiert. {n} "
+            "Position(en) ohne Zahl (nicht baubar, keine Baukosten oder "
+            "keine Sell-Order am Hub) sind NICHT enthalten.",
+        # emm929: Market Stats - Anzahl, nur baubare.
+        "Only buildable": "Nur baubare",
+        "Only items you can build (with a recipe) \u2013 the list then "
+        "shows the top items among those.":
+            "Nur Items, die du bauen kannst (mit Rezept) \u2013 die Liste "
+            "zeigt dann die besten davon.",
+        # emm926: Order update - Mindestgewinn-Preis bei Verlust.
+        "Min profit": "Min. Gewinn",
+        "Copy {price} – the lowest price that still earns {pct} % net "
+        "(after tax, broker and relist fees). Not the cheapest on the "
+        "market, but no loss.":
+            "{price} kopieren – der niedrigste Preis, der noch {pct} % "
+            "netto bringt (nach Steuer, Broker und Relist-Gebühren). "
+            "Nicht der billigste am Markt, aber kein Verlust.",
+        # emm925: Market-Stats-Listen als Tabelle.
+        "Trades/day": "Abschl\u00fcsse/Tag",
+        "Units/day": "St\u00fcck/Tag",
+        "ISK/day": "ISK/Tag",
+        "Build profit/unit": "Baugewinn/Stk",
+        # emm924: Baugewinn je Stueck in Market Stats.
+        "Build profit per unit: sells here for {sell} ({net} after tax and "
+        "broker), build cost {cost} with material prices from {hub}.":
+            "Baugewinn je St\u00fcck: verkauft hier f\u00fcr {sell} ({net} "
+            "nach Steuer und Broker), Baukosten {cost} mit Materialpreisen "
+            "aus {hub}.",
+        # emm922: Top-Handelsware je Ort.
+        "top traded items here": "Top-Handelsware hier",
+        "Nothing here was traded in the region in the last {n} days "
+        "\u2013 or no scan yet.":
+            "Nichts davon wurde in den letzten {n} Tagen in der Region "
+            "gehandelt \u2013 oder noch kein Scan.",
+        "Ranked by ISK traded AND number of trades in the region over {n} "
+        "days, weighted equally - an item must move a lot of ISK and sell "
+        "often. Only items with sell orders here. The market history does "
+        "not tell sales from sell orders apart from sales into buy orders.":
+            "Rangfolge nach ISK-Umsatz UND Zahl der Abschl\u00fcsse in der "
+            "Region \u00fcber {n} Tage, gleich gewichtet - ein Item muss viel "
+            "ISK bewegen und oft verkauft werden. Nur Items mit Sell-Orders "
+            "hier. Die Markthistorie trennt Verk\u00e4ufe aus Sell-Orders "
+            "nicht von Verk\u00e4ufen in Buy-Orders.",
+        # emm921: Market Stats - meister ISK-Umsatz je Region.
+        "most ISK traded here (last {n} days)":
+            "größter ISK-Umsatz hier (letzte {n} Tage)",
+        "No price history known for this region yet \u2013 run a market "
+        "scan there.":
+            "F\u00fcr diese Region ist noch keine Preishistorie bekannt "
+            "\u2013 dort einmal einen Marktscan machen.",
+        "{isk} ISK traded in {span} days, on {days} of them":
+            "{isk} ISK gehandelt in {span} Tagen, an {days} davon",
+        # emm912: Stock Locations nach Sorten.
+        "{n} new location(s) with at least {k} different items "
+        "found and switched ON: {namen}.":
+            "{n} neue(r) Ort(e) mit mindestens {k} verschiedenen Items "
+            "gefunden und EINgeschaltet: {namen}.",
+        "Switch off crumb locations": "Kr\u00fcmel-Orte ausschalten",
+        "Switches off every location that is on but holds fewer than "
+        "{k} different items - a single ship, one contract. Your other "
+        "switches stay as they are.":
+            "Schaltet jeden eingeschalteten Ort aus, an dem weniger als {k} "
+            "verschiedene Items liegen - ein einzelnes Schiff, ein Vertrag. "
+            "Deine \u00fcbrigen Schalter bleiben, wie sie sind.",
+        "{n} location(s) with fewer than {k} different items switched "
+        "off.":
+            "{n} Ort(e) mit weniger als {k} verschiedenen Items "
+            "ausgeschaltet.",
         "● on market": "● im Markt",
         # ---- Altersangaben in der Kopfzeile ----
         "Prices (live)": "Preise (live)",
@@ -390,9 +502,6 @@ KATALOG = {
             "Willst du wirklich alles in \u201e{name}\u201c auf Standard zur\u00fccksetzen?",
         "Plan frozen \u2013 unfreeze first ( button), then reset.":
             "Plan eingefroren \u2013 erst auftauen ( Knopf), dann zur\u00fccksetzen.",
-        "Load order-book prices into the plan": "Orderbuch-Preise in den Plan laden",
-        "Fetches the real sell order book of the hub for every material and uses it for the build cost of this plan (one live request per material, may take a moment).":
-            "Holt f\u00fcr jedes Material das echte Sell-Orderbuch des Hubs und nutzt es f\u00fcr die Baukosten dieses Plans (ein Live-Abruf je Material, kann etwas dauern).",
         "\u2139 Quantities calculated live, order book prices from the last fetch (Tools \u2192 \u201eLoad order-book prices into the plan\u201c, at quantity {qty}). Run it again for fresh prices.":
             "\u2139 Mengen live gerechnet, Orderbuch-Preise vom letzten Abruf (Werkzeuge \u2192 \u201eOrderbuch-Preise in den Plan laden\u201c, bei Menge {qty}). F\u00fcr frische Preise erneut ausf\u00fchren.",
         "Flat price (current market scan) \u2013 for order-book-exact numbers use Tools \u2192 \u201eLoad order-book prices into the plan\u201c.":
@@ -400,7 +509,6 @@ KATALOG = {
         "Optimal quantity": "Optimale Menge",
         "Estimate capital build cost": "Capital-Baukosten sch\u00e4tzen",
         "Load everything from ESI": "Alles aus ESI laden",
-        "Check shortfall": "Fehlbedarf pr\u00fcfen",
         "Build margin": "Bau-Marge",
         "Min build margin %": "Min Bau-Marge %",
         "Rating": "Bewertung",
@@ -449,6 +557,24 @@ KATALOG = {
             "Keine eigenen Blaupausen f\u00fcr Items dieser Stufe gefunden.",
         "Open in game": "Ingame \u00f6ffnen",
         "Open market in game": "Ingame-Markt \u00f6ffnen",
+        "ORDERS RUNNING OUT":
+            "ORDERS LAUFEN AUS",
+        "Expiring within:":
+            "Läuft aus in:",
+        "Shows your open market orders whose time on the market ends within this many days.":
+            "Zeigt deine offenen Markt-Orders, deren Zeit im Markt innerhalb so vieler Tage endet.",
+        "Qty left":
+            "Rest-Menge",
+        "Time left":
+            "Restzeit",
+        "due now":
+            "läuft jetzt aus",
+        "{h} h {m} min":
+            "{h} Std {m} Min",
+        "Expires {datum}":
+            "Läuft aus am {datum}",
+        "No open order runs out within {n} days.":
+            "Keine offene Order läuft innerhalb von {n} Tagen aus.",
         "Enable open in game": "Ingame \u00f6ffnen aktivieren",
         "Could not open the market in game.\n\n":
             "Konnte den Markt im Spiel nicht \u00f6ffnen.\n\n",
@@ -1341,8 +1467,416 @@ KATALOG = {
         "{n} materials were already covered and are missing now \u2013 check \u201e{action}\u201c in the tools menu.":
             "{n} Materialien waren schon gedeckt und fehlen jetzt \u2013 siehe \u201e{action}\u201c im Werkzeuge-Men\u00fc.",
         "Buy missing again": "Fehlendes nachkaufen",
-        "Nothing is missing that was already covered \u2013 there is nothing to buy again.":
-            "Es fehlt nichts, was schon einmal gedeckt war \u2013 es gibt nichts nachzukaufen.",
+        # emm910: derselbe Knopf, aber der Fall, in dem MoMa es NICHT
+        # von selbst holen kann - dann ist "druecke das einmal" ein
+        # falscher Rat, der Knopf endet im 403.
+        "Advanced Broker Relations has never been read from EVE, and MoMa is "
+        "not allowed to read it yet. Remove and re-link one character once "
+        "under „Characters“ – then MoMa fetches it by itself. "
+        "Until then it assumes level 0 and calculates the fees for changing "
+        "an order too high.":
+            "Advanced Broker Relations wurde noch nie aus EVE gelesen, und "
+            "MoMa darf es noch nicht lesen. Entferne und verknüpfe einen "
+            "Charakter einmal neu unter „Characters“ – dann holt "
+            "MoMa es von selbst. Bis dahin nimmt MoMa Level 0 an und rechnet "
+            "die Gebühren fürs Ändern einer Order zu hoch.",
+        # emm909: Hinweis am blinkenden "Aus EVE uebernehmen"
+        "Advanced Broker Relations has never been read from EVE. Without it "
+        "MoMa assumes level 0 and calculates the fees for changing an order "
+        "too high \u2013 press this once.":
+            "Advanced Broker Relations wurde noch nie aus EVE gelesen. Ohne "
+            "den Wert nimmt MoMa Level 0 an und rechnet die Geb\u00fchren "
+            "f\u00fcrs \u00c4ndern einer Order zu hoch \u2013 einmal "
+            "dr\u00fccken.",
+        # emm907/emm908: echte Gebuehren und ehrlicher Zaehler
+        "{n}\u00d7 repriced \u2013 broker fees paid so far: {fee} (CCP relist "
+        "formula, including your Advanced Broker Relations). Counted only when "
+        "the price of THIS order really changed.":
+            "{n}\u00d7 nachgebessert \u2013 bisher bezahlte Broker-Geb\u00fchren: "
+            "{fee} (CCP-Relist-Formel, inklusive deines Advanced Broker "
+            "Relations). Gez\u00e4hlt wird nur, wenn sich der Preis GENAU "
+            "DIESER Order wirklich ge\u00e4ndert hat.",
+        # emm911: die Gebuehren stehen jetzt JE STUECK auf dem Einstand, und
+        # gemessen wird an der Ziel-Marge statt an der Null.
+        "This order has been repriced {n}\u00d7 \u2013 relist fees paid so far: "
+        "{fee}, i.e. {per} per remaining unit ON TOP of your cost. With that "
+        "the margin is {have} %, the minimum is {want} %. Those fees are sunk: "
+        "the market has to move far enough that it works again. Until then "
+        "\u201eNext\u201c SKIPS this order, because repricing again would only "
+        "add more fees.":
+            "Diese Order wurde {n}\u00d7 nachgebessert \u2013 bisher bezahlte "
+            "Relist-Geb\u00fchren: {fee}, also {per} je verbleibendem St\u00fcck "
+            "OBENDRAUF auf deinen Einkauf. Damit liegt die Marge bei {have} %, "
+            "das Minimum ist {want} %. Die Geb\u00fchren sind versunken: der Markt "
+            "muss sich weit genug bewegen, bis es wieder aufgeht. Bis dahin "
+            "\u00dcBERSPRINGT \u201eNext\u201c diese Order \u2013 noch einmal "
+            "nachbessern w\u00fcrde nur weitere Geb\u00fchren draufpacken.",
+        # emm905: neue Lagerorte starten ausgeschaltet
+        "{n} new location(s) found and switched OFF: {namen}. Switch them "
+        "on in the list on the right if you want them counted.":
+            "{n} neue(r) Ort(e) gefunden und AUSGESCHALTET: {namen}. "
+            "Schalte sie rechts in der Liste ein, wenn sie mitz\u00e4hlen "
+            "sollen.",
+        # emm901: systemweite Taste fuer "Next" in Order update
+        "Assign a key …": "Taste zuweisen …",
+        "Change key (currently {k}) …":
+            "Taste ändern (derzeit {k}) …",
+        "Remove key": "Taste entfernen",
+        "(System-wide keys only work on Windows)":
+            "(Systemweite Tasten gehen nur unter Windows)",
+        "Assign a key for „Next“":
+            "Taste für „Next“ zuweisen",
+        "Press the key you want to use.\nEscape cancels.":
+            "Drücke die Taste, die du verwenden willst.\n"
+            "Escape bricht ab.",
+        "Use this key": "Diese Taste nehmen",
+        "Key: {k}": "Taste: {k}",
+        "Only letters, digits and F1–F12 can be used.":
+            "Nur Buchstaben, Ziffern und F1–F12 sind möglich.",
+        "⚠ A key without Ctrl/Alt/Shift belongs to MoMa system-wide "
+        "while MoMa is running – it will no longer reach EVE chat or "
+        "any other program. Ctrl+{k} is the safer choice.":
+            "⚠ Eine Taste ohne Strg/Alt/Umschalt gehört MoMa "
+            "systemweit, solange MoMa läuft – sie kommt dann "
+            "nicht mehr im EVE-Chat oder in anderen Programmen an. "
+            "Strg+{k} ist die sichere Wahl.",
+        "Key for „Next“ removed.":
+            "Taste für „Next“ entfernt.",
+        "„Next“ now also responds to {k} – even while MoMa is "
+        "in the background.":
+            "„Next“ reagiert jetzt auch auf {k} – auch wenn "
+            "MoMa im Hintergrund ist.",
+        "Key saved, but system-wide keys only work on Windows.":
+            "Taste gemerkt, aber systemweite Tasten gehen nur unter "
+            "Windows.",
+        "{k} is already taken by another program – „Next“ "
+        "will not react to it. Please pick a different key.":
+            "{k} ist schon von einem anderen Programm belegt – "
+            "„Next“ reagiert darauf nicht. Bitte eine andere "
+            "Taste wählen.",
+        "{k} could not be registered ({why}).":
+            "{k} konnte nicht angemeldet werden ({why}).",
+        "Key: {k} (works while MoMa is in the background). Right-click to "
+        "change.":
+            "Taste: {k} (wirkt auch, wenn MoMa im Hintergrund ist). "
+            "Rechtsklick zum Ändern.",
+        "Right-click to assign a key.": "Rechtsklick, um eine Taste zuzuweisen.",
+        "Ctrl": "Strg",
+        "Shift": "Umschalt",
+        # emm900: die Preishistorien laufen nach dem Rendern nach
+        "⟳ Price history in the background … {s} s":
+            "⟳ Preishistorie im Hintergrund … {s} s",
+        "Price history {n} of {m} …":
+            "Preishistorie {n} von {m} …",
+        "The portfolio is complete. Only the price history of some items "
+        "is still being fetched – the „Normal“ column fills in "
+        "afterwards.":
+            "Das Portfolio ist fertig. Nur die Preishistorie einiger Items "
+            "wird noch geholt – die Spalte „Normal“ füllt "
+            "sich danach.",
+        # emm892: die Phasen des Portfolio-Ladens, im Ladeschirm und in
+        # der Hintergrund-Anzeige
+        "Transactions from ESI …": "Transaktionen von ESI …",
+        "Reading transactions from the database …":
+            "Transaktionen aus der Datenbank lesen …",
+        "Assets from ESI …": "Bestand von ESI …",
+        "Resolving item names …": "Item-Namen auflösen …",
+        "Prices from the market snapshot …":
+            "Preise aus dem Markt-Schnappschuss …",
+        "Normal price levels (90 days) …":
+            "Normalpreise (90 Tage) …",
+        "Wallet and open orders …": "Kontostand und offene Orders …",
+        "Live prices for your holdings …":
+            "Live-Preise für deinen Bestand …",
+        # emm894: Marktstatistik - Ranking der Regionen (Nutzer
+        # 10.11.2026, "ich brauche ein ranking, von den Regionen wo ich
+        # handeln willl").
+        "Market stats": "Marktstatistik",
+        "WHERE IS THE TRADE?": "WO WIRD GEHANDELT?",
+        # emm896: Karten statt Tabelle, zwei Klapp-Ebenen.
+        "From stored price history \u2013 no new ESI calls. Compare \u201eitems\u201c before the rest.":
+            "Aus gespeicherter Preishistorie \u2013 ohne neue ESI-Abrufe. "
+            "Vergleiche erst \u201eItems\u201c, dann den Rest.",
+        "Eve MoMa only has history for the items it has already looked at (scan, portfolio, build plan) \u2013 that is not the whole trade of a region. Two regions are only comparable when a similar number of items stands behind them. Player structures have no trade history at all: ESI keeps it per region only, so a structure shows what stood in its order book at your last scan.":
+            "Eve MoMa hat Historie nur f\u00fcr die Items, die es schon "
+            "angesehen hat (Scan, Portfolio, Bauplan) \u2013 das ist nicht "
+            "der ganze Handel einer Region. Zwei Regionen sind nur "
+            "vergleichbar, wenn \u00e4hnlich viele Items dahinterstehen. "
+            "Spielerstrukturen haben gar keine Handelshistorie: ESI "
+            "f\u00fchrt sie nur je Region, eine Struktur zeigt also, was "
+            "beim letzten Scan in ihrem Orderbuch lag.",
+        "{items} items \u00b7 {units} units \u00b7 traded on {days} of {span} days":
+            "{items} Items \u00b7 {units} St\u00fcck \u00b7 gehandelt an {days} von "
+            "{span} Tagen",
+        "{n} of your scanned places here": "{n} deiner gescannten Orte hier",
+        "biggest positions in the order book":
+            "gr\u00f6\u00dfte Posten im Orderbuch",
+        "Nothing in the book \u2013 scan this place once.":
+            "Nichts im Orderbuch \u2013 diesen Ort einmal scannen.",
+        "Scanned places without trade history":
+            "Gescannte Orte ohne Handelshistorie",
+        "{n} items": "{n} Items",
+        "WHERE IS THE TRADE?": "WO WIRD GEHANDELT?",
+        "ITEMS": "ITEMS",
+        # emm895: weniger Spalten (Nutzer 10.11.2026, "ordentliche
+        # statistik weniger zahlen"). STUECK, TAGE und die beiden
+        # ISK-Seiten des Orderbuchs sind raus - die Stueckzahl und die
+        # Tage stehen jetzt im Tooltip der Region.
+        "Reading market history …": "Marktverlauf wird gelesen …",
+        "Region {id}": "Region {id}",
+        "Region {id} (your {name})": "Region {id} (dort: {name})",
+        "Structure {id}": "Struktur {id}",
+        "unknown": "unbekannt",
+        # emm888: Ladeanzeige fuer den Farbwelt-Wechsel (Nutzer 10.11.2026,
+        # "ein Ladescreen dafuer waere gut, damit man nicht denkt, MoMa
+        # stuerzt ab").
+        "Switching colour scheme ...": "Farbwelt wird umgestellt ...",
+        "Eve MoMa is not stuck, this only takes a moment.":
+            "Eve MoMa hängt nicht fest, es dauert nur einen Moment.",
+        # emm890: neuer Einstellungs-Aufbau (Nutzer 10.11.2026,
+        # "kathegoriesire schoener, teile auf was sinnvoll ist").
+        "TRADING": "HANDEL",
+        "DATA & PERMISSIONS": "DATEN & BERECHTIGUNGEN",
+        "DISPLAY & CONNECTION": "DARSTELLUNG & VERBINDUNG",
+        # emm891: die Client-ID ist GANZ zu - der Entsperr-Knopf aus
+        # emm890 ist weg, und mit ihm seine sieben Texte (Nutzer
+        # 10.11.2026: "komplett sperren, kein button um selber was
+        # einzugeben"). de_scan6 faengt Katalog-Waisen, darum raus.
+        "The key of the ESI app that logs your characters in. Eve MoMa brings its own, so there is nothing to enter \u2013 the field is locked on purpose. If you run your OWN ESI application, change client_id in your settings.json.":
+            "Der Schl\u00fcssel der ESI-Anwendung, die deine Charaktere anmeldet. Eve MoMa bringt einen eigenen mit, du musst hier also nichts eintragen \u2013 das Feld ist mit Absicht gesperrt. Wer eine EIGENE ESI-Anwendung betreibt, \u00e4ndert `client_id` in seiner settings.json.",
+        # emm884: erledigte Orders leuchten ein paar Tage nach
+        # (Community-Wunsch Spaceballs 2, Discord 09.11.2026).
+        "Keep done orders for:": "Erledigte zeigen f\u00fcr:",
+        "\u2714 BOUGHT": "\u2714 GEKAUFT",
+        "\u2714 SOLD": "\u2714 VERKAUFT",
+        "\u231b EXPIRED": "\u231b ABGELAUFEN",
+        "\u2716 CANCELLED": "\u2716 STORNIERT",
+        "\u2714 CLOSED": "\u2714 BEENDET",
+        "today": "heute",
+        "{n}d ago": "vor {n} T",
+        "How long an order that is done stays visible at the BOTTOM of the list, greyed out and with the status it ended on: BOUGHT / SOLD when it was filled, EXPIRED or CANCELLED when it was not. Handy if you trade the same items again and again \u2013 you see what just went through without opening Transactions. 0 = off. Only orders at the current hub are shown, and the status is never guessed: EVE reports expired and cancelled orders itself, and an order that simply vanishes from the open ones is the filled one.":
+            "Wie lange eine erledigte Order UNTEN in der Liste stehen bleibt, ausgegraut und mit dem Stand, auf dem sie geendet hat: GEKAUFT / VERKAUFT, wenn sie erf\u00fcllt wurde, ABGELAUFEN oder STORNIERT, wenn nicht. Praktisch, wenn du dieselben Items immer wieder handelst \u2013 du siehst, was gerade durchgegangen ist, ohne die Transaktionen zu \u00f6ffnen. 0 = aus. Gezeigt werden nur Orders am aktuellen Hub, und der Stand wird nie geraten: abgelaufene und stornierte meldet EVE selbst, und eine Order, die einfach aus den offenen verschwindet, ist die erf\u00fcllte.",
+        # emm883: unbestaetigte Intervall-Uhr ("Next" geklickt, im Spiel
+        # noch nichts getan). Das Fragezeichen ist in beiden Sprachen
+        # dasselbe Zeichen - der Eintrag steht trotzdem hier, damit der
+        # Text durch t() laeuft und kein Anzeigetext am Katalog vorbei
+        # in einer UI-Datei steht (Regel 6).
+        " (?)": " (?)",
+        "NOT CONFIRMED. \u201eNext\u201c was clicked here on {since} \u2013 but the order has to be changed IN GAME, and EVE still reports the old timestamp for it. Your interval is {iv}, so the row is skipped until {due}. If you really repriced it, the next \u201eCheck orders\u201c confirms it and the \u201e(?)\u201c disappears. If you only misclicked, the waiting time drops away by itself and the row is due again.":
+            "NICHT BEST\u00c4TIGT. \u201eNext\u201c wurde hier am {since} geklickt \u2013 ge\u00e4ndert werden muss die Order aber IM SPIEL, und EVE meldet dazu weiterhin den alten Zeitstempel. Dein Intervall ist {iv}, deshalb wird die Zeile bis {due} \u00fcbersprungen. Hast du wirklich nachgebessert, best\u00e4tigt das n\u00e4chste \u201eCheck orders\u201c es und das \u201e(?)\u201c verschwindet. War es nur ein Verklicker, f\u00e4llt die Wartezeit von selbst weg und die Zeile ist wieder dran.",
+        # Market Stocks: schlanke Tabelle (emm874)
+        "cost": "kostet",
+        "{je} per fit × {ziel} = {voll} needed, {pct} covered.":
+            "{je} je Fit × {ziel} = {voll} nötig, {pct} gedeckt.",
+        "How many units are missing for your target. Hover a row for "
+        "the full picture: per fit, the full target quantity and how "
+        "much of it is covered.":
+            "Wie viele Stück dir zu deinem Ziel fehlen. Die Zeile zeigt im "
+            "Tooltip das ganze Bild: je Fit, die volle Zielmenge und wie "
+            "viel davon gedeckt ist.",
+        "What filling this gap costs: missing quantity times the Jita "
+        "price, PLUS freight at your own rate once you have set one. "
+        "The freight part is an estimate - your number, not a "
+        "measured price. The row tooltip splits it up.":
+            "Was es kostet, diese Lücke zu füllen: fehlende Stückzahl mal "
+            "Jita-Preis, PLUS Fracht zu deinem eigenen Satz, sobald du "
+            "einen gesetzt hast. Der Fracht-Anteil ist eine Schätzung - "
+            "deine Zahl, kein gemessener Preis. Der Zeilen-Tooltip "
+            "schlüsselt es auf.",
+        "Units sitting in the sell orders at your trade hub. The "
+        "tooltip says how many of them are under your price cap and "
+        "how long the stock lasts at the region's daily volume.":
+            "Stückzahl, die an deinem Handelsplatz in den Sell-Orders "
+            "liegt. Der Tooltip sagt, wie viele davon unter deinem "
+            "Preisdeckel liegen und wie lange der Bestand beim "
+            "Tagesvolumen der Region reicht.",
+        "{n} of them under your price cap.":
+            "Davon {n} unter deinem Preisdeckel.",
+        "Lasts {d} days at the region's daily volume.":
+            "Reicht {d} Tage beim Tagesvolumen der Region.",
+        # Market Stocks: Luecke frei Haus + Platz-Vergleich (emm872)
+        "cheaper at": "günstiger bei",
+        "here": "hier",
+        "delivered: {isk} ISK": "frei Haus: {isk} ISK",
+        "Buying one unit HERE (cheapest sell order on the book, "
+        "cap ignored) against buying it in Jita and hauling it in. "
+        "Grey means one of the two sides is missing - then it is no "
+        "comparison, just the only option left.":
+            "Ein Stück HIER kaufen (günstigste Sell-Order im Buch, ohne "
+            "Deckel) gegen in Jita kaufen und herkarren. Grau heisst: eine "
+            "der beiden Seiten fehlt - dann ist es kein Vergleich, sondern "
+            "nur die übrige Möglichkeit.",
+        "Jita {jita} + freight {fr} = {fh} per unit, times {n} missing.":
+            "Jita {jita} + Fracht {fr} = {fh} je Stück, mal {n} fehlende.",
+        "No freight rate set - enter one in the sell list or in Regional "
+        "Trading, then this column fills.":
+            "Kein Frachtsatz gesetzt - einen in der Verkaufsliste oder in "
+            "Regional Trading eintragen, dann füllt sich diese Spalte.",
+        "No Jita price or no volume for this item - nothing is invented "
+        "here.":
+            "Kein Jita-Preis oder kein Volumen zu diesem Item - hier wird "
+            "nichts erfunden.",
+        "Nothing on the book here - Jita is simply the only source, not "
+        "the cheaper one.":
+            "Hier liegt nichts im Buch - Jita ist schlicht die einzige "
+            "Quelle, nicht die günstigere.",
+        "No Jita price or no freight rate - the other side cannot be "
+        "priced, so this is no comparison.":
+            "Kein Jita-Preis oder kein Frachtsatz - die andere Seite lässt "
+            "sich nicht bepreisen, das ist also kein Vergleich.",
+        "Here {local} vs. Jita delivered {fh} - saves {diff} per unit, "
+        "{ges} over the {n} missing.":
+            "Hier {local} gegen Jita frei Haus {fh} - spart {diff} je Stück, "
+            "{ges} über die {n} fehlenden.",
+        "„delivered“ adds the freight at your rate ({satz} ISK/m3) - an "
+        "estimate, your own number.":
+            "„frei Haus“ schlägt die Fracht zu deinem Satz auf ({satz} "
+            "ISK/m³) - eine Schätzung, deine eigene Zahl.",
+        # Portfolio ohne Preise (emm870)
+        "No price for this item yet (not in the market "
+        "snapshot). Run a market scan at your hub – "
+        "price, value and margin follow.":
+            "Für dieses Item gibt es noch keinen Preis (nicht im "
+            "Markt-Schnappschuss). Einmal Markt-Scan am Hub laufen lassen – "
+            "Preis, Wert und Marge folgen.",
+        "Prices not loaded yet – run or await the market "
+        "scan. Value, P&L and total assets follow as soon "
+        "as it finishes.":
+            "Preise noch nicht geladen – Markt-Scan starten oder abwarten. "
+            "Wert, G/V und Gesamtvermögen folgen, sobald er fertig ist.",
+        "Add ship": "Schiff hinzufügen",
+        "Paste another ship fit into this doctrine folder.":
+            "Fügt diesem Doctrine-Ordner ein weiteres Schiffs-Fitting hinzu.",
+        "ships {fits}/{ziel} · gap {isk} ISK":
+            "Schiffe {fits}/{ziel} · Lücke {isk} ISK",
+        "Sum over all ships in this folder - each ship keeps its own target and coverage below.":
+            "Summe über alle Schiffe dieses Ordners – jedes Schiff behält unten sein eigenes Ziel und seine eigene Deckung.",
+        "{n} ship(s)": "{n} Schiff(e)",
+        "The doctrine this ship belongs to.":
+            "Die Doctrine, zu der dieses Schiff gehört.",
+        "Create new doctrine": "Neue Doctrine erstellen",
+        "Create a doctrine first, then add its ships inside it („Add ship“ on the doctrine card).":
+            "Erst eine Doctrine erstellen, dann ihre Schiffe darin einfügen („Schiff hinzufügen“ auf der Doctrine-Karte).",
+        "New doctrine": "Neue Doctrine",
+        "Doctrine name:": "Name der Doctrine:",
+        "A doctrine named „{name}“ already exists.":
+            "Eine Doctrine namens „{name}“ gibt es schon.",
+        "Rename doctrine": "Doctrine umbenennen",
+        "Rename doctrine…": "Doctrine umbenennen…",
+        "Delete doctrine": "Doctrine löschen",
+        "Delete doctrine?": "Doctrine löschen?",
+        "Delete doctrine „{name}“ with its {n} ship(s)? The saved fits are lost.":
+            "Doctrine „{name}“ mit ihren {n} Schiff(en) löschen? Die gespeicherten Fittings gehen verloren.",
+        "No ships yet – press „Add ship“ and paste a fit from the game.":
+            "Noch keine Schiffe – „Schiff hinzufügen“ drücken und ein Fitting aus dem Spiel einfügen.",
+        "Ship/fit name (e.g. Retribution DPS)":
+            "Schiffs-/Fit-Name (z. B. Retribution DPS)",
+        "„{name}“ is a saved build plan. Write the changes back into it, or save them as a duplicate next to it?":
+            "„{name}“ ist ein gespeicherter Bauplan. Änderungen in genau diesen Plan zurückschreiben, oder als Duplikat daneben speichern?",
+        "Save as duplicate": "Als Duplikat speichern",
+        "Name of the duplicate:": "Name des Duplikats:",
+        "(in space)": "(im All)",
+        "structure {id} (no access)": "Struktur {id} (kein Zugriff)",
+        "Assets": "Assets",
+        "ASSETS": "ASSETS",
+        "Everything your linked characters own, grouped by station/structure. Start typing to filter: only characters and locations holding a matching item stay visible.":
+            "Alles, was deine verknüpften Charaktere besitzen, gruppiert nach Station/Struktur. Tippe los zum Filtern: nur Charaktere und Orte mit einem passenden Item bleiben sichtbar.",
+        "Search items … e.g. „Retribution“": "Items suchen … z. B. „Retribution“",
+        "No assets scope granted – re-link this character.":
+            "Keine Assets-Berechtigung erteilt – verknüpfe diesen Charakter neu.",
+        "Loading assets failed.": "Assets laden fehlgeschlagen.",
+        "{n} character(s) · {m} location(s)": "{n} Charakter(e) · {m} Ort(e)",
+        "{n} item type(s)": "{n} Item-Typ(en)",
+        "Click to fold this location's items in or out.":
+            "Klappt die Items dieses Ortes ein oder aus.",
+        "Ticks every position of this card again – the counterpart of „Untick fully covered“.":
+            "Hakt alle Positionen dieser Karte wieder an – das Gegenstück zu „Voll gedeckte abwählen“.",
+        "(buy)": "(kaufen)",
+        "coverage {pct} % · {fits}/{ziel} ships":
+            "Deckung {pct} % · {fits}/{ziel} Schiffe",
+        "Exactly: {isk} ISK": "Genau: {isk} ISK",
+        "{n}× buy": "{n}× Kauf",
+        "{n}× no price": "{n}× ohne Preis",
+        "{n}× Jita": "{n}× Jita",
+        "Start with „Create new doctrine“ on the right, then add the ships inside the doctrine.":
+            "Beginne rechts mit „Neue Doctrine erstellen“ und füge dann die Schiffe in der Doctrine ein.",
+        "INDUSTRY": "INDUSTRIE",
+        "Jumps to this page in the Industry tab.":
+            "Springt zu dieser Seite im Industry-Reiter.",
+        "(buy) = bought, not built (no recipe, or faction set to buy) – lands in the plan's shopping list.":
+            "(kaufen) = wird gekauft, nicht gebaut (kein Rezept, oder Faction auf Kaufen) – landet in der Einkaufsliste des Plans.",
+        "{n} buy item(s) included at market price":
+            "{n} Kauf-Posten zum Marktpreis enthalten",
+        "{n} item(s) without any price not included":
+            "{n} Item(s) ohne jeden Preis nicht enthalten",
+        "Build cost for ONE complete set of this doctrine (every fit once) - the same quick estimate as My build plans: your ME/structure defaults and job fee from the settings, scanned market prices for the materials. Buy-only items (faction set to buy, or no recipe) are counted at market price; only items without any price stay out, named in the note column.":
+            "Baukosten für EINEN kompletten Satz dieser Doctrine (jedes Fit einmal) - dieselbe Schnellschätzung wie „My build plans“: deine ME-/Struktur-Vorgaben und Job-Gebühr aus den Einstellungen, gescannte Marktpreise für die Materialien. Nur-Kauf-Posten (Faction auf Kaufen, oder ohne Rezept) zählen zum Marktpreis mit; nur Items ohne jeden Preis bleiben draussen und stehen in der Notiz-Spalte.",
+        "Multi-Hub is ON, but only {n} buy hub(s) could be resolved – check „Buy from“ A/B/C in the build plan (an unsaved plan starts with them empty; a structure may no longer be linked). Single-hub check against: {hub}":
+            "Multi-Hub ist AN, aber nur {n} Kauf-Hub(s) liessen sich auflösen – prüfe „Buy from“ A/B/C im Bauplan (ein ungespeicherter Plan startet leer; eine Struktur ist vielleicht nicht mehr verlinkt). Einzel-Hub-Prüfung gegen: {hub}",
+        "Multiply all by:": "Alles multiplizieren mit:",
+        "Applied to every quantity above when you press Add.":
+            "Wirkt beim Bestätigen auf jede Menge oben.",
+        "Plan": "Plan",
+        "quantity": "Menge",
+        "gap: {isk} ISK": "Lücke: {isk} ISK",
+        "Sum of the gap-cost column: missing quantity times the Jita price, over all positions.":
+            "Summe der gap-cost-Spalte: fehlende Stückzahl mal Jita-Preis, über alle Positionen.",
+        "{n} missing position(s) have no Jita price and are NOT in this sum.":
+            "{n} fehlende Position(en) haben keinen Jita-Preis und stecken NICHT in dieser Summe.",
+        "Copy missing (multibuy)": "Fehlendes kopieren (Multibuy)",
+        "Copies every ticked position that is missing as Name<TAB>quantity - paste straight into EVE's multibuy.":
+            "Kopiert jede angehakte Position mit Fehlmenge als Name<TAB>Menge - direkt in EVEs Multibuy einfügbar.",
+        "{n} item(s) copied for EVE multibuy.":
+            "{n} Item(s) für EVEs Multibuy kopiert.",
+        "({n} without a resolved name skipped)":
+            "({n} ohne aufgelösten Namen übersprungen)",
+        "New multi build plan": "Neuer Multi-Bauplan",
+        "Show card": "Karte zeigen",
+        "This data is over an hour old - the market has moved on. Fetch again before you act on it.":
+            "Diese Daten sind über eine Stunde alt - der Markt ist weitergezogen. Vor dem Handeln neu abrufen.",
+        "EVE data (SDE) is missing - press „EVE data“ (top right) first.":
+            "Die EVE-Daten (SDE) fehlen - erst „EVE data“ (oben rechts) drücken.",
+        "Loading build recipes…": "Baurezepte werden geladen…",
+        "Nothing copied: {n} missing item(s), but none with a resolved name.":
+            "Nichts kopiert: {n} fehlende Item(s), aber keines mit aufgelöstem Namen.",
+        "Doctrine": "Doctrine",
+        "build cost (1 set)": "Baukosten (1 Satz)",
+        "profit (1 set)": "Profit (1 Satz)",
+        "Sell value of one set at the GLOBAL trading place minus fees and the build cost. Items without a price there use the Jita sell price instead - the note column says so.":
+            "Verkaufswert eines Satzes am GLOBALEN Handelsplatz minus Gebühren und Baukosten. Items ohne Preis dort nehmen stattdessen den Jita-Verkaufspreis - die Notiz-Spalte sagt es.",
+        "Selected doctrines → one multi build plan":
+            "Markierte Doctrinen → ein Multi-Bauplan",
+        "Select one or more doctrines in the list (Ctrl/Shift) and turn everything they are missing into ONE multi build plan. Same rules as per doctrine: unticked, faction-buy and no-recipe items are named and left out.":
+            "Eine oder mehrere Doctrinen in der Liste markieren (Strg/Umschalt) und alles, was ihnen fehlt, zu EINEM Multi-Bauplan machen. Gleiche Regeln wie je Doctrine: abgewählte, Faction-Kauf- und rezeptlose Posten werden genannt und bleiben draußen.",
+        "Multi build plan": "Multi-Bauplan",
+        "Select one or more doctrines in the list first.":
+            "Erst eine oder mehrere Doctrinen in der Liste markieren.",
+        "no price on global hub – Jita sell used for {n} item(s)":
+            "kein Preis am globalen Hub – Jita-Verkaufspreis für {n} Item(s) genommen",
+        "Not estimable: an end product has no sell price anywhere (global hub or Jita), or nothing is buildable.":
+            "Nicht schätzbar: ein Endprodukt hat nirgends einen Verkaufspreis (globaler Hub oder Jita), oder nichts ist baubar.",
+        "Deduct fitted rigs": "Gefittete Rigs abziehen",
+        "Ships with fitted rigs cannot be sold on the market - rigs are DESTROYED on removal. ESI does not say whether a rig in a public contract is fitted or loose, so this conservatively treats every rig in a SHIP contract as fitted and deducts its market value. Contracts that only trade rigs (no ship) are not affected.": "Schiffe mit gefitteten Rigs lassen sich nicht am Markt verkaufen - Rigs werden beim Ausbau ZERSTOERT. ESI sagt bei oeffentlichen Contracts nicht, ob ein Rig gefittet oder lose ist; darum gilt hier konservativ jedes Rig in einem SCHIFFS-Contract als gefittet und sein Marktwert wird abgezogen. Contracts, die nur Rigs handeln (ohne Schiff), bleiben unberuehrt.",
+        "{n} rig(s) {isk} deducted (probably fitted)": "{n} Rig(s) {isk} abgezogen (vermutlich gefittet)",
+        "⚠ {n} rig(s) {isk} probably FITTED - lost on resale": "⚠ {n} Rig(s) {isk} vermutlich GEFITTET - beim Weiterverkauf verloren",
+        "Last trade {n} days ago – this market has gone to sleep. The 30-day average still counts the old days.": "Letzter Handel vor {n} Tagen – dieser Markt ist eingeschlafen. Der 30-Tage-Schnitt zählt die alten Tage noch mit.",
+        "Last trade {n} day(s) ago.": "Letzter Handel vor {n} Tag(en).",
+        "Shifts every copied price relative to the best sell at the ACTIVE hub: +15 % copies 15 % ABOVE it, -15 % copies 15 % below, 0 % keeps the classic one-tick undercut. Prices are rounded DOWN to a valid EVE price (4 significant digits).": "Verschiebt jeden kopierten Preis relativ zum besten Sell am AKTIVEN Hub: +15 % kopiert 15 % DARUEBER, -15 % kopiert 15 % darunter, 0 % bleibt das klassische Ein-Tick-Unterbieten. Gerundet wird ABWAERTS auf einen gueltigen EVE-Preis (4 signifikante Stellen).",
+        "{pct} % on the best sell applied – ": "{pct} % auf den besten Sell angewandt – ",
+        "Quantity × packaged volume per unit ({v} m³).": "Menge × Stückvolumen verpackt ({v} m³).",
+        "No volume in the SDE – „Load recipes“ refreshes it.": "Kein Volumen in der SDE – „Rezepte laden“ frischt es auf.",
+        "incl. {isk} for {n} material(s) without an order book (scan price)": "davon {isk} für {n} Material(ien) ohne Orderbuch (Scan-Preis)",
+        "⚠ {n} material(s) have neither an order book nor a scan price – the total is missing them": "⚠ {n} Material(ien) haben weder Orderbuch noch Scan-Preis – sie fehlen in der Summe",
+        "Click to expand/collapse this doctrine.": "Klick klappt diese Doctrine auf oder zu.",
+        "Not measured yet – press „Fetch market“ first.": "Noch nicht gemessen – erst „Markt abrufen“ drücken.",
+        "Already covered, missing now – will be bought again:": "War schon gedeckt, fehlt jetzt – wird nachgekauft:",
+        "Still missing for the remaining runs (NOT bought – ordinary demand):": "Fehlt noch für die restlichen Runs (wird NICHT gekauft – gewöhnlicher Bedarf):",
+        "   … and {n} more": "   … und {n} weitere",
+        "Add the {n} lost materials to the shopping list?": "Die {n} verlorenen Materialien auf die Einkaufsliste setzen?",
+        "Shows what is missing and offers to buy it back: material that was already covered and is gone now. The ordinary remaining demand is listed too, but never bought automatically („bought is bought“).": "Zeigt, was fehlt, und bietet den Nachkauf an: Material, das schon gedeckt war und jetzt weg ist. Der gewöhnliche Restbedarf steht mit dabei, wird aber nie automatisch gekauft („gekauft ist gekauft“).",
+        "Apply prices to the plan": "Preise in den Plan übernehmen",
+        "Uses these order-book prices for the build cost of the plan, instead of the flat estimate. Same fetch as the numbers above - nothing is requested twice.": "Nimmt diese Orderbuch-Preise für die Baukosten des Plans, statt der pauschalen Schätzung. Derselbe Abruf wie die Zahlen oben – es wird nichts zweimal angefragt.",
+        "Open the build plan again, then retry.": "Öffne den Bauplan erneut und versuche es dann noch einmal.",
         "{n} materials added to the shopping list.":
             "{n} Materialien in die Einkaufsliste \u00fcbernommen.",
         "(building)": "(wird gebaut)",
@@ -1883,6 +2417,44 @@ KATALOG = {
         "attempts":
             "Versuche",
         "{n} attempts": "{n} Versuche",
+        "{name} – {runs} runs · {prob} % base chance":
+            "{name} – {runs} Runs · {prob} % Basis-Chance",
+        "Interface size": "Oberflächen-Größe",
+        "Scales the whole interface - text, tables, column widths and row heights together. Takes effect after a RESTART.\nIt is added ON TOP of your Windows display scaling: at 150 % in Windows plus 150 % here you end up at 225 %.":
+            "Skaliert die ganze Oberfläche - Text, Tabellen, Spaltenbreiten und Zeilenhöhen gemeinsam. Wirkt nach einem NEUSTART.\nDer Faktor kommt ZUSÄTZLICH zur Windows-Skalierung: bei 150 % in Windows und 150 % hier landest du bei 225 %.",
+        "The new interface size takes effect after you restart Eve MoMa.":
+            "Die neue Oberflächen-Größe wirkt nach einem Neustart von Eve MoMa.",
+        "Colour theme": "Farbwelt",
+        "Jita sell": "Jita-Preis",
+        "Hubs: ": "Hubs: ",
+        "This build plan buys from several hubs. Each material is checked against the hub (or hubs) the plan actually buys it from - one column per hub shows how many units come from where. The prices come from the last hub scan of the build plan window, not from a fresh fetch.":
+            "Dieser Bauplan kauft an mehreren Hubs ein. Jedes Material wird gegen den Hub (oder die Hubs) geprüft, an dem der Plan es tatsächlich kauft – eine Spalte je Hub zeigt, wie viele Stück von wo kommen. Die Preise stammen aus dem letzten Hub-Scan des Bauplan-Fensters, nicht aus einem frischen Abruf.",
+        "from the build plan's hub scan ({n} hubs)":
+            "aus dem Hub-Scan des Bauplans ({n} Hubs)",
+        "Replaces the flat price of the shopping list with real order-book prices. This plan buys from several hubs, so the prices come from its last hub scan \u2013 the same data the plan itself calculated with.":
+            "Ersetzt den flachen Materialpreis der Einkaufsliste durch echte Orderbuch-Preise. Dieser Plan kauft an mehreren Hubs ein, deshalb stammen die Preise aus seinem letzten Hub-Scan – denselben Daten, mit denen der Plan selbst gerechnet hat.",
+        "no seller": "kein Anbieter",
+        "no data": "keine Daten",
+        "Sell price in Jita, no matter which hub is selected above. Jita is the game-wide reference. Useful when the selected hub has no offer for an item at all: that is an opportunity (you would be the only seller), but without Jita you would have no yardstick for the price.":
+            "Verkaufspreis in Jita, unabhängig vom oben gewählten Hub. Jita ist die spielweite Richtschnur. Nützlich, wenn es am gewählten Hub für ein Item überhaupt kein Angebot gibt: das ist eine Chance (man wäre der einzige Anbieter), aber ohne Jita hätte man keinen Massstab für den Preis.",
+        " \u00b7 \u26a0 no trade volume for this hub (region unknown) \u2013 compare with the Jita column":
+            " \u00b7 \u26a0 kein Handelsvolumen für diesen Hub (Region unbekannt) – vergleiche mit der Jita-Spalte",
+        "Caldari Blue (default)": "Caldari-Blau (Vorgabe)",
+        "Graphite (neutral grey)": "Graphit (neutrales Grau)",
+        "Daylight (light)": "Tageslicht (hell)",
+        "Colours of the whole interface. Takes effect IMMEDIATELY.\nCaldari Blue is the default. Graphite drops the blue tint and mutes the accents further. Daylight is for a bright room - it inverts the interface to a light background.":
+            "Farben der ganzen Oberfläche. Wirkt SOFORT.\nCaldari-Blau ist die Vorgabe. Graphit nimmt den Blaustich heraus und dämpft die Akzente weiter. Tageslicht ist für einen hellen Raum - es dreht die Oberfläche auf hellen Grund.",
+        "No copying needed – get these relics →":
+            "Kein Kopieren nötig – diese Relics besorgen →",
+        "{name}: {n}": "{name}: {n}",
+        "One relic is consumed per attempt.":
+            "Je Versuch wird ein Relic verbraucht.",
+        "How many invention jobs run at the same time – one relic each, one science slot each.\nLeft = 1 job (slow, 1 slot busy),\nright = all free science slots (as fast as possible).\nIt does NOT change how many blueprints you get – that depends on quantity and decryptor.":
+            "Wie viele Invention-Jobs gleichzeitig laufen – je ein Relic, je ein Wissenschafts-Slot.\nLinks = 1 Job (langsam, 1 Slot belegt),\nrechts = alle freien Wissenschafts-Slots (so schnell wie möglich).\nEs ändert NICHT, wie viele Blaupausen herauskommen – das hängt an Menge und Decryptor.",
+        "Invention attempts. Relics, datacores and decryptors are on the shopping list – one relic per attempt.":
+            "Invention-Versuche. Relics, Datacores und Decryptoren stehen auf der Einkaufsliste – ein Relic je Versuch.",
+        "Relic quality for this invention. One relic is CONSUMED per attempt and is on the shopping list. Default is the highest-yield quality (runs × chance) – compare relic market prices before switching.":
+            "Relic-Qualität für diese Invention. Je Versuch wird EIN Relic VERBRAUCHT und steht auf der Einkaufsliste. Standard ist die ergiebigste Qualität (Runs × Chance) – vor dem Umschalten die Relic-Marktpreise vergleichen.",
         "Show or hide the details of this invention":
             "Details dieser Invention ein- oder ausblenden",
         "Skills \u00d7{mod}": "Skills \u00d7{mod}",
@@ -1963,8 +2535,6 @@ KATALOG = {
             "{n} Position(en) \u00e4ndern sich ({down} weniger, {up} mehr, {gone} auf 0):\n\n{lines}\n\nEinkaufspreise und Jobkosten-Basis bleiben vom Einfrier-Tag.\nAchtung: was hier auf 0 f\u00e4llt, plant der Bauplan danach wieder als ZU KAUFEN ein.",
         "Frozen stock reset on {when} \u2013 {n} position(s) changed ({down} less, {up} more, {gone} to 0). Prices still from the freeze day. Don't forget: \u201eSave build plan\u201c.":
             "Einfrier-Bestand am {when} neu gesetzt \u2013 {n} Position(en) ge\u00e4ndert ({down} weniger, {up} mehr, {gone} auf 0). Preise weiterhin vom Einfrier-Tag. Nicht vergessen: \u201eBauplan speichern\u201c.",
-        "Checks the REMAINING runs of the plan against the real current stock (hangar + pipeline): what will be missing, and how much? Finds vanished stock before it is missing at build time.":
-            "Rechnet die RESTLICHEN Runs des Plans gegen den echten Ist-Bestand (Lager + Pipeline): was wird fehlen, und wie viel? Findet verschwundenen Bestand, bevor er beim Bauen fehlt.",
         "Who sells the final product? Determines sales tax and broker fee \u2013 with thin margins the biggest lever of all.\n\u2b50 = lowest total fee, preset for NEW build plans.\n\u201e\u2014 global \u2014\u201c takes the values from the settings (behaviour as before).\nThe choice is saved with the build plan and freezes with it \u2013 otherwise the target price is off later.\nFill the list: Settings \u2192 \u201e Find best character automatically\u201c.":
             "Wer verkauft das Endprodukt? Bestimmt Sales Tax und Broker Fee \u2013 bei d\u00fcnnen Margen der gr\u00f6\u00dfte Hebel \u00fcberhaupt.\n\u2b50 = niedrigste Gesamtgeb\u00fchr, wird bei NEUEN Baupl\u00e4nen vorbelegt.\n\u201e\u2014 global \u2014\u201c nimmt die Werte aus den Einstellungen (Verhalten wie bisher).\nDie Auswahl wird mit dem Bauplan gespeichert und friert beim Einfrieren mit \u2013 sonst stimmt der Zielpreis sp\u00e4ter nicht mehr.\nListe f\u00fcllen: Einstellungen \u2192 \u201e Besten Charakter automatisch finden\u201c.",
         "\n\n\u26a0 NO character data loaded yet \u2013 the global fee rate from the settings applies. Click \u201e Find best character automatically\u201c once, then all characters with their total fee appear here.":
@@ -2563,8 +3133,6 @@ KATALOG = {
             "Verkaufspreis {price} f\u00fcr {name} kopiert \u2013 dein Ziel-Preis l\u00e4ge hier UNTER dem aktuellen Markt, deshalb ist das der Marktpreis minus einen Tick: verkauft genauso schnell und bringt mehr als deine Ziel-Marge.",
         "\u201e{name}\u201c copied \u2013 paste into the search in the inventory.":
             "\u201e{name}\u201c kopiert \u2013 im Inventar in die Suche einf\u00fcgen.",
-        "\u21a9 Undo adjustment (currently {n}\u00d7)":
-            "\u21a9 Nachbesserung r\u00fcckg\u00e4ngig (aktuell {n}\u00d7)",
         "Orders checked: {b} buy ({nb} to adjust), {s} sell ({ns} to adjust":
             "Orders gepr\u00fcft: {b} Buy ({nb} nachbessern), {s} Sell ({ns} nachbessern",
         ", {n} of them only at a loss":
@@ -2732,8 +3300,6 @@ KATALOG = {
             "Kein berechneter Plan mit Bau-Positionen offen \u2013 erst \u201eNeu berechnen\u201c (\u00e4ltere gespeicherte Pl\u00e4ne kennen die exakten Zutatenmengen noch nicht).",
         "Everything is covered \u2713\n\nHangar + pipeline + your remaining runs cover the remaining need of every ingredient.\n(Calculated against the REAL current stock, not the frozen state.)":
             "Alles deckt sich \u2713\n\nLager + Pipeline + die restlichen eigenen Runs decken den Restbedarf jeder Zutat.\n(Gerechnet gegen den ECHTEN Ist-Bestand, nicht den Einfrier-Stand.)",
-        "Working through the remaining runs, THIS WILL BE MISSING:":
-            "Beim Abarbeiten der restlichen Runs WIRD FEHLEN:",
         "Delete old transactions":
             "Alte Transaktionen l\u00f6schen",
         "All transactions before {date} are permanently deleted.\n\nCareful: very old purchases are the cost basis (FIFO) for long-held items \u2013 their profit calculation may be incomplete afterwards. Continue?":
@@ -3611,8 +4177,8 @@ KATALOG = {
             "Netto-Erl\u00f6s pro St\u00fcck nach Steuer + Broker.",
         "Margin against your purchase price.":
             "Marge gegen\u00fcber deinem Kaufpreis.",
-        "Three states: in market (order running) \u00b7 SELL (net margin above your target margin) \u00b7 hold (everything else \u2013 the reason is in the cell's tooltip).":
-            "Drei Zust\u00e4nde: im Markt (Order l\u00e4uft) \u00b7 VERKAUFEN (Netto-Marge \u00fcber deiner Ziel-Marge) \u00b7 Halten (alles andere \u2013 der Grund steht im Tooltip der Zelle).",
+        "Four states: in market (order running) \u00b7 SELL (net margin above your target margin) \u00b7 hold (margin below target or no hub price \u2013 wait) \u00b7 no purchase price (MoMa does not know what you paid, so it cannot advise; changes by itself once a purchase shows up in your wallet). The reason is in the cell's tooltip.":
+            "Vier Zust\u00e4nde: im Markt (Order l\u00e4uft) \u00b7 VERKAUFEN (Netto-Marge \u00fcber deiner Ziel-Marge) \u00b7 Halten (Marge unter Ziel oder kein Hub-Preis \u2013 warten) \u00b7 ohne Einkaufspreis (MoMa kennt deinen Einkauf nicht und kann nichts raten; \u00e4ndert sich von selbst, sobald ein Kauf in deiner Wallet auftaucht). Der Grund steht im Tooltip der Zelle.",
         "Your open market orders for this item: \u201eBuy\u201c = you have a buy order running, \u201eSell\u201c = a sell order is listed.":
             "Deine offenen Market-Orders f\u00fcr dieses Item: \u201eBuy\u201c = du hast eine Kauf-Order laufen, \u201eSell\u201c = eine Verkaufs-Order ist gelistet.",
         "\u00d8 purchase plus estimated broker fees from adjusting your buy orders (\u201eOrder update\u201c, work-through mode) - separate, estimated extra column, does NOT change the normal \u00d8 purchase. \u201e\u2014\u201c = no adjustments recorded (or \u00d8 purchase unknown).":
@@ -3988,8 +4554,11 @@ KATALOG = {
             "Mindest-Gewinn pro m\u00b3 Frachtraum. Beim Regional-Trading entscheidend: zeigt, was sich pro Transportvolumen lohnt. 0 = aus.",
         "\uff0b Other structure (paste in-game link) \u2026":
             "\uff0b Andere Struktur (Ingame-Link einf\u00fcgen) \u2026",
-        "Choose a structure (found from your orders) \u2013 or \u201ePaste in-game link\u201c below for another one (e.g. your Azbel):":
-            "Struktur w\u00e4hlen (aus deinen Orders gefunden) \u2013 oder unten \u201eIngame-Link einf\u00fcgen\u201c f\u00fcr eine andere (z. B. deine Azbel):",
+        # emm893: das Feld ist jetzt beschreibbar, der Text sagt das auch
+        # (Nutzer 10.11.2026: "ich kann nichmal mit der Maus ins
+        # Eingabefeld klicken, da gibts nur ein dropdown mehr nicht").
+        "Choose a structure (found from your orders) \u2013 or paste an in-game link straight into this field (e.g. your Azbel):":
+            "Struktur w\u00e4hlen (aus deinen Orders gefunden) \u2013 oder einen Ingame-Link direkt in dieses Feld einf\u00fcgen (z. B. deine Azbel):",
         "\n\u26a0 Current book spread is WIDER than what the item historically yields daily (throwaway-order suspicion) - the rating uses the realistic profit.":
             "\n\u26a0 Aktueller Buch-Spread ist BREITER als das, was das Item historisch t\u00e4glich hergibt (Wegwerf-Order-Verdacht) - Wertung nutzt den realistischen Gewinn.",
         "Searching your structures (assets + orders) \u2026 may take 10\u201320 s":
@@ -4050,8 +4619,6 @@ KATALOG = {
             "Netto-Marge \u00fcber deiner Ziel-Marge \u2013 verkaufbar.",
         " Note: price is still below the normal level ({normal}) \u2013 there might be more, your call.":
             " Hinweis: Preis liegt noch unter dem Normalniveau ({normal}) \u2013 da ginge evtl. mehr, deine Entscheidung.",
-        "Purchase price unknown (owned before the program) and price not at the normal level \u2013 no recommendation possible.":
-            "Kaufpreis unbekannt (vor dem Programm besessen) und Preis nicht auf Normalniveau \u2013 keine Handlungsempfehlung m\u00f6glich.",
         "Net margin below your target margin":
             "Netto-Marge unter deiner Ziel-Marge",
         ", normal level {normal} not reached yet":
@@ -4135,8 +4702,6 @@ KATALOG = {
             "Pr\u00fcfe tats\u00e4chlichen Absatz im Ziel \u2026",
         "Searching empty destination markets with sales \u2026":
             "Suche leere Zielm\u00e4rkte mit Absatz \u2026",
-        "Counter reset to {n}":
-            "Z\u00e4hler auf {n} zur\u00fcckgesetzt",
         "Outbidding to {price} leaves no flip profit after broker (buy) + tax/broker (sell) - the market sell is only {sell}.":
             "H\u00f6herbieten auf {price} l\u00e4sst nach Broker (Kauf) + Steuer/Broker (Verkauf) keinen Flip-Gewinn mehr \u00fcbrig - der Markt-Sell liegt nur bei {sell}.",
         "Undercutting to {price} would be BELOW your purchase price (\u00d8 {cost}) after tax + broker - you would make a loss.":
@@ -5110,8 +5675,6 @@ KATALOG = {
             "Neuen Preis kopieren \u2013 ingame in \u201eOrder \u00e4ndern\u201c einf\u00fcgen.",
         "No journal data yet \u2013 run \u201eRefresh\u201c once, then the real fees are collected.":
             "Noch keine Journal-Daten \u2013 einmal \u201eAktualisieren\u201c ausf\u00fchren, dann werden die echten Geb\u00fchren gesammelt.",
-        "Key of your ESI app from developers.eveonline.com. Enter once, enables the login.":
-            "Schl\u00fcssel deiner ESI-App von developers.eveonline.com. Einmal eintragen, erm\u00f6glicht den Login.",
         "From this net margin upwards the portfolio marks a position as ready to sell (SELL).":
             "Ab dieser Netto-Marge markiert das Portfolio eine Position als verkaufsbereit (SELL).",
         "Queries the latest release in the GitHub repository and compares it with the running version. Does NOT check the EVE data \u2013 the \u201eUpdates\u201c button at the top right does that.":
@@ -5158,10 +5721,6 @@ KATALOG = {
             "Schnellsch\u00e4tzung mit den Preisen des letzten Markt-Scans.<br><br>Der ge\u00f6ffnete Bauplan rechnet mit echten <b>Orderbuch-Preisen</b> und kommt dadurch meist etwas <b>teurer</b> heraus \u2013 hier w\u00e4re ein Live-Abruf je Material f\u00fcr die ganze Liste zu langsam.<br>Zum Vergleichen also immer den Bauplan \u00f6ffnen; die Karte ist zum <b>Sortieren</b> da: welcher Plan lohnt sich gerade \u00fcberhaupt.",
         "Source: {src}. You already have an open buy order for this item in game.":
             "Quelle: {src}. Du hast f\u00fcr dieses Item bereits eine offene Buy-Order ingame.",
-        "This order has already been repriced {n}\u00d7 - estimated broker fees so far: \u2248{fee}. That alone already eats up the expected profit over the remaining quantity (rough estimate with the current price, as the exact prices of earlier repricings are unknown). Better just hold the order / let it fill now instead of repricing further.":
-            "Diese Order wurde schon {n}\u00d7 nachgebessert - gesch\u00e4tzte Broker-Geb\u00fchren dadurch bisher: \u2248{fee}. Das allein frisst den erwarteten Gewinn \u00fcber die Restmenge schon auf (grobe Sch\u00e4tzung mit aktuellem Preis, da die genauen Preise fr\u00fcherer Nachbesserungen nicht bekannt sind). Besser die Order jetzt einfach halten/f\u00fcllen lassen statt weiter nachzubessern.",
-        "{n}\u00d7 repriced - estimated broker fees so far: \u2248{fee} (approximation with current price \u00d7 remaining quantity, as the exact prices of earlier steps are unknown).":
-            "{n}\u00d7 nachgebessert - gesch\u00e4tzte Broker-Geb\u00fchren dadurch bisher: \u2248{fee} (N\u00e4herung mit aktuellem Preis \u00d7 Restmenge, da die genauen Preise fr\u00fcherer Schritte nicht bekannt sind).",
         "Sell price from the market scan of: {when}":
             "Sell-Preis aus dem Markt-Scan von: {when}",
         "Tradability: how reliably the item is traded daily on BOTH sides (your buy AND sell order get filled).\n\n":
@@ -5172,12 +5731,14 @@ KATALOG = {
             " vom {when}",
         ", sale at the last market scan \u2013 the same calculation as in the dialog (\u201epurchase fixed \u00b7 profit live\u201c). At LIVE purchase prices the same card would look different \u2013 but that answers \u201eis a NEW build worth it today?\u201c, not \u201ewhat does MY build yield?\u201c.":
             ", Verkauf zum letzten Markt-Scan \u2013 dieselbe Rechnung wie im Dialog (\u201eEinkauf fest \u00b7 Gewinn live\u201c). Zu LIVE-Einkaufspreisen s\u00e4he dieselbe Karte anders aus \u2013 das beantwortet aber die Frage \u201elohnt ein NEUER Bau heute?\u201c, nicht \u201ewas bringt MEIN Bau?\u201c.",
-        "Net margin after tax + broker if you reprice to {price}.":
-            "Netto-Marge nach Steuer + Broker, wenn du auf {price} nachbesserst.",
+        "Net margin after tax + broker if you reprice to {price} \u2013 "
+        "including the relist fees already paid on this order, spread over "
+        "the remaining quantity.":
+            "Netto-Marge nach Steuer + Broker, wenn du auf {price} nachbesserst "
+            "\u2013 inklusive der Relist-Geb\u00fchren, die auf dieser Order "
+            "schon bezahlt sind, verteilt auf die Restmenge.",
         "Bidding up to {price} leaves no flip profit after broker (buy) + tax/broker (sell) \u2013 the market sell is only at {sell}. Better wait than bid up.":
             "H\u00f6herbieten auf {price} l\u00e4sst nach Broker (Kauf) + Steuer/Broker (Verkauf) keinen Flip-Gewinn mehr \u2013 der Markt-Sell liegt nur bei {sell}. Besser warten statt hochbieten.",
-        "{n}\u00d7 repriced - estimated broker fees so far: \u2248{fee} (approximation - recalculated with real values at the next \u201eCheck orders\u201c).":
-            "{n}\u00d7 nachgebessert - gesch\u00e4tzte Broker-Geb\u00fchren dadurch bisher: \u2248{fee} (N\u00e4herung - wird beim n\u00e4chsten \u201eOrders pr\u00fcfen\u201c mit echten Werten neu berechnet).",
         "\u00d8 buy: {avg} + estimated {fee}/unit repricing fees = {adj}.\nRough approximation - fills cannot be matched exactly to individual repricings via ESI.":
             "\u00d8-Kauf: {avg} + gesch\u00e4tzt {fee}/Stk. Nachbesserungs-Geb\u00fchren = {adj}.\nGrobe N\u00e4herung - Fills lassen sich \u00fcber ESI nicht exakt einzelnen Nachbesserungen zuordnen.",
         "You sell at {sell}, \u00d8 buy was {avg} ({pct:+.1f} %). ":
@@ -6065,8 +6626,6 @@ KATALOG = {
         "Could not check ({why}).":
             "Pr\u00fcfung nicht m\u00f6glich ({why}).",
         # Sitzung 17: kurz statt Roman (Nutzer)
-        "Purchase price unknown \u2013 no margin shown.":
-            "Kaufpreis unbekannt \u2013 keine Marge.",
         "Purchase price unknown.":
             "Kaufpreis unbekannt.",
         "\u26a0 Purchase price unknown \u2013 no loss check. Check the price yourself.":
@@ -7245,6 +7804,129 @@ KATALOG = {
         # "Where is it?" (emm459)
         'Where is it? (Stock locations)':
             'Wo liegt es? (Lagerorte)',
+        # ---- Market Stocks (emm824) ----------------------------------
+        'Where your doctrines are SOLD and stock is measured. Usually a player structure (e.g. a Keepstar) - NPC hubs work too. Kept separate from the global trading place on purpose.':
+            'Wo deine Doctrinen VERKAUFT werden und der Bestand gemessen wird. Meist eine Spielerstruktur (z. B. eine Keepstar) - NPC-Hubs gehen auch. Bewusst getrennt vom globalen Handelsplatz.',
+        'Fetch market':
+            'Markt abrufen',
+        'no data yet - press „Fetch market“':
+            'noch keine Daten - „Markt abrufen“ drücken',
+        'TRADE HUB':
+            'HANDELSPLATZ',
+        'Buyable up to':
+            'Kaufbar bis',
+        'Sell orders count as buyable only up to Jita price plus this margin. Without a cap a single order at 50x price would make a doctrine look covered. Jita is the reference most of EVE uses as the normal price.':
+            'Sell-Orders zählen nur bis Jita-Preis plus diesem Aufschlag als kaufbar. Ohne Deckel ließe eine einzelne Order zum 50-fachen Preis eine Doctrine gedeckt aussehen. Jita ist die Referenz, die fast ganz EVE als Normalpreis nutzt.',
+        'over Jita':
+            'über Jita',
+        'Full at':
+            'Voll bei',
+        'A doctrine counts as 100% when this many COMPLETE ships are buyable. Every item scales with its own quantity per fit: 250 ships with 100 rounds each means 25,000 rounds, not 250. New doctrines start with this target; each doctrine can override it.':
+            "Eine Doctrine gilt als 100 %, wenn so viele KOMPLETTE Schiffe kaufbar sind. Jedes Item skaliert mit seiner Menge je Fit: 250 Schiffe mit je 100 Schuss heißen 25'000 Schuss, nicht 250. Neue Doctrinen starten mit diesem Ziel; jede kann es überschreiben.",
+        'complete ships':
+            'komplette Schiffe',
+        'RULES':
+            'REGELN',
+        'on book':
+            'im Buch',
+        'missing':
+            'fehlt',
+        'note':
+            'Hinweis',
+        # emm919: der Reiter heisst "Doctrines" statt "Market Stocks".
+        'Doctrines':
+            'Doctrinen',
+        'Paste ship fit from clipboard':
+            'Schiffs-Fit aus der Zwischenablage',
+        'Build faction items myself (LP blueprints)':
+            'Faction-Items selbst bauen (LP-Blaupausen)',
+        'Some players bought faction blueprints with loyalty points. ON: faction items go into the build plan too (only those that actually have a recipe). OFF: faction items stay on the buy side.':
+            'Manche haben Faction-Blaupausen über Loyalitätspunkte gekauft. AN: Faction-Items gehen mit in den Bauplan (nur die, die wirklich ein Rezept haben). AUS: Faction-Items bleiben auf der Kaufseite.',
+        'No fit header found - the first line must look like [Rifter, My Fit].':
+            'Keine Fit-Kopfzeile gefunden - die erste Zeile muss aussehen wie [Rifter, Mein Fit].',
+        'Unknown names (need a market scan first?): {namen}':
+            'Unbekannte Namen (fehlt erst ein Market scan?): {namen}',
+        '{n} fit(s) recognised, all names resolved.':
+            '{n} Fit(s) erkannt, alle Namen aufgelöst.',
+        'Unnamed doctrine':
+            'Doctrine ohne Namen',
+        'Delete ship?':
+            'Schiff löschen?',
+        'Remove ship „{name}“ from its doctrine? The saved fit is lost.':
+            'Schiff „{name}“ aus seiner Doctrine entfernen? Der gespeicherte Fit geht verloren.',
+        'Pick a trade hub first.':
+            'Wähle zuerst einen Handelsplatz.',
+        'Paste a doctrine first - there is nothing to measure yet.':
+            'Füge zuerst eine Doctrine ein - noch gibt es nichts zu messen.',
+        'fetching…':
+            'ruft ab…',
+        'fetch failed: {err}':
+            'Abruf fehlgeschlagen: {err}',
+        '{name}: data {m} min old':
+            '{name}: Daten {m} min alt',
+        '{o} doctrine(s) · {d} ship(s) · {i} distinct item(s)':
+            '{o} Doctrine(n) · {d} Schiff(e) · {i} verschiedene Items',
+        'Buyable = sell orders at the hub up to Jita + {pct} %. A doctrine is full at its target of complete ships; every item scales with its quantity per fit. Unknown names and items without a Jita price are flagged on their rows.':
+            'Kaufbar = Sell-Orders am Platz bis Jita + {pct} %. Eine Doctrine ist voll bei ihrem Ziel an kompletten Schiffen; jedes Item skaliert mit seiner Menge je Fit. Unbekannte Namen und Items ohne Jita-Preis sind an ihren Zeilen markiert.',
+        '{fits} of {ziel} complete ships buyable - the scarcest item decides. 95% of the positions are worth nothing if the ammo is missing.':
+            '{fits} von {ziel} kompletten Schiffen kaufbar - das knappste Item entscheidet. 95 % der Positionen nützen nichts, wenn die Munition fehlt.',
+        '{n} fit(s)':
+            '{n} Fit(s)',
+        '{n} item(s) not on the market at all':
+            '{n} Item(s) gar nicht am Markt',
+        '{n} item(s) without a Jita price (counted uncapped)':
+            '{n} Item(s) ohne Jita-Preis (ungedeckelt gezählt)',
+        'Untick fully covered':
+            'Voll gedeckte abwählen',
+        'Unticks every position that is already at 100% - what is left ticked is exactly your remaining work. You can still tick/untick every row by hand.':
+            'Wählt jede Position ab, die schon bei 100 % steht - angehakt bleibt genau deine Restarbeit. Jede Zeile lässt sich weiter von Hand an- und abwählen.',
+        'Faction items: {art}':
+            'Faction-Items: {art}',
+        'build myself':
+            'selbst bauen',
+        'buy only':
+            'nur kaufen',
+        'stock %':
+            'Bestand %',
+        'Missing quantity times the Jita price - what filling the gap costs if you simply bought it.':
+            'Fehlende Stückzahl mal Jita-Preis - was das Auffüllen kostet, wenn man einfach kauft.',
+        'not on the market at all':
+            'gar nicht am Markt',
+        'offers exist, but above Jita + cap':
+            'Angebote da, aber über Jita + Deckel',
+        'no Jita price - counted uncapped':
+            'kein Jita-Preis - ungedeckelt gezählt',
+        'New multi build plan from ticked positions':
+            'Neuer Multi-Bauplan aus den angehakten Positionen',
+        'Edit ship…':
+            'Schiff bearbeiten…',
+        'Faction items: build myself':
+            'Faction-Items: selbst bauen',
+        'Faction items: buy only':
+            'Faction-Items: nur kaufen',
+        'Delete ship':
+            'Schiff löschen',
+        '(faction, set to buy)':
+            '(Faction, steht auf kaufen)',
+        '(no recipe - buy only)':
+            '(kein Rezept - nur kaufen)',
+        'Nothing ticked is missing - there is nothing to build.':
+            'Von den angehakten fehlt nichts - es gibt nichts zu bauen.',
+        'No region history known for this item - no number is invented.':
+            'Keine Regions-Historie zu diesem Item bekannt - es wird keine Zahl erfunden.',
+        # ---- Transactions: noch im Verkauf + Open (emm825) ----
+        'still selling':
+            'noch im Verkauf',
+        'Of this item, how much is still sitting in your own open SELL orders - the answer to ‚did I sell everything, or do I still have to attend to it?‘. Counts the characters shown by the filter. The number is as fresh as the last order fetch (see the line below the table), not live.':
+            'Wie viel von diesem Item noch in deinen eigenen offenen VERKAUFS-Orders liegt - die Antwort auf ‚habe ich alles verkauft, oder muss ich da noch ran?‘. Gezählt werden die Charaktere, die der Filter zeigt. Die Zahl ist so frisch wie der letzte Order-Abruf (siehe Zeile unter der Tabelle), nicht live.',
+        'Plus {n} on the buy side':
+            'Dazu {n} auf der Kaufseite',
+        '‚still selling‘ from your orders, {m} min old.':
+            '‚noch im Verkauf‘ aus deinen Orders, {m} min alt.',
+        '‚still selling‘ from your orders, {h} h old – press Refresh for a fresh count.':
+            '‚noch im Verkauf‘ aus deinen Orders, {h} h alt – für eine frische Zahl auf Aktualisieren drücken.',
+        '‚still selling‘ is empty until your orders have been fetched once (Refresh).':
+            '‚noch im Verkauf‘ bleibt leer, bis deine Orders einmal abgerufen wurden (Aktualisieren).',
     },
 }
 

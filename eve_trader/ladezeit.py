@@ -206,3 +206,89 @@ def ui_stop():
     _ui.clear()
     _schreiben(_bericht("UI thread: " + str(name), time.perf_counter() - t0, prof,
                         ui=True, marken=marken))
+
+
+# WANN LIEF UNSER CODE LOS (emm880)? Beim Import dieses Moduls - es
+# wird von main_window geladen, also VOR dem Fensteraufbau. Damit
+# enthaelt "since app start" auch das Bauen der Oberflaeche, und genau
+# dort vermuteten wir die Sekunden, die das Messraster nicht erklaerte.
+# Die Zeit davor (Python-Start, PySide6-Import) bleibt aussen vor.
+APP_START = time.monotonic()
+
+
+def seit_start():
+    """Sekunden seit dem Laden dieses Moduls (emm880)."""
+    return time.monotonic() - APP_START
+
+
+def bericht(zeiten, namen=None):
+    """Aus gemessenen Ladezeiten EINE Logzeile (emm877).
+
+    Nutzer 09.11.2026: "MoMa freezed jetzt nichtmehr ... aber Portfolio
+    laden dauert sehr lange ueber 1 minute". Das Perf-Log kannte bis
+    dahin nur die Schritte NACH dem Laden - die Minute davor war eine
+    Blackbox, und ohne Messpunkte bleibt jede Ursache geraten (Regel 2).
+
+    `zeiten`: {"names": 3.2, ("tx", 123): 12.4, ("assets", 123): 5.1, ...}
+    Schluessel mit Charakter werden je Phase zusammengezaehlt; dahinter
+    stehen die drei teuersten EINZELposten - so sieht man, ob ein
+    Charakter bremst oder alle gleich langsam sind.
+
+    Diese Funktion wohnt bewusst HIER und nicht im Fenster: sie ist rein,
+    ohne Qt pruefbar, und ihre englischen Logtexte haben in einer
+    UI-Datei nichts zu suchen (de_scan3 moniert dort jeden Text, der
+    nicht durch t() laeuft - zu Recht, denn dort gehoeren Anzeigetexte
+    hin, keine Logzeilen)."""
+    if not zeiten:
+        return "load: (not measured)"
+    # WANDZEIT ZUERST (emm880): die Summe unten zaehlt parallele Arbeit
+    # mehrfach - 12 Charaktere zu viert abgerufen stehen dort mit ihrer
+    # addierten Zeit. Der Nutzer erlebt die WANDZEIT, und nur die
+    # gehoert nach vorn; die Summe bleibt als Aufschluesselung dahinter.
+    wall = zeiten.get("__wall__")
+    seit = zeiten.get("__seit_start__")
+    summe = {}
+    einzeln = []
+    # ZAEHLER NEBEN DEN ZEITEN (emm897). Nutzer 11.11.2026: "Portfolio
+    # ladedauer 1 minute, sit das gut?" - gemessen 55,0 s, davon 42,4 s
+    # in EINER Phase (normal-levels), waehrend dieselbe Phase in den
+    # vier Laeufen davor 6-11 s brauchte. Die Zeit allein sagt nicht
+    # WARUM: diese Phase holt Preishistorien EINZELN ueber ESI nach, und
+    # ob sie dabei 3 oder 900 Stueck nachholen musste, stand nirgends.
+    # Solche Zaehler kommen als ("#", name) herein und bleiben aus der
+    # Sekunden-Summe heraus - sonst stuenden Stueckzahlen in einer
+    # Zeitangabe.
+    zaehler = {}
+    for schluessel, dauer in zeiten.items():
+        if schluessel in ("__wall__", "__seit_start__"):
+            continue
+        if isinstance(schluessel, tuple) and schluessel[0] == "#":
+            zaehler[str(schluessel[1])] = dauer
+            continue
+        if isinstance(schluessel, tuple):
+            phase, cid = schluessel[0], schluessel[1]
+            einzeln.append((float(dauer), phase, cid))
+        else:
+            phase = str(schluessel)
+        summe[phase] = summe.get(phase, 0.0) + float(dauer)
+    teile = [f"{p} {d:.1f}s" for p, d in
+             sorted(summe.items(), key=lambda kv: -kv[1])]
+    kopf = "load: "
+    if wall is not None:
+        kopf += f"WALL {wall:.1f}s"
+        if seit is not None:
+            kopf += f" (since app start {seit:.1f}s)"
+        kopf += " | "
+    text = (kopf + " · ".join(teile)
+            + f" | sum {sum(summe.values()):.1f}s"
+              " (parallel phases counted more than once)")
+    if zaehler:
+        text += " | " + " · ".join(f"{_n2}={_v2:g}"
+                                   for _n2, _v2 in sorted(zaehler.items()))
+    einzeln.sort(reverse=True)
+    if einzeln:
+        _n = namen or {}
+        text += "\nload: slowest - " + ", ".join(
+            f"{_n.get(cid, cid)} {phase} {d:.1f}s"
+            for d, phase, cid in einzeln[:3])
+    return text

@@ -865,8 +865,19 @@ for _pend in ("_bd_bp_pending", "_bd_frozen_pending", "_bd_manual_pending",
 # _open_saved_plan hingegen NICHT (der soll ja den Plan wiederherstellen).
 # 4 seit emm298: der Reset-Knopf oeffnet den Einzelplan ebenfalls frisch.
 # 5 seit emm436: "Build from stock" oeffnet einen neuen Plan mit Menge.
-eq("aa19 fuenf Einstiege oeffnen frisch (drei neue Plaene + Reset + Bestand)",
-   _src_txt.count("fresh=True)"), 5)
+# 6-7 seit emm824: Market Stocks oeffnet Plaene aus der Positions-Tabelle
+# und dem Einzel-Rueckfall des Multiplan-Wegs - beide IMMER frisch, denn
+# dort gibt es keinen gespeicherten Zustand, den man wiederherstellen
+# koennte. (Bis emm853 gab es einen DRITTEN Weg ueber die Gesamt-
+# Itemliste; die ist auf Nutzerwunsch weg, ihr Einstieg mit ihr.)
+# 8 seit emm923 (14.11.2026): Rechtsklick "Open build plan" in Market
+# Stats - ein neuer Plan aus einer Item-Zeile, also frisch.
+# 7 seit emm930 (14.11.2026): der Positions-Rechtsklick der Doctrines
+# laeuft jetzt ueber DASSELBE Item-Menue wie Market Stats
+# (`_ms_item_menue_ausfuehren`) - ein Weg weniger, kein Einstieg weniger.
+eq("aa19 sieben Einstiege oeffnen frisch (3 neue Plaene + Reset + Bestand"
+   " + Market Stocks + gemeinsames Item-Menue)",
+   _src_txt.count("fresh=True)"), 7)
 check("aa19 gespeicherter Plan oeffnet NICHT frisch",
       'self.open_build_detail(p["type_id"], p["item_name"])' in _src_txt)
 check("aa19 Menge faellt auf 1 zurueck", "self._bd_qty = 1" in _src_txt)
@@ -1802,7 +1813,7 @@ check("aa51 exakter Wert steht im Tooltip",
       't("Exact: ") + _exact[col]' in _src_txt)   # Sitzung 17: englischer Schluessel
 check("aa51 Status-Pille im Blueprints-Tab",
       "STATUS ALS FARBIGE PILLE" in _src_txt
-      and "border-radius:9px" in _src_txt)
+      and "border-radius:{theme.RAD_PILLE}" in _src_txt)
 check("aa51 Marge ist eine eigene KPI-Karte",
       'st_marge = _box(t("Margin"))' in _src_txt)
 check("aa51 alte Marge-Zeile ausgeblendet, aber MIT Parent",
@@ -2187,7 +2198,7 @@ check("aa57 gewaehlte Stufe ist farblich erkennbar",
       "QRadioButton::indicator:checked" in _src_txt
       and "QRadioButton:checked{{color:" in _src_txt)
 check("aa57 Indikator hat einen Rahmen (sonst unsichtbar auf dunkel)",
-      "border-radius:7px; border:2px solid " in _src_txt)
+      "border-radius:{theme.RAD}; border:2px solid " in _src_txt)
 # (b) Standard = alles selbst, solange nichts gespeichert ist. Genau das tut
 # _build_bp_ownership_panel schon: owned = alle Keys, wenn _bd_owned_bp None.
 check("aa57 ohne gespeicherte Wahl gelten ALLE Kategorien",
@@ -3330,12 +3341,12 @@ check("aa78 beide Aktions-Knoepfe gleich gestylt (theme.amber_rahmen_knopf)",
       "mat_copy_btn.setStyleSheet(theme.amber_rahmen_knopf())" in _sbd78
       and "paste_apply_btn.setStyleSheet(theme.amber_rahmen_knopf())" in _sbd78)
 eq("aa78 keiner davon mehr cyan",
-   _sbd78.count("border:1.5px solid {theme.CYAN}; border-radius:6px"), 0)
+   _sbd78.count("border:1.5px solid {theme.CYAN}; border-radius:{theme.RAD}"), 0)
 import eve_trader.ui.theme as _th78
 check("aa78 Rahmen und Hover amber (im Theme)",
       f"border:1.5px solid {_th78.AMBER}" in _th78.amber_rahmen_knopf()
-      and "rgba(242,162,60,0.16)" in _th78.amber_rahmen_knopf()
-      and "rgba(70,224,200,0.14)" not in _sbd78)
+      and _th78.toenung(_th78.AMBER, 0.16) in _th78.amber_rahmen_knopf()
+      and _th78.toenung(_th78.CYAN, 0.14) not in _sbd78)
 
 # ---------------------------------------------------------------- (aa79)
 # GLEICHE INHALTSBREITE IN ALLEN TABS (Nutzer: "jeder Tab soll optisch
@@ -3406,7 +3417,7 @@ check("aa79 Rahmen in beiden Zustaenden gleich dick (kein Springen)",
       _fbs79.count("border:2px solid {theme.AMBER}") == 2)
 check("aa79 Hover toent amber",
       "border-color:{theme.AMBER}" in _fbs79_aus
-      and "rgba(242,162,60,0.16)" in _fbs79_aus)
+      and "theme.toenung(theme.AMBER, 0.16)" in _fbs79_aus)
 # (3) Genau EINE primaere Aktion in der Kopfzeile.
 # SEIT emm298: "Save build plan" ist die hervorgehobene Aktion, Reset neutral.
 check("aa79 'Save build plan' ist hervorgehoben, Reset nicht",
@@ -4435,7 +4446,13 @@ check("aa107 nur noch der Fehlmengen-Kopier-Knopf vorhanden",
 # teilen denselben Kopierweg und unterscheiden sich nur im Mengen-Feld.
 check("aa107 der Knopf kopiert die Fehlmengen-Liste",
       '_copy_rows("missing"' in _ccf107)
-check("aa107 Kopier-Knoepfe in Amber", "rgba(242,162,60" in _ccf107)
+# WAR EINE SCHREIBWEISEN-PROBE ("rgba(242,162,60" im Quelltext) und fiel
+# damit gegen jede Aenderung der Farbe durch, ohne etwas ueber die
+# WIRKUNG zu sagen. Seit emm836 kommt die Toenung aus theme.toenung();
+# geprueft wird jetzt der Stil, den der Knopf wirklich traegt.
+check("aa107 Kopier-Knoepfe in Amber",
+      _th78.toenung(_th78.AMBER, 0.16) in _th78.kopier_knopf_stil()
+      or f"color:{_th78.AMBER}" in _th78.kopier_knopf_stil())
 # Der Wagen-Modus darf davon nichts abbekommen.
 check("aa107 Wagen-Modus unveraendert",
       'add = QPushButton(t("Add"))' in _ccf107
@@ -7513,7 +7530,7 @@ except Exception as _e636:
 check("aa168 und nutzt den ESI-Geliefert-Stand",
       "_bd_runplan_delivered" in _mw168)
 check("aa168 der Knopf rechnet NICHT selbst, sondern ruft die geteilte "
-      "Funktion", "self._fehlbedarf_jetzt()" in _fn_src("_check_shortfall"))
+      "Funktion", "self._fehlbedarf_jetzt()" in _fn_src("_buy_missing_again"))
 # GENAU IN DER FUNKTION SUCHEN, die den Materialien-Reiter fuellt: ein
 # Blick in den GESAMTEN Quelltext fand den Aufruf auch im Knopf-Handler -
 # die Mutation "Dauer-Anzeige entfernt" blieb damit unbemerkt.
@@ -7524,9 +7541,27 @@ check("aa168 der Knopf rechnet NICHT selbst, sondern ruft die geteilte "
 check("aa168 die Dauer-Anzeige ruft dieselbe Funktion",
       "_fehl_auto = self._fehlbedarf_jetzt()"
       in _fn_src("_fill_material_tab"))
-check("aa168 der Werkzeuge-Eintrag existiert und ist verdrahtet",
-      '_fehl_act.triggered.connect(self._check_shortfall)'
-      in _fn_src("_show_build_detail"))
+# AUSGEDUENNT (emm840): "Fehlbedarf pruefen" war ein eigener Eintrag, der
+# NUR anzeigte - und zwar dieselbe Lage, die "Fehlendes nachkaufen"
+# danach bucht. Jetzt macht der eine Eintrag beides. Geprueft wird, dass
+# die ALTE Funktion restlos weg ist (toter Code waere eine zweite
+# Wahrheit) und dass ALLES, was sie zeigte, im Nachkauf wieder auftaucht -
+# allen voran die Erz-Deckung (emm739), die sonst lautlos verschwunden
+# waere: zu wenig Erz faellt erst Tage spaeter als fehlendes MINERAL auf,
+# und dann verbindet es niemand mehr mit dem Einkauf.
+check("aa168 emm840: `_check_shortfall` ist restlos entfernt",
+      "def _check_shortfall" not in _src_txt
+      and "self._check_shortfall" not in _src_txt
+      and "_fehl_act" not in _src_txt)
+_bm168 = _fn_src("_buy_missing_again")
+check("aa168 emm840: der Nachkauf zeigt die Erz-Deckung mit",
+      "self._erz_deckung_jetzt()" in _bm168
+      and "NOT ENOUGH ORE for the planned reprocessing" in _bm168)
+check("aa168 emm840: und die vier Zahlen je Fehlposten",
+      "remaining need {need}, on hand " in _bm168
+      and "{have}, remaining production {prod}" in _bm168)
+check("aa168 emm840: und die Ursachen-Erklaerung",
+      "counted at freeze time" in _bm168)
 
 
 # ---------------------------------------------------------------- (aa169)
@@ -8882,8 +8917,13 @@ check("aa195 die Bauplan-Karten holen ihre Bilder nach",
 # ergaenzt oder streicht, zieht die Zahl hier BEWUSST nach.
 # emm548: der Multiplan-Vorschlag ist der 14. Anschluss (seine Liste zeigte
 # ueberhaupt kein Item-Bild).
-eq("aa195 GENAU 14 Stellen sind am Icon-Nachtrag angeschlossen",
-   _src_txt.count("self._icon_prefetch_pending("), 14)
+# emm841: Market Stocks ist der 15. (Schiffs-Icon im Karten-Kopf,
+# Item-Icons in beiden Listen - vorher zeigte der ganze Reiter kein Bild).
+# emm929 (14.11.2026): Market Stats ist der 16. (Item-Bilder in den
+# Top-Listen, `_ms_item_tabelle`).
+# emm937 (14.11.2026): die Portfolio-Karte "Orders laufen aus" ist der 17.
+eq("aa195 GENAU 17 Stellen sind am Icon-Nachtrag angeschlossen",
+   _src_txt.count("self._icon_prefetch_pending("), 17)
 
 
 # ---------------------------------------------------------------- (aa196)
@@ -9128,15 +9168,21 @@ for _w201 in ("\u25cf guter Preis", "\u25cf Marge ok", "keine Info"):
 # SEIT SITZUNG 12 laufen die Zustandsnamen durch t() - der Quelltext ist
 # englisch, die Anzeige uebersetzt. Gezaehlt werden weiterhin die ZWEIGE,
 # nicht die deutschen Woerter.
-eq("aa201 GENAU drei Zustaende werden vergeben (Halten 4x fuer 4 Gruende)",
+eq("aa201 Markt/VERKAUFEN/Halten werden vergeben (Halten 3x fuer 3 Gruende)",
+   # SEIT emm870 gibt es den Halten-Grund "noch kein Preis fuer dieses
+   # Item" - statt einer -100-%-Scheinmarge aus net_unit 0.
+   # ANGEPASST 14.11.2026 (emm913): die zwei Zweige "Einkaufspreis
+   # unbekannt" sind kein Halten mehr, sondern EIN eigener vierter Zustand
+   # - 7 -> 5, der vierte wird in aa913 gezaehlt.
    _pf201.count('signal, srank = t("\u25cf on market"), 2')
    + _pf201.count('signal, srank = t("\u25cf SELL"), 3')
-   + _pf201.count('signal, srank = t("\u25cf Hold")'), 6)
+   + _pf201.count('signal, srank = t("\u25cf Hold")'), 5)
 # UND KEINER MEHR AUF DEUTSCH: sonst zeigt die englische Oberflaeche
 # mitten in der Statusspalte ein deutsches Wort.
 eq("aa201 kein Zustand mehr fest auf Deutsch",
    _pf201.count('srank = "\u25cf'), 0)
 check("aa201 jeder Zweig begruendet sich im Tooltip (sig_tip je Zweig)",
+      # 7 -> 6 seit emm913 (zwei Zweige zu einem zusammengelegt).
       _pf201.count("sig_tip = ") == 6
       and "item.setToolTip(sig_tip)" in _pf201)
 _sr201 = _fn_src("_sell_ready")
@@ -9151,8 +9197,10 @@ check("aa201 das Normalniveau lebt als Tooltip-Hinweis weiter",
 check("aa201 Farbe/Tooltip kommen aus DERSELBEN Entscheidung wie der Text",
       "die fuenf\n                    # alten Zweige" in _pf201
       or "aus DERSELBEN Entscheidung" in _pf201)
-check("aa201 die Spalten-Legende nennt die drei Zustaende",
-      "Three states: in market" in _src_txt)   # seit Sitzung 16 englisch
+check("aa201 die Spalten-Legende nennt die vier Zustaende",
+      # seit Sitzung 16 englisch; seit emm913 VIER Zustaende.
+      "Four states: in market" in _src_txt
+      and "Three states: in market" not in _src_txt)
 
 
 # ---------------------------------------------------------------- (aa202)
@@ -9162,9 +9210,13 @@ check("aa201 die Spalten-Legende nennt die drei Zustaende",
 check("aa202 die Sell-Tabelle traegt Oe-Einkauf und Marge neu",
       't("\\u00d8 purchase"),' in _src_txt and 't("New margin"),' in _src_txt
       and "QTableWidget(0, 7 if is_buy else 9)" in _src_txt)
+# SEIT emm911 steht im Nenner der EINSTAND MIT den bezahlten
+# Relist-Gebuehren je Stueck, nicht mehr der nackte Einkauf. Die Zusage
+# bleibt dieselbe: gerechnet wird mit den Gebuehren DIESER Zeile.
 check("aa202 die Marge rechnet mit den Zeilen-Gebuehren des Charakters",
-      "(newp * (1 - tax - broker) - cost)\n"
-      "                                          / cost * 100.0" in _src_txt)
+      "net_at_new = newp * (1 - tax - broker)" in _src_txt
+      and "(net_at_new - _basis911)\n"
+          "                                          / _basis911 * 100.0" in _src_txt)
 check("aa202 unbekannter Kaufpreis zeigt Strich samt Tooltip, keine Null",
       'isk(r["cost"], suffix=False) if _ck9 else "—"' in _src_txt
       and 't("Purchase price unknown.")' in _src_txt)
@@ -9265,12 +9317,17 @@ check("aa205 der Waechter vergleicht das Scan-Label mit den NPC-Hubs",
       "store.get_scan_label()" in _ps205
       and "for _k, _l, _r, _s in hubs.NPC_HUBS" in _ps205)
 check("aa205 bei unbekannter Quelle wird NICHT bevormundet",
-      "return True          # unbekannt" in _ps205)
+      "return True      # unbekannt" in _ps205)
+# emm873 reicht die gepruefte Quelle durch (sonst ein DB-Zugriff je
+# Zeile) - die Sperre selbst ist dieselbe: ohne OK keine Empfehlung.
+_sr205 = _fn_src("_sell_ready")
 check("aa205 _sell_ready gibt ohne Hub-Quelle keine Empfehlung",
-      "and self._pf_price_source_ok()" in _fn_src("_sell_ready"))
+      "quelle_ok = self._pf_price_source_ok()" in _sr205
+      and "and quelle_ok" in _sr205)
 _pf205 = _fn_src("_render_portfolio")
 check("aa205 die Statuszelle erklaert die fremde Quelle im Tooltip",
-      "elif not self._pf_price_source_ok():" in _pf205
+      "elif not _quelle_ok873:" in _pf205
+      and "_quelle_ok873 = self._pf_price_source_ok(_lbl873)" in _pf205
       and "NOT the trade " in _pf205)
 # WARNBALKEN ENTFERNT (Nutzer, Sitzung 16: "diese Anzeige nervt"). Der
 # TEXT ist weg, die stille Sperre der Verkaufs-Empfehlungen BLEIBT - das
@@ -9574,8 +9631,10 @@ for _b211 in _erw211:
 # 22.09.2026: -2, die beiden Gold-Suche-Knoepfe sind auf Nutzer-Wunsch aus
 # den Werkzeug-Leisten von Daytrade und Swing Trade verschwunden.
 # emm357: +1 "Re-link" neben "Remove" im Charaktere-Tab (Nutzer-Wunsch).
-eq("aa211 GENAU 13 Knoepfe tragen gezeichnete Symbole",
-   _src_txt.count("_btn_icon(QPushButton("), 13)
+# emm894: +1 "Refresh" auf der Marktstatistik-Seite.
+# emm926 (14.11.2026): +1 "Min profit" in Order update bei Verlust.
+eq("aa211 GENAU 15 Knoepfe tragen gezeichnete Symbole",
+   _src_txt.count("_btn_icon(QPushButton("), 15)
 check("aa211 auch Menue-Aktionen tragen Symbole",
       'addAction(icons.icon("hammer"), t("Open build plan")' in _src_txt
       and 'addAction(icons.icon("trend_up"), t("Open price history")'
@@ -9782,8 +9841,10 @@ check("aa217 Lupe sitzt links im Feld",
       "LeadingPosition" in _sf217 and 'icons.icon("search")' in _sf217)
 check("aa217 faellt die Lupe aus, bleibt das Feld benutzbar",
       "except Exception:" in _sf217)
-eq("aa217 alle drei Suchfelder laufen ueber den Helfer",
-   _src_txt.count("_such_feld(self."), 3)
+# emm855: + vier Filterzeilen der Trading-Tabs (Daytrade, Swing,
+# Regional, Firesales) - bewusst nachgezogen, Zaehlung bleibt EXAKT.
+eq("aa217 alle sieben Suchfelder laufen ueber den Helfer",
+   _src_txt.count("_such_feld(self."), 7)
 eq("aa217 kein Lupen-Emoji mehr im Platzhalter",
    _src_txt.count("\\U0001F50D Suchen"), 0)
 
@@ -10660,8 +10721,12 @@ for _verbot226 in ("EveTradeLedger", _APP225,
           _verbot226 not in _ohne_kommentar222(_iss226))
 # Und er packt NUR die fertige EXE ein, nichts aus dem Projektordner.
 _quellen226 = _build_quellen222(_iss226)
-eq("aa226 eingepackt wird ausschliesslich die gebaute EXE",
-   _quellen226, ["dist/{#MyAppExeName}"])   # Pfade normalisiert
+# SEIT emm866 (onedir statt onefile - die onefile-EXE entpackte bei jedem
+# Start ~200 MB nach %TEMP%, "der generelle erststart dauert lange"):
+# eingepackt wird der GANZE Build-Ordner aus dist\ - und weiterhin NUR
+# aus dist, nichts aus dem Projektordner (das prueft aa222 daneben).
+eq("aa226 eingepackt wird ausschliesslich der gebaute dist-Ordner",
+   _quellen226, ["dist/{#MyAppName}/*"])   # Pfade normalisiert
 
 # NAME UND VERSION KOMMEN VON AUSSEN (EINE Wahrheit, Regel 9). Stuenden sie
 # in der .iss fest, liefe die Version im Installer der Version im Programm
@@ -11409,8 +11474,8 @@ check("aa241 die Kaufmenge kommt aus dem Rest-Bedarf",
 # EINE WAHRHEIT: dieselbe Funktion wie der Werkzeuge-Knopf. Zwei getrennte
 # Rechnungen waren genau der Widerspruch, der den Nutzer in die Irre
 # gefuehrt hat.
-check("aa241 dieselbe Rechnung wie der Fehlbedarf-Knopf",
-      "self._fehlbedarf_jetzt()" in _fn_src("_check_shortfall"))
+check("aa241 dieselbe Rechnung wie der Nachkauf-Knopf (emm840)",
+      "self._fehlbedarf_jetzt()" in _fn_src("_buy_missing_again"))
 # FAELLT DIE RECHNUNG AUS, wird NICHT gedeckt gemeldet: lieber die alte
 # (zu strenge) Aussage als eine falsche Entwarnung.
 check("aa241 ohne Rest-Rechnung keine falsche Entwarnung",
@@ -13537,9 +13602,16 @@ check("aa301 das Nachholen laeuft nur EINMAL je Charakter",
 check("aa301 und haengt an BEIDEN Abruf-Stellen",
       _src_txt.count("self._tx_altes_nachholen(client_id, cid)") == 2)
 # UND ES STEHT VOR DER FRISCHE-SPERRE (sonst laeuft es beim Start nie).
+# emm881 setzt eine Stoppuhr zwischen beide Zeilen - geprueft wird
+# darum die REIHENFOLGE (Nachholen VOR der Sperre), nicht mehr die
+# Textnachbarschaft. Die Zusage ist dieselbe: sonst laeuft das
+# Nachholen beim Start nie, solange die Transaktionen frisch sind.
+_ra301 = _fn_src("refresh_all")
 check("aa301 beim Start laeuft es auch bei frischen Transaktionen",
-      "self._tx_altes_nachholen(client_id, cid)\n"
-      "                if not store.tx_is_fresh(cid, max_min):" in _src_txt)
+      "self._tx_altes_nachholen(client_id, cid)" in _ra301
+      and "if not store.tx_is_fresh(cid, max_min):" in _ra301
+      and _ra301.index("self._tx_altes_nachholen(client_id, cid)")
+      < _ra301.index("if not store.tx_is_fresh(cid, max_min):"))
 
 
 # ---------------------------------------------------------------- (aa302)
@@ -13670,11 +13742,13 @@ check("aa305 die ESI-Bestandszeile ist nicht mehr grau",
       and 'f"color:{theme.TEXT}; font-size:13px; padding:1px 0;")' in _bf305)
 check("aa305 der Details-Ausklapper hat Rahmen und Zeigefinger",
       "st_details_toggle.setCursor(Qt.PointingHandCursor)" in _bf305
-      and 'f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:5px; "'
+      and 'f"QPushButton{{border:1px solid {theme.BORDER}; '
+          'border-radius:{theme.RAD_KLEIN}; "'
       in _bf305)
 check("aa305 der Bestandsbereich sieht nach Bedienelement aus",
       "stock_scope_cb.setCursor(Qt.PointingHandCursor)" in _bf305
-      and 'f"QComboBox{{border:2px solid {theme.BLUE}; border-radius:6px; "'
+      and 'f"QComboBox{{border:2px solid {theme.BLUE}; '
+          'border-radius:{theme.RAD}; "'
       in _bf305)
 check("aa305 und hebt sich beim Draufhalten ab",
       'f"QComboBox:hover{{border-color:{theme.CYAN}; "' in _bf305)
@@ -13825,13 +13899,13 @@ _btn311 = _qss311[_qss311.index("QPushButton {{"):_qss311.index("QPushButton:hov
 _lang311 = _src_txt[_src_txt.index("self.lang_box = QComboBox()"):]
 _lang311 = _lang311[:_lang311.index("addItem")]
 for _teil311, _name311 in ((f"background:{{theme.PANEL}}", "Hintergrund"),
-                           ("border-radius:6px", "Radius"),
+                           ("border-radius:{theme.RAD}", "Radius"),
                            ("padding:5px 12px", "Polster"),
                            (f"border:1px solid {{theme.BORDER}}", "Rand")):
     check(f"aa311 der Sprachschalter uebernimmt das {_name311} der Knoepfe",
           _teil311 in _lang311)
 check("aa311 und die Knopf-Regel im Theme sagt dasselbe",
-      "border-radius: 6px" in _btn311 and "padding: 5px 12px" in _btn311
+      "border-radius: {RAD}" in _btn311 and "padding: 5px 12px" in _btn311
       and "background: {PANEL}" in _btn311)
 check("aa311 er zeigt den Zeigefinger wie ein Knopf",
       "self.lang_box.setCursor(Qt.PointingHandCursor)" in _src_txt)
@@ -14941,6 +15015,229 @@ check("aa314 ein unbekannter Systemname sagt das auch",
       't("\\u2014 system not found \\u2014")' in _dlg314)
 check("aa314 die gewaehlte Station ist zugleich die Verknuepfung",
       'data["link_structure_id"] = int(_stat_gewaehlt["id"])' in _dlg314)
+
+# ===== aa893: in die Struktur-Auswahl kann man HINEINKLEBEN ===========
+# Nutzer 10.11.2026: "Add Strucurte ich kann keine Strukturen mehr Copy
+# PAsten" und, nachgefragt: "ich kann nichmal mit der Maus ins
+# Eingabefeld klicken, da gibts nur ein dropdown mehr nicht". Das letzte
+# Argument von QInputDialog.getItem heisst `editable` und stand auf
+# False - das Feld war nie beschreibbar.
+try:
+    _ad893 = _mw314.split("def add_structure(")[1].split("\n    def ")[0]
+    check("aa893 die Struktur-Auswahl ist beschreibbar",
+          "labels, 0, True)" in _ad893 and "labels, 0, False)" not in _ad893)
+    check("aa893 ein eingeklebter Text wird als Link gelesen, nicht als "
+          "Name gesucht",
+          "if choice not in labels:" in _ad893
+          and "self._struktur_id_aus_text(choice)" in _ad893)
+    check("aa893 ... und ohne erkennbare Id kommt eine Meldung statt "
+          "eines stillen Nichts",
+          "if _sid893 is None:" in _ad893
+          and 'QMessageBox.information(' in _ad893)
+    # EINE STELLE FUER BEIDE WEGE (Regel 9): Dialog und Liste muessen
+    # dasselbe erkennen, sonst haengt es am Zufall, wohin man geklebt hat.
+    _sid893s = _fn_src("_struktur_id_aus_text")
+    _man893 = _fn_src("_add_structure_manual")
+    check("aa893 beide Wege nehmen denselben Parser",
+          "self._struktur_id_aus_text(txt)" in _man893
+          and "re.search" not in _man893)
+    check("aa893 der Parser nimmt die Zahl HINTER dem doppelten "
+          "Schraegstrich - davor steht der Typ, nicht die Struktur",
+          r'r"showinfo:\d+//(\d+)"' in _sid893s)
+    check("aa893 ... und faellt sonst auf die blanken Ziffern zurueck",
+          'digits = "".join(ch for ch in (txt or "") if ch.isdigit())'
+          in _sid893s
+          and "return int(digits) if digits else None" in _sid893s)
+except Exception as _e893:                               # pragma: no cover
+    _fail.append(f"aa893 Struktur einkleben: {type(_e893).__name__}: {_e893}")
+
+# ===== aa894: Marktstatistik - Ranking der Regionen ==================
+# Nutzer 10.11.2026: "koennen wir eine 'Marktstatistik' in der linken
+# Sidebar einfuegen die zeigt von allen Hubs: Volumen, verschiedene
+# gehandelte Items, wieviel ISK gefossen ist? ... ich brauche ein
+# ranking, von den Regionen wo ich handeln willl" und "ich will meine
+# verlinnkten Strukturen angezeigt haben".
+try:
+    _st894 = open("eve_trader/store.py", encoding="utf-8").read()
+    _ms894 = _st894.split("def markt_statistik(")[1].split("\ndef ")[0]
+
+    def _ohne_doc894(src):
+        """Nur der CODE einer Funktion, ohne ihren Docstring.
+
+        WARUM DAS SEIN MUSS: die Docstrings hier erklaeren ausdruecklich,
+        was im Code NICHT stehen darf ("kein esi", "volume > 0 haelt
+        Tage draussen"). Ein Check ueber die ganze Funktion findet
+        genau diese Woerter im Text und bleibt gruen, waehrend der Code
+        kaputt ist - zwei solche BLIND-Faelle hat die Rotprobe an
+        diesem Abend gefunden.
+        """
+        return src.split('"""')[-1] if '"""' in src else src
+    _msc894 = _ohne_doc894(_ms894)
+    # KEIN ESI: alles kommt aus der schon gespeicherten Historie.
+    check("aa894 das Ranking rechnet aus der Datenbank, nicht aus ESI",
+          "FROM history" in _msc894 and "esi" not in _msc894
+          and "requests" not in _msc894)
+    check("aa894 es summiert die drei gefragten Zahlen",
+          "SUM(volume)" in _msc894
+          and "SUM(volume * average)" in _msc894
+          and "COUNT(DISTINCT type_id)" in _msc894)
+    # TAGE OHNE HANDEL ZAEHLEN NICHT MIT - sonst saehe ein toter Markt
+    # so lebendig aus wie ein laufender.
+    check("aa894 Tage ohne Handel bleiben draussen",
+          "volume > 0" in _msc894)
+    check("aa894 das Ranking steht nach ISK, wie bestellt",
+          'aus.sort(key=lambda x: x["isk"], reverse=True)' in _msc894)
+    # STRUKTUREN HABEN KEINE HISTORIE - das ist keine Luecke im Code,
+    # sondern in ESI. Darum eine EIGENE Funktion mit eigenen Zahlen.
+    _ss894 = _ohne_doc894(
+        _st894.split("def snapshot_statistik(")[1].split("\ndef ")[0])
+    check("aa894 fuer Strukturen gibt es eine eigene Quelle",
+          "FROM market_snapshot" in _ss894 and "GROUP BY source" in _ss894)
+    check("aa894 ... und sie rechnet den Buchwert beider Seiten",
+          "sell_qty,0) * COALESCE(sell_min,0)" in _ss894
+          and "buy_qty,0) * COALESCE(buy_max,0)" in _ss894)
+
+    _mw894 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    _bt894 = _fn_src("_build_mstats_tab")
+    check("aa894 die Seite haengt in der linken Leiste",
+          '"market", "mstats", "characters"' in _mw894)
+    check("aa894 ... und ist der LETZTE Reiter (Positions-Falle)",
+          '"characters", "settings",\n                "mstats"]' in _mw894)
+    check("aa894 sie hat ein Symbol (b55)",
+          '"mstats": "trend_up"' in _mw894)
+    # ZWEI TABELLEN, WEIL ES ZWEI VERSCHIEDENE ZAHLEN SIND.
+    # ZWEI TABELLEN - die Spaltenzahl steht nicht mehr im Check (emm895
+    # hat beide gekuerzt, und daran soll diese Zusage nicht haengen).
+    # KEINE TABELLE MEHR (emm896). Nutzer 11.11.2026, zweimal:
+    # "tmach schoenere Anzegie es sieht zu fest nach Ecsel tabelle aus".
+    check("aa896 die Seite baut Karten, keine Tabelle",
+          "QTableWidget" not in _bt894
+          and "self.ms_karten = QVBoxLayout(" in _bt894)
+    # ===== emm895: weniger Zahlen, dafuer lesbar =====================
+    # Nutzer 10.11.2026 nach dem ersten Blick: "sieht so aus,
+    # schrecklich" und "bitte schoener gestaltetn farben, ordentliche
+    # statistik weniger zahlen".
+    # Das Zeichnen ist aus `_mstats_fuellen` heraus in eine eigene
+    # Stelle gewandert, weil das Rechnen in den Hintergrund ging.
+    _mz895b = _fn_src("_mstats_zeichnen")
+    # (emm896: die Zahlen stehen jetzt auf der KARTE, nicht in Zellen.)
+    _rk896 = _fn_src("_ms_region_karte")
+    check("aa895 die ISK stehen kurz da, nicht 14-stellig",
+          'isk_kurz(z["isk"])' in _rk896)
+    check("aa895 ... die genaue Zahl bleibt im Tooltip",
+          '_isk.setToolTip(isk(z["isk"]))' in _rk896)
+    # emm896: Stueck und Tage stehen wieder in der Karte selbst - auf
+    # einer Karte ist Platz dafuer, in einer Tabellenzelle war keiner.
+    check("aa895 Stueck und Handelstage stehen auf der Karte",
+          "{units} units" in _rk896 and "{days} of {span} days" in _rk896)
+    # DER BALKEN IST EIN ECHTES WIDGET (emm896) - Block-Zeichen sahen
+    # nach Terminal aus, genau das Excel-Gefuehl, das weg sollte.
+    _bk895 = _fn_src("_ms_balken_widget")
+    check("aa895 es gibt einen Anteilsbalken statt einer zweiten Zahl",
+          "QFrame()" in _bk895 and "QHBoxLayout(_box)" in _bk895)
+    check("aa895 ... er misst am groessten Markt, nicht an der Summe",
+          "float(wert) / float(groesster or 1.0)" in _bk895)
+    check("aa895 ... und staucht die Skala, sonst waere er ueberall leer",
+          "_a ** 0.5" in _bk895)
+    check("aa896 ... und die kleinste Region bekommt noch einen Rest",
+          "max(1, int(_s * 1000))" in _bk895)
+    # DIE BEDEUTUNGSLOSEN ISK-SPALTEN SIND RAUS: Menge x Extrempreis
+    # ergab bei Jita 616 Billiarden ISK.
+    check("aa895 der Orderbuch-Wert steht nicht mehr als ISK da",
+          't("SELL SIDE")' not in _bt894 and 't("BUY SIDE")' not in _bt894)
+    check("aa895 ein alter Scan faellt farblich auf",
+          "(z['alter'] or 0) > 7 * 86400" in _fn_src("_ms_ort_zeile"))
+    # isk_kurz KENNT JETZT BILLIONEN - sonst stuende "28432.89B" da.
+    _ik895 = open("eve_trader/ui/mw_basis.py", encoding="utf-8").read()
+    check("aa895 isk_kurz kennt Billionen",
+          'if av >= 1e12:' in _ik895 and 'return f"{s}T"' in _ik895)
+
+    # DAS RECHNEN GEHOERT IN DEN HINTERGRUND (emm895). Nutzer: "klicke
+    # ich drauf laedt irgendwas ... aber moma bleibt fast stehen".
+    # GEMESSEN an 5,3 Mio nachgebauten Zeilen: 2,9 s je Abfrage - und
+    # seine Datenbank ist 548 MB gross.
+    _mf895 = _fn_src("_mstats_fuellen")
+    check("aa895 die Abfrage laeuft im Hintergrund, nicht in der "
+          "Oberflaeche",
+          "Worker(job)" in _mf895 and "self._run(" in _mf895)
+    check("aa895 ... und es laeuft nur EINE auf einmal",
+          'if getattr(self, "_mstats_job", None) is not None:' in _mf895)
+    check("aa895 ... der Job holt alle drei Abfragen auf einmal",
+          "store.list_favorites()," in _mf895
+          and "store.markt_statistik(_tage895)," in _mf895
+          and "store.snapshot_statistik())" in _mf895)
+    # GEZEICHNET WIRD GETRENNT - Qt-Widgets gehoeren in den
+    # Oberflaechen-Thread, die Abfrage nicht.
+    _mz895 = _fn_src("_mstats_zeichnen")
+    check("aa895 gezeichnet wird in einer eigenen Stelle",
+          "self.ms_karten.addWidget(" in _mz895
+          and "store.markt_statistik" not in _mz895
+          and "store.snapshot_statistik" not in _mz895)
+    # BEIDE WEGE MUESSEN FREIGEBEN, nicht einer: scheitert die Abfrage
+    # und `fail` raeumt nicht auf, bleibt der Job fuer immer belegt und
+    # die Seite laedt nie wieder. Der erste Check fragte nur, ob die
+    # Zeile IRGENDWO vorkommt - sie stand auch in `fail`, und eine
+    # Mutation, die sie aus `done` nahm, blieb unbemerkt (von der
+    # Rotprobe als BLIND gefangen).
+    check(f"aa895 ... und der Job wird auf BEIDEN Wegen freigegeben "
+          f"({_mf895.count('self._mstats_job = None')}x)",
+          _mf895.count("self._mstats_job = None") == 2)
+    # KEIN INDEX - und das ist GEMESSEN, nicht vermutet: ein Index auf
+    # `date` machte dieselbe Abfrage DREIMAL LANGSAMER (2,9 -> 8,1 s).
+    check("aa895 es wird kein Index angelegt (gemessen: macht es "
+          "langsamer)",
+          "CREATE INDEX" not in _ohne_doc894(_ms894))
+    # DER HINWEIS IST PFLICHT (Regel 1): die Historie deckt nur die
+    # Items ab, die MoMa kennt - ohne diesen Satz liest sich eine
+    # schlecht gescannte Region als toter Markt.
+    # AUF EIN STUECK, DAS NICHT UMBRICHT: der Satz steht im Quelltext
+    # ueber mehrere Zeilen, ein laengeres Stueck davon faende sich nie
+    # (beim ersten Anlauf genau so passiert, und es war schon das dritte
+    # Mal an diesem Abend - Anker IMMER gegen die Umbruchstellen pruefen).
+    # DER HINWEIS IST PFLICHT (Regel 1) - seit emm896 kurz in der
+    # Zeile, ausfuehrlich im Tooltip, weil die Hoehe den Karten gehoert.
+    # BEIDE HAELFTEN DES HINWEISES, nicht nur der Anfang: der Tooltip
+    # sagt ZWEI Dinge - dass die Historie nur die bekannten Items deckt
+    # UND dass Strukturen gar keine haben. Der erste Anlauf prueffte nur
+    # das erste; eine Mutation, die das zweite strich, blieb hier gruen
+    # (von der Rotprobe als BLIND gefangen, und aufgefallen ist sie nur,
+    # weil der Sprachkatalog die entstandene Waise meldete).
+    check("aa894 die Seite sagt, worauf die Zahlen beruhen",
+          "no new ESI calls" in _bt894
+          and "whole trade of a region" in _bt894
+          and "book at your last scan" in _bt894)
+    check("aa894 ... und dass Strukturen keine Historie haben",
+          "no trade history at all" in _bt894)
+    # ZAHLEN MUESSEN NUMERISCH SORTIEREN, nicht als Text.
+    # KEINE ZWEITE LOESUNG (Regel 9): MoMa hat `NumericItem` seit langem.
+    # Mein erster Entwurf baute eine eigene mit setData(Qt.EditRole, ...)
+    # - und die war still kaputt, weil das folgende setText dasselbe Feld
+    # ueberschreibt.
+    # NUR DER CODE, NICHT DER DOCSTRING: der erklaert ausdruecklich, was
+    # hier NICHT mehr stehen darf - ein Check ueber die ganze Funktion
+    # waere daran haengen geblieben. Zum zweiten Mal an diesem Abend
+    # dieselbe Falle (emm891), darum hier sauber getrennt.
+    # (emm896: `_ms_zahl` ist mit den Tabellen entfallen - der
+    # Balken ist jetzt ein echtes Widget, s. aa895/aa896.)
+    # (emm896: ohne Tabelle gibt es keine Sortierung zu sperren. Dafuer
+    # MUESSEN die alten Karten weg, bevor neue kommen.)
+    check("aa896 die alten Karten werden abgeraeumt, bevor neue kommen",
+          "self._ms_leeren(self.ms_karten)" in _mz895b)
+    _lr896 = _fn_src("_ms_leeren")
+    check("aa896 ... und zwar SOFORT, nicht erst beim naechsten Durchlauf",
+          "lay.takeAt(0)" in _lr896 and "setParent(None)" in _lr896)
+    # DIE VERLINKTEN STRUKTUREN, ausdruecklich bestellt.
+    _on894 = _fn_src("_mstats_ort_name")
+    check("aa894 eine eigene Struktur steht mit ihrem Namen da",
+          'if _f.get("structure_id") and int(_f["structure_id"]) == _sid:'
+          in _on894)
+    check("aa894 ... und ein unbekannter Schluessel wird nicht geraten",
+          "return _s or t(\"unknown\")" in _on894)
+    check("aa894 die Seite fuellt sich beim Oeffnen",
+          'if cur is getattr(self, "mstats_tab", None):' in _mw894
+          and "self._mstats_fuellen()" in _mw894)
+except Exception as _e894:                               # pragma: no cover
+    _fail.append(f"aa894 Marktstatistik: {type(_e894).__name__}: {_e894}")
 check("aa314 und gilt als gesucht - sonst staende dort ewig gelb",
       'data["link_search_done"] = True' in _dlg314)
 
@@ -19893,9 +20190,19 @@ check("aa397 die Leisten-Breite kommt aus sizeHint(), nicht aus einer Zahl",
 for _k397 in ("day", "swing", "region"):
     check(f"aa397 der Reiter {_k397} haengt den Wagen in die Leiste",
           f'self._wagen_block("{_k397}")' in _src_txt)
-check("aa397 alle drei Leisten tragen beide Gruppen",
-      _src_txt.count('(t("DEALS"), theme.CYAN,') == 3
-      and _src_txt.count('(t("SHOPPING LIST"), theme.GREEN,') == 3)
+# SEIT emm886 HAT AUCH FIRESALES EINE LEISTE, aber nur die
+# DEALS-Gruppe: dort kauft man ganze Contracts, keine Einzelposten, und
+# ein leerer Einkaufswagen waere Gleichheit im Aussehen und eine Luege
+# in der Sache. Die Zusage lautet deshalb nicht mehr "alle Leisten
+# tragen beide Gruppen", sondern: JEDE Leiste hat DEALS, und den Wagen
+# haben genau die drei Reiter, in denen man Einzelposten sammelt.
+check("aa397 jede Werkzeugleiste traegt eine DEALS-Gruppe",
+      # DEALS seit emm867 amber (Nutzer: "alle ... uebertitel ...
+      # ueberall anpassen auf amber").
+      _src_txt.count('(t("DEALS"), theme.AMBER,') == 4)
+check("aa397 den Einkaufswagen tragen genau die drei Reiter, in denen "
+      "man Einzelposten sammelt",
+      _src_txt.count('(t("SHOPPING LIST"), theme.GREEN,') == 3)
 # EINE BAUSTELLE FUER DIE WIDGETS: sie entstehen weiter in
 # `_build_ladder_panel` (ein Dutzend Stellen schreibt ueber den Kontext
 # hinein) und bekommen in `_wagen_block` nur ein Layout. Zwei Bauorte
@@ -20093,9 +20400,14 @@ check("aa400 die Farbtabelle steht an EINER Stelle",
 _fs400 = _fn_src("_plan_farb_stil")
 check("aa400 gefaerbt wird die FLAECHE, schwach",
       "background: rgba({r},{g},{b},0.18)" in _fs400)
+# WAR EINE SCHREIBWEISEN-PROBE (die Zuweisungszeile im Quelltext). Seit
+# emm836 wird die Toenung berechnet, und wichtiger: geprueft wird jetzt,
+# dass der Rand im ERGEBNIS steht - eine auskommentierte Zuweisung waere
+# der alten Probe entgangen.
+from eve_trader.ui.main_window import MainWindow as _MW400  # noqa: E402
 check("aa400 der amberne Multi-Rand ueberlebt die Farbwahl",
-      'rand = "rgba(242,162,60,0.55)" if (multi or buendel) else None'
-      in _fs400)
+      _th78.toenung(_th78.AMBER, 0.55)
+      in _MW400._plan_farb_stil("f1", True))
 _fm400 = _fn_src("_plan_farb_palette")
 for _k400 in ("f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"):
     check(f"aa400 die Palette kennt {_k400}",
@@ -20247,7 +20559,7 @@ eq("aa402 ... und nichts bleibt nichts", _norm402(None), None)
 # lesbar bleibt.
 _stil402 = _MW402._plan_farb_stil
 check("aa402 ein Buendel ist ohne eigene Wahl schon eingefaerbt",
-      "rgba(242,162,60,0.10)" in _stil402(None, False, True))
+      _th49.toenung(_th49.AMBER, 0.10) in _stil402(None, False, True))
 check("aa402 ... schwaecher als eine gewaehlte Farbe",
       "0.18" in _stil402("f1", False, True))
 check("aa402 eine gewaehlte Farbe gewinnt ueber die Standardfarbe",
@@ -20884,7 +21196,8 @@ check("aa412 der alte Etikett-Klick ist weg (eine Zusage, EIN Mechanismus)",
       and "lbl.setCursor(Qt.PointingHandCursor)\n"
       "                    lbl.mousePressEvent" not in _src_txt)
 check("aa412 der Knopf hat den Amber-Rahmen und wird beim Aufbau versteckt",
-      "border:1px solid {theme.AMBER}; border-radius:5px; " in _src_txt
+      "border:1px solid {theme.AMBER}; border-radius:{theme.RAD_KLEIN}; "
+      in _src_txt
       and "sell_btn.hide()" in _src_txt
       and 'self._plan_sell_btns[p["id"]] = sell_btn' in _src_txt)
 check("aa412 die Fertig-Zeile ruft den Knopf (nicht mehr Sell im Text)",
@@ -21402,9 +21715,15 @@ check("aa421 rebuild gibt die Build cost der Kopfzeile an den Gewinn je Ende",
 # (ohne Live-Preise = Alter des Scans, nicht "jetzt").
 _ra422 = _fn_src("refresh_all")
 check("aa422 refresh_all holt Live-Preise fuer Bestand und Orders",
-      "live_n = self._portfolio_live_preise(" in _ra422
+      # emm879: der Aufruf steckt jetzt in der Zeitmessung - die
+      # Zusage (Live-Preise werden geholt) ist unveraendert.
+      '_dauer877("live-prices", lambda: self._portfolio_live_preise('
+      in _ra422
       and "self._portfolio_live_ids(assets_struct, ignored, all_tx," in _ra422
-      and '"live_n": live_n}' in _ra422)
+      # emm877 haengt die gemessenen Ladezeiten hinten an, emm900
+      # ausserdem die Liste fuer den Hintergrund-Job
+      and '"live_n": live_n, "ladezeiten": _mess877,' in _ra422
+      and '"nachholen": list(_nach900)}' in _ra422)
 check("aa422 ... und setzt das Preis-Alter ehrlich",
       'self._prices_ts = _t.time() - float(res["snap_age"])' in _ra422
       and "if self._prices_live_n:" in _ra422)
@@ -22051,8 +22370,11 @@ for _dat441 in ("eve_trader/ui/main_window.py", "eve_trader/ui/mw_bauplan_tabs.p
     # EVE-Daten-Knopf, Plan-Karten, die Checkboxen des Filter-Mehrfach-
     # knopfs mit ihrem "Only this"-Menue - dort gibt es nichts zu
     # kopieren) und den Blaupausen-Reiter im Bauplan-Fenster
+    # emm901: dazu der "Next"-Knopf in Order update - sein Rechtsklick
+    # weist eine systemweite Taste zu. Ein KNOPF, keine Tabelle: es gibt
+    # dort nichts zu kopieren, also auch kein "Copy" zu verpassen.
     _erlaubt441 = ("self.g_hub.", "self.g_sde_btn.", "card.",
-                   "cb.customContextMenuRequested.connect(",
+                   "self._ord_next_btn.", "cb.customContextMenuRequested.connect(",
                    "tbl.customContextMenuRequested.connect(_bp_tab_menu)")
     for _z441 in _q441.splitlines():
         if ("customContextMenuRequested.connect(" in _z441
@@ -22204,10 +22526,16 @@ if os.path.exists(_db444) and os.path.getsize(_db444) > 0:
     finally:
         _I444._db_path = _alt444
         _sh444.rmtree(_tmp444, ignore_errors=True)
+    # SEIT emm843 ABSICHTLICH ZWEI KATEGORIEN: "mit Rigs meine ich alle
+    # Rigs" (Nutzer) - die Wortgrenzen-Definition fasst Ship-Rigs
+    # (Kategorie 7, "Rig ...") UND Structure-Rigs (Kategorie 66,
+    # "Structure ... Rig ...") zusammen. Vorher stand hier "alle in
+    # EINER Kategorie" - das war der Beleg dafuer, dass NUR Ship-Rigs
+    # gefangen wurden, also genau fuer die Luecke.
     check(f"aa444 SDE: Rig-Gruppen gefunden ({len(_rg444)}), 'Rig Navigation' dabei, "
-          f"alle in EINER Kategorie ({_kat444})",
+          f"Ship- UND Structure-Kategorie ({_kat444})",
           len(_rg444) >= 10 and bool(_nav444) and _nav444[0] in _rg444
-          and len(_kat444) == 1)
+          and _kat444 == {7, 66})
 else:
     check("aa444 SDE-Teil uebersprungen: sde_kompakt.db fehlt", True)
 _src444 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
@@ -25674,11 +26002,19 @@ check("aa444 nach 'Load blueprints' wird das Dropdown neu gefuellt",
 # Der ANKER ist unveraendert: es muessen WEITERHIN beide Filterwege
 # DIESELBE eine Funktion fragen, und niemand darf den Vergleich von Hand
 # nachbauen - nur der Funktionsname folgt der Umstellung.
+# Das globale "bp_kategorie_passt kommt in main_window nicht vor" ist
+# seit emm843 falsch: der DAYTRADE-Filter (Einzel-Dropdown d_cat) nutzt
+# genau diese Einzelwert-Funktion jetzt legitim fuer seine Rigs-
+# Semantik. Der eigentliche Anker bleibt scharf: die BEIDEN
+# My-Blueprints-Wege fragen weiterhin dieselbe Mehrfach-Funktion und
+# bauen den Vergleich nicht von Hand nach.
 check("aa444 Tabellen-Filter UND Fehlende-Liste fragen dieselbe Kategorie-Pruefung",
       "industry.kategorie_passt_mehrfach(" in _fn_src("_apply_bp_filter")
       and "industry.kategorie_passt_mehrfach(" in _fn_src(
           "_apply_missing_blueprints_display")
-      and "industry.bp_kategorie_passt(" not in _src444
+      and "industry.bp_kategorie_passt(" not in _fn_src("_apply_bp_filter")
+      and "industry.bp_kategorie_passt(" not in _fn_src(
+          "_apply_missing_blueprints_display")
       and "if row_cat_id != want_cat" not in _src444)
 
 # ---------------------------------------------------------------- (aa431)
@@ -25861,11 +26197,11 @@ check("aa427 ... der Optimierer holt die Enden-Namen aus _bd_names_ref",
 # Veroeffentlichung lassen wir immer einen Test laufen, um eine fehlerfreie
 # Veroeffentlichung zu gewaehrleisten"). Die Veroeffentlichung bricht bei
 # Rot ab, BEVOR committet wird; eigener Starter per Doppelklick. CRLF.
-_rel426b = open("release/veroeffentliche_1.1.5.bat", "rb").read()
+_rel426b = open("release/veroeffentliche_1.1.6.bat", "rb").read()
 _rel426 = _rel426b.replace(b"\r\n", b"\n")      # Logik unabhaengig vom Zeilenende
 _p426 = _rel426.find(b"python pruefe.py < nul\n")
 _f426 = _rel426.find(b"if errorlevel 1 (\n  echo ROT: pruefe.py", _p426)
-check("aa426 veroeffentliche_1.1.5.bat prueft ZUERST und bricht bei Rot ab",
+check("aa426 veroeffentliche_1.1.6.bat prueft ZUERST und bricht bei Rot ab",
       0 < _p426 < _f426 < _rel426.find(b"git commit")
       and 0 < _rel426.find(b"  goto ende\n)\necho gruen", _f426))
 check("aa426 ... und hat Windows-Zeilenenden (CRLF)",
@@ -25963,11 +26299,21 @@ try:
     os.makedirs(_alt424)
     with open(os.path.join(_alt424, "marke.txt"), "w") as _f424:
         _f424.write("alt")
+    import eve_trader.store as _st424
+    # SELBSTERHOLUNG STATT MERKUNG (emm873): seit der Drosselung merkt
+    # sich app_data_dir die Antwort bis zu PRUEF_INTERVALL_S - direkt
+    # nach dem Loeschen kaeme also noch der alte Pfad. Im Betrieb faellt
+    # genau das beim naechsten DB-Zugriff auf: `store._conn` wirft die
+    # Merkung weg und sieht nach. DAS wird hier zuerst geprueft - und
+    # damit zugleich, dass die Umzugs-Zusage dahinter noch greift.
+    _st424._conn().close()               # muss sich selbst erholen
     _p3 = _cfgmod223.app_data_dir()
     check("aa424 ... neuer Ordner weg, alter da: alter wird umgezogen (Inhalt kommt mit)",
           _p3 == _p1 and os.path.exists(os.path.join(_p3, "marke.txt"))
           and not os.path.isdir(_alt424))
-    import eve_trader.store as _st424
+    import inspect as _in424
+    check("aa873 _conn holt den Ordner zurueck, statt still zu scheitern",
+          "config.vergiss_datenordner()" in _in424.getsource(_st424._conn))
     # ROT WERDEN, NICHT KRACHEN (Lehre aa393): faellt oben der Umzug aus,
     # gibt es den Ordner nicht - die Verbindung scheitert dann hier.
     try:
@@ -30072,9 +30418,17 @@ try:
     #    "if highlight:") direkt nach der Top-15-Berechnung.
     check("aa600 Daytrade (_render_deals) sortiert IMMER nach der "
           "kombinierten Qualitaet, nicht nur wenn 'Top 15' aktiv ist",
-          "        deals = ranked\n        tint = QColor(theme.AMBER); "
-          "tint.setAlpha(28)\n\n        self.deals_table.setSortingEnabled(False)"
-          in _src600)
+          # EINDEUTIG WIRD DER ANKER durch die Tabelle in der Zeile
+          # darunter: "deals = ranked" allein kommt bei Daytrade UND
+          # Swing identisch vor (siehe unten). Seit emm904 steht dort
+          # der Zellton-Zeichner, davor duerfen Kommentare stehen.
+          _re600.search(
+              r'top_ids = \{d\["type_id"\] for d in ranked\[:15\]\}\n'
+              r'        deals = ranked\n'
+              r'        tint = QColor\(theme\.AMBER\); tint\.setAlpha\(28\)\n'
+              r'(?:        #[^\n]*\n)*'
+              r'        self\._ton_delegate904\(self\.deals_table\)',
+              _src600) is not None)
     # (eindeutiger Kontext bis zum naechsten Code noetig - "deals = ranked"
     # allein kommt bei Daytrade UND Swing identisch vor, siehe oben)
     check("aa600 Daytrade-Tabelle haelt die Qualitaets-Reihenfolge per "
@@ -30086,11 +30440,15 @@ try:
           "Qualitaet (_swing_quality), nicht nur wenn 'Top 15' aktiv ist",
           _re600.search(
               # hinter tint.setAlpha steht seit emm814 die kurze
-              # Statuszeile (Kommentar "KURZE ZEILE...") - der Kern der
-              # Zusage bleibt: "deals = ranked" UNBEDINGT nach Top-15.
+              # Statuszeile und seit emm904 der Zellton-Zeichner - der
+              # Kern der Zusage bleibt: "deals = ranked" UNBEDINGT nach
+              # Top-15. Die Tabelle in der letzten Zeile macht den Anker
+              # eindeutig gegen Daytrade.
               r'top_ids = \{d\["type_id"\] for d in ranked\[:15\]\}\n'
-              r'        deals = ranked\n        tint = QColor\(theme\.AMBER\); '
-              r'tint\.setAlpha\(28\)\n        # KURZE ZEILE',
+              r'        deals = ranked\n'
+              r'        tint = QColor\(theme\.AMBER\); tint\.setAlpha\(28\)\n'
+              r'(?:        #[^\n]*\n)*'
+              r'        self\._ton_delegate904\(self\.hold_table\)',
               _src600) is not None)
     check("aa600 Swing-Tabelle haelt die Qualitaets-Reihenfolge per "
           "sortByColumn(-1, ...)",
@@ -32568,9 +32926,16 @@ try:
        (_R739.erz_deckung(None, None), _R739.erz_deckung([], {})), ([], []))
     # Quell-Anker: EINE Stelle, und sie rechnet gegen den ECHTEN Bestand.
     _mw739 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
-    check("aa739 die Pruefung haengt im Fehlbedarf-Dialog (Werkzeuge)",
-          "_erz739 = self._erz_deckung_jetzt()" in _mw739
-          and "if not defizite and not _erz739:" in _mw739)
+    # UMGEZOGEN MIT emm840: der eigene Eintrag "Fehlbedarf pruefen" ist
+    # weg, die Erz-Deckung haengt jetzt an "Fehlendes nachkaufen" - und
+    # zwar VOR dessen Rueckfrage. Dass sie dort wirklich noch gerechnet
+    # UND in die Entwarnung einbezogen wird, ist der Punkt: beim
+    # Ausduennen eines Menues verschwindet eine solche Warnung sonst
+    # lautlos, und zu wenig Erz faellt erst Tage spaeter auf.
+    _bm739 = _fn_src("_buy_missing_again")
+    check("aa739 die Pruefung haengt am Nachkauf-Eintrag (Werkzeuge)",
+          "_erz = self._erz_deckung_jetzt() or []" in _bm739
+          and "if not verlust and not _rest and not _erz:" in _bm739)
     check("aa739 ... und rechnet gegen _bd_live_stock, nicht gegen "
           "max(Einfrier, live)",
           '_live = getattr(self, "_bd_live_stock", None)'
@@ -36033,7 +36398,7 @@ try:
           and "return True      # wirklich kopiert" in _mw735)
     check("aa735 Laden: issued je Order aus ESI -> Uhr-Abgleich -> Zeilen",
           "_issued735[o.get(\"order_id\")] = o.get(\"issued\")" in _mw735
-          and "store.order_intervall_sync(_issued_res735)" in _mw735
+          and "store.order_intervall_sync(" in _mw735
           and "_r735[\"clock\"] = _clocks735.get(_r735.get(\"order_id\"))" in _mw735)
     check("aa735 Standard (Tage + Stunden) im Tab-Kopf, uebernommen NUR bei "
           "Enter/Fokusverlust (nicht bei jedem Klick), Ausnahme im Rechtsklick",
@@ -38131,6 +38496,5744 @@ try:
 except Exception as _e820:                               # pragma: no cover
     _fail.append(f"aa820 Gedeckte Knoepfe: {type(_e820).__name__}: {_e820}")
 
+
+# ---------------------------------------------------------------- (aa824)
+# MARKET STOCKS: Doctrinen aus dem Clipboard, Deckung am Handelsplatz
+# (Nutzer 03./04.11.2026). Die Rechenmodule sind bewusst Qt-frei - hier
+# laufen sie ECHT, nichts nachgebaut.
+try:
+    from eve_trader import doctrinen as _doc824, marktdeckung as _md824
+
+    _TXT824 = ("Kopfzeilen-Vorspann wird uebergangen\n"
+               "[Rifter, WC Tackle, v2]\n"
+               "200mm AutoCannon II, Republic Fleet EMP S\n"
+               "200mm AutoCannon II, Republic Fleet EMP S\n"
+               "[Empty High slot]\n\n"
+               "1MN Afterburner II\n\n"
+               "Hobgoblin II x5\n"
+               "Republic Fleet EMP S x1'000\n"
+               "[Punisher, Zweitfit]\n"
+               "Small Armor Repairer II\n")
+    _fits824 = _doc824.fits_lesen(_TXT824)
+    eq("aa824 zwei Fits erkannt, Vorspann uebergangen", len(_fits824), 2)
+    eq("aa824 Fitname darf selbst Kommas tragen (erstes Komma trennt)",
+       (_fits824[0]["schiff"], _fits824[0]["name"]),
+       ("Rifter", "WC Tackle, v2"))
+    _p824 = _fits824[0]["posten"]
+    check("aa824 der Rumpf ist ein Posten (Total Hulls)",
+          _p824.get("Rifter") == 1)
+    check("aa824 leerer Slot zaehlt nichts",
+          not any("empty" in k.lower() for k in _p824))
+    # GELADENE MUNITION HINTER DEM KOMMA: zwei geladene Waffen + 1000 im
+    # Cargo (mit Tausendertrenner) = 1002 - wer nur bis zum Komma liest,
+    # haelt die Doctrine fuer gedeckt, obwohl keine Munition am Markt ist.
+    eq("aa824 geladene Ladung je Modul + Cargo addiert (1'000 + 2)",
+       _p824.get("Republic Fleet EMP S"), 1002)
+    eq("aa824 x-Menge bei Drohnen", _p824.get("Hobgoblin II"), 5)
+
+    _nm824 = {"rifter": 587, "200mm autocannon ii": 2969,
+              "republic fleet emp s": 21896, "1mn afterburner ii": 12056,
+              "hobgoblin ii": 2456, "punisher": 597}
+    _d824 = _doc824.doctrine_aus_text("T", _TXT824, _nm824, ziel=250)
+    check("aa824 unaufgeloeste Namen werden GEMELDET, nicht verschluckt",
+          "Small Armor Repairer II" in _doc824.unbekannte([_d824]))
+    # DIE VOLL-REGEL DES NUTZERS (04.11.2026): "Wenn 1 Schiff 100 Schuss
+    # hat, gilt 'Markt ist voll' natuerlich nicht auch 250 Schuss /
+    # sondern 250000 Schuss ist = Markt voll." Hier: 1002 je Fit x 250.
+    _bed824 = _doc824.doctrine_bedarf(_d824)
+    eq("aa824 'voll' skaliert je Item mit der Menge je Fit (1002 x 250)",
+       _bed824.get(21896), 1002 * 250)
+    eq("aa824 der Rumpf skaliert mit dem Ziel", _bed824.get(587), 250)
+
+    # DECKUNG: der Deckel (Jita + X %) schneidet Wucher weg, das
+    # schwaechste Item entscheidet, und jede Position traegt ihren Stand.
+    check("aa824 ohne Jita-Preis gibt es KEINEN Deckel (None, nicht 0)",
+          _md824.grenzpreis(None) is None
+          and _md824.grenzpreis(0) is None
+          and _md824.grenzpreis(100.0, 30.0) == 130.0)
+    _leiter824 = {"sell": [(100.0, 5), (129.0, 7), (131.0, 1000)]}
+    eq("aa824 kaufbar zaehlt nur bis zum Deckel (5+7, nicht +1000)",
+       _md824.kaufbare_menge(_leiter824, 130.0), (12, 1012))
+    _bedarf824 = {1: 1, 2: 2}
+    _buch824 = {1: {"sell": [(10.0, 4)]}, 2: {"sell": [(5.0, 10)]}}
+    _erg824 = _md824.fit_deckung(_bedarf824, _buch824,
+                                 {1: 10.0, 2: 5.0}, 30.0, ziel=10)
+    eq("aa824 das knappste Item entscheidet (4 Ruempfe vor 5x Waffen)",
+       (_erg824["fits"], _erg824["pct"]), (4, 40.0))
+    check("aa824 jede Position traegt voll/kaufbar/fehlt/pct",
+          _erg824["positionen"][0]["tid"] == 1
+          and _erg824["positionen"][0]["voll_stk"] == 10
+          and _erg824["positionen"][0]["fehlt_stk"] == 6
+          and abs(_erg824["positionen"][0]["pct"] - 40.0) < 0.01)
+    check("aa824 Engpaesse sind DIESELBEN Objekte, keine zweite Rechnung",
+          all(any(e is p for p in _erg824["positionen"])
+              for e in _erg824["engpaesse"]))
+    _w824 = _md824.fit_deckung({3: 1}, {3: {"sell": [(10.0, 1), (900.0, 99)]}},
+                               {3: 10.0}, 30.0, ziel=10)
+    check("aa824 Wucher wird markiert (Deckel schneidet >Haelfte weg)",
+          _w824["positionen"][0]["wucher"] and 3 in _w824["wucher"])
+    _l824 = _md824.fit_deckung({4: 1}, {}, {4: 10.0}, 30.0, ziel=10)
+    check("aa824 gar nicht am Markt -> leer-Kennzeichen + fehlt_ganz",
+          _l824["positionen"][0]["leer"] and 4 in _l824["fehlt_ganz"])
+    # GETEILTE ITEMS INNERHALB EINER DOCTRINE: zwei Fits brauchen dieselbe
+    # Munition - der Markt muss BEIDE zugleich tragen (Mengen addieren).
+    _dd824 = {"name": "D", "ziel": 10, "fits": [
+        {"schiff": "A", "name": "", "posten": [[7, 1], [9, 2]]},
+        {"schiff": "B", "name": "", "posten": [[8, 1], [9, 3]]}]}
+    _db824 = {7: {"sell": [(1.0, 100)]}, 8: {"sell": [(1.0, 100)]},
+              9: {"sell": [(1.0, 49)]}}
+    _de824 = _md824.doctrine_deckung(_dd824, _db824, {7: 1.0, 8: 1.0, 9: 1.0})
+    _pos9 = next(p for p in _de824["positionen"] if p["tid"] == 9)
+    eq("aa824 geteilte Position addiert ueber die Fits (2+3 je Schiff)",
+       _pos9["je_fit"], 5)
+    eq("aa824 Doctrine-Deckung: das schwaechste Fit entscheidet",
+       _de824["fits"], min(f["fits"] for f in _de824["je_fit"]))
+    check("aa824 Reichweite erfindet ohne Volumen keine Zahl",
+          _md824.reichweite_tage(100, None) is None
+          and _md824.reichweite_tage(100, 0) is None
+          and _md824.reichweite_tage(100, 25) == 4.0)
+    _il824 = _md824.item_lage(9, 50, _db824, {9: 1.0}, 30.0, 7.0)
+    check("aa824 item_lage: kaufbar/fehlt/Tage in einer Zeile",
+          _il824["kaufbar_stk"] == 49 and _il824["fehlt_stk"] == 1
+          and _il824["tage"] == 7.0)
+
+    # QUELL-ANKER am Reiter: die Baubar-Pruefung laeuft JE ITEM gegen
+    # product_to_bp, NIE pauschal ueber die Meta-Gruppe (04.11.2026:
+    # 735 Faction-Produkte HABEN ein Rezept); der Multiplan-Weg nimmt die
+    # FEHLENDE Menge und laesst Abgewaehltes draussen; der Verkaufsplatz
+    # ist eine EIGENE Auswahl, nicht das globale g_hub.
+    _ms824 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                               "mw_market_stocks.py"), encoding="utf-8").read()
+    check("aa824 baubar = je Item gegen product_to_bp",
+          'p2b = getattr(rec, "product_to_bp", None) or {}' in _ms824
+          and "return int(tid) in p2b" in _ms824)
+    # emm853: der Multiplan-Weg laeuft jetzt ueber _ms_multiplan_docs
+    # (eine Stelle fuer Einzel- und Mehrfach-Doctrine) - gleiche
+    # Eigenschaft, neue Anker.
+    check("aa824 Multiplan nimmt die fehlende Menge der angehakten",
+          '(int(p["tid"]), int(p.get("fehlt_stk") or 0))' in _ms824
+          and 'if int(p["tid"]) not in abgew]' in _ms824)
+    check("aa824 Faction folgt dem Schalter der Doctrine",
+          'if self._ms_faction(tid) and not doc.get("faction_bauen"):'
+          in _ms824)
+    check("aa824 eigener Handelsplatz (ms_hub), nicht das globale g_hub",
+          "self.ms_hub = QComboBox()" in _ms824)
+    check("aa824 Haken-Zustand wird je Doctrine gespeichert",
+          'st["abgewaehlt"][key] = sorted(ab)' in _ms824)
+except Exception as _e824:                               # pragma: no cover
+    _fail.append(f"aa824 Market Stocks: {type(_e824).__name__}: {_e824}")
+
+
+# ---------------------------------------------------------------- (aa825)
+# "NOCH IM VERKAUF" IN DEN TRANSAKTIONEN (Discord-Wunsch 04.11.2026,
+# Spaceballs 2: "I saw in Transactions that I sold some items. My first
+# thought was: Good, but did I sell everything or do I need still to
+# attend to it? maybe add next to column QTY another column that shows
+# how many items I am still selling").
+try:
+    import tempfile as _tf825
+    import eve_trader.store as _st825
+
+    _O825 = lambda oid, tid, rem, buy=False: {
+        "order_id": oid, "type_id": tid, "volume_remain": rem,
+        "volume_total": rem, "price": 1.0, "is_buy_order": buy,
+        "issued": "2026-11-01T00:00:00Z", "duration": 90, "location_id": 1}
+
+    # Eigene Datenbank, damit die Pruefung keine echten Orders anfasst -
+    # Muster wie aa200: config.db_path umbiegen, danach zuruecksetzen.
+    import eve_trader.config as _cfg825
+    _alt825 = _cfg825.db_path
+    _tmp825 = _tf825.mkdtemp()
+    try:
+        _cfg825.db_path = lambda: os.path.join(_tmp825, "t.db")
+        _st825.save_orders(7, [_O825(1, 34, 500), _O825(2, 35, 200)],
+                           nur_offene=True)
+        eq("aa825 offene Mengen je Item aus den gespeicherten Orders",
+           _st825.offene_order_mengen(7),
+           {34: {"sell": 500, "buy": 0}, 35: {"sell": 200, "buy": 0}})
+        # DER KERN: eine VOLLSTAENDIG ERFUELLTE Order taucht bei ESI auch
+        # in der Historie NICHT mehr auf (dort stehen nur abgelaufene und
+        # stornierte). Ohne Aufraeumen bliebe sie ewig "offen" - und die
+        # neue Spalte behauptete Ware, die laengst verkauft ist. Genau in
+        # die beruhigende Richtung, also die gefaehrliche (Regel 3).
+        _st825.save_orders(7, [_O825(2, 35, 150)], nur_offene=True)
+        # Item 34 ist AUSVERKAUFT: es bleibt mit 0 stehen, statt zu
+        # verschwinden. Der Unterschied ist die eigentliche Antwort auf
+        # die Nutzerfrage - 0 heisst "alles verkauft" (gute Nachricht),
+        # ein fehlender Eintrag hiesse "keine Order bekannt" (keine
+        # Aussage). Faellt 34 heraus, sieht Erfolg aus wie Unwissen.
+        eq("aa825 ausverkauft bleibt als 0 stehen (nicht verschwinden)",
+           _st825.offene_order_mengen(7),
+           {34: {"sell": 0, "buy": 0}, 35: {"sell": 150, "buy": 0}})
+        # Kauf- und Verkaufsseite bleiben getrennt.
+        _st825.save_orders(7, [_O825(2, 35, 150), _O825(3, 36, 99, buy=True)],
+                           nur_offene=True)
+        eq("aa825 Buy- und Sell-Seite werden getrennt gezaehlt",
+           _st825.offene_order_mengen(7),
+           {34: {"sell": 0, "buy": 0}, 35: {"sell": 150, "buy": 0},
+            36: {"sell": 0, "buy": 99}})
+        # Und das Aufraeumen wirkt wirklich: 34 steht auf 0, nicht auf 500.
+        eq("aa825 erfuellte Order zaehlt NICHT mehr als offen",
+           _st825.offene_order_mengen(7)[34]["sell"], 0)
+        # Die HISTORIE darf nichts aufraeumen - sonst riss ein
+        # Historien-Abruf alle offenen Orders mit.
+        _st825.save_orders(7, [_O825(9, 34, 1)])
+        check("aa825 ein Historien-Abruf raeumt NICHTS weg",
+              _st825.offene_order_mengen(7).get(35, {}).get("sell") == 150)
+        # Alter: letzter_abruf nur ueber die OFFENEN, und bei mehreren
+        # Charakteren zaehlt der AELTESTE.
+        _st825.save_orders(8, [_O825(4, 34, 10)], nur_offene=True,
+                           jetzt_iso="2026-11-04T10:00:00")
+        _st825.save_orders(9, [_O825(5, 34, 10)], nur_offene=True,
+                           jetzt_iso="2026-11-04T18:00:00")
+        eq("aa825 bei 'alle Charaktere' zaehlt der AELTESTE Abruf",
+           _st825.orders_letzter_abruf(None), "2026-11-04T10:00:00")
+        eq("aa825 je Charakter sein eigener Abruf",
+           _st825.orders_letzter_abruf(9), "2026-11-04T18:00:00")
+        eq("aa825 ohne Abruf gibt es kein Alter (None, nicht 'jetzt')",
+           _st825.orders_letzter_abruf(999), None)
+    finally:
+        _cfg825.db_path = _alt825
+        import shutil as _sh825
+        _sh825.rmtree(_tmp825, ignore_errors=True)
+
+    # Quell-Anker: der Abruf der offenen Orders MUSS nur_offene setzen,
+    # der Historien-Abruf darf es NICHT.
+    check("aa825 offene Orders werden mit nur_offene=True gespeichert",
+          "esi.fetch_character_orders(client_id, cid),\n"
+          "                              nur_offene=True)" in _src_txt)
+    check("aa825 der Historien-Abruf raeumt nicht auf",
+          "store.save_orders(cid, esi.fetch_order_history(client_id, cid))"
+          in _src_txt)
+    # Eine Abfrage fuer die ganze Tabelle, nicht eine je Zeile.
+    check("aa825 die offenen Mengen kommen in EINER Abfrage",
+          "_offen825 = store.offene_order_mengen(cid)" in _src_txt)
+    # Der Open-Knopf nimmt den Charakter der ZEILE - EVE oeffnet das
+    # Fenster nur im Client, in dem dieser Charakter eingeloggt ist.
+    # SEIT emm914 keine Knopf-Lambda mehr: die Zelle traegt den
+    # Charakter der Zeile als UserRole+2 (aa914 fuehrt den Klick aus).
+    check("aa825 'Open' nutzt den Charakter der Zeile",
+          '_ob914.setData(Qt.UserRole + 2, tx.get("character_id"))'
+          in _src_txt)
+except Exception as _e825:                               # pragma: no cover
+    _fail.append(f"aa825 noch im Verkauf: {type(_e825).__name__}: {_e825}")
+
+
+# ---------------------------------------------------------------- (aa826)
+# T3-INVENTION: ALLE QUELLEN STATT WILLKUERLICH DER LETZTEN (Nutzer
+# 04.11.2026: "kann der Bauplan T3 Destroyer bauen?" -> "ja das sollten wir
+# machen. Und es muss auch mit multiplans funktionieren also T1 T2 T3 alles
+# zusammen muss klappen"). GEMESSEN in der SDE: jeder T3-BPC (Hulls UND
+# Subsysteme) entsteht per Invention (activity 8) aus DREI Relic-Qualitaeten
+# - Intact 20 Runs/26 %, Malfunctioning 10/21 %, Wrecked 3/14 %, gleiche
+# Datacores. Der Recipes-Aufbau ueberschrieb je Produkt (inv_products[pid] =
+# ... und probs[product_id] = ...) und behielt willkuerlich die ZULETZT
+# gelesene Quelle - gemessen die schlechteste. Dazu wurde das Relic selbst
+# (je Versuch VERBRAUCHT, der Hauptkostenblock) nie bepreist und stand auf
+# keiner Einkaufsliste, und die Kopier-Jobgebuehr unterstellte ein T1-
+# Original, das es bei T3 nicht gibt.
+try:
+    import sqlite3 as _sq826
+    import tempfile as _tmpm826
+    import types as _t826
+    from eve_trader import industry as _I826
+    _tmp826 = _tmpm826.mkdtemp(prefix="emm_aa826_")
+    _dbp826 = os.path.join(_tmp826, "ind.db")
+    _c826 = _sq826.connect(_dbp826)
+    _c826.executescript("""
+        CREATE TABLE materials (blueprint_id INTEGER, activity_id INTEGER,
+                                material_id INTEGER, quantity INTEGER);
+        CREATE TABLE products (blueprint_id INTEGER, activity_id INTEGER,
+                               product_id INTEGER, quantity INTEGER);
+        CREATE TABLE probabilities (blueprint_id INTEGER, activity_id INTEGER,
+                                    product_id INTEGER, probability REAL);
+        CREATE TABLE item_cat (type_id INTEGER, category_id INTEGER);
+    """)
+    # T3-BPC 777 aus drei Relics (801/802/803, Kategorie 34), gleiche
+    # Datacores 701x3+702x3; Lese-Reihenfolge BEWUSST schlechteste zuletzt
+    # (der alte Fehlerweg behielte 803).
+    for _src826, _r826, _p826 in ((801, 20, 0.26), (802, 10, 0.21),
+                                  (803, 3, 0.14)):
+        _c826.execute("INSERT INTO products VALUES (?,?,?,?)",
+                      (_src826, 8, 777, _r826))
+        _c826.execute("INSERT INTO probabilities VALUES (?,?,?,?)",
+                      (_src826, 8, 777, _p826))
+        _c826.execute("INSERT INTO materials VALUES (?,?,?,?)", (_src826, 8, 701, 3))
+        _c826.execute("INSERT INTO materials VALUES (?,?,?,?)", (_src826, 8, 702, 3))
+        _c826.execute("INSERT INTO item_cat VALUES (?,?)", (_src826, 34))
+    # T2-BPC 778 klassisch: EIN T1-Blueprint 810 (Kategorie 9) mit
+    # Kopier-Material (703x5) - Format und copy_mats muessen unveraendert bleiben.
+    _c826.execute("INSERT INTO products VALUES (810, 8, 778, 1)")
+    _c826.execute("INSERT INTO probabilities VALUES (810, 8, 778, 0.3)")
+    _c826.execute("INSERT INTO materials VALUES (810, 8, 701, 2)")
+    _c826.execute("INSERT INTO materials VALUES (810, 5, 703, 5)")
+    _c826.execute("INSERT INTO item_cat VALUES (810, 9)")
+    _c826.commit(); _c826.close()
+    _alt_dbp826 = _I826._db_path
+    _I826._db_path = lambda: _dbp826
+    try:
+        _R826 = _I826.Recipes()
+    finally:
+        _I826._db_path = _alt_dbp826
+    eq("aa826 Standard ist die ERGIEBIGSTE Relic-Quelle (nicht die letzte)",
+       _R826.invention_for_bpc.get(777),
+       (801, 20, 0.26, [(701, 3), (702, 3)]))
+    eq("aa826 alle drei Quellen stehen sortiert in invention_quellen",
+       [(q[0], q[1], q[2]) for q in _R826.invention_quellen.get(777) or []],
+       [(801, 20, 0.26), (802, 10, 0.21), (803, 3, 0.14)])
+    eq("aa826 Relics (Kategorie 34) sind als Verbrauchs-Quellen markiert",
+       sorted(_R826.relic_quellen), [801, 802, 803])
+    eq("aa826 T2 bleibt unveraendert: eine Quelle, Kopier-Material angehaengt",
+       _R826.invention_for_bpc.get(778), (810, 1, 0.3, [(701, 2), (703, 5)]))
+    eq("aa826 T2-Kopier-Material weiter in invention_copy_mats",
+       _R826.invention_copy_mats.get(778), [(703, 5)])
+    check("aa826 der T1-Blueprint ist KEIN Relic", 810 not in _R826.relic_quellen)
+
+    # EINE Stelle fuer die Quellen-Wahl: Standard ergiebigste, Wahl per
+    # opts["inv_relic_map"], unbekannte Wahl faellt auf den Standard zurueck,
+    # und alte Fake-Recipes ohne invention_quellen nutzen invention_for_bpc.
+    eq("aa826 Chooser ohne Wahl = ergiebigste",
+       _I826.invention_quelle_fuer_bp(777, _R826, {})[0], 801)
+    eq("aa826 Chooser mit Wahl = die gewaehlte Qualitaet",
+       _I826.invention_quelle_fuer_bp(777, _R826, {"inv_relic_map": {777: 803}})[:3],
+       (803, 3, 0.14))
+    eq("aa826 unbekannte Wahl faellt auf den Standard zurueck",
+       _I826.invention_quelle_fuer_bp(777, _R826, {"inv_relic_map": {777: 999}})[0],
+       801)
+    _RAlt826 = _t826.SimpleNamespace(invention_for_bpc={9: (8, 1, 0.5, [])})
+    eq("aa826 Fake-Recipes ohne invention_quellen: invention_for_bpc gilt",
+       _I826.invention_quelle_fuer_bp(9, _RAlt826, {}), (8, 1, 0.5, []))
+
+    # _inv_cost: das Relic kostet JE VERSUCH und steht auf der Einkaufsliste.
+    # Preise: Relic 50M, Datacores je 100k -> 1 Erfolg noetig (20 Runs/Kopie),
+    # 26 % mit 75 %-Sicherheit = 5 Versuche (invention_attempts_for_confidence).
+    _pr826 = {801: 50e6, 803: 2e6, 701: 100e3, 702: 100e3}
+    _mats826 = {}
+    _k826 = _I826._inv_cost(777, 20, _R826, _pr826.get, {}, mats_out=_mats826)
+    _att826 = _I826.invention_attempts_for_confidence(1, 0.26, 0.75)
+    check("aa826 Relic-Preis steckt in den Invention-Kosten "
+          f"(erhalten {_k826:,.0f})",
+          abs(_k826 - _att826 * (50e6 + 600e3)) < 1.0)
+    eq("aa826 das Relic steht auf der Einkaufsliste (eins je Versuch)",
+       _mats826.get(801), int(-(-float(_att826) // 1)))
+    check("aa826 Datacores wie gehabt (3 je Versuch)",
+          _mats826.get(701) == 3 * _mats826.get(801))
+    # Die Relic-WAHL aendert die Rechnung: Wrecked = 3 Runs/14 %.
+    _mats826b = {}
+    _k826b = _I826._inv_cost(777, 20, _R826, _pr826.get,
+                          {"inv_relic_map": {777: 803}}, mats_out=_mats826b)
+    _att826b = _I826.invention_attempts_for_confidence(-(-20 // 3), 0.14, 0.75)
+    check("aa826 gewaehlte Qualitaet rechnet mit IHREN Runs/Chancen "
+          f"(erhalten {_k826b:,.0f})",
+          abs(_k826b - _att826b * (2e6 + 600e3)) < 1.0
+          and _mats826b.get(803) == int(-(-float(_att826b) // 1))
+          and 801 not in _mats826b)
+
+    # Kopier-Jobgebuehr: bei T3 wird NICHT kopiert. Pathologischer Beleg:
+    # dem Relic 801 eine Fertigungs-Materialliste unterschieben - die Gebuehr
+    # darf TROTZDEM nicht anfallen (die Rechnung weiss es, statt sich auf die
+    # leere EIV zu verlassen). Beim T2-Zwilling faellt sie an.
+    _R826.bp_materials[(801, _I826.MANUFACTURING)] = [(701, 1000)]
+    _R826.bp_materials[(810, _I826.MANUFACTURING)] = [(701, 1000)]
+    _o826fee = {"adjusted_prices": {701: 100e3, 702: 100e3, 703: 0.0},
+                "sci_index_copying": 0.05}
+    _fee_t3 = _I826._inv_cost(777, 20, _R826, _pr826.get, dict(_o826fee))
+    _fee_t3_ohne = _I826._inv_cost(777, 20, _R826, _pr826.get,
+                                {"adjusted_prices": _o826fee["adjusted_prices"]})
+    check("aa826 T3: keine Kopier-Jobgebuehr (es gibt kein T1-Original)",
+          abs(_fee_t3 - _fee_t3_ohne) < 1e-9)
+    _fee_t2 = _I826._inv_cost(778, 1, _R826, _pr826.get, dict(_o826fee))
+    _fee_t2_ohne = _I826._inv_cost(778, 1, _R826, _pr826.get,
+                                {"adjusted_prices": _o826fee["adjusted_prices"]})
+    check("aa826 T2: Kopier-Jobgebuehr faellt weiter an", _fee_t2 > _fee_t2_ohne)
+    del _R826.bp_materials[(801, _I826.MANUFACTURING)]
+
+    # build_cost (Scanner-Pfad, Erwartungswert-Formel): Relic-Preis gehoert
+    # in den inv-Posten - per Aufschluesselung nachgerechnet.
+    _R826.product_to_bp[1777] = (777, _I826.MANUFACTURING, 1)
+    _R826.bp_materials[(777, _I826.MANUFACTURING)] = [(705, 10)]
+    _pr826c = dict(_pr826); _pr826c[705] = 1000.0
+    _pm826 = {}
+    _I826.build_cost(1777, _pr826c.get, _R826,
+                  {"me": 0, "job_pct": 0, "invention": True}, {},
+                  parts_memo=_pm826)
+    _erw826 = ((50e6 + 600e3) / 0.26) / 20     # (Relic+Datacores)/Chance/Runs
+    check("aa826 build_cost: Relic-Preis im inv-Posten "
+          f"(erhalten {_pm826[1777]['inv']:,.2f})",
+          abs(_pm826[1777]["inv"] - _erw826) < 1e-6)
+
+    # Quell-Anker der Verdrahtung (die b-Suite prueft die Bedienelemente):
+    _mwsrc826 = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+                     encoding="utf-8").read()
+    _fsrc826 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                 "mw_bauplan_fenster.py"), encoding="utf-8").read()
+    _msrc826 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                 "mw_multi_bauplan.py"), encoding="utf-8").read()
+    check("aa826 die Plan-Opts tragen die Relic-Wahl",
+          'opts["inv_relic_map"] = {\n            int(k): int(v)' in _mwsrc826)
+    check("aa826 der Plan speichert die Relic-Wahl",
+          '"relic_map": dict(getattr(self, "_bd_relic_map", {})' in _fsrc826)
+    check("aa826 der Plan-Loader stellt sie wieder her",
+          "self._bd_relic_map[int(k)] = int(v)" in _mwsrc826)
+    check("aa826 die Schnellschaetzung rechnet mit ihr",
+          '"inv_relic_map": _inv_relic_map,' in _mwsrc826)
+    check("aa826 der Multi-Plan nimmt die Wahl der Einzelplaene mit",
+          'for k, v in (p.get("relic_map") or {}).items():' in _msrc826
+          and '"relic_map": rel,' in _msrc826)
+    check("aa826 neuer Plan setzt die Wahl zurueck",
+          "self._bd_relic_map = {}       # neuer Plan" in _mwsrc826)
+    check("aa826 Multi: Runs je Kopie aus der EINEN Quellen-Stelle",
+          "industry.invention_quelle_fuer_bp(bp[0], rec, opts)" in _msrc826)
+    check("aa826 Multi: ME/TE-Anzeige aus der EINEN Quellen-Stelle",
+          "industry.invention_quelle_fuer_bp(_bp[0], _rec, _opt)" in _msrc826)
+    check("aa826 der Multi-Loader stellt die Relic-Wahl wieder her",
+          "self._bd_relic_map[int(k)] = int(v)" in _msrc826)
+    check("aa826 Einzelplan: Endprodukt-Kopien aus der EINEN Quellen-Stelle",
+          "_inv0 = _bp0 and industry.invention_quelle_fuer_bp(" in _fsrc826)
+    import shutil as _sh826
+    _sh826.rmtree(_tmp826, ignore_errors=True)
+except Exception as _e826:                               # pragma: no cover
+    import traceback as _tb826
+    _fail.append(f"aa826 T3-Invention: {type(_e826).__name__}: {_e826} | "
+                 + _tb826.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa827)
+# AUTO-DECRYPTOR PRUEFT BEI T3 AUCH DIE RELIC-SORTEN (Nutzer 04.11.2026:
+# "ist das am bessten so?" -> "jawohl sauber bauen"). Welche Relic-Qualitaet
+# am billigsten baut, haengt an den Relic-MARKTPREISEN (gemessen: bei teurem
+# Intact gewinnt Wrecked trotz 3 Runs/14 %) - das kann keine Voreinstellung
+# wissen. invention_best_decryptor_by_real_cost rechnet deshalb jede
+# Kombination Quelle x Decryptor mit der echten production_plan-Formel und
+# traegt die Quelle als "relic" in der Zeile; bei EINER Quelle (T2) bleibt
+# alles wie bisher (relic None, gleiche Zeilenzahl).
+try:
+    import sqlite3 as _sq827
+    import tempfile as _tmpm827
+    from eve_trader import industry as _I827
+    _tmp827 = _tmpm827.mkdtemp(prefix="emm_aa827_")
+    _dbp827 = os.path.join(_tmp827, "ind.db")
+    _c827 = _sq827.connect(_dbp827)
+    _c827.executescript("""
+        CREATE TABLE materials (blueprint_id INTEGER, activity_id INTEGER,
+                                material_id INTEGER, quantity INTEGER);
+        CREATE TABLE products (blueprint_id INTEGER, activity_id INTEGER,
+                               product_id INTEGER, quantity INTEGER);
+        CREATE TABLE probabilities (blueprint_id INTEGER, activity_id INTEGER,
+                                    product_id INTEGER, probability REAL);
+        CREATE TABLE item_cat (type_id INTEGER, category_id INTEGER);
+    """)
+    for _s827, _r827, _p827 in ((801, 20, 0.26), (802, 10, 0.21),
+                                (803, 3, 0.14)):
+        _c827.execute("INSERT INTO products VALUES (?,8,777,?)", (_s827, _r827))
+        _c827.execute("INSERT INTO probabilities VALUES (?,8,777,?)",
+                      (_s827, _p827))
+        _c827.execute("INSERT INTO materials VALUES (?,8,701,3)", (_s827,))
+        _c827.execute("INSERT INTO item_cat VALUES (?,34)", (_s827,))
+    _c827.execute("INSERT INTO products VALUES (777,1,1777,1)")
+    _c827.execute("INSERT INTO materials VALUES (777,1,705,10)")
+    _c827.execute("INSERT INTO products VALUES (810,8,778,1)")
+    _c827.execute("INSERT INTO probabilities VALUES (810,8,778,0.3)")
+    _c827.execute("INSERT INTO materials VALUES (810,8,701,2)")
+    _c827.execute("INSERT INTO item_cat VALUES (810,9)")
+    _c827.execute("INSERT INTO products VALUES (778,1,1778,1)")
+    _c827.execute("INSERT INTO materials VALUES (778,1,705,5)")
+    _c827.commit(); _c827.close()
+    _alt_dbp827 = _I827._db_path
+    _I827._db_path = lambda: _dbp827
+    try:
+        _R827 = _I827.Recipes()
+    finally:
+        _I827._db_path = _alt_dbp827
+    _o827 = {"me": 0, "job_pct": 0, "invention": True}
+    _dl827 = [("No decryptor", (1.0, 0, 0, 0, None))]
+    # Intact SEHR teuer, Wrecked billig -> Wrecked muss gewinnen.
+    _pr827 = {801: 500e6, 802: 100e6, 803: 1e6, 701: 100e3, 705: 1000.0}
+    _rk827 = _I827.invention_best_decryptor_by_real_cost(
+        1777, 20, _pr827.get, _R827, dict(_o827), 777, _dl827)
+    eq("aa827 jede Relic-Qualitaet bekommt ihre Zeile im Ranking",
+       sorted(r["relic"] for r in _rk827), [801, 802, 803])
+    eq("aa827 bei teurem Intact gewinnt das billige Wrecked",
+       _rk827[0]["relic"], 803)
+    check("aa827 die Zeilen sind nach echten Gesamtkosten sortiert",
+          _rk827[0]["total_cost"] <= _rk827[1]["total_cost"]
+          <= _rk827[2]["total_cost"])
+    # Der PREIS entscheidet, nicht die Ergiebigkeit: Intact billig -> Intact.
+    _pr827b = dict(_pr827); _pr827b[801] = 2e6
+    _rk827b = _I827.invention_best_decryptor_by_real_cost(
+        1777, 20, _pr827b.get, _R827, dict(_o827), 777, _dl827)
+    eq("aa827 bei billigem Intact gewinnt Intact",
+       _rk827b[0]["relic"], 801)
+    # T2 (eine Quelle): relic None, gleiche Zeilenzahl wie Decryptoren.
+    _rk827c = _I827.invention_best_decryptor_by_real_cost(
+        1778, 5, _pr827.get, _R827, dict(_o827), 778, _dl827)
+    eq("aa827 T2 bleibt eine Zeile je Decryptor mit relic None",
+       [(r["name"], r["relic"]) for r in _rk827c],
+       [("No decryptor", None)])
+    # Die Rangliste darf die opts des Aufrufers nicht veraendern.
+    _o827x = {"me": 0, "job_pct": 0, "invention": True}
+    _I827.invention_best_decryptor_by_real_cost(
+        1777, 20, _pr827.get, _R827, _o827x, 777, _dl827)
+    check("aa827 die Aufrufer-opts bleiben unangetastet",
+          "inv_relic_map" not in _o827x and "inv_decryptor_map" not in _o827x)
+    # Quell-Anker: die Ladder-Neurechnung in _rangliste rechnet mit der
+    # Relic-Qualitaet DER ZEILE, und Auto-Decryptor schreibt den Gewinner
+    # in Plan-Map UND opts.
+    _tabs827 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                 "mw_bauplan_tabs.py"), encoding="utf-8").read()
+    check("aa827 Ladder-Neurechnung nutzt die Relic der Zeile",
+          '_test_opts["inv_relic_map"] = _rm' in _tabs827)
+    check("aa827 Auto-Decryptor schreibt die Gewinner-Relic in beide Karten",
+          'self._bd_relic_map[int(_bp)] = int(_rel)' in _tabs827
+          and 'self._bd_opts.setdefault("inv_relic_map", {})[int(_bp)] = int(_rel)'
+          in _tabs827)
+    import shutil as _sh827
+    _sh827.rmtree(_tmp827, ignore_errors=True)
+except Exception as _e827:                               # pragma: no cover
+    import traceback as _tb827
+    _fail.append(f"aa827 Auto-Relic: {type(_e827).__name__}: {_e827} | "
+                 + _tb827.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa828)
+# ERSTER T3-PRAXISLAUF DES NUTZERS (Confessor, 05.11.2026) - DREI FEHLER.
+#
+# (1) ZWEI ZAHLEN FUER DIESELBE SACHE: die Invention-Karte zeigte "5 attempts
+#     - 15 Datacores", die Einkaufsliste kaufte "18 Datacores - 6 Relics".
+#     NACHGERECHNET: die Karte rechnet mit dem Skill-Bonus (x1.267 ->
+#     14 % x 1.5 x 1.267 = 26,6 % -> 5 Versuche), der PLAN ohne (21 % ->
+#     6 Versuche). Ursache: `_resolve_inv_skill_modifiers` wurde im
+#     Dialog-Aufbau gerufen, wo weder `_bd_recipes` noch die Skill-Tabelle
+#     schon auf diesem Plan standen - sie gab ein LEERES Dict zurueck, und
+#     das blieb fuer den ganzen Dialog in `_bd_opts`. Traf T2 genauso.
+# (2) "#34204" / "#34416" im Materialien-Tab: der Namens-Nachzug beim
+#     Neuaufbau zaehlte build_runs/buy/stock_used von Hand auf und kannte
+#     die Invention-Schluessel nicht - die DRITTE handgeschriebene Kopie
+#     einer Liste, die es als PLAN_QTY_KEYS laengst gibt.
+# (3) Die Zusammenfassung unter dem Reiter nannte Datacores und Decryptor,
+#     aber NICHT das verbrauchte Relic - den groessten Posten der
+#     T3-Invention.
+try:
+    import inspect as _ins828
+    from eve_trader import industry as _I828b
+    import eve_trader.ui.main_window as _MW828
+    import eve_trader.ui.mw_bauplan_fenster as _BF828
+
+    # --- (1) Die Rechnung selbst: Skill-Bonus entscheidet ueber 5 vs. 6.
+    _att_mit = _I828b.invention_attempts_for_confidence(1, 0.14 * 1.267 * 1.5, 0.75)
+    _att_ohne = _I828b.invention_attempts_for_confidence(1, 0.14 * 1.5, 0.75)
+    eq("aa828 mit Skill-Bonus reichen 5 Versuche (Confessor-Fall)", _att_mit, 5)
+    eq("aa828 ohne Skill-Bonus waeren es 6 - genau die gemeldete Abweichung",
+       _att_ohne, 6)
+    # Die Funktion nimmt die Rezepte des AKTUELLEN Plans entgegen und holt
+    # sich die Skill-Tabelle selbst, statt auf einen frueheren Dialog zu hoffen.
+    _sig828 = _ins828.signature(_MW828.MainWindow._resolve_inv_skill_modifiers)
+    eq("aa828 _resolve_inv_skill_modifiers nimmt recipes/opts entgegen",
+       [p for p in _sig828.parameters if p != "self"], ["recipes", "opts"])
+    # UND SIE BENUTZT SIE AUCH (die Signatur allein belegt das nicht - die
+    # erste Rotprobe meldete hier BLIND): mit uebergebenen Rezepten muss ein
+    # Ergebnis kommen, OBWOHL der Dialog-Zustand (_bd_recipes) leer ist -
+    # genau die Lage beim ersten Bauplan nach Programmstart.
+    class _FakeMW828:
+        _bd_recipes = None                  # voriger Dialog: nichts da
+        _bd_invention_skills_map = {890: {"encryption": 1, "science": [2]}}
+
+        @staticmethod
+        def _bau_invention_skill_modifier(_t1):
+            return 1.5
+    _rec828f = _t826.SimpleNamespace(
+        invention_for_bpc={900: (890, 1, 0.3, [])}, invention_quellen={})
+    eq("aa828 die uebergebenen Rezepte gelten, nicht der vorige Dialog",
+       _MW828.MainWindow._resolve_inv_skill_modifiers(
+           _FakeMW828(), _rec828f, {}), {900: 1.5})
+    _rsm828 = _ins828.getsource(_MW828.MainWindow._resolve_inv_skill_modifiers)
+    check("aa828 sie laedt die Skill-Tabelle selbst, wenn sie fehlt",
+          "self._bd_invention_skills_map = industry.bp_invention_skills_map()"
+          in _rsm828)
+    check("aa828 sie nutzt die GEWAEHLTE Invention-Quelle (T3)",
+          "industry.invention_quelle_fuer_bp(bp_id, recipes, opts or {})"
+          in _rsm828)
+    # Aufruf steht jetzt in job(), wo die Rezepte feststehen - und VOR der
+    # ersten Rechnung. Reihenfolge im Quelltext belegt das.
+    _obd828 = _fn_src("open_build_detail")
+    _i_call828 = _obd828.find('opts["inv_skill_modifier"] = '
+                              'self._resolve_inv_skill_modifiers(')
+    _i_rec828 = _obd828.find("recipes = industry.recipes_cached()")
+    _i_tree828 = _obd828.find("tree = industry.build_tree(type_id, pm.get, recipes, opts)")
+    check("aa828 der Skill-Bonus wird im Plan-Aufbau gesetzt", _i_call828 > 0)
+    check("aa828 ... NACH den Rezepten dieses Plans",
+          0 < _i_rec828 < _i_call828)
+    check("aa828 ... und VOR der ersten Rechnung",
+          _i_call828 < _i_tree828)
+    check("aa828 die alte, zu fruehe Zuweisung ist weg",
+          'opts["inv_skill_modifier"] = self._resolve_inv_skill_modifiers()'
+          not in _obd828)
+
+    # --- (2) Namens-Nachzug nutzt ALLE Mengen-Schluessel, nicht drei.
+    _bf828 = _ins828.getsource(_BF828)
+    _i_nach828 = _bf828.find("FEHLENDE ITEM-NAMEN NACHLADEN")
+    check("aa828 der Nachzug-Block ist auffindbar", _i_nach828 > 0)
+    _aus828 = _bf828[_i_nach828:_i_nach828 + 1400]
+    check("aa828 der Namens-Nachzug grast PLAN_QTY_KEYS ab",
+          "for _k828 in self.PLAN_QTY_KEYS:" in _aus828)
+    check("aa828 die handgeschriebene Dreier-Liste ist weg",
+          'set(plan.get("build_runs", {}))\n                                    '
+          '| set(plan.get("buy", {}))' not in _bf828)
+    # PLAN_QTY_KEYS MUSS die Invention-Schluessel enthalten - sonst haette
+    # die Umstellung nichts gebracht.
+    for _k828b in ("inv_buy", "inv_stock_used"):
+        check(f"aa828 PLAN_QTY_KEYS kennt {_k828b}",
+              _k828b in _MW828.MainWindow.PLAN_QTY_KEYS)
+
+    # --- (3) Das Relic steht im Bedarf und in der Zusammenfassung.
+    _agg828 = _MW828.MainWindow._aggregate_invention_needs
+    _dc828, _dcy828, _rel828, _att828 = _agg828({
+        777: {"datacores": [(701, 15)], "decryptor_id": 34204,
+              "decryptor_qty": 5, "relic_id": 34416, "relic_qty": 5,
+              "attempts": 5},
+        778: {"datacores": [(701, 4)], "decryptor_id": None,
+              "decryptor_qty": 0, "attempts": 2}})
+    eq("aa828 die Aggregation meldet die Relics getrennt", _rel828, {34416: 5})
+    eq("aa828 Datacores werden weiter ueber alle Karten addiert",
+       _dc828, {701: 19})
+    eq("aa828 Decryptoren unveraendert", _dcy828, {34204: 5})
+    eq("aa828 Versuchssumme unveraendert", _att828, 7)
+    eq("aa828 T2 ohne Relic liefert kein Relic",
+       _agg828({778: {"datacores": [], "attempts": 1}})[2], {})
+    # Die Karte traegt das Relic ein - und NUR fuer die Anzeige, nicht in
+    # den Einkaufs-Pfad (es kommt schon als Material aus dem Plan).
+    _fit828 = _fn_src("_fill_invention_tab")
+    check("aa828 die Karte traegt die Relic-Quelle in den Bedarf",
+          '"relic_id": _relic_id,' in _fit828
+          and '"relic_qty": _attempts_n if _relic_id else 0,' in _fit828)
+    check("aa828 sie erkennt das Relic an relic_quellen",
+          'getattr(\n                    recipes, "relic_quellen", None) or set()'
+          in _fit828)
+    _upd828 = _fn_src("_update_total")
+    check("aa828 die Zusammenfassung zaehlt Relics mit auf",
+          "for _grp in (rel, dc, dcy):" in _upd828)
+    # Der Einkaufs-Pfad bleibt bewusst unberuehrt - sonst stuende das Relic
+    # zweimal auf der Liste.
+    _cart828 = _fn_src("_bau_to_shopping") if "_bau_to_shopping" in dir(
+        _MW828.MainWindow) else ""
+    if _cart828:
+        check("aa828 der Einkaufs-Pfad kauft kein Relic doppelt",
+              'info.get("relic_id")' not in _cart828)
+except Exception as _e828:                               # pragma: no cover
+    import traceback as _tb828
+    _fail.append(f"aa828 T3-Praxisbefunde: {type(_e828).__name__}: {_e828} | "
+                 + _tb828.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa829)
+# ZWEITER T3-PRAXISLAUF (Confessor, 05.11.2026, nach emm828): DIE KARTE
+# BEPREISTE DAS RELIC NICHT.
+# Der Nutzer oeffnete den Plan (Standard: Intact, 20 Runs/26 %). Die Karte
+# meldete "4 attempts - 1'406'942 ISK", die Kopfzeile aber 151'868'161 ISK
+# Baukosten; nach "Auto-Decryptor" (wechselt auf Wrecked+Accelerant) nur noch
+# 68'442'410 - 83 Mio weniger. NACHGERECHNET mit realistischen Preisen
+# (Intact ~20 Mio, Wrecked ~1,2 Mio): genau diese Luecke. URSACHE: die Karte
+# rechnete `dc_cost` aus Datacores und Decryptor - das verbrauchte Relic
+# fehlte in IHRER Rechnung, waehrend `industry._inv_cost` es laengst
+# bepreist. Dazu nahm sie NUR den Adjusted Price; fuer Relics gibt es
+# keinen, sie waren damit gratis. Zwei Rechnungen, zwei Zahlen - und die
+# falsche lud zur teuren Wahl ein (Arbeitsregel 9).
+try:
+    import sqlite3 as _sq829
+    import tempfile as _tmpm829
+    from eve_trader import industry as _I829
+    _tmp829 = _tmpm829.mkdtemp(prefix="emm_aa829_")
+    _dbp829 = os.path.join(_tmp829, "ind.db")
+    _c829 = _sq829.connect(_dbp829)
+    _c829.executescript("""
+        CREATE TABLE materials (blueprint_id INTEGER, activity_id INTEGER,
+                                material_id INTEGER, quantity INTEGER);
+        CREATE TABLE products (blueprint_id INTEGER, activity_id INTEGER,
+                               product_id INTEGER, quantity INTEGER);
+        CREATE TABLE probabilities (blueprint_id INTEGER, activity_id INTEGER,
+                                    product_id INTEGER, probability REAL);
+        CREATE TABLE item_cat (type_id INTEGER, category_id INTEGER);
+    """)
+    for _s829, _r829, _p829x in ((801, 20, 0.26), (803, 3, 0.14)):
+        _c829.execute("INSERT INTO products VALUES (?,8,777,?)", (_s829, _r829))
+        _c829.execute("INSERT INTO probabilities VALUES (?,8,777,?)",
+                      (_s829, _p829x))
+        _c829.execute("INSERT INTO materials VALUES (?,8,701,3)", (_s829,))
+        _c829.execute("INSERT INTO materials VALUES (?,8,702,3)", (_s829,))
+        _c829.execute("INSERT INTO item_cat VALUES (?,34)", (_s829,))
+    _c829.commit(); _c829.close()
+    _alt_dbp829 = _I829._db_path
+    _I829._db_path = lambda: _dbp829
+    try:
+        _R829 = _I829.Recipes()
+    finally:
+        _I829._db_path = _alt_dbp829
+    # Preise wie beim Nutzer: Intact teuer, Wrecked billig.
+    _pr829 = {801: 20e6, 803: 1.2e6, 701: 117e3, 702: 117e3, 34201: 1e6}
+    _skill829 = 1.267
+    for _nm829, _src829, _dv829 in (
+            ("Intact/kein Decryptor", 801, (1.0, 0, 0, 0, None)),
+            ("Wrecked/Accelerant", 803, (1.2, 1, 2, 10, 34201))):
+        _q829 = next(e for e in _R829.invention_quellen[777] if e[0] == _src829)
+        _out829 = _I829.invention_outcome(
+            _q829[1], min(1.0, _q829[2] * _skill829), _dv829)
+        _dc829 = sum(_pr829.get(_d, 0) * _n for _d, _n in _q829[3])
+        _relc829 = _pr829.get(_src829, 0)
+        _dcy829 = _pr829.get(_dv829[4], 0) if _dv829[4] else 0.0
+        # SO rechnet die Karte seit emm829 (Relic als zweiter Posten je Versuch)
+        _ap829 = _I829.invention_attempt_plan(
+            1, _out829, [_dc829, _relc829], _dcy829, confidence=0.75)
+        # ... und so der Plan.
+        _o829 = {"inv_relic_map": {777: _src829},
+                 "inv_skill_modifier": {777: _skill829},
+                 "adjusted_prices": dict(_pr829)}
+        if _dv829[4]:
+            _o829["inv_decryptor_map"] = {777: _dv829}
+        _plan829 = _I829._inv_cost(777, 1, _R829, _pr829.get, _o829)
+        check(f"aa829 {_nm829}: Karte und Plan nennen dieselbe Zahl "
+              f"({_ap829['confident_cost']:,.0f})",
+              abs(_ap829["confident_cost"] - _plan829) < 1.0)
+    # Ohne den Relic-Posten waere die Karte um Faktor >50 zu billig - das war
+    # der gemeldete Zustand. Gegenprobe, damit die Pruefung oben nicht
+    # zufaellig gruen ist.
+    _q829i = next(e for e in _R829.invention_quellen[777] if e[0] == 801)
+    _out829i = _I829.invention_outcome(_q829i[1], min(1.0, _q829i[2] * _skill829),
+                                       (1.0, 0, 0, 0, None))
+    _ohne829 = _I829.invention_attempt_plan(
+        1, _out829i, [sum(_pr829.get(_d, 0) * _n for _d, _n in _q829i[3])], 0.0,
+        confidence=0.75)["confident_cost"]
+    _mit829 = _I829.invention_attempt_plan(
+        1, _out829i, [sum(_pr829.get(_d, 0) * _n for _d, _n in _q829i[3]),
+                      _pr829[801]], 0.0, confidence=0.75)["confident_cost"]
+    check(f"aa829 ohne Relic-Posten waere die Karte um {_mit829 / _ohne829:.0f}x "
+          f"zu billig", _mit829 > 20 * _ohne829)
+
+    # Quell-Anker: Relic als zweiter Posten, Preis Markt-vor-Adjusted, und
+    # t1_bp fest gebunden (sonst saehe die Rangliste das Relic der LETZTEN Karte).
+    _fit829 = _fn_src("_fill_invention_tab")
+    check("aa829 die Karte uebergibt das Relic als eigenen Posten je Versuch",
+          "_runs_still_needed, outcome, [dc_cost, _rel_cost], dcy_cost,"
+          in _fit829)
+    # DER RUMPF MUSS STIMMEN, nicht nur der Name (erste Rotprobe meldete
+    # hier BLIND: die Mutation liess `def _p829` stehen und ersetzte nur den
+    # Inhalt durch den alten Adjusted-Price-Einzeiler).
+    _i_p829 = _fit829.find("def _p829(_t):")
+    check("aa829 die Preisfunktion der Karte ist da", _i_p829 > 0)
+    _rumpf829 = _fit829[_i_p829:_i_p829 + 320]
+    check("aa829 sie bepreist Markt zuerst, Adjusted Price als Rueckfall",
+          '_v = (getattr(self, "_bd_pricemap", None) or {}).get(_t)' in _rumpf829
+          and "if _v is not None and _v > 0:" in _rumpf829
+          and "return float(_v)" in _rumpf829
+          and 'return float(adj_prices.get(_t, 0) or 0)' in _rumpf829)
+    check("aa829 auch der Rueckfall-Zweig der Rangliste kennt das Relic",
+          "[dc_cost, _rel_cost_b]," in _fit829)
+    check("aa829 t1_bp ist in der Rangliste fest gebunden",
+          "t1_bp=t1_bp):" in _fit829)
+
+    # (2) Namens-Nachzug MUSS vor dem Fuellen der Materialtabelle laufen -
+    # sonst sieht die Tabelle die neuen Namen erst beim naechsten Aufbau
+    # (genau das zeigte der zweite Screenshot: "#34201"/"#34416" blieben).
+    _sbd829 = _fn_src("_show_build_detail")
+    _i_nach829 = _sbd829.find("for _k828 in self.PLAN_QTY_KEYS:")
+    _i_fill829 = _sbd829.find("self._fill_material_tab(plan, names, self._bd_mat_tab_tbl,")
+    check("aa829 der Namens-Nachzug steht im Aufbau", _i_nach829 > 0)
+    check("aa829 ... und VOR dem Fuellen der Materialtabelle",
+          0 < _i_nach829 < _i_fill829)
+    import shutil as _sh829
+    _sh829.rmtree(_tmp829, ignore_errors=True)
+except Exception as _e829:                               # pragma: no cover
+    import traceback as _tb829
+    _fail.append(f"aa829 Relic-Preis in der Karte: {type(_e829).__name__}: "
+                 f"{_e829} | " + _tb829.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa830)
+# DIE BILLIGSTE RELIC-SORTE WIRD VORGEWAEHLT (Nutzer-Entscheid 05.11.2026:
+# "Billigste automatisch"). BEGRUENDUNG AUS DER MESSUNG: welche T3-Sorte am
+# guenstigsten baut, entscheidet der MARKT, nicht die Ergiebigkeit - Intact
+# (20 Runs/26 %, ~20 Mio) kostet fuer EINEN Confessor 82,8 Mio Invention,
+# Wrecked (3/14 %, ~1,2 Mio) nur 11,4 Mio. Vorher stand immer die
+# ergiebigste vorn, und ein frisch geoeffneter T3-Plan zeigte -58 % Marge,
+# obwohl -6,7 % moeglich waren.
+try:
+    from eve_trader import industry as _I830
+    import eve_trader.ui.main_window as _MW830
+    # Dieselbe Fake-SDE wie aa829 (zwei Quellen, gleiche Datacores).
+    import sqlite3 as _sq830
+    import tempfile as _tmpm830
+    _tmp830 = _tmpm830.mkdtemp(prefix="emm_aa830_")
+    _dbp830 = os.path.join(_tmp830, "ind.db")
+    _c830 = _sq830.connect(_dbp830)
+    _c830.executescript("""
+        CREATE TABLE materials (blueprint_id INTEGER, activity_id INTEGER,
+                                material_id INTEGER, quantity INTEGER);
+        CREATE TABLE products (blueprint_id INTEGER, activity_id INTEGER,
+                               product_id INTEGER, quantity INTEGER);
+        CREATE TABLE probabilities (blueprint_id INTEGER, activity_id INTEGER,
+                                    product_id INTEGER, probability REAL);
+        CREATE TABLE item_cat (type_id INTEGER, category_id INTEGER);
+    """)
+    for _s830, _r830, _p830 in ((801, 20, 0.26), (802, 10, 0.21), (803, 3, 0.14)):
+        _c830.execute("INSERT INTO products VALUES (?,8,777,?)", (_s830, _r830))
+        _c830.execute("INSERT INTO probabilities VALUES (?,8,777,?)", (_s830, _p830))
+        _c830.execute("INSERT INTO materials VALUES (?,8,701,3)", (_s830,))
+        _c830.execute("INSERT INTO item_cat VALUES (?,34)", (_s830,))
+    # T2-Zwilling mit EINER Quelle - der darf nie angefasst werden.
+    _c830.execute("INSERT INTO products VALUES (810,8,778,1)")
+    _c830.execute("INSERT INTO probabilities VALUES (810,8,778,0.3)")
+    _c830.execute("INSERT INTO materials VALUES (810,8,701,2)")
+    _c830.execute("INSERT INTO item_cat VALUES (810,9)")
+    _c830.commit(); _c830.close()
+    _alt_dbp830 = _I830._db_path
+    _I830._db_path = lambda: _dbp830
+    try:
+        _R830 = _I830.Recipes()
+    finally:
+        _I830._db_path = _alt_dbp830
+    _o830 = {"inv_skill_modifier": {777: 1.267}}
+    _teuer830 = {801: 20e6, 802: 5e6, 803: 1.2e6, 701: 117e3}
+    _o830["adjusted_prices"] = dict(_teuer830)
+    eq("aa830 teures Intact -> das billige Wrecked wird vorgewaehlt",
+       _I830.beste_relic_quellen(_R830, {777: 1}, _teuer830.get, dict(_o830)),
+       {777: 803})
+    # Der PREIS entscheidet, nicht die Ergiebigkeit - Gegenprobe.
+    _billig830 = dict(_teuer830); _billig830[801] = 0.5e6
+    eq("aa830 billiges Intact -> Intact wird vorgewaehlt",
+       _I830.beste_relic_quellen(_R830, {777: 1}, _billig830.get,
+                                 dict(_o830, adjusted_prices=dict(_billig830))),
+       {777: 801})
+    # Eine eigene/gespeicherte Wahl bleibt unangetastet.
+    eq("aa830 eine bestaetigte Wahl wird nicht ueberschrieben",
+       _I830.beste_relic_quellen(_R830, {777: 1}, _teuer830.get,
+                                 dict(_o830, inv_relic_fest={777})), {})
+    # "Eigene BPC" wird gar nicht erfunden - nichts zu waehlen.
+    eq("aa830 bei 'Eigene BPC' bleibt die Wahl aus",
+       _I830.beste_relic_quellen(_R830, {777: 1}, _teuer830.get,
+                                 dict(_o830, inv_manual_override={777: True})), {})
+    # T2 (eine Quelle) wird nie angefasst.
+    check("aa830 T2 mit einer Quelle bekommt keinen Eintrag",
+          778 not in _I830.beste_relic_quellen(
+              _R830, {777: 1, 778: 5}, _teuer830.get, dict(_o830)))
+    # Ohne Runs gibt es nichts zu entscheiden.
+    eq("aa830 ohne benoetigte Runs keine Wahl",
+       _I830.beste_relic_quellen(_R830, {}, _teuer830.get, dict(_o830)), {})
+    # EINE QUELLE OHNE PREIS SIEHT GRATIS AUS (Arbeitsregel 3, beruhigende
+    # Richtung): sie darf eine bepreiste nicht unterbieten.
+    _ohne830 = {801: 20e6, 802: 5e6, 701: 117e3}      # 803 hat keinen Preis
+    eq("aa830 eine Quelle ohne Preis gewinnt nicht gegen eine bepreiste",
+       _I830.beste_relic_quellen(_R830, {777: 1}, _ohne830.get,
+                                 dict(_o830, adjusted_prices=dict(_ohne830))),
+       {777: 802})
+    # Quell-Anker: die Vorwahl laeuft im Plan-Aufbau, NACH dem ersten Plan
+    # (sie braucht die Run-Zahlen) und rechnet danach einmal neu.
+    _obd830 = _fn_src("open_build_detail")
+    _i_plan830 = _obd830.find("plan = industry.production_plan(type_id, qty0, pm.get, recipes, opts)")
+    _i_wahl830 = _obd830.find("_wahl830 = industry.beste_relic_quellen(")
+    check("aa830 die Vorwahl steht im Plan-Aufbau", _i_wahl830 > 0)
+    check("aa830 ... NACH dem ersten Plan (sie braucht die Run-Zahlen)",
+          0 < _i_plan830 < _i_wahl830)
+    check("aa830 ... und rechnet danach einmal neu",
+          "plan = industry.production_plan(\n                            type_id, qty0, pm.get, recipes, opts)" in _obd830)
+    check("aa830 fest ist, was der Nutzer bestaetigt hat",
+          'opts["inv_relic_fest"] = set(\n                        getattr(self, "_bd_relic_bestaetigt", None) or ())'
+          in _obd830)
+    # Die Bestaetigung wird an den drei Stellen gesetzt, an denen eine Wahl
+    # bewusst getroffen wird - und beim neuen Plan geleert.
+    _tabs830 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                 "mw_bauplan_tabs.py"), encoding="utf-8").read()
+    _mw830src = open(os.path.join(_ROOT, "eve_trader", "ui", "main_window.py"),
+                     encoding="utf-8").read()
+    _multi830 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                  "mw_multi_bauplan.py"), encoding="utf-8").read()
+    eq("aa830 Combo-Wahl und Auto-Decryptor bestaetigen beide",
+       _tabs830.count("self._bd_relic_bestaetigt.add("), 2)
+    check("aa830 der gespeicherte Plan gilt als bestaetigt",
+          "self._bd_relic_bestaetigt = set(self._bd_relic_map)" in _mw830src
+          and "self._bd_relic_bestaetigt = set(self._bd_relic_map)" in _multi830)
+    check("aa830 ein neuer Plan laesst die Automatik wieder waehlen",
+          "self._bd_relic_bestaetigt = set()   # ... und die Automatik darf waehlen"
+          in _mw830src)
+    import shutil as _sh830
+    _sh830.rmtree(_tmp830, ignore_errors=True)
+except Exception as _e830:                               # pragma: no cover
+    import traceback as _tb830
+    _fail.append(f"aa830 billigste Relic-Sorte: {type(_e830).__name__}: "
+                 f"{_e830} | " + _tb830.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa831)
+# T3 KOPIERT NICHTS (Nutzerfragen 05.11.2026: "muss man die ueberhaupt
+# erfinden?" / "wieviele Runs per Copy gibt das denn so? ... glaube nicht
+# dass das korrekt ist"). Bei T3 gibt es KEIN T1-Original: das Ancient Relic
+# ist das Verbrauchsmaterial, eines je Versuch. Die Karte zeigte trotzdem
+# "Copy your T1 original like this -> Job Runs 4 / Runs per Copy 12" - Zahlen
+# fuer einen Kopierjob, den es nicht gibt, und der Nutzer hielt die 12 fuer
+# die Runs seiner T3-Blaupause (es sind 4). Der Runplaner plante dazu eine
+# eigene Stufe "Copying" samt belegtem Science-Slot.
+try:
+    from eve_trader import industry as _I831
+    _I831b_alt = _I831._db_path
+    _I831._db_path = lambda: "/tmp/claude-0/ind.db"
+    _hat_sde831 = os.path.exists("/tmp/claude-0/ind.db")
+    _I831._db_path = _I831b_alt
+    # Aus der SDE belegt (gilt unabhaengig von der lokalen Datei): Relics
+    # haben KEINE Kopier-Aktivitaet - die Kopierzeit ist damit 0 und die
+    # Dauer-Zeile faellt von selbst weg. Hier gegen die Projekt-Logik
+    # geprueft, nicht gegen eine Datei, die im Container fehlen darf.
+    _fit831 = _fn_src("_fill_invention_tab")
+    # (1) Die Karte kennt den T3-Fall und zeigt die Relics statt der
+    #     Kopieranleitung.
+    check("aa831 die Karte erkennt die Relic-Quelle fuer die Anleitung",
+          "_relic=(int(t1_bp) if int(t1_bp) in (" in _fit831)
+    check("aa831 sie sagt, dass nichts zu kopieren ist",
+          't("No copying needed \\u2013 get these relics \\u2192")' in _fit831)
+    check("aa831 sie nennt die Relic-Menge = Versuche",
+          'n=f\'<span style="{_zahl}">{int(_att or 0)}</span>\'' in _fit831)
+    check("aa831 sie sagt, dass je Versuch eines verbraucht wird",
+          't("One relic is consumed per attempt.")' in _fit831)
+    # (2) Die T1-Original-Warnung schweigt bei T3 - es gibt kein Original.
+    check("aa831 keine 'du besitzt das T1-Original nicht'-Warnung bei T3",
+          'if int(t1_bp) in (getattr(recipes, "relic_quellen", None) or set()):\n'
+          '                    _lage512 = "unknown"' in _fit831)
+    # (3) Der Regler-Tooltip spricht bei T3 von Relics, nicht von T1-Kopien.
+    check("aa831 der Regler-Tooltip kennt den T3-Fall",
+          '"How many invention jobs run at the same time \\u2013 one relic "' in _fit831)
+    # (4) Runplaner: keine Kopier-Auftraege fuer Relic-Karten, und ohne
+    #     Auftraege auch keine leere Stufe.
+    _sci831 = _fn_src("_science_block")
+    check("aa831 Relic-Karten erzeugen keinen Kopier-Auftrag",
+          'and not (needs.get(bp) or {}).get("relic_id")]' in _sci831)
+    _i_auftr831 = _sci831.find("_copy_auftr = [(bp, 1) for bp, _i in _sortiert")
+    _i_kopf831 = _sci831.find('_k = _kopf(')
+    check("aa831 die Auftraege stehen VOR dem Kopf", 0 < _i_auftr831 < _i_kopf831)
+    check("aa831 ohne Kopier-Auftrag entsteht gar kein Kopf",
+          "parallel copies.\") + _sc_tip) if _copy_auftr else None" in _sci831)
+    check("aa831 Abschluss/Aufklappen nur mit Kopf",
+          "if _k is not None:\n            _k_st = _abschluss(_k, _k_zust, _k_zeilen)"
+          in _sci831)
+    check("aa831 der Invention-Kopf sagt ohne Kopieren etwas anderes",
+          'else t("Invention attempts. Relics, datacores and "' in _sci831
+          and ') if _copy_auftr' in _sci831)
+    # (5) Alle neuen Anzeigetexte stehen im Katalog (Regel 6, keine Waisen).
+    from eve_trader import sprache as _spr831
+    _kat831 = _spr831.KATALOG.get("de", {})
+    for _t831 in ("No copying needed \u2013 get these relics \u2192",
+                  "{name}: {n}",
+                  "One relic is consumed per attempt.",
+                  "Invention attempts. Relics, datacores and decryptors are on "
+                  "the shopping list \u2013 one relic per attempt."):
+        check(f"aa831 im Katalog: {_t831[:42]}", _t831 in _kat831)
+except Exception as _e831:                               # pragma: no cover
+    import traceback as _tb831
+    _fail.append(f"aa831 T3 kopiert nichts: {type(_e831).__name__}: {_e831} | "
+                 + _tb831.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa832)
+# WERKZEUG, DAMIT ZAHLEN-FRAGEN OHNE SCREENSHOT GEHEN (Nutzer 05.11.2026:
+# "kannst du das alles nicht selber Simulieren? muss ich davon immer
+# screenshots machen" -> "ja natuerlich").
+# `export_sim_daten.py` holt Preise, Skills, Strukturen und Plaene in EINE
+# Datei, `sim_plan.py` rechnet damit. Hier wird geprueft, was ZUGESAGT
+# wurde: keine Geheimnisse im Export, und das Werkzeug rechnet wie das
+# Fenster (sonst waere es selbst eine zweite Wahrheit, Arbeitsregel 9).
+try:
+    _wz832 = os.path.join(_ROOT, "werkzeuge")
+    _exp832 = open(os.path.join(_wz832, "export_sim_daten.py"),
+                   encoding="utf-8").read()
+    _sim832 = open(os.path.join(_wz832, "sim_plan.py"), encoding="utf-8").read()
+    # Beide muessen gueltiges Python sein - ein Werkzeug, das nicht startet,
+    # ist schlimmer als keines.
+    import ast as _a832
+    _a832.parse(_exp832)
+    _a832.parse(_sim832)
+    check("aa832 beide Werkzeuge sind gueltiges Python", True)
+    # (1) WHITELIST, NICHT AUSSCHLUSSLISTE: eine Ausschlussliste vergisst
+    #     irgendwann einen neuen Schluessel.
+    check("aa832 der Export nutzt eine Whitelist", "SETTINGS_WEISS = (" in _exp832)
+    _ws832 = None
+    for _n832 in _a832.walk(_a832.parse(_exp832)):
+        if (isinstance(_n832, _a832.Assign)
+                and getattr(_n832.targets[0], "id", "") == "SETTINGS_WEISS"):
+            _ws832 = [x.value for x in _n832.value.elts]
+    check("aa832 die Whitelist ist auslesbar", bool(_ws832))
+    # (2) KEINE GEHEIMNISSE. Die Zusage an den Nutzer lautet: keine Token,
+    #     keine Charakternamen, kein Handelsjournal.
+    for _bad832 in ("token", "secret", "passwor", "journal", "transaction",
+                    "wallet", "balance"):
+        _treffer = [k for k in (_ws832 or []) if _bad832 in k.lower()]
+        check(f"aa832 nichts mit {_bad832!r} in der Whitelist ({_treffer})",
+              not _treffer)
+    check("aa832 der Export liest keine Token-Datei",
+          "tokens" not in _exp832.lower().replace("keine token", ""))
+    check("aa832 der Export liest das Handelsjournal nicht",
+          "FROM transactions" not in _exp832 and "wallet" not in _exp832.lower())
+    # (3) DAS WERKZEUG RECHNET WIE DAS FENSTER: dieselbe Relic-Vorwahl
+    #     (emm830) und dieselbe Quellen-Stelle (emm826).
+    check("aa832 sim_plan nutzt die Relic-Vorwahl des Fensters",
+          "industry.beste_relic_quellen(recipes, runs, pm.get, o)" in _sim832)
+    check("aa832 sim_plan nutzt die EINE Quellen-Stelle",
+          "industry.invention_quelle_fuer_bp(bp_id, recipes, o)" in _sim832)
+    check("aa832 sim_plan rechnet ueber production_plan, nicht selbst",
+          "industry.production_plan(tid, menge, pm.get, recipes, o)" in _sim832)
+    # (4) EHRLICH BEI LUECKEN (Regel 1): fehlende Preise und fehlende
+    #     Adjusted Prices muessen DASTEHEN, nicht stillschweigend 0 sein.
+    check("aa832 es warnt bei Einkaufsposten ohne Preis",
+          "Einkaufsposten ohne Preis" in _sim832)
+    check("aa832 es warnt, wenn die Adjusted Prices fehlen",
+          "keine Adjusted Prices im Export" in _sim832)
+    # (5) Die beiden .bat wie alle anderen: CRLF und reines ASCII.
+    for _b832 in ("export_sim_daten.bat", "sim_plan.bat"):
+        _roh832 = open(os.path.join(_wz832, _b832), "rb").read()
+        check(f"aa832 werkzeuge{os.sep}{_b832}: CRLF",
+              b"\r\n" in _roh832 and b"\n" not in _roh832.replace(b"\r\n", b""))
+        check(f"aa832 werkzeuge{os.sep}{_b832}: reines ASCII",
+              all(c < 128 for c in _roh832))
+except Exception as _e832:                               # pragma: no cover
+    import traceback as _tb832
+    _fail.append(f"aa832 Sim-Werkzeug: {type(_e832).__name__}: {_e832} | "
+                 + _tb832.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa834)
+# AUGENFREUNDLICHE FARBEN - DIE ZIELWERTE FESTGEHALTEN (emm834).
+# Ein Nutzer mit 4K-Monitor meldete ueber Discord, dass ihm von den Farben
+# die Augen weh tun. GEMESSEN statt geschaetzt: TEXT stand auf 17:1 (fuer
+# dunkle Oberflaechen gelten 7-12:1 als angenehm - darueber "blutet" Weiss
+# aus), BG auf 0,40 % Leuchtdichte (praktisch Schwarz, die Pupille weitet
+# sich), CYAN/AMBER auf 73/75 % Saettigung. RED hatte UMGEKEHRT zu wenig:
+# 4,1:1 auf PANEL, unter der Lesbarkeitsschwelle.
+# Diese Pruefung haelt die Zielwerte fest, damit niemand sie beim naechsten
+# Farbwunsch versehentlich zurueckdreht - in BEIDE Richtungen.
+try:
+    from eve_trader.ui import theme as _th834
+
+    def _lum834(h):
+        h = h.lstrip("#")
+        c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        c = [(x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4)
+             for x in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    def _k834(a, b):
+        la, lb = _lum834(a), _lum834(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+    def _sat834(h):
+        h = h.lstrip("#")
+        r, g, b = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        mx, mn = max(r, g, b), min(r, g, b)
+        return 0 if mx == 0 else (mx - mn) / mx
+
+    _bg834, _pa834 = _th834.BG, _th834.PANEL
+    # (1) KEIN BLENDEN: nichts darf heller als 12:1 gegen den Grund stehen.
+    #     Genau daran lag die Augenermuedung.
+    for _n834 in ("TEXT", "CYAN", "AMBER", "GREEN", "GREEN_BRIGHT", "MUTED",
+                  "RED", "VIOLET", "CYAN_RUN", "BLUE"):
+        _c834 = getattr(_th834, _n834)
+        _kk834 = _k834(_c834, _bg834)
+        check(f"aa834 {_n834} blendet nicht ({_kk834:.1f}:1 <= 12)",
+              _kk834 <= 12.0)
+    # (2) ABER AUCH LESBAR: Flaechenfarben >= 4,5:1 auf der Karte (WCAG AA).
+    for _n834 in ("TEXT", "MUTED", "CYAN", "AMBER", "GREEN", "RED",
+                  "VIOLET", "CYAN_RUN", "BLUE"):
+        _c834 = getattr(_th834, _n834)
+        _kk834 = _k834(_c834, _pa834)
+        check(f"aa834 {_n834} ist auf Karten lesbar ({_kk834:.1f}:1 >= 4.5)",
+              _kk834 >= 4.5)
+    # (3) NICHT ZU GESAETTIGT: ueber ~65 % flimmern Farben auf dunklem Grund.
+    for _n834 in ("CYAN", "AMBER", "RED", "GREEN", "CYAN_RUN", "BLUE"):
+        _s834 = _sat834(getattr(_th834, _n834))
+        check(f"aa834 {_n834} ist nicht uebersaettigt ({_s834 * 100:.0f} % <= 65)",
+              _s834 <= 0.65)
+    # (4) DER GRUND IST NICHT MEHR FAST-SCHWARZ (Pupillenweitung).
+    check(f"aa834 der Hintergrund ist angehoben "
+          f"({_lum834(_bg834) * 100:.2f} % >= 0.55)",
+          _lum834(_bg834) * 100 >= 0.55)
+    # (5) DIE LOGO-TOENE BLEIBEN KRAEFTIG - Markenzeichen, keine Lesefarbe.
+    eq("aa834 das Logo-Gold bleibt unveraendert", _th834.GOLD, "#F2A23C")
+    eq("aa834 der Symbol-Grundton bleibt unveraendert", _th834.ICON, "#C9A06A")
+    # (6) Und die Stufen bleiben unterscheidbar: Karte heller als Grund,
+    #     "laeuft gerade" heller als Karte.
+    check("aa834 PANEL ist heller als BG",
+          _lum834(_th834.PANEL) > _lum834(_th834.BG))
+    check("aa834 PANEL_HELL ist heller als PANEL",
+          _lum834(_th834.PANEL_HELL) > _lum834(_th834.PANEL))
+    check("aa834 PANEL2 liegt dazwischen",
+          _lum834(_th834.BG) < _lum834(_th834.PANEL2) < _lum834(_th834.PANEL))
+except Exception as _e834:                               # pragma: no cover
+    import traceback as _tb834
+    _fail.append(f"aa834 Theme-Kontraste: {type(_e834).__name__}: {_e834} | "
+                 + _tb834.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa835)
+# OBERFLAECHEN-SKALIERUNG (emm835). Dieselbe Discord-Meldung wie emm834:
+# 4K-Monitor, Schrift zu klein. GEMESSEN: im Code stecken 1267 feste Masse
+# (281 Schriftgroessen, 239 Abstaende, 237 Raender, 138 Mindestbreiten,
+# 76 feste Breiten, 26 Spaltenbreiten ...). Einzeln umstellen waere
+# Wochenarbeit mit hohem Risiko - Qt skaliert alles gemeinsam, wenn
+# QT_SCALE_FACTOR VOR der QApplication steht (an einem echten Fenster
+# nachgemessen: 380x230 bei 100 %, 570x345 bei 150 %; auch krumme Stufen
+# rendern sauber).
+# Diese Pruefung haelt die drei Dinge fest, an denen es scheitern wuerde.
+try:
+    import eve_trader.__main__ as _mainmod835
+    import inspect as _ins835
+    _m835 = _ins835.getsource(_mainmod835.main)
+    # (1) DIE REIHENFOLGE IST ALLES: nach der QApplication liest Qt die
+    #     Variable nicht mehr - die Einstellung waere dann wirkungslos.
+    _i_setz835 = _m835.find('os.environ["QT_SCALE_FACTOR"]')
+    _i_app835 = _m835.find("app = QApplication(sys.argv)")
+    check("aa835 der Start setzt den Skalierungsfaktor", _i_setz835 > 0)
+    check("aa835 ... und zwar VOR der QApplication",
+          0 < _i_setz835 < _i_app835)
+    # (2) EINE VON HAND GESETZTE VARIABLE GEWINNT (Diagnose/Sonderfall).
+    check("aa835 eine gesetzte Umgebungsvariable wird nicht ueberschrieben",
+          'if not os.environ.get("QT_SCALE_FACTOR"):' in _m835)
+    # (3) NUR VERGROESSERN. Verkleinern waere eine Falle - Text unter der
+    #     Lesbarkeit, und der Nutzer kaeme an die Einstellung nicht mehr
+    #     heran, um es zurueckzudrehen.
+    check("aa835 nur Werte ueber 100 % wirken", "if 1.0 < _skal <= 3.0:" in _m835)
+    # (4) Eine kaputte Einstellung darf den Start nie kosten.
+    check("aa835 ein Fehler beim Lesen bleibt folgenlos",
+          "except Exception:\n            pass          # eine kaputte Einstellung"
+          in _m835)
+    # (5) Der Standardwert steht in der Konfiguration.
+    from eve_trader import config as _cfg835
+    eq("aa835 Standard ist unveraendert (1.0)",
+       float(_cfg835.DEFAULT_SETTINGS.get("ui_scale", 0)), 1.0)
+    # (6) Das Auswahlfeld: KEIN Regler (es gibt keine Live-Vorschau), feste
+    #     Stufen, und der Neustart-Hinweis NUR bei Aenderung.
+    _bst835 = _fn_src("_build_settings_tab")
+    check("aa835 die Groesse ist ein Auswahlfeld, kein Regler",
+          "self.s_scale = QComboBox()" in _bst835)
+    check("aa835 es bietet feste Stufen an",
+          "for _pz in (100, 110, 125, 150, 175, 200):" in _bst835)
+    check("aa835 die Zeile steht in den Einstellungen",
+          't("Interface size"), self.s_scale' in _bst835)
+    check("aa835 der Tooltip nennt den Neustart",
+          "Takes effect after a RESTART" in _bst835)
+    check("aa835 ... und dass es zur Windows-Skalierung HINZUkommt",
+          "added ON TOP of your Windows display scaling" in _bst835)
+    _save835 = _src_txt
+    check("aa835 der Wert wird gespeichert",
+          '"ui_scale": float(self.s_scale.currentData() or 1.0),' in _save835)
+    check("aa835 der Neustart-Hinweis kommt nur bei Aenderung",
+          "- float(_skal_vorher)) > 1e-9:" in _save835)
+    # (7) Beide neuen Anzeigetexte im Katalog (Regel 6).
+    from eve_trader import sprache as _spr835
+    _kat835 = _spr835.KATALOG.get("de", {})
+    # Der Hinweis gehoert seit emm837 wieder ALLEIN der Groesse: die
+    # Farbwelt wechselt seither sofort und braucht keinen Neustart mehr.
+    for _t835 in ("Interface size",
+                  "The new interface size takes effect after you restart "
+                  "Eve MoMa."):
+        check(f"aa835 im Katalog: {_t835[:40]}", _t835 in _kat835)
+except Exception as _e835:                               # pragma: no cover
+    import traceback as _tb835
+    _fail.append(f"aa835 Skalierung: {type(_e835).__name__}: {_e835} | "
+                 + _tb835.format_exc().splitlines()[-3].strip())
+
+
+# ================================================================= (aa836)
+# THEME-WAHL. Zweiter Teil der Discord-Meldung vom 05.11.2026 ("die Augen
+# tun weh"): emm834 hat die EINE Farbwelt gemessen entschaerft, emm836
+# stellt mehrere zur Wahl.
+#
+# WAS HIER GEPRUEFT WIRD UND WARUM GERADE DAS: ein Theme ist nicht "ein
+# Satz anderer Zahlen". Es ist erst dann eins, wenn es DIESELBEN
+# Lesbarkeits-Zusagen haelt wie die Vorgabe. Eine Pruefung, die nur
+# nachzaehlt, dass drei Themes dastehen, waere blind gegen genau den
+# Fehler, der die Meldung ausgeloest hat - eine Farbkombination, die man
+# nicht lesen kann. Darum wird JEDES Theme DURCHGERECHNET, nicht nur die
+# Vorgabe.
+try:
+    from eve_trader.ui import theme as _th836
+
+    def _lum836(h):
+        """WCAG-Leuchtdichte eines #rrggbb-Werts."""
+        _h = str(h).lstrip("#")
+        _w = []
+        for _i in (0, 2, 4):
+            _c = int(_h[_i:_i + 2], 16) / 255.0
+            _w.append(_c / 12.92 if _c <= 0.03928
+                      else ((_c + 0.055) / 1.055) ** 2.4)
+        return 0.2126 * _w[0] + 0.7152 * _w[1] + 0.0722 * _w[2]
+
+    def _kon836(a, b):
+        _la, _lb = _lum836(a), _lum836(b)
+        return (max(_la, _lb) + 0.05) / (min(_la, _lb) + 0.05)
+
+    def _abst836(a, b):
+        return sum((int(a[_i:_i + 2], 16) - int(b[_i:_i + 2], 16)) ** 2
+                   for _i in (1, 3, 5)) ** 0.5
+
+    # (1) KEINE WAISEN in beide Richtungen. Ein Theme, das in THEMES steht
+    # aber nicht in theme_namen(), kann niemand waehlen; eins, das nur im
+    # Auswahlfeld steht, faellt beim Waehlen stumm auf die Vorgabe zurueck.
+    _namen836 = dict(_th836.theme_namen())
+    eq("aa836 jedes Theme ist waehlbar",
+       sorted(set(_th836.THEMES) - set(_namen836)), [])
+    eq("aa836 jedes waehlbare Theme gibt es auch",
+       sorted(set(_namen836) - set(_th836.THEMES)), [])
+    check("aa836 die Vorgabe ist eines davon",
+          _th836.THEME_VORGABE in _th836.THEMES)
+    # Die Vorgabe traegt KEINE eigenen Werte: ihre Zahlen stehen als
+    # Literale oben in theme.py, damit die Begruendungen (emm834 und
+    # frueher) dort bleiben, wo die Zahl steht. Stuenden sie doppelt, waere
+    # eine der beiden Stellen irgendwann falsch (Arbeitsregel 9).
+    eq("aa836 die Vorgabe steht nur an EINER Stelle",
+       _th836.THEMES[_th836.THEME_VORGABE], {})
+
+    # (2) JEDES THEME WIRD DURCHGERECHNET. Die Zielwerte sind dieselben,
+    # die emm834 fuer die Vorgabe gemessen hat.
+    for _tk836 in sorted(_th836.THEMES):
+        _w836 = _th836.THEMES[_tk836]
+
+        def _f836(name, _w=_w836):
+            """Der Wert des Themes - oder der geerbte der Vorgabe."""
+            return _w.get(name, getattr(_th836, name))
+
+        _bg, _pan = _f836("BG"), _f836("PANEL")
+        _hell836 = _lum836(_bg) > 0.5
+        # TEXT: unter 7:1 schlecht lesbar, ueber 15:1 blendet es auf
+        # dunklem Grund (Halation - genau der Befund aus emm834).
+        for _grund, _gn in ((_bg, "Grund"), (_pan, "Panel")):
+            _k = _kon836(_f836("TEXT"), _grund)
+            check(f"aa836 {_tk836}: Text auf {_gn} lesbar ohne zu blenden "
+                  f"({_k:.1f}:1)", 7.0 <= _k <= 15.0)
+        # Nebentext und jede Akzentfarbe muessen die Lesbarkeitsschwelle
+        # halten - RED stand bei der Vorgabe einmal DARUNTER (emm834).
+        for _n836 in ("MUTED", "CYAN", "AMBER", "RED", "GREEN",
+                      "GREEN_BRIGHT", "VIOLET", "CYAN_RUN", "BLUE"):
+            _k = _kon836(_f836(_n836), _pan)
+            check(f"aa836 {_tk836}: {_n836} auf Panel lesbar ({_k:.1f}:1)",
+                  _k >= 4.5)
+        # Flaechen muessen sich voneinander abheben, sonst ist die
+        # Tiefenstaffelung nur behauptet.
+        check(f"aa836 {_tk836}: Panel hebt sich vom Grund ab",
+              _kon836(_pan, _bg) >= 1.17)
+        check(f"aa836 {_tk836}: die Kante ist sichtbar",
+              _kon836(_f836("BORDER"), _pan) >= 1.8)
+        check(f"aa836 {_tk836}: laufende Karten sind eine Stufe abgesetzt",
+              _kon836(_f836("PANEL_HELL"), _pan) >= 1.15)
+        # Beschriftung AUF einer Akzentflaeche (Primary-Knopf,
+        # Fortschrittsbalken) - die war bei der Vorgabe schon einmal
+        # matschig (Sitzung 8, "Aktualisierungsbutton hat
+        # Kontrastprobleme").
+        for _fill, _auf in (("CYAN_FILL", "CYAN_ON_FILL"),
+                            ("GREEN_FILL", "GREEN_ON_FILL")):
+            _k = _kon836(_f836(_auf), _f836(_fill))
+            check(f"aa836 {_tk836}: Schrift auf {_fill} lesbar ({_k:.1f}:1)",
+                  _k >= 4.5)
+
+        # (3) DIE ACHT PLANFARBEN, mit der Messlatte von aa402 - aber
+        # RICHTUNGSUNABHAENGIG formuliert. aa402 prueft "nicht dunkler als
+        # das beanstandete Blau"; das gilt nur auf dunklem Grund. Auf
+        # hellem Grund waere dieselbe Forderung GENAU VERKEHRT - dort
+        # verschwindet ein heller Ton. Gemeint war immer: die Farbe muss
+        # sich von der Flaeche abheben, auf der sie liegt.
+        _pf836 = _f836("PLAN_FARBEN")
+        for _k836, _v836 in sorted(_pf836.items()):
+            check(f"aa836 {_tk836}: Planfarbe {_k836} hebt sich vom Panel ab",
+                  _kon836(_v836, _pan) >= 4.0)
+        # Rot und Gruen sind besetzt (Verlust/Gewinn) - keine Planfarbe
+        # darf ihnen nahekommen, sonst liest sich eine Karte wie eine
+        # Verlustmeldung. Genau hier sind beim Entwurf von "graphit" zwei
+        # entsaettigte Signalfarben durchgefallen; sie erben jetzt.
+        for _sig836 in ("RED", "GREEN", "GREEN_BRIGHT"):
+            _nah836 = sorted(_k for _k, _v in _pf836.items()
+                             if _abst836(_v, _f836(_sig836)) < 70)
+            eq(f"aa836 {_tk836}: keine Planfarbe kommt {_sig836} zu nahe",
+               _nah836, [])
+        _paare836 = [(_a, _b) for _i, _a in enumerate(sorted(_pf836))
+                     for _b in sorted(_pf836)[_i + 1:]
+                     if _abst836(_pf836[_a], _pf836[_b]) < 40]
+        eq(f"aa836 {_tk836}: die acht sind untereinander unterscheidbar",
+           _paare836, [])
+        # Die Runplaner-Stufen bedeuten Verschiedenes und muessen
+        # auseinanderzuhalten sein. Beim Entsaettigen von "graphit" waren
+        # CYAN_RUN und BLUE auf 22 Punkte zusammengerueckt (Vorgabe: 31).
+        for _a836, _b836 in (("CYAN", "CYAN_RUN"), ("CYAN_RUN", "BLUE"),
+                             ("VIOLET", "BLUE"), ("CYAN", "BLUE")):
+            _d836 = _abst836(_f836(_a836), _f836(_b836))
+            check(f"aa836 {_tk836}: {_a836} und {_b836} unterscheidbar "
+                  f"({_d836:.0f})", _d836 >= 30)
+
+    # (3b) UND JETZT DIE WIRKUNGSPROBE: WIRD DAS THEME UEBERHAUPT
+    # ANGEWENDET? Alles oben liest die THEMES-TABELLE - das sagt nur, dass
+    # die Zahlen gut sind, nicht dass sie je im Programm ankommen. Die
+    # Rotprobe hat das bewiesen: eine Mutation, die die Anwendung
+    # lahmlegt (`for ... in {}.items()`), lief durch ALLE obigen
+    # Pruefungen gruen hindurch. Das ist derselbe Fehlertyp, der in
+    # dieser Sitzung schon viermal BLIND gefallen ist.
+    # EIGENER PROZESS, weil das Theme beim IMPORT von theme.py festliegt -
+    # diese Suite selbst laeuft mit der Vorgabe, und ein zweites Mal
+    # importieren bringt dasselbe Modul zurueck.
+    import subprocess as _sp836
+    _probe836 = (
+        "from eve_trader.ui import theme as T;"
+        "print(T.THEME_AKTIV, T.BG, T.PANEL,"
+        " T.THEMES['graphit']['BG'] in T.QSS,"
+        " T.THEMES['caldari'].get('BG', '#0C1424') in T.QSS)")
+    _um836 = dict(os.environ, EVE_MOMA_THEME="graphit")
+    _aus836 = _sp836.run([sys.executable, "-c", _probe836],
+                         capture_output=True, text=True, env=_um836,
+                         cwd=os.getcwd(), timeout=120)
+    _teile836 = (_aus836.stdout or "").split()
+    check("aa836 ein gewaehltes Theme kommt wirklich an (eigener Start)",
+          len(_teile836) == 5 and _teile836[0] == "graphit"
+          and _teile836[1] == _th836.THEMES["graphit"]["BG"]
+          and _teile836[2] == _th836.THEMES["graphit"]["PANEL"],
+          )
+    # ... und das Stylesheet, das Qt bekommt, traegt die neuen Farben -
+    # nicht die der Vorgabe. Ohne diese Haelfte waere ein Theme denkbar,
+    # das die Konstanten umlegt, waehrend das QSS schon gebaut ist.
+    check("aa836 das Stylesheet traegt die Farben des gewaehlten Themes",
+          len(_teile836) == 5 and _teile836[3] == "True"
+          and _teile836[4] == "False")
+
+    # (4) HELL WIRD GEMESSEN, NICHT GEPFLEGT. Stuende es als Schalter im
+    # Theme, haette das erste vergessene Kreuz ein helles Theme mit
+    # Aufhellungs-Schleiern - also unsichtbaren Fortschrittsbalken.
+    _qu836 = open("eve_trader/ui/theme.py", encoding="utf-8").read()
+    # Die Zeile ist in emm837 in `_theme_anwenden()` gewandert, damit
+    # sie bei JEDEM Wechsel neu faellt und nicht nur beim Start.
+    check("aa836 hell faellt aus dem Hintergrund, es steht nirgends",
+          'globals()["THEME_HELL"] = _leuchtdichte(globals()["BG"]) > 0.5'
+          in _qu836)
+    check("aa836 der Schleier dreht die Richtung bei hellem Grund",
+          'f"rgba(0,0,0,{alpha})" if THEME_HELL' in _qu836)
+    # Der Vorhang bleibt dunkel - und zwar begruendet, nicht vergessen.
+    check("aa836 der Vorhang dunkelt in jedem Theme ab",
+          "BLEIBT IN JEDEM THEME DUNKEL" in _qu836)
+
+    # (5) KEIN FESTES rgba MEHR IM PROGRAMM. Das war der eigentliche
+    # Grund, warum Themes vorher nicht gehen konnten: rund 45 Stellen
+    # hatten die Akzentfarben als Zahlen eingetippt - und trugen noch das
+    # Cyan/Amber von VOR emm834, weil sie nicht wie Farbkonstanten
+    # aussehen. Diese Pruefung haelt sie draussen.
+    import glob as _gl836
+    import re as _re836
+    _suender836 = []
+    for _d836 in sorted(_gl836.glob("eve_trader/**/*.py", recursive=True)):
+        if _d836.replace("\\", "/").endswith("ui/theme.py"):
+            continue
+        for _nr836, _z836 in enumerate(
+                open(_d836, encoding="utf-8").read().splitlines(), 1):
+            if _re836.search(r"rgba\(\s*\d", _z836):
+                _suender836.append(f"{_d836}:{_nr836}")
+    eq("aa836 keine fest eingetippte Farbe ausserhalb des Themes",
+       _suender836, [])
+    # Die beiden Wege, die es stattdessen gibt, muessen das auch leisten.
+    check("aa836 toenung baut die Farbe aus dem Theme",
+          _th836.toenung("#1A2B3C", 0.25) == "rgba(26,43,60,0.25)")
+    check("aa836 toenung folgt dem AKTUELLEN Akzent",
+          _th836.toenung(_th836.AMBER, 0.4).startswith(
+              "rgba(" + str(int(str(_th836.AMBER).lstrip("#")[0:2], 16))))
+
+    # (6) EINE KAPUTTE EINSTELLUNG DARF DEN START NIE KOSTEN, und ein
+    # unbekannter Name faellt auf die Vorgabe zurueck statt auf nichts.
+    _fn836 = _fn_src("aktives_theme")
+    check("aa836 ein unbekanntes Theme faellt auf die Vorgabe zurueck",
+          "return _wahl if _wahl in THEMES else THEME_VORGABE" in _fn836)
+    check("aa836 eine kaputte Einstellung wird verschluckt",
+          "except Exception:" in _fn836)
+
+    # (7) DER BESTANDSFEHLER, der beim Umbau aufgefallen ist: in
+    # mw_bauplan_fenster standen Qt-Stilvorlagen als NICHT-f-Strings mit
+    # verdoppelten Klammern. Qt bekam dadurch "QTableWidget{{...}}" und
+    # verwarf die ganze Vorlage - NACHGEMESSEN an einem echten Widget:
+    # mit {{ }} blieb frameWidth auf 1, mit { } ging es auf 0, "border:
+    # none" griff also nur im zweiten Fall.
+    _bf836 = open("eve_trader/ui/mw_bauplan_fenster.py",
+                  encoding="utf-8").read()
+    _doppelt836 = [_z for _z in _bf836.splitlines()
+                   if '"QTableWidget{{' in _z and not _z.lstrip().startswith("f")]
+    eq("aa836 keine Stilvorlage mit doppelten Klammern ohne f-String",
+       _doppelt836, [])
+
+    # (8) DIE EINSTELLUNG. Das Auswahlfeld speist sich aus theme_namen() -
+    # wer dort ein Theme eintraegt, hat es im Fenster, ohne main_window
+    # anzufassen (Arbeitsregel 9).
+    _mw836 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    check("aa836 das Auswahlfeld kommt aus der EINEN Liste",
+          "for _tk, _tn in theme.theme_namen():" in _mw836)
+    check("aa836 der Wert wird gespeichert",
+          '"ui_theme": str(self.s_theme.currentData()' in _mw836)
+    check("aa836 die Zeile steht in den Einstellungen",
+          '(t("Colour theme"), self.s_theme),' in _mw836)
+    # Seit emm837 wechselt die Farbwelt SOFORT - sie darf gar nicht mehr
+    # in einer Neustart-Meldung auftauchen.
+    check("aa836 die Farbwelt verlangt keinen Neustart mehr",
+          "Colour theme" not in _mw836.split("def _save_settings")[-1]
+          .split("takes effect after you restart")[0][-600:]
+          or "_neustart" not in _mw836)
+    from eve_trader import config as _cfg836
+    check("aa836 die Vorgabe steht in den Standard-Einstellungen",
+          _cfg836.DEFAULT_SETTINGS.get("ui_theme") == _th836.THEME_VORGABE)
+    # (9) Jeder Anzeigetext zweisprachig (Arbeitsregel 6) - auch die
+    # Theme-NAMEN, die durch t() gehen.
+    from eve_trader import sprache as _spr836
+    _kat836 = _spr836.KATALOG.get("de", {})
+    for _t836 in ["Colour theme"] + [_n for _, _n in _th836.theme_namen()]:
+        check(f"aa836 im Katalog: {_t836[:40]}", _t836 in _kat836)
+except Exception as _e836:                               # pragma: no cover
+    import traceback as _tb836
+    _fail.append(f"aa836 Theme-Wahl: {type(_e836).__name__}: {_e836} | "
+                 + _tb836.format_exc().splitlines()[-3].strip())
+
+# ================================================================= (aa837)
+# THEME-WECHSEL IM BETRIEB. Nutzer am 05.11.2026: "theme wechseln braucht
+# einen restart, kann man das nicht direkt aendern bitte".
+#
+# DIE PRUEFUNGEN SIND BEWUSST WIRKUNGSPROBEN. Einen Tag zuvor ist aa836
+# genau hier BLIND gefallen: es las die THEMES-Tabelle und merkte nicht,
+# dass die Werte nie ankommen. Was unten steht, ruft deshalb auf und
+# misst das Ergebnis, statt Quelltext zu lesen.
+try:
+    from eve_trader.ui import theme as _th837
+
+    _start837 = _th837.THEME_AKTIV
+    try:
+        # (1) HIN UND ZURUECK. Der Rueckweg ist der eigentliche Test: er
+        # geht nur, wenn die Vorgabe-Werte VOR dem ersten Theme gesichert
+        # wurden. Ohne das erbt ein Theme stumm die Farben des vorigen,
+        # sobald es eine Farbe nicht selbst setzt.
+        _th837.umschalten("graphit")
+        _bg_g837 = _th837.BG
+        _th837.umschalten("caldari")
+        eq("aa837 der Rueckweg stellt die Vorgabe wieder her",
+           _th837.BG, _th837._VORGABE_WERTE["BG"])
+        check("aa837 der Hinweg aendert ueberhaupt etwas",
+              _bg_g837 == _th837.THEMES["graphit"]["BG"]
+              and _bg_g837 != _th837.BG)
+
+        # (2) DAS STYLESHEET WIRD NEU GEBAUT, nicht nur die Konstanten.
+        # Ohne das bliebe die ganze Oberflaeche in den alten Farben -
+        # genau der Fall, den der Nutzer gemeldet hat.
+        _th837.umschalten("graphit")
+        check("aa837 das Stylesheet traegt danach die neuen Farben",
+              _th837.THEMES["graphit"]["BG"] in _th837.QSS
+              and _th837._VORGABE_WERTE["BG"] not in _th837.QSS)
+        # Und die abgeleiteten Paletten ziehen mit - sie werden aus den
+        # Farben gebaut und waeren sonst im alten Theme eingefroren.
+        check("aa837 die Farbpaletten ziehen mit",
+              _th837.CHART_PALETTE[0] == _th837.CYAN
+              and _th837.TIER_PALETTE[0] == _th837.AMBER)
+
+        # (3) EIN WECHSEL AUF DAS GLEICHE THEME TUT NICHTS. Sonst baute
+        # jedes Speichern der Einstellungen das Stylesheet neu und faerbte
+        # alle Widgets durch - Arbeit und Flackern ohne Anlass.
+        eq("aa837 derselbe Name aendert nichts", _th837.umschalten("graphit"), {})
+        eq("aa837 ein unbekannter Name aendert nichts",
+           _th837.umschalten("gibtsnicht"), {})
+
+        # (4) DIE FARBPAARE, mit denen die eigenen Stilvorlagen der
+        # Widgets umgefaerbt werden. ZWEI SCHREIBWEISEN JE FARBE: im
+        # Stylesheet steht eine Farbe mal als "#D9A057", mal - durch
+        # toenung() - als "217,160,87" in einem rgba(). Wer nur die
+        # Hex-Form taeuscht, laesst jeden Schleier in der alten Farbe.
+        _th837.umschalten("caldari")
+        _p837 = _th837.umschalten("tageslicht")
+        check("aa837 der Wechsel liefert Farbpaare", len(_p837) >= 20)
+        _amber_alt = _th837._VORGABE_WERTE["AMBER"]
+        check("aa837 die Paare enthalten die Hex-Schreibweise",
+              _amber_alt in _p837)
+        _rgb_alt = ",".join(str(int(_amber_alt[_i:_i + 2], 16))
+                            for _i in (1, 3, 5))
+        check("aa837 die Paare enthalten auch die rgb-Schreibweise",
+              _rgb_alt in _p837)
+        # DER SCHLEIER DREHT MIT. Er ist keine Theme-Farbe, sondern Weiss
+        # bzw. Schwarz je nach Grund - und faellt deshalb durch das Raster
+        # der Farbpaare. GEMESSEN: ohne ihn blieb beim Wechsel ins helle
+        # Theme die Rinne des Fortschrittsbalkens weiss stehen (2,64 % der
+        # Bildflaeche, im Bildvergleich gefunden, nicht im Code).
+        check("aa837 beim Wechsel der Grundhelligkeit dreht der Schleier",
+              _p837.get("rgba(255,255,255,") == "rgba(0,0,0,")
+        _p837b = _th837.umschalten("caldari")
+        check("aa837 und zurueck in die andere Richtung",
+              _p837b.get("rgba(0,0,0,") == "rgba(255,255,255,")
+        # Zwischen zwei DUNKLEN Themes darf er NICHT drehen.
+        _p837c = _th837.umschalten("graphit")
+        check("aa837 zwischen zwei dunklen Themes dreht er nicht",
+              "rgba(255,255,255," not in _p837c
+              and "rgba(0,0,0," not in _p837c)
+
+        # (5) WIRKUNGSPROBE AN ECHTEN WIDGETS: eine Stilvorlage, wie der
+        # Code sie setzt, muss nach dem Umfaerben die neuen Farben tragen.
+        try:
+            from PySide6.QtWidgets import QApplication as _QA837, QLabel, QWidget
+            if _QA837.instance() is None:
+                _QA837([])
+            _th837.umschalten("caldari")
+            _wz837 = QWidget()
+            _lb837 = QLabel(_wz837)
+            _lb837.setStyleSheet(
+                f"color:{_th837.AMBER}; background:"
+                f"{_th837.toenung(_th837.AMBER, 0.14)};")
+            _alt837 = _lb837.styleSheet()
+            _pp837 = _th837.umschalten("tageslicht")
+            _n837 = _th837.stile_nachziehen(_wz837, _pp837)
+            check("aa837 ein Widget mit eigenem Stil wird umgefaerbt",
+                  _n837 >= 1 and _lb837.styleSheet() != _alt837)
+            check("aa837 die Hex-Farbe im Widget-Stil ist die neue",
+                  _th837.AMBER in _lb837.styleSheet()
+                  and _th837._VORGABE_WERTE["AMBER"]
+                  not in _lb837.styleSheet())
+            # DIE TOENUNG IST DER EIGENTLICHE PRUEFSTEIN: sie steht als
+            # rgb-Tripel da und wird von einer reinen Hex-Ersetzung
+            # uebersehen.
+            check("aa837 auch die rgba-Toenung im Widget-Stil ist neu",
+                  _th837.toenung(_th837.AMBER, 0.14) in _lb837.styleSheet())
+            eq("aa837 ohne Paare wird nichts angefasst",
+               _th837.stile_nachziehen(_wz837, {}), 0)
+        except ImportError:                              # pragma: no cover
+            pass
+
+        # (6) DIE EINSTELLUNG RUFT ALLE DREI SCHRITTE AUF. Fehlt einer,
+        # bleibt der Wechsel halb stehen - und zwar lautlos.
+        _mw837 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+        for _was837, _wie837 in (
+                ("legt die Farben um", "_paare = theme.umschalten(_thm_neu)"),
+                ("verteilt das neue Stylesheet",
+                 "_app.setStyleSheet(theme.QSS)"),
+                ("faerbt die eigenen Stile um",
+                 "theme.stile_nachziehen(_w837, _paare)")):
+            check(f"aa837 die Einstellung {_was837}", _wie837 in _mw837)
+        # ALLE Fenster, nicht nur das Hauptfenster: offene Bauplan- und
+        # Multiplan-Fenster haengen nicht darunter und blieben sonst in
+        # den alten Farben stehen.
+        check("aa837 auch offene Nebenfenster werden umgefaerbt",
+              "for _w837 in _app.topLevelWidgets():" in _mw837)
+        # UND DER NEUSTART-HINWEIS GILT NUR NOCH DER GROESSE.
+        check("aa837 die Farbwelt loest keinen Neustart-Hinweis mehr aus",
+              "The new interface size takes effect after you restart"
+              in _mw837)
+        check("aa837 der Tooltip verspricht keinen Neustart mehr",
+              "Colours of the whole interface. Takes effect IMMEDIATELY."
+              in _mw837)
+    finally:
+        _th837.umschalten(_start837)     # die Suite laeuft weiter mit der
+                                         # Vorgabe - sonst saehen alle
+                                         # folgenden Pruefungen andere Farben
+    eq("aa837 die Suite laeuft mit dem Ausgangs-Theme weiter",
+       _th837.THEME_AKTIV, _start837)
+except Exception as _e837:                               # pragma: no cover
+    import traceback as _tb837
+    _fail.append(f"aa837 Theme-Wechsel im Betrieb: {type(_e837).__name__}: "
+                 f"{_e837} | "
+                 + _tb837.format_exc().splitlines()[-3].strip())
+
+# ================================================================= (aa838)
+# HANDELSVOLUMEN UND JITA-RICHTSCHNUR AM STRUKTUR-HUB.
+#
+# DER AUSLOESER (Nutzer, 06.11.2026): Hub auf einer Nullsec-Keepstar, in
+# "Sold/day" standen Zahlen wie 757 - die kamen aus THE FORGE. Sein Satz
+# dazu: "dort kauft es niemand, weil es nicht vorhanden ist, waere die
+# richtige Aussage", und weiter: "Items die es da noch nicht gibt, sind
+# ebenso gut, weil dann waere ich der einzige Anbieter".
+#
+# WAS DIE MESSUNG VORHER ERGAB, und warum die erste Idee verworfen wurde:
+# geplant war eine Schwelle auf die Markttiefe ("weniger als N Stueck im
+# Angebot = kein Markt"). An den echten Daten gemessen war die Tiefe in
+# der Keepstar aber GENAUSO gut wie in Jita (12,4 % der Preise mit
+# hoechstens 2 Stueck gegen 11,2 % in Jita) - eine Mengenschwelle haette
+# in Jita genauso oft zugeschlagen und nichts getrennt. Der echte
+# Unterschied war die ABDECKUNG: 2'352 Items mit Preis gegen 16'810.
+try:
+    import re as _re838
+    _mw838 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    _st838 = open("eve_trader/store.py", encoding="utf-8").read()
+
+    # (1) KEIN STILLER RUECKFALL AUF JITA. Das war der Fehler: stand bei
+    # einer Struktur keine Region, nahm das Programm The Forge - und
+    # lieferte Handelszahlen aus einer Region, in der der Nutzer gar nicht
+    # handelt. Eine Zahl aus der falschen Region ist schlimmer als keine.
+    # NUR ECHTE CODE-ZEILEN, keine Kommentare: die alte Zeile wird in der
+    # Begruendung ueber der neuen woertlich zitiert ("HIER STAND ..."), und
+    # eine blosse Textsuche faellt darauf herein - ist beim Schreiben
+    # dieser Pruefung prompt passiert.
+    _code838 = [_z.strip() for _z in _mw838.splitlines()
+                if not _z.strip().startswith("#")]
+    check("aa838 der Struktur-Scan faellt nicht mehr auf Jita zurueck",
+          not [_z for _z in _code838
+               if 'structure.get("region_id") or config.FORGE_REGION' in _z])
+    check("aa838 die Region wird beim ESI nachgeschlagen",
+          "esi.region_of_system(int(_sys_id))" in _mw838)
+    check("aa838 bleibt sie unbekannt, ist sie None - nicht Jita",
+          "region = int(region) if region else None" in _mw838)
+
+    # (2) UNBEKANNT WIRD ALS 0 FESTGEHALTEN - eine 0 ist ein Wert, den die
+    # Anzeige lesen kann. Ohne sie waere "unbekannt" von "Jita" nicht zu
+    # unterscheiden, sobald es einmal in der Datenbank steht.
+    check("aa838 store schreibt 0 statt einer erfundenen Region",
+          "(str(int(region) if region else 0),)" in _st838)
+    # WIRKUNGSPROBE: get_scan_region darf die 0 NICHT in den Vorgabewert
+    # umdeuten. Genau das tat die alte Fassung (`if row["v"] else default`).
+    import eve_trader.store as _sto838
+    _fn838 = _inspect_getsource(_sto838.get_scan_region) \
+        if "_inspect_getsource" in dir() else None
+    import inspect as _ins838
+    _src838 = _ins838.getsource(_sto838.get_scan_region)
+    check("aa838 eine 0 bleibt 0 und wird nicht zu Jita",
+          'row["v"] == ""' in _src838 and "int(row[\"v\"])" in _src838)
+    check("aa838 nur ein FEHLENDER Eintrag gibt die Vorgabe",
+          "if row is None or row[\"v\"] is None" in _src838)
+
+    # (3) DIE JITA-SPALTE. Sie beantwortet die Frage, die "Sale/unit" an
+    # einem Hub ohne Angebote nicht beantworten kann.
+    check("aa838 die Jita-Preise werden eigens geladen",
+          "store.hub_source(config.FORGE_REGION)" in _mw838
+          and "jita_pm" in _mw838)
+    check("aa838 sie kommen NICHT aus der Hub-Preistabelle",
+          "jita_pm = {int(s0[\"type_id\"])" in _mw838)
+    check("aa838 die Spalte steht im Tabellenkopf",
+          't("Jita sell")' in _mw838)
+    check("aa838 und ist von Haus aus eingeschaltet",
+          "_BP_STD = {6, 8, 10, 11, 16, 17, 18, 22}" in _mw838)
+    # Am Jita-Hub waere sie eine Verdoppelung - dann aus. Aber NUR aus:
+    # wer hier auch einblendet, ueberschreibt die Spaltenwahl des Nutzers
+    # bei jedem Neuladen.
+    check("aa838 am Jita-Hub wird sie ausgeblendet",
+          'if hasattr(self, "bp_table") and res.get("ist_jita"):' in _mw838)
+    check("aa838 sie wird nie von selbst wieder eingeblendet",
+          _mw838.count("self.bp_table.setColumnHidden(22, True)") == 1
+          and "setColumnHidden(22, False)" not in _mw838)
+
+    # (4) KLARTEXT STATT STRICH. Ein Strich liess offen, ob der Preis
+    # fehlt oder das Item nichts taugt - fuer diesen Nutzer ein
+    # entscheidender Unterschied, denn ein Item ohne Anbieter ist seine
+    # Gelegenheit.
+    check("aa838 fehlt das Angebot, steht 'kein Anbieter' statt eines Strichs",
+          'sell_txt = (t("no seller"), -1e18)' in _mw838)
+    # Gewinn und ISK/h bleiben leer - die KANN man ohne Verkaufspreis
+    # nicht ausrechnen, und eine Null waere gelogen.
+    check("aa838 Gewinn bleibt trotzdem leer (eine Null waere gelogen)",
+          "cost_txt = prof_txt = iskh_txt = dash" in _mw838)
+    check("aa838 ohne Region steht 'keine Daten' statt einer Fremdzahl",
+          'elif product_id and not res.get("hist_region"):' in _mw838
+          and '_abs_txt = (t("no data"), -1.0)' in _mw838)
+    # Einmal oben sagen schlaegt 285-mal in Spalten verstecken.
+    check("aa838 die Statuszeile sagt es einmal deutlich",
+          "no trade volume for this hub" in _mw838)
+
+    # (5) JEDER ANZEIGETEXT ZWEISPRACHIG (Arbeitsregel 6).
+    from eve_trader import sprache as _spr838
+    _kat838 = _spr838.KATALOG.get("de", {})
+    for _t838 in ("Jita sell", "no seller", "no data"):
+        check(f"aa838 im Katalog: {_t838}", _t838 in _kat838)
+except Exception as _e838:                               # pragma: no cover
+    import traceback as _tb838
+    _fail.append(f"aa838 Handelsvolumen/Jita: {type(_e838).__name__}: {_e838} | "
+                 + _tb838.format_exc().splitlines()[-3].strip())
+
+# ================================================================= (aa839)
+# ORDERBUCH-PRUEFUNG UND OPTIMIERER BEI MEHREREN EINKAUFS-HUBS.
+# Nutzer 06.11.2026: "Pruefe wie sich bei multihub eingestelltem Bauplan
+# das Tools-> orderbook exakt Fenster verhaelt, baue eine Loesung, evt 2
+# Spalten oder mehrere Spalten fuer Maerkte / und optimal quantity
+# Fenster pruefe funktionalitaet".
+#
+# DER BEFUND WAR: beide Fenster verhielten sich, als gaebe es nur einen
+# Hub. Sie holten `self._active_hub()` - den Hub aus der KOPFLEISTE - und
+# prueften jedes Material dagegen, auch wenn der Plan es woanders kauft.
+# Beim Optimierer war das doppelt schaedlich: er meldete Engpaesse fuer
+# Material, das ueber die Hubs zusammen reichlich da ist, und rechnete
+# die empfohlene Menge dadurch kuenstlich klein.
+try:
+    _opt839 = open("eve_trader/ui/mw_optimizer.py", encoding="utf-8").read()
+
+    # (1) BEIDE FENSTER KENNEN DIE PLAN-HUBS.
+    # emm858: die Weiche wohnt jetzt in _ladder_hubs_jetzt (dynamisch,
+    # bei jedem Calculate) - gleicher Inhalt, neuer Anker.
+    check("aa839 das Orderbuch-Fenster liest die Hubs des Plans",
+          '_an = bool(getattr(self, "_bd_multi_hub_an", False))'
+          in _opt839
+          and "self._bd_buy_hub_locs()" in _opt839)
+    check("aa839 es nimmt die Buecher des Plans statt neu abzurufen",
+          "_books = self._bd_multihub_books() or {}" in _opt839)
+    check("aa839 der Optimierer ebenso",
+          "_mh_books_opt = self._bd_multihub_books() or {}" in _opt839)
+    # (2) DIESELBEN FUNKTIONEN WIE DER PLAN (Arbeitsregel 9) - eine
+    # eigene Aufteilungsrechnung waere eine zweite Wahrheit und wuerde
+    # frueher oder spaeter andere Zahlen zeigen als der Plan selbst.
+    eq("aa839 die Aufteilung kommt aus multihub_leiter",
+       _opt839.count("industry.multihub_leiter("), 2)
+    check("aa839 und aus multihub_split",
+          "industry.multihub_split(" in _opt839)
+    # (3) EINE SPALTE JE HUB - der Wunsch des Nutzers, und noetig, weil
+    # `multihub_split` ein Material AUF MEHRERE Hubs verteilen kann.
+    check("aa839 die Tabelle waechst um eine Spalte je Hub",
+          "tbl = QTableWidget(0, 4 + len(_mh_spalten))" in _opt839)
+    check("aa839 die Hub-Namen stehen im Tabellenkopf",
+          "+ [_n for _, _n in (_mh_hubs if _mh_spalten else [])]" in _opt839)
+    # VOM ENDE GEZAEHLT (emm840): zahlengleich zum frueheren
+    # `2 + len(_mh_spalten)`, aber unabhaengig davon, wie die Breite
+    # zustande kommt. Die Hub-Zellen werden ausserdem nur gesetzt, wenn
+    # sie VOR diesen beiden liegen - sonst ueberschriebe eine Hub-Spalte
+    # die Markup-Spalte, und das faellt nicht auf, weil beides Zahlen
+    # sind.
+    check("aa839 Markup und Status ruecken dahinter",
+          "_sp_n = tbl.columnCount()" in _opt839
+          and "tbl.setItem(i, _sp_n - 2, mk_it)" in _opt839
+          and "tbl.setItem(i, _sp_n - 1, status)" in _opt839)
+    check("aa839 die Hub-Zellen bleiben vor den letzten beiden Spalten",
+          "if 2 + _ci < tbl.columnCount() - 2:" in _opt839)
+    # (4) EHRLICH SAGEN, WOHER DIE ZAHLEN KOMMEN: bei Multi-Hub sind es
+    # die Buecher des letzten Scans, kein frischer Abruf. Ohne das haelt
+    # man eine alte Momentaufnahme fuer den Markt von jetzt.
+    check("aa839 die Zusammenfassung nennt die Quelle",
+          "from the build plan's hub scan" in _opt839)
+    check("aa839 und der Einleitungstext auch",
+          "so the prices come from its last hub scan" in _opt839)
+    # Der Katalog-Scanner kann einen ueber `if ... else` zerrissenen
+    # t()-Aufruf nicht zuordnen - deshalb zwei getrennte Aufrufe.
+    check("aa839 der Beschreibungstext steht in zwei klaren t()-Aufrufen",
+          "_desc_txt = t(" in _opt839
+          and "head_desc = QLabel(_desc_txt)" in _opt839)
+
+    # (5) WIRKUNGSPROBE AN DER AUFTEILUNG SELBST. Das ist der Kern: eine
+    # Leiter ueber zwei Hubs muss den Bedarf dort abtragen, wo er am
+    # billigsten LANDET (Preis + Fracht), und ueber Hubgrenzen hinweg.
+    from eve_trader import industry as _I839
+    _b839 = {"jita": {7: [(100.0, 40), (130.0, 100)]},
+             "amarr": {7: [(110.0, 30), (115.0, 500)]}}
+    _lt839 = _I839.multihub_leiter(_b839, 7, {"jita": 0.0, "amarr": 0.0}, 0.0)
+    eq("aa839 die Leiter ist nach Landepreis sortiert",
+       [round(_p) for _p, _m, _h, _r in _lt839], [100, 110, 115, 130])
+    _sp839, _rest839 = _I839.multihub_split(_lt839, 60)
+    # 40 aus Jita zu 100, dann 20 aus Amarr zu 110 - NICHT 60 aus einem Hub.
+    eq("aa839 60 Stueck verteilen sich auf beide Hubs",
+       {_h: _v[0] for _h, _v in _sp839.items()}, {"jita": 40, "amarr": 20})
+    eq("aa839 nichts bleibt offen", _rest839, 0)
+    # FRACHT KIPPT DIE REIHENFOLGE, und das muss sie: ein Hub mit
+    # billigerem Preis, aber teurer Fracht, ist nicht der guenstigere.
+    _lt2 = _I839.multihub_leiter(_b839, 7, {"jita": 50.0, "amarr": 0.0}, 1.0)
+    check("aa839 Fracht aendert die Reihenfolge der Leiter",
+          _lt2[0][2] == "amarr")
+    # REICHT DER MARKT NICHT, bleibt ein Rest - und der wird gemeldet,
+    # statt still mit dem letzten Preis weiterzurechnen.
+    _sp3, _rest3 = _I839.multihub_split(_lt839, 10_000)
+    check("aa839 ein zu duenner Markt meldet den Rest", _rest3 > 0)
+
+    # (6) DER OPTIMIERER-KERN, nachgerechnet statt nachgelesen.
+    _buch839 = [(100.0, 50), (110.0, 50), (130.0, 100), (200.0, 300)]
+
+    def _plan839(n):
+        return {"buy": {1: 10 * n}, "total_cost": 10 * n * 100.0,
+                "build_runs": {}}
+    _k839 = _I839.ladder_cost_curve([10], _plan839,
+                                    lambda m: list(_buch839),
+                                    price_fn=lambda t: 100.0)[0]
+    # 100 Stueck Material = 50x100 + 50x110 = 10'500, je Einheit 1'050.
+    eq("aa839 die Kostenkurve rechnet die Leiter exakt ab",
+       round(_k839["total_cost"]), 10500)
+    eq("aa839 und teilt korrekt auf die Stueckzahl",
+       round(_k839["cost_unit"]), 1050)
+    # Engpass: der Markt hat 500 Stueck, der Plan will 600.
+    _k839b = _I839.ladder_cost_curve([60], _plan839,
+                                     lambda m: list(_buch839),
+                                     price_fn=lambda t: 100.0)[0]
+    _sm839 = _k839b["short_materials"]
+    check("aa839 ein echter Engpass wird gemeldet",
+          len(_sm839) == 1 and _sm839[0]["short"] == 100
+          and _sm839[0]["available"] == 500)
+    # Und bei genau aufgehender Menge NICHT - sonst waere jede Rechnung
+    # an der Marktgrenze eine Falschmeldung.
+    _k839c = _I839.ladder_cost_curve([50], _plan839,
+                                     lambda m: list(_buch839),
+                                     price_fn=lambda t: 100.0)[0]
+    eq("aa839 kein Engpass, wenn es genau aufgeht",
+       _k839c["short_materials"], [])
+    # Markt-Absorption: 30 Tage mit Volumen 101..130 -> 115,5 am Tag.
+    _hist839 = [{"date": f"2026-10-{_d:02d}", "volume": 100 + _d}
+                for _d in range(1, 31)]
+    _abs839 = _I839.market_absorption(_hist839)
+    eq("aa839 die Markt-Absorption mittelt richtig",
+       round(_abs839["avg_daily"], 1), 115.5)
+    eq("aa839 und rechnet auf den Monat hoch",
+       round(_abs839["per_month"]), 3465)
+    check("aa839 ohne Historie behauptet sie nichts",
+          _I839.market_absorption([]) is None)
+
+    # (7) ZWEISPRACHIG (Arbeitsregel 6).
+    from eve_trader import sprache as _spr839
+    _kat839 = _spr839.KATALOG.get("de", {})
+    for _t839 in ("Hubs: ", "from the build plan's hub scan ({n} hubs)"):
+        check(f"aa839 im Katalog: {_t839[:34]}", _t839 in _kat839)
+except Exception as _e839:                               # pragma: no cover
+    import traceback as _tb839
+    _fail.append(f"aa839 Multi-Hub Orderbuch/Optimierer: "
+                 f"{type(_e839).__name__}: {_e839} | "
+                 + _tb839.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (aa840)
+# DAS WERKZEUGE-MENUE AUSGEDUENNT (Nutzer 06.11.2026, nach Durchsicht:
+# "generell 'Tools' dropdown eniges Davon braeuchte es meiner meinung
+# nach nicht ... buy missing again, finde ich unnoetig / Load Contract
+# prices,.. fuer was? --> nur wenn Capital bauen / Load everthying from
+# ESI,.. warum? das machts ja automatisch"). Bestaetigter Plan: neun
+# Eintraege auf sieben.
+#
+# WAS HIER GEPRUEFT WIRD, ist nicht "das Menue ist kuerzer" - das waere
+# billig - sondern dass beim Kuerzen NICHTS LAUTLOS VERSCHWUNDEN IST.
+# Genau das ist die Gefahr beim Ausduennen: ein Eintrag faellt weg, und
+# mit ihm eine Warnung, die niemand vermisst, weil sie nur erschien,
+# wenn etwas nicht stimmte.
+try:
+    _mw840 = _src_txt
+    _bf840 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+    _opt840 = open("eve_trader/ui/mw_optimizer.py", encoding="utf-8").read()
+
+    # (1) DIE ZWEI ENTFERNTEN EINTRAEGE SIND RESTLOS WEG - Action,
+    # Verdrahtung und Menue-Abgleich. Ein uebrig gebliebener Verweis
+    # wuerde beim Oeffnen des Plans mit KeyError sterben.
+    for _n840 in ("_fehl_act", "_lplan_act"):
+        check(f"aa840 {_n840} steht nirgends mehr",
+              _n840 not in _bf840 and _n840 not in _mw840)
+    # KOMMENTARZEILEN HERAUS: die Begruendung des Umbaus nennt die zwei
+    # Schluessel namentlich. Ohne Filter prueft der Anker den eigenen
+    # Kommentar - dieser Fehler ist in dieser Reihe schon einmal
+    # passiert und waere hier wieder passiert.
+    _bf840_code = "\n".join(_z840 for _z840 in _bf840.splitlines()
+                            if not _z840.lstrip().startswith("#"))
+    for _k840 in ('"fehl"', '"ladder_plan"'):
+        check(f"aa840 der Menue-Schluessel {_k840} ist weg",
+              _k840 not in _bf840_code)
+
+    # (2) CONTRACT-PREISE NUR BEI CAPITALS. Der Eintrag hilft nur dort
+    # (Capital-Bauteile werden ueber Contracts gehandelt); fuer alles
+    # andere war er Rauschen. Sichtbarkeit aus der EINEN Capital-Quelle
+    # (Arbeitsregel 9), nicht aus einer eigenen Namensliste.
+    check("aa840 'Contract-Preise' wird nur bei Capitals gezeigt",
+          "_ct_act.setVisible(bool(_ist_cap))" in _bf840)
+    check("aa840 und die Capital-Erkennung kommt aus der EINEN Quelle",
+          "industry.capital_ship_products(" in _bf840)
+
+    # (3) DER ABRUFWEG LEBT WEITER - als Knopf im Orderbuch-Fenster, und
+    # er ruft DIESELBE Funktion wie der entfernte Eintrag. Ein zweiter
+    # Abrufweg waere eine zweite Wahrheit (Arbeitsregel 9).
+    check("aa840 der Plan stellt den Abrufweg bereit",
+          "self._bd_ladder_refresh = _ladder_refresh" in _bf840)
+    check("aa840 der Knopf im Orderbuch-Fenster ruft genau ihn",
+          't("Apply prices to the plan")' in _opt840
+          and 'getattr(self, "_bd_ladder_refresh", None)' in _opt840)
+    check("aa840 er startet gesperrt (vor dem Rechnen gibt es nichts)",
+          "uebern_btn.setEnabled(False)" in _opt840
+          and "uebern_btn.setEnabled(True)" in _opt840)
+    # OHNE OFFENEN PLAN KEIN STILLER FEHLSCHLAG: der Knopf sagt, was zu
+    # tun ist, statt nichts zu tun.
+    check("aa840 ohne offenen Plan sagt er es",
+          't("Open the build plan again, then retry.")' in _opt840)
+
+    # (4) ALLES, WAS "FEHLBEDARF PRUEFEN" ZEIGTE, ZEIGT JETZT DER
+    # NACHKAUF - und zwar VOR seiner Rueckfrage. Vier Dinge, die sonst
+    # weg gewesen waeren; die Erz-Deckung ist die wichtigste davon.
+    _bm840 = _fn_src("_buy_missing_again")
+    for _txt840, _was840 in (
+            ("self._erz_deckung_jetzt()", "die Erz-Deckung (emm739)"),
+            ("No calculated plan with build positions open",
+             "die Vorbedingung (sonst falsche Entwarnung)"),
+            ("Everything is covered", "die genaue Entwarnung"),
+            ("remaining need {need}, on hand ", "die vier Zahlen je Posten"),
+            ("counted at freeze time", "die Ursachen-Erklaerung"),
+            ("Buy the shortfalls OR push", "der Handlungshinweis")):
+        check(f"aa840 der Nachkauf zeigt {_was840}", _txt840 in _bm840)
+    # UND ER FRAGT, BEVOR ER BUCHT. Vorher kaufte der Eintrag ungesehen
+    # nach; jetzt liegen die Zahlen vor der Entscheidung.
+    check("aa840 er fragt vor dem Buchen",
+          "QMessageBox.question(" in _bm840
+          and 'Add the {n} lost materials to the shopping list?' in _bm840)
+    # NICHTS NACHKAUFEN, WENN ES NUR RESTBEDARF IST ("gekauft ist
+    # gekauft"): dann zeigt er und geht.
+    check("aa840 ohne Verlust wird nichts gebucht",
+          "if not verlust:" in _bm840)
+
+    # (5) ZWEISPRACHIG (Arbeitsregel 6).
+    from eve_trader import sprache as _spr840
+    _kat840 = _spr840.KATALOG.get("de", {})
+    for _t840 in ("Apply prices to the plan",
+                  "Open the build plan again, then retry.",
+                  "Already covered, missing now \u2013 will be bought again:",
+                  "Still missing for the remaining runs "
+                  "(NOT bought \u2013 ordinary demand):",
+                  "Add the {n} lost materials to the shopping list?",
+                  "   \u2026 and {n} more"):
+        check(f"aa840 im Katalog: {_t840[:34]}", _t840 in _kat840)
+    # UND KEINE WAISEN: die Texte der entfernten Eintraege sind auch aus
+    # dem Katalog heraus (aa235 prueft das global, hier namentlich).
+    for _w840 in ("Check shortfall", "Load order-book prices into the plan",
+                  "Working through the remaining runs, THIS WILL BE MISSING:"):
+        check(f"aa840 Waise raus: {_w840[:34]}", _w840 not in _kat840)
+except Exception as _e840:                               # pragma: no cover
+    import traceback as _tb840
+    _fail.append(f"aa840 Werkzeuge-Menue ausgeduennt: "
+                 f"{type(_e840).__name__}: {_e840} | "
+                 + _tb840.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa841)
+# MARKET STOCKS VERSCHOENERT (emm841). Die WIRKUNG prueft b842 am
+# lebenden Widget; hier stehen nur die Pfade, die durch den
+# BLOCKIERENDEN Dialog laufen (Einfuegen) oder reine Layout-Eigenschaft
+# sind - plus der Katalog.
+try:
+    _ms841 = open("eve_trader/ui/mw_market_stocks.py",
+                  encoding="utf-8").read()
+    # (1) DER SPLITTER DARF DIE KARTEN NICHT VERSCHLUCKEN. Beim Nutzer
+    # war der obere Bereich ein schmaler Streifen - Stretch-Faktoren
+    # wirken erst beim Ziehen, die Anfangsverteilung kommt aus den
+    # sizeHints, und eine zugeklappte Karte ist winzig.
+    check("aa841 beide Splitter-Seiten sind unkollabierbar",
+          "split.setCollapsible(0, False)" in _ms841
+          and "split.setCollapsible(1, False)" in _ms841)
+    # emm853: die Teilung ist jetzt HORIZONTAL (Karten links, Doctrine-
+    # Uebersicht rechts) - die Schranken sind Breiten, keine Hoehen.
+    check("aa841 feste Startgroessen statt sizeHint-Zufall",
+          "split.setSizes(" in _ms841
+          and "scroll.setMinimumWidth(" in _ms841
+          and "rechts.setMinimumWidth(" in _ms841)
+    # (2) FRISCH EINGEFUEGT STARTET OFFEN - dieser Zweig lebt hinter
+    # dlg.exec() und ist im Test nicht fahrbar; der Anker haengt an der
+    # Zuweisung der neuen id, direkt daneben.
+    check("aa841 eine neue Doctrine wird gleich aufgeklappt",
+          'st["aufgeklappt"].append(int(doc["id"]))' in _ms841)
+    check("aa841 Loeschen raeumt den Klappzustand mit",
+          'st["aufgeklappt"] = [i for i in' in _ms841)
+    # (3) FEHLENDE ICONS WERDEN EINMAL NACHGEHOLT - _table_icon merkt
+    # nur vor; ohne den Nachtrag blieben die Zellen fuer immer leer.
+    check("aa841 der Icon-Nachtrag haengt am Render",
+          "self._icon_prefetch_pending(self._ms_render)" in _ms841)
+    # (4) ZWEISPRACHIG (Arbeitsregel 6).
+    from eve_trader import sprache as _spr841
+    _kat841 = _spr841.KATALOG.get("de", {})
+    for _t841 in ("Click to expand/collapse this doctrine.",
+                  "Not measured yet \u2013 press "
+                  "\u201eFetch market\u201c first."):
+        check(f"aa841 im Katalog: {_t841[:38]}", _t841 in _kat841)
+except Exception as _e841:                               # pragma: no cover
+    import traceback as _tb841
+    _fail.append(f"aa841 Market Stocks verschoenert: "
+                 f"{type(_e841).__name__}: {_e841} | "
+                 + _tb841.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa842)
+# ORDERBUCH-FENSTER: DIE SUMME RECHNET MATERIALIEN OHNE ORDERBUCH MIT
+# (emm842). Nutzer-Screenshot (Ishtar an RD-G2R): "Total markup -34.8 %
+# (-35'145'192 ISK)" - sah aus wie eine Ersparnis, war aber ein Loch:
+# jedes "No order book"-Material ging mit 0 in die Orderbuch-Summe ein
+# und steckte zugleich VOLL in der Flat-Schaetzung. Die beruhigende
+# Richtung ist die gefaehrliche (Regel 3): wer die Baukosten 35 Mio zu
+# niedrig sieht, glaubt an Gewinn, der keiner ist. Jetzt gehen diese
+# Materialien ZUM FLACHPREIS in die Summe (wie es die Schwesterfunktion
+# ladder_cost_curve immer schon tat) und werden getrennt ausgewiesen.
+try:
+    from eve_trader import industry as _I842
+    # HANDRECHNUNG (eine Stelle, Regel 9): Material 1 hat ein Buch
+    # (10 Stk x 100), Material 2 (5 Stk) hat KEINS; Flachpreis je 100.
+    # Flat gesamt 1500. Richtig: Orderbuch-exakt = 1000 (am Buch)
+    # + 500 (ohne Buch, flat) = 1500, Markup 0. Vorher: 1000, "-33 %".
+    _p842 = {"buy": {1: 10, 2: 5}, "total_cost": 1500.0,
+             "mat_cost": 1500.0}
+    _r842 = _I842.refine_plan_with_ladder(
+        _p842, {1: [(100.0, 999)]}, price_fn={1: 100.0, 2: 100.0}.get)
+    eq("aa842 die Summe traegt das buchlose Material zum Flachpreis",
+       _r842["total_cost"], 1500.0)
+    eq("aa842 und das Markup wird dadurch fair (0 statt -33 %)",
+       (_r842["delta"], round(_r842["delta_pct"], 6)), (0.0, 0.0))
+    eq("aa842 der Nicht-Orderbuch-Anteil wird getrennt ausgewiesen",
+       (_r842["no_book_cost"], _r842["no_book_n"]), (500.0, 1))
+    # DIE ZEILE bleibt ehrlich: kein Orderbuch -> keine erfundene
+    # Zeilen-Zahl, das Fenster zeigt weiter "No order book".
+    _z842 = next(r for r in _r842["rows"] if r["type_id"] == 2)
+    check("aa842 die Zeile selbst bleibt 'nicht schaetzbar' (NaN)",
+          _z842["ladder_cost"] != _z842["ladder_cost"]
+          and not _z842["has_orderbook"])
+    # OHNE Flachpreis bleibt die Summe unvollstaendig - und SAGT es.
+    _r842b = _I842.refine_plan_with_ladder(
+        _p842, {1: [(100.0, 999)]}, price_fn={1: 100.0}.get)
+    eq("aa842 ohne Flachpreis wird das Material als fehlend GEZAEHLT",
+       _r842b["unpriced_n"], 1)
+    # ECHTER AUFSCHLAG bleibt sichtbar: Buch von Material 1 wird teurer
+    # (5 x 100, dann 5 x 200) -> exakt +500 auf die faire Basis.
+    _r842c = _I842.refine_plan_with_ladder(
+        _p842, {1: [(100.0, 5), (200.0, 999)]},
+        price_fn={1: 100.0, 2: 100.0}.get)
+    eq("aa842 ein echter Orderbuch-Aufschlag bleibt als Aufschlag stehen",
+       (_r842c["total_cost"], _r842c["delta"]), (2000.0, 500.0))
+    # DIE KOPFZEILE weist den Anteil aus - und der Katalog kennt beide
+    # Texte auf Deutsch (Arbeitsregel 6).
+    _opt842 = open("eve_trader/ui/mw_optimizer.py", encoding="utf-8").read()
+    check("aa842 die Kopfzeile nennt den Scan-Preis-Anteil",
+          'if res.get("no_book_n"):' in _opt842
+          and "without an order book (scan price)" in _opt842)
+    check("aa842 und warnt, wenn die Summe unvollstaendig ist",
+          'if res.get("unpriced_n"):' in _opt842
+          and "the total is missing them" in _opt842)
+    from eve_trader import sprache as _spr842
+    _kat842 = _spr842.KATALOG.get("de", {})
+    for _t842 in ("incl. {isk} for {n} material(s) without an order "
+                  "book (scan price)",
+                  "\u26a0 {n} material(s) have neither an order book "
+                  "nor a scan price \u2013 the total is missing them"):
+        check(f"aa842 im Katalog: {_t842[:38]}", _t842 in _kat842)
+except Exception as _e842:                               # pragma: no cover
+    import traceback as _tb842
+    _fail.append(f"aa842 Orderbuch-Summe ohne Buch: "
+                 f"{type(_e842).__name__}: {_e842} | "
+                 + _tb842.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa843)
+# "RIGS" HEISST ALLE RIGS (Nutzer 06.11.2026: "scanner tab zeigt keine
+# Rig kathegorien", auf Rueckfrage: "mit Rigs meie ich alle Rigs").
+# GEMESSEN an der SDE vor dem Umbau: das alte Praefix `startswith("Rig ")`
+# fing 14 Ship-Rig-Gruppen (Kat 7) und KEINE der 86 Structure-Rig-
+# Gruppen (Kat 66) - der "Rigs"-Filter in Swing/Regional zeigte also
+# nur die halbe Wahrheit, und Daytrade/Industrie hatten GAR keinen
+# Rigs-Eintrag.
+try:
+    from eve_trader import industry as _I843
+    # (1) DIE WORT-DEFINITION, an den vier gemessenen Sorten:
+    for _nm843, _soll843 in (("Rig Armor", True),
+                             ("Structure Combat Rig M - Max Targets", True),
+                             ("Outpost Conversion Rigs", True),
+                             ("Rigging", False),          # die SKILL-Gruppe
+                             ("Logistics Frigate", False)):
+        check(f"aa843 ist_rig_gruppe({_nm843!r}) = {_soll843}",
+              _I843.ist_rig_gruppe(_nm843) == _soll843)
+    # (2) AN DER ECHTEN SDE: Ship- und Structure-Gruppen drin,
+    # Blueprint-Gruppen (Kat 9) draussen - "Rig Blueprint" matcht das
+    # Wort, ist aber keins.
+    import sqlite3 as _sq843
+    # _db_path ZEIGEN, WO DIE SDE LIEGT (wie aa444): im Testlauf zeigt
+    # der normale Pfad auf die Test-Umgebung, rig_group_ids_all() kam
+    # leer zurueck und BEIDE SDE-Pruefungen liefen als "uebersprungen"
+    # durch - die Rotprobe "Blueprint-Gruppen rutschen wieder rein"
+    # blieb dadurch BLIND (so gefunden, 13. Fall der Reihe).
+    _dbp_alt843 = _I843._db_path
+    try:
+        _I843._db_path = lambda: os.path.join(_ROOT, "sde_kompakt.db")
+        _rg843 = _I843.rig_group_ids_all()
+    finally:
+        _I843._db_path = _dbp_alt843
+    check("aa843 die Repo-SDE ist lesbar (sonst pruefte hier nichts)",
+          len(_rg843) >= 50)
+    if _rg843:
+        _c843 = _sq843.connect(os.path.join(_ROOT, "sde_kompakt.db"))
+        _namen843 = {r[0]: r[1] for r in _c843.execute(
+            "SELECT group_id, name FROM group_name")}
+        _c843.close()
+        _tr843 = {_namen843.get(g, "") for g in _rg843}
+        check(f"aa843 Ship- UND Structure-Rigs in der Markt-Menge "
+              f"({len(_rg843)} Gruppen)",
+              "Rig Navigation" in _tr843
+              and any(n.startswith("Structure Combat Rig") for n in _tr843))
+        check("aa843 die Blueprint-Gruppen bleiben draussen",
+              "Rig Blueprint" not in _tr843
+              and "Structure Rig Blueprint" not in _tr843)
+    else:
+        check("aa843 SDE-Teil uebersprungen: keine Rig-Gruppen auffindbar",
+              True)
+    # (3) EINE STELLE fuer den Eintrag (Regel 9): alle vier Filter
+    # haengen an mit_rigs_eintrag, market_category_options baut nicht
+    # mehr selbst.
+    _dbp_alt843b = _I843._db_path
+    try:
+        _I843._db_path = lambda: os.path.join(_ROOT, "sde_kompakt.db")
+        check("aa843 mit_rigs_eintrag haengt den Eintrag an",
+              (_I843.RIGS_KAT, "Rigs")
+              in _I843.mit_rigs_eintrag([(6, "Ship")]))
+    finally:
+        _I843._db_path = _dbp_alt843b
+    check("aa843 eine leere Liste bleibt leer (keine SDE -> kein Eintrag)",
+          _I843.mit_rigs_eintrag([]) == [])
+    check("aa843 market_category_options nutzt dieselbe Stelle",
+          "return mit_rigs_eintrag(category_options())"
+          in open(os.path.join(_ROOT, "eve_trader", "industry.py"),
+                  encoding="utf-8").read())
+    # (4) DIE SEMANTIK an einer Structure-Rig-Gruppe: unter RIGS_KAT,
+    # NICHT mehr unter ihrer SDE-Kategorie 66.
+    if _rg843:
+        _g843 = next(g for g in _rg843
+                     if _namen843.get(g, "").startswith("Structure"))
+        check("aa843 Structure-Rig zaehlt zur Rigs-Kategorie",
+              _I843.bp_kategorie_passt(_I843.RIGS_KAT, 66, _g843, _rg843)
+              and not _I843.bp_kategorie_passt(66, 66, _g843, _rg843)
+              and _I843.kategorie_passt_mehrfach(
+                  {_I843.RIGS_KAT}, 66, _g843, _rg843))
+    # (5) DIE ZWEI NACHGERUESTETEN FILTER fragen die geteilten
+    # Funktionen (nicht den alten Handvergleich):
+    check("aa843 Daytrade filtert ueber bp_kategorie_passt",
+          "industry.bp_kategorie_passt(" in _fn_src("compute_deals")
+          and "c_id != cat_id" not in _fn_src("compute_deals"))
+    check("aa843 der Industrie-Scan ueber kategorie_passt_mehrfach",
+          "industry.kategorie_passt_mehrfach(" in _fn_src("compute_build")
+          and "c_id not in cat_sel" not in _fn_src("compute_build"))
+except Exception as _e843:                               # pragma: no cover
+    import traceback as _tb843
+    _fail.append(f"aa843 alle Rigs: {type(_e843).__name__}: {_e843} | "
+                 + _tb843.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa845)
+# DER REGIONAL-KATEGORIEFILTER WAR LEER (Nutzer 07.11.2026: "Regional
+# trading kann ich kategory Dropdown nicht aufklappen"). Befund per
+# Start-Reihenfolge: _reload_categories fuellt die Mehrfach-Menues nur
+# ueber hasattr-Zweige, und es laeuft beim Bau des Daytrade- und des
+# Industrie-Tabs - der Regional-Tab wird NACH beiden gebaut, sein Menue
+# blieb also leer (ein leeres QMenu oeffnet als Nichts). Der Swing-Tab
+# ueberlebte nur, weil der Industrie-Tab zufaellig nach ihm gebaut wird.
+# Seit emm845 fuellen BEIDE Bauten ihr Kategorie-Menue initial selbst,
+# wie es das Meta-Menue daneben seit jeher tut - unabhaengig von der
+# Reihenfolge. Die Wirkung prueft b845 am lebenden Fenster; hier der
+# Anker, dass die zwei Initial-Fuellungen stehen bleiben (die Wirkung
+# im Test wird vom spaeteren _reload_categories ueberdeckt, darum
+# reicht sie allein nicht als Rueckbau-Schutz).
+try:
+    check("aa845 der Regional-Bau fuellt sein Kategorie-Menue selbst",
+          "self._rg_cat_refresh(industry.market_category_options())"
+          in _fn_src("_build_region_tab"))
+    check("aa845 der Swing-Bau ebenso (nicht nur Reihenfolgen-Glueck)",
+          "self._h_cat_refresh(industry.market_category_options())"
+          in _fn_src("_build_hold_tab"))
+except Exception as _e845:                               # pragma: no cover
+    _fail.append(f"aa845 Regional-Kategorien: {type(_e845).__name__}: {_e845}")
+
+
+# ---------------------------------------------------------------- (aa847)
+# KOPIER-PREIS MIT +/-% (emm847). Die WIRKUNG am Fenster prueft b847
+# (Clipboard-Inhalt); hier die REINE RECHNUNG mit Handwerten und die
+# Verdrahtung. Abgerundet wird in BEIDE Richtungen auf einen gueltigen
+# EVE-Preis: bei + nie teurer als gewollt, bei - sicher unter der
+# Marke.
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _H847
+    for _p847, _pc847, _soll847 in (
+            (100.0, 15, 115.0),          # glatt
+            (100.0, -15, 85.0),          # glatt nach unten
+            (123456.0, 15, 141900.0),    # 141'974.4 -> 4 sig. abgerundet
+            (1000000.0, -15, 850000.0),
+            (0.02, -90, None)):          # unter 0,01 -> ehrlich None
+        eq(f"aa847 preis_mit_aufschlag({_p847}, {_pc847:+d} %)",
+           _H847.preis_mit_aufschlag(_p847, _pc847), _soll847)
+    # 0 % IST der klassische Tick darunter - dieselbe Funktion, kein
+    # zweiter Rechenweg (Arbeitsregel 9).
+    eq("aa847 0 % bleibt das Ein-Tick-Unterbieten",
+       _H847.preis_mit_aufschlag(100.0, 0),
+       _H847.naechster_tick_darunter(100.0))
+    _mw847 = _fn_src("_sell_paste_prices")
+    check("aa847 der Kopierweg fragt genau diese eine Funktion",
+          "MainWindowHelpers.preis_mit_aufschlag(sm, _pct847)" in _mw847
+          and "naechster_tick_darunter" not in _mw847)
+    check("aa847 der eingestellte Wert wird gemerkt",
+          '"sell_paste_pct"' in _src_txt)
+    from eve_trader import sprache as _spr847
+    _kat847 = _spr847.KATALOG.get("de", {})
+    check("aa847 Tooltip und Meldung im Katalog",
+          any(k.startswith("Shifts every copied price") for k in _kat847)
+          and "{pct} % on the best sell applied \u2013 " in _kat847)
+except Exception as _e847:                               # pragma: no cover
+    import traceback as _tb847
+    _fail.append(f"aa847 Kopier-Prozent: {type(_e847).__name__}: {_e847} | "
+                 + _tb847.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa848)
+# TOTE MAERKTE SAHEN HANDELBAR AUS (Nutzer 07.11.2026, mit INGAME-BELEG:
+# "Items die nicht 1x verkauft wurden in den letzten Wochen, werden
+# einfach als handelbar gelistet in MoMa, sowas ist echt gefaehrlich" -
+# Humboldt EC-900-I, Pure Blind: MoMa "Ø 6/Tag", Ingame-Historie seit
+# Monaten 0). URSACHE: die ESI-Historie enthaelt nur HANDELSTAGE, und
+# vier Stellen schnitten ihr Fenster nach POSITION (hist[-30:]) - bei
+# einem toten Item sind das Eintraege aus der Steinzeit. Dazu teilte
+# daily_vol durch die Handelstage statt durch Kalendertage. Alles
+# haengt jetzt an EINER Stelle: market.fenster_nach_datum.
+try:
+    import datetime as _dt848
+    from eve_trader.market import fenster_nach_datum as _fnd848
+    from eve_trader import scanner as _sc848, hubs as _hb848
+    _heute848 = _dt848.datetime.now(_dt848.timezone.utc).date()
+    _tot848 = [{"date": f"2024-01-{d:02d}", "average": 2.2e6,
+                "highest": 2.2e6, "lowest": 2.2e6, "volume": 6,
+                "order_count": 2} for d in range(1, 31)]
+    _frisch848 = [{"date": (_heute848 - _dt848.timedelta(days=i)).isoformat(),
+                   "average": 100.0, "highest": 110.0, "lowest": 90.0,
+                   "volume": 10, "order_count": 3} for i in (9, 5, 2)]
+    # (1) DAS FENSTER selbst:
+    eq("aa848 tote Historie: das 30-Tage-Fenster ist LEER",
+       len(_fnd848(_tot848, 30)), 0)
+    eq("aa848 frische Historie: alle drei Handelstage im Fenster",
+       len(_fnd848(_frisch848, 30)), 3)
+    eq("aa848 ohne date-Feld: Fallback auf das Positionsfenster",
+       len(_fnd848([{"volume": 1}] * 40, 30)), 30)
+    # (2) window_stats, der Lieferant von "Ø daily vol destination":
+    _ws_tot848 = _sc848.window_stats(_tot848, 30)
+    eq("aa848 window_stats am toten Item: Tagesumsatz 0, nicht 6",
+       (_ws_tot848["daily_vol"], _ws_tot848["active_ratio"]), (0.0, 0.0))
+    _ws_fr848 = _sc848.window_stats(_frisch848, 30)
+    eq("aa848 window_stats: 30 Stueck / 30 KALENDERTAGE = 1.0 "
+       "(nicht 10.0 je Handelstag)", _ws_fr848["daily_vol"], 1.0)
+    eq("aa848 und active_ratio zaehlt Kalendertage (3/30)",
+       round(_ws_fr848["active_ratio"], 4), 0.1)
+    # (3) bewerte_leeren_markt - die Funktion, die leere Zielmaerkte
+    # ADELT ("nachgewiesener Absatz"): am toten Item jetzt None.
+    check("aa848 bewerte_leeren_markt lehnt das tote Item ab",
+          _hb848.bewerte_leeren_markt(1, 100.0, _tot848, 0.03, 0.015, {})
+          is None)
+    # EIN EINZELNER 20 TAGE ALTER HANDELSTAG ADELT AUCH NICHT: er liegt
+    # im 30er-Preisfenster, aber NICHT in den letzten 7 Tagen - genau
+    # die Zeile, die hist[-7:] frueher uebersehen haette (die Rotprobe
+    # dagegen blieb zuerst BLIND, weil beim komplett toten Item schon
+    # das 30er-Fenster leer war und den Fehler verdeckte).
+    _fast848 = _tot848 + [{"date": (_heute848 - _dt848.timedelta(days=20))
+                           .isoformat(), "average": 100.0, "highest": 110.0,
+                           "lowest": 90.0, "volume": 10, "order_count": 3}]
+    check("aa848 ein 20 Tage alter Handelstag adelt den Zielmarkt nicht",
+          _hb848.bewerte_leeren_markt(1, 50.0, _fast848, 0.0, 0.0, {})
+          is None)
+    _lb848 = _hb848.bewerte_leeren_markt(1, 50.0, _frisch848, 0.0, 0.0, {})
+    check("aa848 und nimmt das frische (mit ehrlicher Tagesmenge 1.0)",
+          _lb848 is not None and _lb848["target_vol"] == 1.0
+          and _lb848.get("leerer_markt") is True)
+    # (4) die zwei sell_reach-Stellen fragen dieselbe EINE Stelle:
+    check("aa848 Daytrade/Swing-sell_reach nutzt das Datumsfenster",
+          "_fnd848(hist, days)" in open(os.path.join(
+              _ROOT, "eve_trader", "scanner.py"), encoding="utf-8").read())
+    check("aa848 Regional-sell_reach ebenso",
+          "market.fenster_nach_datum(hist, 30)" in _src_txt)
+except Exception as _e848:                               # pragma: no cover
+    import traceback as _tb848
+    _fail.append(f"aa848 tote Maerkte: {type(_e848).__name__}: {_e848} | "
+                 + _tb848.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa849)
+# FRISCHE-AMPEL IN ALLEN DREI HANDELS-TABS (emm849, Nutzer: "okey 30
+# Tage durchscnittvolume macht mehr sinn, ich wuerde das aber fuer
+# alle Handelstabs sehen daytrade und swingtrade und regional trade").
+# Arbeitsteilung: der 30-Tage-Schnitt sagt WIE VIEL (emm848), die neue
+# Zahl "Tage seit letztem Umsatztag" sagt OB NOCH - vermatscht man
+# beides in einer Zahl, entsteht wieder ein Humboldt.
+try:
+    import datetime as _dt849
+    from eve_trader import market as _mk849, hubs as _hb849
+    _heute849 = _dt849.datetime.now(_dt849.timezone.utc).date()
+    # (1) Die Kennzahl selbst, mit Handwerten:
+    eq("aa849 letzter Umsatztag vor 3 Tagen -> 3",
+       _mk849.tage_seit_handel(
+           [{"date": (_heute849 - _dt849.timedelta(days=9)).isoformat(),
+             "volume": 5},
+            {"date": (_heute849 - _dt849.timedelta(days=3)).isoformat(),
+             "volume": 1}]), 3)
+    check("aa849 nur umsatzlose Tage -> None (unbekannt, nicht frisch)",
+          _mk849.tage_seit_handel(
+              [{"date": _heute849.isoformat(), "volume": 0}]) is None)
+    check("aa849 ohne date-Feld -> None",
+          _mk849.tage_seit_handel([{"volume": 9}]) is None)
+    # (2) Der Scanner traegt sie in JEDEN Deal (Daytrade UND Swing
+    # laufen beide ueber find_deals):
+    check("aa849 find_deals gibt das Feld jedem Treffer mit",
+          '"zuletzt_handel_tage": _mkt_fnd.tage_seit_handel(hist),'
+          in open(os.path.join(_ROOT, "eve_trader", "scanner.py"),
+                  encoding="utf-8").read())
+    # (3) Regional: der leere-Markt-Pfad traegt target_frisch - per
+    # Definition juenger als 7 Tage (sonst lehnt er ab, aa848).
+    _fr849 = [{"date": (_heute849 - _dt849.timedelta(days=2)).isoformat(),
+               "average": 100.0, "highest": 110.0, "lowest": 90.0,
+               "volume": 10, "order_count": 3}]
+    _lb849 = _hb849.bewerte_leeren_markt(1, 50.0, _fr849, 0.0, 0.0, {})
+    eq("aa849 bewerte_leeren_markt meldet die Frische mit",
+       (_lb849 or {}).get("target_frisch"), 2)
+    # (4) Die drei Anzeige-Stellen und das Top-Pick-Tor:
+    # Anker OHNE das \u2013-Escape: im Quelltext steht es als Text,
+    # hier wuerde es zum Zeichen - der erste Anker fand darum 0.
+    # emm856 zog die Heute-Uebersicht als vierte Stelle nach; seit
+    # emm871 ist der Heute-Reiter KOMPLETT raus ("mhh ne, weg damit")
+    # - es bleiben die drei Trading-Tabellen.
+    eq("aa849 die Frische-Ampel steht in GENAU drei Tabellen",
+       _src_txt.count("Last trade {n} days ago"), 3)
+    check("aa849 Daytrade haengt sie an Spalte 8",
+          'd.get("zuletzt_handel_tage")' in _fn_src("_render_deals"))
+    check("aa849 Swing ebenso",
+          'd.get("zuletzt_handel_tage")' in _fn_src("_render_hold"))
+    check("aa849 Regional liest die Ziel-Frische",
+          'd.get("target_frisch")' in _src_txt)
+    check("aa849 eingeschlafene Ziele (>14 T) sind keine Top-Picks",
+          'd["target_frisch"] > 14' in _src_txt)
+    from eve_trader import sprache as _spr849
+    _kat849 = _spr849.KATALOG.get("de", {})
+    check("aa849 beide Ampel-Texte im Katalog",
+          "Last trade {n} day(s) ago." in _kat849
+          and any(k.startswith("Last trade {n} days ago") for k in _kat849))
+except Exception as _e849:                               # pragma: no cover
+    import traceback as _tb849
+    _fail.append(f"aa849 Frische-Ampel: {type(_e849).__name__}: {_e849} | "
+                 + _tb849.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa851)
+# FIRESALES: GEFITTETE RIGS SIND BEIM WEITERVERKAUF VERLOREN (emm851,
+# Nutzer: "Schiffe die gefittete Rigs haben, kann man theoretisch
+# nicht verkaufen, da muss man erst die Rigs rausreissen ... und dann
+# hat man den gewinn nicht mehr"). ESI verraet bei oeffentlichen
+# Contracts NICHT, ob ein Rig gefittet ist - darum die konservative
+# Regel: Rig IM SCHIFFS-Contract = gefittet (Regel 3); ein reiner
+# Rig-Contract bleibt gewoehnliche Marktware.
+try:
+    from eve_trader.scanner import firesale_bewertung as _fb851
+    _ct851 = {"price": 100e6, "contract_id": 7, "volume": 0,
+              "date_issued": "", "title": ""}
+    # Schiff + EIN einzelnes Rig (quantity 1) - der Verdachtsfall.
+    _it851 = [{"type_id": 587, "quantity": 1, "is_included": True},
+              {"type_id": 900, "quantity": 1, "is_included": True}]
+    _pf851 = {587: 200e6, 900: 10e6, 901: 20e6}.get
+    _sf851 = lambda t0: t0 == 587
+    _rf851 = lambda t0: t0 in (900, 901)
+    _a851 = _fb851(_ct851, _it851, _pf851, _sf851, _rf851, False)
+    eq("aa851 ohne Abzug: voller Wert, Rig-Anteil ausgewiesen",
+       (_a851["wert"], _a851["rig_wert"], _a851["rig_n"],
+        _a851["rigs_abgezogen"]), (210e6, 10e6, 1, False))
+    _b851 = _fb851(_ct851, _it851, _pf851, _sf851, _rf851, True)
+    eq("aa851 mit Abzug: der Rig-Wert fehlt im Wert UND im Gewinn",
+       (_b851["wert"], _b851["gewinn"], _b851["rigs_abgezogen"]),
+       (200e6, 100e6, True))
+    # EIN EINZELNES Rig ohne Schiff: prueft die SCHIFFS-Bedingung
+    # isoliert (mit quantity 3 fing hier stattdessen der Stapel-Fakt,
+    # und die Rotprobe "Schiffs-Bedingung weg" blieb blind - so
+    # gefunden).
+    _c851 = _fb851(_ct851, [{"type_id": 900, "quantity": 1,
+                             "is_included": True}],
+                   _pf851, _sf851, _rf851, True)
+    eq("aa851 reiner Rig-Contract (kein Schiff): nichts abgezogen",
+       (_c851["wert"], _c851["rig_n"]), (10e6, 0))
+    # GESTAPELT IST EIN FAKT, KEIN VERDACHT (emm851b, Nutzer: "wenn
+    # mehrere Rigs gestapelt sind ... heisst sie liegen im cargo"):
+    # quantity > 1 kann nie gefittet sein - auch neben einem Schiff.
+    _e851b = _fb851(_ct851, [{"type_id": 587, "quantity": 1,
+                              "is_included": True},
+                             {"type_id": 900, "quantity": 3,
+                              "is_included": True}],
+                    _pf851, _sf851, _rf851, True)
+    eq("aa851b gestapelte Rigs neben dem Schiff: nichts abgezogen",
+       (_e851b["wert"], _e851b["rig_n"]), (230e6, 0))
+    # SLOT-DECKEL: 1 Schiff traegt hoechstens 3 Rigs - bei 5 einzelnen
+    # Kandidaten gelten nur die 3 TEUERSTEN als gefittet (2x20 + 10).
+    _it851b = ([{"type_id": 587, "quantity": 1, "is_included": True}]
+               + [{"type_id": 901, "quantity": 1, "is_included": True}] * 2
+               + [{"type_id": 900, "quantity": 1, "is_included": True}] * 3)
+    _f851b = _fb851(_ct851, _it851b, _pf851, _sf851, _rf851, True)
+    eq("aa851b Slot-Deckel: nur die 3 teuersten von 5 einzelnen Rigs",
+       (_f851b["rig_n"], _f851b["rig_wert"], _f851b["wert"]),
+       (3, 50e6, 220e6))
+    # Ohne die Praedikate (alte Aufrufer): unveraendertes Verhalten.
+    _d851 = _fb851(_ct851, _it851, _pf851)
+    eq("aa851 ohne Praedikate bleibt alles beim Alten",
+       (_d851["wert"], _d851["rig_n"]), (210e6, 0))
+    # Verdrahtung: der Haken speist die Bewertung, die Note-Spalte
+    # sagt es an - in BEIDEN Formen (abgezogen / nur gewarnt).
+    check("aa851 der Haken speist die Bewertung",
+          "rigs_abziehen=_abzug851" in _fn_src("_fs_zeichnen")
+          and 'self.fs_rigs.isChecked()' in _fn_src("_fs_zeichnen"))
+    check("aa851 die Zeile sagt beides an",
+          "deducted (probably fitted)" in _src_txt
+          and "probably FITTED" in _src_txt)
+    from eve_trader import sprache as _spr851
+    _kat851 = _spr851.KATALOG.get("de", {})
+    for _t851 in ("Deduct fitted rigs",
+                  "{n} rig(s) {isk} deducted (probably fitted)"):
+        check(f"aa851 im Katalog: {_t851[:34]}", _t851 in _kat851)
+except Exception as _e851:                               # pragma: no cover
+    import traceback as _tb851
+    _fail.append(f"aa851 gefittete Rigs: {type(_e851).__name__}: {_e851} | "
+                 + _tb851.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (aa853)
+# EIN SATZ JE DOCTRINE (emm853): Grundlage der Doctrine-Uebersicht in
+# Market Stocks ("Baukosten/ Profit usw." je Doctrine, Nutzer
+# 06.11.2026). doctrine_satz zaehlt jeden Fit genau EINMAL und haengt
+# NICHT am Ziel-Feld.
+try:
+    from eve_trader import doctrinen as _dc853a
+    _doc853 = {"name": "S", "ziel": 250, "fits": [
+        {"schiff": "A", "name": "", "posten": [[7, 1], [9, 2]]},
+        {"schiff": "B", "name": "", "posten": [[8, 1], [9, 3]]}]}
+    # HANDRECHNUNG: Rumpf 7 einmal, Rumpf 8 einmal, Munition 9 geteilt
+    # ueber beide Fits = 2 + 3 = 5. Das Ziel (250) skaliert NICHT mit.
+    eq("aa853 ein Satz = jeder Fit einmal, geteilte Posten addiert",
+       _dc853a.doctrine_satz(_doc853), {7: 1, 8: 1, 9: 5})
+    # UNABHAENGIG VOM ZIEL: ein kaputtes Ziel-Feld (None) aendert den
+    # Satz nicht - doctrine_bedarf braeuchte es.
+    eq("aa853 der Satz haengt nicht am Ziel-Feld",
+       _dc853a.doctrine_satz(dict(_doc853, ziel=None)), {7: 1, 8: 1, 9: 5})
+    _leer853 = _dc853a.doctrine_satz({"name": "X", "ziel": 5, "fits": []})
+    eq("aa853 ohne Fits ist der Satz leer", _leer853, {})
+except Exception as _e853:                               # pragma: no cover
+    _fail.append(f"aa853 Doctrine-Satz: {type(_e853).__name__}: {_e853}")
+
+
+# ---------------------------------------------------------------- (aa861)
+# Nutzer-Screenshot (Sell list): "Open und Price und dahinter +irgendwas
+# ist zusammengedrueckt" - feste Knopf-/Spaltenbreiten quetschten die
+# Zeilen-Knoepfe uebereinander, sobald die Systemschrift breiter lief.
+# Das LEBENDE Sell-list-Rendering misst b861; hier der Headless-Beleg,
+# dass auch die Schwester-Tabellen (Shopping list, Order update) auf
+# knopf_passend + Inhaltsbreite umgestellt sind.
+try:
+    _rs861 = _fn_src("_render_shopping")
+    _fo861 = _fn_src("_fill_order_table")
+    _sl861 = _fn_src("_render_sell_list")
+    check("aa861 keine festen Knopfbreiten (setFixedSize) mehr in den "
+          "drei Zeilen-Renderern",
+          all(".setFixedSize(" not in _s
+              for _s in (_rs861, _fo861, _sl861)))
+    check("aa861 Shopping: alle vier Zeilen-Knoepfe (Buy/Open/Qty/x) "
+          "laufen ueber knopf_passend",
+          _rs861.count("knopf_passend(") == 4
+          and "knopf_passend(copyb)" in _rs861
+          and "knopf_passend(openb)" in _rs861
+          and "knopf_passend(qtyb)" in _rs861
+          and "knopf_passend(rmb)" in _rs861)
+    check("aa861 Shopping: Aktionsspalte folgt dem breitesten Inhalt",
+          "self.sh_table.setColumnWidth(1, _w861 + 6)" in _rs861)
+    # emm926: dritter Knopf "Min profit" (nur bei Verlust).
+    check("aa861 Order update: alle drei Zeilen-Knoepfe laufen ueber "
+          "knopf_passend",
+          _fo861.count("knopf_passend(") == 3
+          and "knopf_passend(minb)" in _fo861
+          and "knopf_passend(copyb)" in _fo861
+          and "knopf_passend(openb)" in _fo861)
+    check("aa861 Order update: Aktionsspalte folgt dem breitesten Inhalt",
+          "table.setColumnWidth(6 + _off, _w861 + 6)" in _fo861)
+except Exception as _e861:                               # pragma: no cover
+    _fail.append(f"aa861 Knopfbreiten: {type(_e861).__name__}: {_e861}")
+
+
+# ---------------------------------------------------------------- (aa863)
+# Assets-Reiter (Nutzer 08.11.2026): "alle Stationen/Strukturen der
+# charaktere und was darin fuer Items sind" + Live-Suche ("Retribution"
+# -> nur Besitzer bleiben). Hier die PURE Rechnung: orte_mengen pinnt
+# jedes Item an seine WURZEL (Container-Ketten hochgelaufen),
+# suche_filter ist Mehrwort-UND auf Item-Namen.
+try:
+    from eve_trader import char_assets as _ca863
+    _assets863 = [
+        # Station 60003760: lose Retribution + Frachtcontainer mit
+        # 2 weiteren Retributions und 50 Tritanium darin.
+        {"item_id": 1, "type_id": 11393, "quantity": 1,
+         "location_id": 60003760, "location_flag": "Hangar"},
+        {"item_id": 2, "type_id": 33003, "quantity": 1,
+         "location_id": 60003760, "location_flag": "Hangar"},
+        {"item_id": 3, "type_id": 11393, "quantity": 2,
+         "location_id": 2, "location_flag": "Unlocked"},
+        {"item_id": 4, "type_id": 34, "quantity": 50,
+         "location_id": 2, "location_flag": "Unlocked"},
+        # Struktur 1035000000001: nur Tritanium.
+        {"item_id": 5, "type_id": 34, "quantity": 7,
+         "location_id": 1035000000001, "location_flag": "Hangar"},
+    ]
+    _je863 = _ca863.orte_mengen(_assets863)
+    check("aa863 orte_mengen zieht Container-Inhalt zur Station hoch "
+          "und summiert gleiche Typen",
+          _je863 == {60003760: {11393: 3, 33003: 1, 34: 50},
+                     1035000000001: {34: 7}})
+    _nm863 = {11393: "Retribution", 33003: "Freight Container",
+              34: "Tritanium"}
+    _f863 = _ca863.suche_filter(_je863, _nm863, "  retri ")
+    check("aa863 suche_filter: Teilwort, Gross/klein egal, Orte ohne "
+          "Treffer verschwinden",
+          _f863 == {60003760: {11393: 3}})
+    check("aa863 suche_filter: Mehrwort ist UND",
+          _ca863.suche_filter(_je863, _nm863, "freight container")
+          == {60003760: {33003: 1}}
+          and _ca863.suche_filter(_je863, _nm863, "freight retri") == {})
+    check("aa863 suche_filter: leerer Text laesst alles durch",
+          _ca863.suche_filter(_je863, _nm863, "   ") == _je863)
+except Exception as _e863:                               # pragma: no cover
+    _fail.append(f"aa863 Assets-Rechnung: {type(_e863).__name__}: {_e863}")
+
+
+# ---------------------------------------------------------------- (aa865)
+# Nutzer-Screenshot 08.11.2026: "teilweise nur zahlen anstatt Struktur
+# Namen koennten auch WH's sein wie Terra" - #30000852 war ein
+# SONNENSYSTEM (Assets im All), keine Struktur: der Struktur-Abruf
+# scheiterte daran und frass das Fehlerbudget leer. Jetzt entscheidet
+# die ID-ART (ort_art) den Abruf; der Lader nutzt fuer Systeme das
+# oeffentliche /universe/systems/ und haelt Strukturen aus dem
+# /universe/names/-Sammelabruf heraus (der lehnte sonst den Block ab).
+try:
+    from eve_trader import char_assets as _ca865
+    check("aa865 ort_art kennt die ID-Baender (Station/System/Struktur)",
+          _ca865.ort_art(60003760) == "station"
+          and _ca865.ort_art(30000852) == "system"
+          and _ca865.ort_art(31000005) == "system"      # Thera (WH)
+          and _ca865.ort_art(1056386670135) == "structure"
+          and _ca865.ort_art(999) == "other"
+          and _ca865.ort_art(None) == "other")
+    import inspect as _in865
+    from eve_trader.ui.mw_assets import AssetsTab as _AT865
+    _lad865 = _in865.getsource(_AT865._assets_laden)
+    check("aa865 Lader: Systeme ueber system_info, Struktur-Abruf nur "
+          "fuer ort_art 'structure', Sammelabruf ohne Strukturen",
+          'elif art == "system":' in _lad865
+          and "esi.system_info(lid)" in _lad865
+          and 'elif art == "structure":' in _lad865
+          and 'char_assets.ort_art(l) != "structure"' in _lad865)
+except Exception as _e865:                               # pragma: no cover
+    _fail.append(f"aa865 Orts-Arten: {type(_e865).__name__}: {_e865}")
+
+
+# ---------------------------------------------------------------- (aa866)
+# Nutzer 08.11.2026: "das laden vom Portfolio und der generelle
+# erststart von Moma dauert lange" - das Portfolio lief alle Charaktere
+# STRIKT nacheinander ab (12x auf ESI warten). Jetzt laufen bis zu 4
+# Charaktere nebeneinander (nebenlaeufig.je_charakter); die DB laeuft
+# WAL mit busy-timeout, jeder Charakter schreibt eigene Zeilen.
+try:
+    import threading as _th866
+    from eve_trader import nebenlaeufig as _nl866
+    # ECHT PARALLEL, deterministisch belegt: eine Barriere fuer 4
+    # Teilnehmer oeffnet NUR, wenn wirklich 4 gleichzeitig laufen -
+    # seriell liefe der erste in den Timeout (BrokenBarrierError).
+    _bar866 = _th866.Barrier(4, timeout=10)
+    _erg866 = _nl866.je_charakter([11, 22, 33, 44],
+                                  lambda c: (_bar866.wait(), c * 2)[1],
+                                  max_parallel=4)
+    check("aa866 je_charakter laeuft wirklich nebeneinander und haelt "
+          "die Eingabe-Reihenfolge",
+          _erg866 == [(11, 22, None), (22, 44, None),
+                      (33, 66, None), (44, 88, None)])
+    def _mal2_oder_knall(c):
+        if c == 22:
+            raise RuntimeError("kaputt 866")
+        return c * 2
+    _erg866b = _nl866.je_charakter([11, 22, 33], _mal2_oder_knall,
+                                   max_parallel=2)
+    check("aa866 ein kranker Charakter bricht die anderen nicht ab",
+          _erg866b[0] == (11, 22, None)
+          and _erg866b[1][0] == 22 and _erg866b[1][1] is None
+          and "kaputt 866" in str(_erg866b[1][2])
+          and _erg866b[2] == (33, 66, None)
+          and _nl866.je_charakter([], _mal2_oder_knall) == [])
+    # Die beiden Nutzniesser haengen wirklich an der Schiene:
+    _rfa866 = _fn_src("refresh_all")
+    import inspect as _in866
+    from eve_trader.ui.mw_assets import AssetsTab as _AT866
+    _asl866 = _in866.getsource(_AT866._assets_laden)
+    check("aa866 Portfolio-Abruf laeuft ueber je_charakter (Transaktionen "
+          "UND Assets)",
+          "nebenlaeufig.je_charakter(cid_list, _tx_je" in _rfa866
+          and "nebenlaeufig.je_charakter(" in _rfa866.split("_erg_as")[1])
+    check("aa866 Assets-Reiter laedt ueber je_charakter",
+          "nebenlaeufig.je_charakter(" in _asl866)
+except Exception as _e866:                               # pragma: no cover
+    _fail.append(f"aa866 Nebenlaeufig: {type(_e866).__name__}: {_e866}")
+
+
+# ---------------------------------------------------------------- (aa867)
+# Nutzer 08.11.2026 (4 Screenshots quer durchs Programm): "alle Column
+# und uebertitel sind noch in cyan blau, bitte ueberall anpassen auf
+# amber" + "was jetzt weiss oder grau geschrieben ist, darf gerne so
+# bleiben". Spaltennamen kommen app-weit aus EINER Stelle
+# (QHeaderView::section im Theme); die Seiten-/Panel-Uebertitel waren
+# verstreute Inline-Stile. Der #Brand-Schriftzug im Logo bleibt bewusst
+# cyan (Marke, kein Uebertitel), Werte/Weiss/Grau unveraendert.
+try:
+    from eve_trader.ui import theme as _th867
+    _seg867 = _th867.QSS[_th867.QSS.index("QHeaderView::section"):]
+    _seg867 = _seg867[:_seg867.index("}")]
+    check("aa867 Spaltennamen app-weit amber (QHeaderView::section)",
+          _th867.AMBER in _seg867 and _th867.CYAN not in _seg867)
+    _tq867 = open(os.path.join(_ROOT, "eve_trader", "ui", "theme.py"),
+                  encoding="utf-8").read()
+    check("aa867 Uebertitel-Klasse H1 amber",
+          "QLabel#H1 {{ color: {AMBER};" in _tq867)
+    _mw867 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                               "main_window.py"), encoding="utf-8").read()
+    check("aa867 keine cyan Seiten-/Panel-Uebertitel mehr im Hauptfenster",
+          _mw867.count('"color:{theme.CYAN}; font-size:15px; '
+                       'font-weight:800; "') == 0
+          and "color:{theme.CYAN}; font-size:13px; font-weight:8" not in _mw867
+          and "color:{theme.CYAN}; font-size:13px; font-weight:7" not in _mw867
+          and '(t("DEALS"), theme.CYAN,' not in _mw867
+          and 'header(t("PLANNING"), theme.CYAN)' not in _mw867
+          # der Logo-Schriftzug bleibt cyan:
+          and "#Brand{{color:{theme.CYAN}" in _mw867)
+except Exception as _e867:                               # pragma: no cover
+    _fail.append(f"aa867 Amber-Titel: {type(_e867).__name__}: {_e867}")
+
+
+# ---------------------------------------------------------------- (aa868)
+# Nutzer 08.11.2026: "Doctrine bestehen aus mehreren schiffen,
+# normalerweise benennt man die Doctrine nach dem DPS schiff, ich
+# muesste also Doctrinen als Ueberordner erstellen koennen ... darin
+# sind dann die einzelnen Schiffe mit ihren Fittings". Hier die PURE
+# Gruppierung; das lebende Rendering misst b868.
+try:
+    from eve_trader import doctrinen as _dc868
+    _d868 = [{"id": 1, "name": "Retribution DPS", "ordner": "Fleet X"},
+             {"id": 2, "name": "Alte Karte"},
+             {"id": 3, "name": "Oneiros Logi", "ordner": "Fleet X"},
+             {"id": 4, "name": "  "}]
+    _dc868.ordner_nachruesten(_d868)
+    check("aa868 Migration: Eintrag ohne Ordner bekommt seinen Namen, "
+          "leerer Name wird '?'",
+          _d868[1].get("ordner") == "Alte Karte"
+          and _d868[3].get("ordner") == "?"
+          and _d868[0].get("ordner") == "Fleet X")
+    _g868 = _dc868.ordner_gruppen(_d868)
+    check("aa868 Gruppen in Reihenfolge des ersten Vorkommens, Schiffe "
+          "beim richtigen Ordner",
+          [g[0] for g in _g868] == ["Fleet X", "Alte Karte", "?"]
+          and [d["id"] for d in _g868[0][1]] == [1, 3]
+          and _dc868.ordner_gruppen([]) == [])
+except Exception as _e868:                               # pragma: no cover
+    _fail.append(f"aa868 Ordner-Gruppen: {type(_e868).__name__}: {_e868}")
+
+
+# ---------------------------------------------------------------- (aa869)
+# Nutzer 08.11.2026: "Beim start von MoMa bleibt es fast stehen ...
+# (Keine Rueckmeldung) ... bis es dann 'plopp' macht". Der Freeze ist
+# auf seinem Windows, offscreen nicht nachstellbar - also misst eine
+# UI-WACHE kuenftig VOR ORT: bleibt der Herzschlag des UI-Threads aus,
+# schreibt ein Waechter-Thread den LIVE-Stack des Blockierers nach
+# fehler.log (genau EINE Meldung je Blockade + die Erholung).
+try:
+    import threading as _th869
+    import time as _t869
+    from eve_trader.ui_wache import UiWache as _UW869
+    _logs869 = []
+    _w869 = _UW869(lambda wo, txt: _logs869.append(str(txt)),
+                   schwelle=0.4)
+    _frei869 = _th869.Event()
+
+    def _blockierer869():
+        _t869.sleep(1.2)         # simuliert den eingefrorenen UI-Thread
+        _frei869.set()
+    _t869b = _th869.Thread(target=_blockierer869)
+    _t869b.start()
+    _w869.start(_t869b.ident)
+    _t869.sleep(0.9)             # > Schwelle + Takt, Blockade laeuft noch
+    _block869 = [x for x in _logs869 if "blocked" in x]
+    check("aa869 UI-Wache meldet GENAU EINE Blockade samt Stack des "
+          "Blockierers",
+          len(_block869) == 1 and "sleep" in _block869[0])
+    _frei869.wait(5)
+    # Erholung: der Herzschlag muss WEITERTICKEN, sonst meldet die
+    # Wache (richtigerweise) die naechste Blockade.
+    for _ in range(5):
+        _w869.herzschlag()
+        _t869.sleep(0.15)
+    check("aa869 UI-Wache meldet die Erholung und spammt nicht",
+          len([x for x in _logs869 if "blocked for" in x
+               and "responsive" not in x]) == 1
+          and any("responsive again" in x for x in _logs869))
+    _w869.stop()
+    _t869b.join(5)
+    # PARALLEL-HAERTUNG (emm869, Folge von emm866): die Token-ABLAGE
+    # (Windows-Keyring/tokens.json) ist nicht thread-zugesagt, und EVE
+    # SSO ROTIERT Refresh-Tokens - zwei gleichzeitige Refreshes
+    # desselben Charakters melden ihn ab. Beide Pfade sind verriegelt;
+    # der Refresh prueft den Cache unter dem Lock ein zweites Mal.
+    import inspect as _in869
+    from eve_trader import tokens as _tk869
+    from eve_trader import esi as _esi869
+    check("aa869 Token-Ablage verriegelt (set/get/delete)",
+          all("with _LOCK:" in _in869.getsource(f)
+              for f in (_tk869.set_token, _tk869.get_token,
+                        _tk869.delete_token)))
+    _at869 = _in869.getsource(_esi869._access_token)
+    check("aa869 Token-Refresh verriegelt, mit zweitem Blick unter "
+          "dem Lock",
+          "with _access_lock:" in _at869
+          and _at869.count("_access_cache.get(character_id)") == 2)
+except Exception as _e869:                               # pragma: no cover
+    _fail.append(f"aa869 UI-Wache: {type(_e869).__name__}: {_e869}")
+
+
+# ---------------------------------------------------------------- (aa870)
+# PORTFOLIO OHNE PREISE (Nutzer 08.11.2026: nach dem Start stand
+# ueberall -100 % und ein absurdes P&L, erst nach dem Markt-Scan "sieht
+# es richtig aus"). Drei Zusagen: (1) net_unit 0 heisst "kein Preis",
+# nie "-100 % Marge"; (2) die Preisquelle wird an EINER Stelle gebaut
+# (_hub_preise) - refresh_all und der gechainte Start-Scan teilen sie
+# (Regel 9); (3) der Start-Scan reicht seine frischen Preise sofort ans
+# Portfolio weiter, statt sie bis zum naechsten Refresh liegenzulassen.
+try:
+    _pf870 = _fn_src("_render_portfolio")
+    check("aa870 kein Preis heisst kein Marge-Schein (has_price-Wache)",
+          "has_price = (h.net_unit or 0) > 0" in _pf870
+          and 'if (has_cost and has_price) else "—"' in _pf870
+          and '_preise_da = bool(getattr(self, "_prices", None))' in _pf870)
+    check("aa870 ohne Preisquelle zeigen die Kacheln — statt Summen",
+          # Im Quelltext steht der Strich als ECHTES Zeichen (wie in den
+          # Zellen) - — hier im Test ergibt dasselbe Zeichen.
+          'self.k_value.setText("—")' in _pf870
+          and 'self.k_pl.setText("—")' in _pf870
+          and 'if _preise_da else "—"' in _pf870)
+    check("aa870 jedes Portfolio-Rendern schreibt eine Diagnose-Zeile "
+          "ins Perf-Log (render_portfolio: char/rows/unpriced)",
+          '"render_portfolio: char=' in _pf870
+          and "unpriced={unpriced}" in _pf870)
+    _hp870 = _fn_src("_hub_preise")
+    check("aa870 EINE Stelle baut die Portfolio-Preisquelle (Regel 9)",
+          "store.get_snapshot(store.get_hub_source())" in _hp870
+          and '"buy_max": s["buy_max"]' in _hp870)
+    _ra870 = _fn_src("refresh_all")
+    check("aa870 refresh_all bezieht die Preise aus _hub_preise",
+          '_dauer877("prices", self._hub_preise)' in _ra870
+          and '"snap_missing": not prices' in _ra870)
+    _ds870 = _fn_src("_do_scan")
+    check("aa870 der Hub-Scan reicht frische Preise sofort ans "
+          "Portfolio weiter (nur fuer die Portfolio-Quelle)",
+          "store.hub_source(region) == store.get_hub_source()" in _ds870
+          and "self._prices = self._hub_preise()" in _ds870
+          and _ds870.split("store.hub_source(region)")[1]
+              .count("self._recompute()") >= 1)
+except Exception as _e870:                               # pragma: no cover
+    _fail.append(f"aa870 Portfolio ohne Preise: {type(_e870).__name__}: {_e870}")
+
+
+# ---------------------------------------------------------------- (aa872)
+# LUECKE FREI HAUS + "wo ist es billiger" (emm872, Nutzer 08.11.2026 zur
+# 8B-Luecke: "was koennte man aendern ... wenn man den markt auffuellen
+# will"). Qt-freie Handrechnungen gegen marktdeckung.py: die gap cost war
+# der JITA-Preis, gekauft wird aber am Handelsplatz.
+try:
+    from eve_trader import marktdeckung as _md872
+    # (1) bester_sell: guenstigstes Angebot, OHNE Deckel - kaputte und
+    # leere Eintraege zaehlen nicht mit.
+    eq("aa872 bester_sell nimmt das guenstigste brauchbare Angebot",
+       _md872.bester_sell({"sell": [(9.0, 5), (3.0, 0), (4.5, 2),
+                                    (None, 1)]}), 4.5)
+    check("aa872 ohne Angebot gibt es keinen Preis (None, nicht 0)",
+          _md872.bester_sell({"sell": []}) is None
+          and _md872.bester_sell(None) is None)
+    # (2) Fracht je Stueck = Volumen mal Satz. OHNE Satz oder Volumen
+    # NICHT 0.0 - eine Null hiesse "Transport ist gratis" (Regel 1).
+    eq("aa872 Fracht je Stueck: 5 m3 mal 300 ISK = 1'500",
+       _md872.fracht_je_stueck(5, 300), 1500.0)
+    check("aa872 ohne Satz/Volumen wird NICHT gerechnet",
+          _md872.fracht_je_stueck(5, 0) is None
+          and _md872.fracht_je_stueck(0, 300) is None
+          and _md872.fracht_je_stueck(None, 300) is None)
+    # (3) Der Vergleich, beide Richtungen - Handrechnung:
+    # Jita 100 + Fracht 1'500 = 1'600 frei Haus.
+    _fr872 = _md872.fracht_je_stueck(5, 300)
+    _hier872 = _md872.fracht_vergleich(100, 1200, _fr872)
+    eq("aa872 hier guenstiger: 1'600 gegen 1'200 spart 400 (25 %)",
+       (_hier872["guenstiger"], _hier872["diff_stk"],
+        round(_hier872["diff_pct"], 1), _hier872["nur_eine_seite"]),
+       ("here", 400.0, 25.0, False))
+    _jita872 = _md872.fracht_vergleich(100, 2000, _fr872)
+    eq("aa872 Jita guenstiger: 2'000 gegen 1'600 spart 400 (20 %)",
+       (_jita872["guenstiger"], _jita872["diff_stk"],
+        round(_jita872["diff_pct"], 1)), ("jita", 400.0, 20.0))
+    # (4) EINSEITIG IST KEIN VERGLEICH (Regel 3): fehlt eine Seite,
+    # steht zwar eine Antwort da, aber mit Marker und ohne Ersparnis -
+    # sonst sieht "Jita" nach einem Rechenergebnis aus.
+    _leer872 = _md872.fracht_vergleich(100, None, _fr872)
+    eq("aa872 nichts im Buch -> Jita, aber als 'nur eine Seite'",
+       (_leer872["guenstiger"], _leer872["nur_eine_seite"],
+        _leer872["diff_stk"]), ("jita", True, None))
+    _ohne872 = _md872.fracht_vergleich(0, 500, _fr872)
+    eq("aa872 kein Jita-Preis -> hier, ebenfalls ohne Ersparnis",
+       (_ohne872["guenstiger"], _ohne872["nur_eine_seite"],
+        _ohne872["jita_frei_haus"]), ("here", True, None))
+    _nix872 = _md872.fracht_vergleich(0, 0, None)
+    eq("aa872 beide Seiten unbekannt -> gar keine Aussage",
+       (_nix872["guenstiger"], _nix872["nur_eine_seite"]), (None, False))
+    # (5) Die Position traegt den Platz-Preis mit - sonst koennte die
+    # Karte gar nicht vergleichen.
+    _dk872 = _md872.fit_deckung(
+        {34: 1}, {34: {"sell": [(7.0, 10), (5.0, 3)]}},
+        {34: 4.0}, 30, ziel=5)
+    eq("aa872 fit_deckung reicht den besten Platz-Preis durch",
+       _dk872["positionen"][0].get("bester_sell"), 5.0)
+    # (6) EINE Stelle rechnet Fracht+Vergleich je Zeile (Regel 9):
+    # Zellen UND Sortierung lesen von _ms_fracht_zeile.
+    _fz872 = _fn_src("_ms_fracht_zeile")
+    check("aa872 Zeilen-Fracht kommt aus marktdeckung, nicht aus der UI",
+          "marktdeckung.fracht_je_stueck(" in _fz872
+          and "marktdeckung.fracht_vergleich(" in _fz872)
+    _pw872 = _fn_src("_ms_pos_wert")
+    check("aa872 die Sortierung rechnet NICHT selbst, sie fragt dieselbe "
+          "Stelle",
+          "self._ms_fracht_zeile(p, jita, m3map)" in _pw872
+          and "fracht_je_stueck" not in _pw872)
+    _dok872 = _fn_src("_ms_doc_karte")
+    check("aa872 die Karte holt m3 ueber den Verkaufslisten-Helfer",
+          "self._fracht_volumen(" in _dok872
+          and "self._ms_fracht_zeile(p, jita, _m3map)" in _dok872)
+except Exception as _e872:                               # pragma: no cover
+    _fail.append(f"aa872 Luecke frei Haus: {type(_e872).__name__}: {_e872}")
+
+
+# ---------------------------------------------------------------- (aa873)
+# DER START-FREEZE, VON DER EIGENEN WACHE GEFUNDEN (emm873). Die
+# fehler.log des Nutzers vom 08.11.2026 zeigte 43 s Blockade im
+# Portfolio-Render. Nachgemessen: 1'401 SQLite-Verbindungen und 1'603
+# app_data_dir()-Aufrufe fuer EINEN Render mit 200 Zeilen. Drei
+# Ursachen, drei Zusagen - plus die Lehre, dass EIN Stack je Blockade
+# zu wenig ist.
+try:
+    # (1) Stammdaten werden durchgereicht, nicht je Zeile neu geholt.
+    _pq873 = _fn_src("_pf_price_source_ok")
+    check("aa873 die Preisquelle nimmt ein fertiges Scan-Label an",
+          "def _pf_price_source_ok(self, lbl=None):" in _pq873
+          and "if lbl is None:" in _pq873)
+    _sr873 = _fn_src("_sell_ready")
+    check("aa873 _sell_ready nimmt die geprueften Quelle entgegen",
+          "def _sell_ready(self, h, quelle_ok=None):" in _sr873
+          and "if quelle_ok is None:" in _sr873)
+    _of873 = _fn_src("_order_fremde_chars")
+    check("aa873 die Fremd-Orders nehmen die Charakterliste entgegen",
+          "def _order_fremde_chars(self, art, type_id, chars=None):" in _of873
+          and "if chars is None:" in _of873)
+    _rp873 = _fn_src("_render_portfolio")
+    check("aa873 der Render holt beides EINMAL und reicht es durch",
+          "_lbl873 = store.get_scan_label()" in _rp873
+          and "_chars873 = store.list_characters()" in _rp873
+          and "self._sell_ready(h, _quelle_ok873)" in _rp873
+          and "_chars873)" in _rp873
+          # und NICHT mehr je Zeile selbst nachfragen
+          and "elif not self._pf_price_source_ok():" not in _rp873)
+    # (2) app_data_dir fasst die Platte nicht mehr bei jedem Aufruf an.
+    _cfg873 = open("eve_trader/config.py", encoding="utf-8").read()
+    check("aa873 die Ordner-Pruefung ist zeitlich gedrosselt",
+          "PRUEF_INTERVALL_S" in _cfg873
+          and "_DATENORDNER_GEPRUEFT" in _cfg873
+          and "< PRUEF_INTERVALL_S:" in _cfg873)
+    # FUNKTIONAL: zweiter Aufruf fasst die Platte NICHT an, der Schutz
+    # greift trotzdem weiter (geloeschter Ordner wird neu angelegt).
+    import os as _os873
+    from eve_trader import config as _c873
+    _c873.app_data_dir()                       # einmal warmlaufen
+    _echt873 = _os873.path.isdir
+    _zaehler873 = {"n": 0}
+
+    def _isdir873(p):
+        _zaehler873["n"] += 1
+        return _echt873(p)
+    _os873.path.isdir = _isdir873
+    try:
+        for _ in range(50):
+            _c873.app_data_dir()
+    finally:
+        _os873.path.isdir = _echt873
+    eq("aa873 50 Aufrufe kosten KEINEN Platten-Zugriff mehr",
+       _zaehler873["n"], 0)
+    # (3) Der Kartenaufbau speichert nicht mehr die ganzen settings.
+    _kl873 = _fn_src("_ms_doc_karte")
+    check("aa873 der Klapp-Zustand wird beim AUFBAU nicht gespeichert",
+          'if not getattr(self, "_ms_aufbau873", False):' in _kl873
+          and "self._ms_aufbau873 = True" in _kl873
+          and "self._ms_aufbau873 = False" in _kl873)
+    # (4) Die Wache schaut bei langen Blockaden mehrfach nach.
+    from eve_trader import ui_wache as _uw873
+    check("aa873 die Wache kennt Nachschau und einen Deckel",
+          _uw873.NACHSCHAU_S > 0 and _uw873.HOECHSTENS_PROBEN >= 2)
+    _alt873 = _uw873.NACHSCHAU_S
+    _uw873.NACHSCHAU_S = 0.4
+    try:
+        import threading as _th873
+        _meld873 = []
+        _w873 = _uw873.UiWache(
+            lambda wo, txt: _meld873.append(txt.splitlines()[0]),
+            schwelle=0.3)
+        _w873.start(_th873.get_ident())
+        import time as _tt873
+        _tt873.sleep(2.2)                      # blockiert: kein Herzschlag
+        for _ in range(5):
+            _w873.herzschlag(); _tt873.sleep(0.15)
+        _w873.stop(); _tt873.sleep(0.4)
+    finally:
+        _uw873.NACHSCHAU_S = _alt873
+    check("aa873 eine lange Blockade liefert MEHRERE Stacks",
+          sum(1 for m in _meld873 if "still blocked after" in m) >= 1
+          and sum(1 for m in _meld873 if "blocked for" in m) >= 1
+          and any("responsive again" in m for m in _meld873))
+    check("aa873 und hoert beim Deckel auf",
+          sum(1 for m in _meld873 if "still blocked after" in m)
+          <= _uw873.HOECHSTENS_PROBEN)
+except Exception as _e873:                               # pragma: no cover
+    _fail.append(f"aa873 Start-Freeze: {type(_e873).__name__}: {_e873}")
+
+
+# ---------------------------------------------------------------- (aa876)
+# GREIFKANTE DER SPALTEN (Nutzer 09.11.2026: "ich kann gar nicht sehen
+# wo die spalten zu ziehen sind, weil der anfang und ende der spalte
+# nicht eingefaerbt ist"). Ein Trennstrich im Spaltenkopf, dezent grau -
+# und GANZZAHLIG, sonst rundet Windows ihn bei 125/150 % weg (emm862).
+try:
+    from eve_trader.ui import theme as _th876
+    _seg876 = _th876.QSS[_th876.QSS.index("QHeaderView::section"):]
+    _seg876 = _seg876[:_seg876.index("}")]
+    check("aa876 die Spaltenkoepfe haben einen sichtbaren Trenner",
+          "border-right:" in _seg876)
+    check("aa876 der Trenner ist ganzzahlig (1.5px rundet weg)",
+          "border-right: 1px solid" in _seg876
+          and "border-right: 1.5px" not in _seg876)
+    # DEZENT GRAU, NICHT AMBER: der Trenner soll die Kante zeigen, nicht
+    # mit den Spaltennamen um Aufmerksamkeit streiten.
+    _ton876 = _th876.toenung(_th876.MUTED, 0.45)
+    check("aa876 der Trenner ist das gedaempfte Grau, kein zweiter "
+          "Blickfang", _ton876 in _seg876
+          and f"border-right: 1px solid {_th876.AMBER}" not in _seg876)
+except Exception as _e876:                               # pragma: no cover
+    _fail.append(f"aa876 Spalten-Greifkante: {type(_e876).__name__}: {_e876}")
+
+
+# ---------------------------------------------------------------- (aa877)
+# WO BLEIBT DIE LADEZEIT? (Nutzer 09.11.2026: "MoMa freezed jetzt
+# nichtmehr ... aber Portfolio laden dauert sehr lange ueber 1 minute".)
+# Das Perf-Log kannte nur die Schritte NACH dem Laden - die Minute
+# davor war eine Blackbox. Jetzt misst der Job jede Phase und jeden
+# Charakter; der Bericht entsteht an EINER Stelle (Regel 9).
+try:
+    # Die Funktion wohnt in ladezeit.py - rein, ohne Qt pruefbar, und
+    # ihre englischen Logtexte haben in einer UI-Datei nichts zu suchen
+    # (de_scan3 moniert dort jeden Text ausserhalb von t()).
+    from eve_trader import ladezeit as _lz877
+    _mw877 = _lz877.bericht
+    # (1) Handrechnung: Phasen werden zusammengezaehlt, Charakter-Posten
+    # einzeln ausgewiesen, die Summe stimmt.
+    _txt877 = _mw877({"names": 3.2, "prices": 0.4, ("tx", 1): 12.4,
+                      ("tx", 2): 8.0, ("assets", 1): 5.1,
+                      "wallet+orders": 22.5}, {1: "Lezaar", 2: "Pilot2"})
+    check("aa877 der Bericht zaehlt je Phase zusammen (tx 12.4+8.0=20.4)",
+          "tx 20.4s" in _txt877 and "wallet+orders 22.5s" in _txt877)
+    # emm880 hat "total" in "sum" umbenannt - die Zahl ist dieselbe,
+    # der Name sagt jetzt ehrlich, dass parallele Phasen mehrfach
+    # zaehlen. Die WANDZEIT steht seitdem vorn (aa880).
+    check("aa877 und nennt die Summe der Phasen (51.6 s)",
+          "sum 51.6s" in _txt877)
+    check("aa877 die teuersten Einzelposten stehen mit NAMEN dabei",
+          "Lezaar tx 12.4s" in _txt877 and "Pilot2 tx 8.0s" in _txt877)
+    # MIT MEHR ALS DREI POSTEN wird die Auswahl erst scharf: bei genau
+    # drei sind sie in JEDER Reihenfolge alle dabei - so eine Probe
+    # haette eine verdrehte Sortierung durchgelassen (Rotprobe 2594 war
+    # damit BLIND).
+    _txt877b = _mw877({("tx", 1): 12.4, ("tx", 2): 8.0, ("assets", 1): 5.1,
+                       ("assets", 2): 1.2, ("tx", 3): 0.3},
+                      {1: "Lezaar", 2: "Pilot2", 3: "Pilot3"})
+    # .find statt .index: ein fehlender Posten soll den Check ROT
+    # machen, nicht den ganzen Block mit ValueError kippen (sonst
+    # meldet die Rotprobe BLIND statt der echten Pruefung).
+    _pos877 = [_txt877b.find(_x) for _x in ("Lezaar tx 12.4s",
+                                            "Pilot2 tx 8.0s",
+                                            "Lezaar assets 5.1s")]
+    check("aa877 nur die DREI teuersten, teuerste zuerst",
+          all(_p >= 0 for _p in _pos877) and _pos877 == sorted(_pos877)
+          and "Pilot3" not in _txt877b and "1.2s" not in _txt877b)
+    check("aa877 die teuerste Phase steht vorn",
+          _txt877.index("wallet+orders") < _txt877.index("names"))
+    eq("aa877 ohne Messwerte wird nichts erfunden",
+       _mw877({}), "load: (not measured)")
+    # ===== aa897: ZAEHLER NEBEN DEN ZEITEN =========================
+    # Nutzer 11.11.2026: "Portfolio ladedauer 1 minute, sit das gut?" -
+    # gemessen 55,0 s, davon 42,4 s in EINER Phase (normal-levels),
+    # waehrend dieselbe Phase in den vier Laeufen davor 6-11 s brauchte.
+    # Die Zeit allein sagt nicht WARUM: die Phase holt Preishistorien
+    # EINZELN ueber ESI nach, und wie viele das waren, stand nirgends.
+    _txt897 = _mw877({"__wall__": 55.0, "normal-levels": 42.4,
+                      ("#", "held"): 1153, ("#", "hist-cached"): 253,
+                      ("#", "hist-queued"): 900})
+    check("aa897 der Bericht nennt die Zaehler",
+          "held=1153" in _txt897 and "hist-cached=253" in _txt897
+          and "hist-queued=900" in _txt897)
+    # ZAEHLER SIND KEINE SEKUNDEN: 1153 Stueck duerfen die Zeitsumme
+    # nicht aufblaehen, sonst stuende dort "sum 2348.4s".
+    check(f"aa897 ... und zaehlt sie NICHT in die Sekunden "
+          f"({_txt897[_txt897.find('sum '):_txt897.find('sum ') + 12]})",
+          "sum 42.4s" in _txt897)
+    check("aa897 ... und nennt sie auch nicht als Phase",
+          "held 1153" not in _txt897 and "# 1153" not in _txt897)
+    # (2) Der Job misst wirklich alle Phasen - sonst bleibt die Minute
+    # teilweise unerklaert.
+    _ra877 = _fn_src("refresh_all")
+    # emm897: und er ZAEHLT auch, wie viele Historien er nachholen
+    # musste - das ist die Zahl, die den Unterschied zwischen 6 und 42
+    # Sekunden erklaert.
+    # emm900: die Zahl heisst jetzt `hist-queued`. `hist-fetched` waere
+    # eine Luege - diese Phase HOLT nichts mehr, sie uebergibt die Liste
+    # an `_normals_nachladen900`.
+    check("aa897 der Job zaehlt die nachgeholten Historien",
+          '_mess877[("#", "held")] = len(held_ids)' in _ra877
+          and '_mess877[("#", "hist-queued")] = len(_nachholen)' in _ra877
+          and '"hist-fetched"' not in _ra877)
+    check("aa897 ... und wie viele aus dem Zwischenspeicher kamen",
+          '_mess877[("#", "hist-cached")] = len(held_ids) - len(_nachholen)'
+          in _ra877)
+    for _ph877 in (# emm881: statt EINER tx-Zeit vier Teilschritte -
+                   # "tx" selbst entfaellt, sonst zaehlt die Summe doppelt.
+                   '_mess877[("tx-backfill", cid)]',
+                   '_mess877[("tx-fetch", cid)]',
+                   '_mess877[("tx-journal", cid)]',
+                   '_mess877[("tx-orders", cid)]',
+                   '_mess877[("assets", c)]',
+                   '_dauer877("names"', '_dauer877("prices"',
+                   '_dauer877("normal-levels"',
+                   # emm882: auch Kontostand+Orders laufen nebenlaeufig,
+                   # also je Charakter gemessen statt als eine Summe.
+                   '_mess877[("wallet+orders", cid)]',
+                   '_dauer877("db-tx"',
+                   # emm879: der letzte ungemessene Posten - bis zu 400
+                   # einzelne ESI-Orderbuecher, einer je Item.
+                   '_dauer877("live-prices"'):
+        check(f"aa879 auch die Live-Preise werden gemessen: {_ph877}"
+              if "live-prices" in _ph877 else
+              f"aa877 gemessen wird auch: {_ph877}", _ph877 in _ra877)
+    check("aa881 die Oberphase 'tx' ist weg - sonst stuende ihre Zeit "
+          "in der Summe doppelt",
+          '_mess877[("tx", cid)]' not in _ra877)
+    check("aa877 die Zeiten reisen im Ergebnis mit und werden EINMAL "
+          "im UI-Thread geschrieben",
+          '"ladezeiten": _mess877' in _ra877
+          and "self._log_step(ladezeit.bericht(" in _ra877)
+    check("aa877 gemessen wird im Worker mit eigener Zeit-Einfuhr "
+          "(pyflakes fand hier ein undefiniertes 'time')",
+          "import time as _zeit877" in _ra877
+          and "_zeit877.monotonic()" in _ra877)
+    # ---- emm880: die Wandzeit ist die Zahl, die der Nutzer erlebt ----
+    # Die Summe taugt dafuer nicht: 12 Charaktere zu viert abgerufen
+    # stehen darin mit ihrer ADDIERTEN Zeit. Nutzer am 09.11.2026 sah
+    # "ca 30 sekunden", die Summe sagte 29.4 s - und beides stimmte
+    # zufaellig fast ueberein, obwohl die echte Wartezeit bei ~17 s lag.
+    _w880 = _mw877({"__wall__": 17.3, "__seit_start__": 31.2,
+                    "tx": 12.9, ("tx", 1): 2.3}, {1: "Elrasier"})
+    check("aa880 die Wandzeit steht VORN, nicht die Summe",
+          _w880.startswith("load: WALL 17.3s")
+          and "since app start 31.2s" in _w880)
+    check("aa880 die Summe ist als Summe benannt, nicht als Gesamtzeit",
+          "sum 15.2s" in _w880
+          and "parallel phases counted more than once" in _w880
+          and "total" not in _w880)
+    check("aa880 die Marker selbst stehen NICHT als Phase in der Liste",
+          "__wall__" not in _w880 and "__seit_start__" not in _w880)
+    check("aa880 ohne Wandzeit bleibt der Bericht wie gehabt",
+          not _mw877({"tx": 1.0}).startswith("load: WALL"))
+    _ra880 = _fn_src("refresh_all")
+    check("aa880 gemessen wird im UI-Thread: Start vor dem Worker, "
+          "Stopp im done",
+          "self._t_laden880 = ladezeit.time.monotonic()" in _ra880
+          and '_zt880["__wall__"] = ladezeit.time.monotonic() - _t0_880' in _ra880
+          and '_zt880["__seit_start__"] = ladezeit.seit_start()' in _ra880)
+    # Der Worker heisst seit emm892 `_w892` (er braucht `with_status=True`
+    # fuer die Phasen-Anzeige); der Anker steht am Aufruf, nicht am Namen
+    # des Arguments.
+    check("aa880 der Startpunkt liegt VOR dem Worker-Aufruf",
+          _ra880.index("self._t_laden880 = ")
+          < _ra880.index("self._run(_w892, done, fail_cb=fail"))
+    from eve_trader import ladezeit as _lz880
+    check("aa880 der Programmstart wird beim Modulimport gemerkt",
+          _lz880.APP_START > 0 and _lz880.seit_start() >= 0)
+except Exception as _e877:                               # pragma: no cover
+    _fail.append(f"aa877 Ladezeit-Messung: {type(_e877).__name__}: {_e877}")
+
+
+# ---------------------------------------------------------------- (aa878)
+# DIE 90-TAGE-MEDIANE WAREN DER GROESSTE LADEPOSTEN (emm878). Gemessen
+# beim Nutzer am 09.11.2026: "normal-levels 17.9s" von 36.7 s gesamt.
+# Grund: scanner.history_cached fragt JE ITEM zweimal die Datenbank
+# (Alter + Zeilen), jedes Mal mit eigener Verbindung - bei ~1000
+# gehaltenen Items rund 2000 Verbindungen. store hat die
+# Sammelfunktionen seit emm336; hier wurden sie nur nie benutzt.
+try:
+    from eve_trader import config as _cf878
+    from eve_trader import store as _st878
+    import time as _t878
+    _nl878 = _fn_src("refresh_all")
+    check("aa878 die Mediane kommen aus EINER Sammelabfrage",
+          "store.get_histories(held_ids, config.FORGE_REGION)" in _nl878
+          and "store.fresh_history_type_ids(" in _nl878)
+    # emm900 geht weiter als emm878: diese Phase loest JETZT GAR KEINEN
+    # Abruf mehr aus, auch nicht fuer veraltete Items. Sie sammelt sie
+    # nur in `_nachholen` und uebergibt die Liste an den Hintergrund-Job
+    # (aa900). Darum hier nicht mehr "nur frische sind gratis", sondern
+    # "in dieser Phase ist ALLES gratis".
+    check("aa878 frisch gecachte Items loesen KEINEN Einzelabruf aus",
+          "if _ti not in _frisch:" in _nl878
+          and "_nachholen.append(_ti)" in _nl878
+          and "_nach900[:] = _nachholen" in _nl878)
+    # GEMESSEN STATT GEGLAUBT: die Sammelabfrage darf nicht mit der
+    # Itemzahl wachsen - gegen die echte Test-Datenbank gezaehlt.
+    _ids878 = list(range(70000, 70400))          # 400 Items
+    for _i878 in _ids878[:200]:                  # die Haelfte "frisch"
+        _st878.save_history(_i878, [{"date": "2026-11-01", "average": 100.0,
+                                    "highest": 110.0, "lowest": 90.0,
+                                    "volume": 10, "order_count": 2}],
+                           _cf878.FORGE_REGION)
+    _zaehl878 = {"n": 0}
+    _orig878 = _st878._conn
+
+    def _conn878():
+        _zaehl878["n"] += 1
+        return _orig878()
+    _st878._conn = _conn878
+    try:
+        _zaehl878["n"] = 0
+        _frisch878 = _st878.fresh_history_type_ids(_cf878.FORGE_REGION, 24)
+        _hist878 = _st878.get_histories(_ids878, _cf878.FORGE_REGION)
+    finally:
+        _st878._conn = _orig878
+    eq("aa878 400 Items kosten GENAU zwei Verbindungen (statt 800)",
+       _zaehl878["n"], 2)
+    check("aa878 und die Sammelabfrage liefert die Zeilen wirklich",
+          len(_hist878) == 400 and len(_hist878[70000]) == 1
+          and 70000 in _frisch878 and 70399 not in _frisch878)
+    # GEHT DABEI ETWAS VERLOREN? (Nutzer 09.11.2026: "gehen jetzt
+    # irgendwelche Preise oder Orderdaten verloren?") Die Frage verdient
+    # einen Beleg, keine Beruhigung - also laufen hier BEIDE Wege gegen
+    # dieselbe Datenbank und muessen dasselbe liefern. Vier Faelle:
+    # frisch mit Zeilen, frischer Zeitstempel OHNE Zeilen, veraltet,
+    # voellig unbekannt.
+    from eve_trader import scanner as _sc878
+    _R878 = _cf878.FORGE_REGION
+
+    def _hist878s(n, basis=100.0):
+        return [{"date": f"2026-10-{_d:02d}", "average": basis + _d,
+                 "highest": basis + _d + 5, "lowest": basis + _d - 5,
+                 "volume": 100, "order_count": 5} for _d in range(1, n + 1)]
+    _st878.save_history(71001, _hist878s(30), _R878)       # frisch, Zeilen
+    _st878.save_history(71002, [], _R878)                  # Stempel, keine Zeilen
+    _st878.save_history(71003, _hist878s(30, 200.0), _R878)
+    with _st878._conn() as _c878:                          # 71003 veralten
+        _c878.execute("UPDATE history_meta SET updated_at=? WHERE type_id=?",
+                      (_t878.time() - 48 * 3600, 71003))
+    _ids878v = [71001, 71002, 71003, 71004]                # 71004: unbekannt
+    _esi878 = _sc878.esi.fetch_market_history
+    _sc878.esi.fetch_market_history = lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("kein Netz im Test"))
+    try:
+        def _normal878(_t):
+            try:
+                _ts = _sc878.trend_stats(_sc878.history_cached(_t, _R878), 90)
+                return _ts.get("normal") or 0
+            except Exception:
+                return 0
+        _alt878 = {_t: _n for _t in _ids878v if (_n := _normal878(_t))}
+        _frisch878v = _st878.fresh_history_type_ids(_R878, 24)
+        _h878v = _st878.get_histories(_ids878v, _R878)
+        _neu878, _nach878 = {}, []
+        for _t in _ids878v:
+            if _t in _frisch878v:
+                try:
+                    _ts = _sc878.trend_stats(_h878v.get(_t) or [], 90)
+                    _n = _ts.get("normal") or 0
+                except Exception:
+                    _n = 0
+                if _n:
+                    _neu878[_t] = _n
+            else:
+                _nach878.append(_t)
+        for _t in _nach878:
+            _n = _normal878(_t)
+            if _n:
+                _neu878[_t] = _n
+    finally:
+        _sc878.esi.fetch_market_history = _esi878
+    eq("aa878 der neue Weg liefert GENAU dieselben Normalpreise",
+       _neu878, _alt878)
+    check("aa878 und ueberspringt nichts: ohne Zeilen/veraltet/unbekannt "
+          "gehen weiter einzeln ueber ESI",
+          71002 in _nach878 and 71004 in _nach878 and 71001 not in _nach878)
+except Exception as _e878:                               # pragma: no cover
+    _fail.append(f"aa878 Mediane-Sammelabfrage: {type(_e878).__name__}: {_e878}")
+
+
+# ===================== aa882: Kontostand + Orders nebenlaeufig ==========
+# Nutzer 09.11.2026: "mach was richtig ist pruefe das duz keine fehler
+# machst". Der LETZTE serielle ESI-Block des Portfolio-Refreshs (12
+# Charaktere x zwei Abrufe, gemessen 3.4 s) laeuft jetzt zu viert.
+#
+# Ein solcher Umbau darf am ERGEBNIS nichts aendern - sonst stehen
+# falsche Vermoegen und falsche Order-Marken im Portfolio. Deshalb wird
+# hier nichts nachgebaut: der GELIEFERTE Block wird aus `refresh_all`
+# herausgeschnitten, mit gefaelschtem ESI ausgefuehrt und gegen den
+# ALTEN seriellen Weg (hier Zeichen fuer Zeichen als Referenz) gestellt.
+try:
+    import textwrap as _tw882
+    from eve_trader import nebenlaeufig as _nl882
+    _ra882 = _fn_src("refresh_all")
+    _flat882 = " ".join(_ra882.split())
+    check("aa882 Kontostand+Orders laufen ueber nebenlaeufig.je_charakter",
+          "nebenlaeufig.je_charakter( cid_list, _wo_je882, max_parallel=4)"
+          in _flat882)
+    check("aa882 die alte serielle Schleife ist weg",
+          "wallet[cid] = esi.fetch_wallet_balance(" not in _ra882)
+    check("aa882 vier gleichzeitig - wie bei tx und assets, nicht mehr",
+          "_wo_je882, max_parallel=4)" in _flat882)
+
+    # --- den echten Block herausschneiden -----------------------------
+    _i882 = _ra882.index("            def _wo_je882(cid):")
+    _j882 = _ra882.index("            # LETZTER UNGEMESSENER POSTEN", _i882)
+    _src882 = _tw882.dedent(_ra882[_i882:_j882])
+    check("aa882 der echte Block wurde gefunden und enthaelt beide Teile",
+          "def _wo_je882(cid):" in _src882
+          and "for cid, _erg882, _f882 in" in _src882)
+
+    class _Esi882:
+        """Gefaelschtes ESI: ein gesunder Charakter, einer ohne
+        Kontostand, einer ohne Orderliste."""
+        def __init__(self):
+            self.ruf = []
+        def fetch_wallet_balance(self, client_id, cid):
+            self.ruf.append(("wallet", cid))
+            if cid == 2:
+                raise RuntimeError("403 wallet")
+            return {1: 100.0, 3: 7.0}[cid]
+        def fetch_character_orders(self, client_id, cid):
+            self.ruf.append(("orders", cid))
+            if cid == 3:
+                raise RuntimeError("timeout orders")
+            return [{"type_id": 34, "is_buy_order": True, "escrow": 50.0},
+                    {"type_id": 35, "is_buy_order": False, "price": 10.0,
+                     "volume_remain": 5},
+                    {"type_id": None, "is_buy_order": False, "price": 1.0,
+                     "volume_remain": 2}]
+
+    class _Zeit882:
+        def monotonic(self):
+            return 1.0
+
+    # --- NEUER Weg: der gelieferte Block, echt ausgefuehrt -------------
+    _esi882 = _Esi882()
+    _mess882 = {}
+    # emm892 hat eine Phasen-Meldung in diesen Block gelegt - der Block
+    # wird hier echt ausgefuehrt, also muessen beide Namen da sein.
+    # Gleich mitgeprueft, DASS die Phase gemeldet wird (unten).
+    _ph882 = []
+    _ns882 = {"_zeit877": _Zeit882(), "esi": _esi882, "client_id": "x",
+              "_mess877": _mess882, "nebenlaeufig": _nl882,
+              "cid_list": [1, 2, 3], "wallet": {}, "orders": {},
+              "orders_je_char": {},
+              # `_fn_src` schreibt `_txt(` zu `t(` um (CLAUDE.md), der
+              # ausgefuehrte Block ruft also `t`, nicht `_txt`.
+              "_phase892": _ph882.append, "t": lambda s: s}
+    exec(_src882, _ns882)                                     # noqa: S102
+
+    # --- ALTER Weg als Referenz (Stand vor emm882, unveraendert) -------
+    _esi_alt882 = _Esi882()
+    _w_alt882, _o_alt882, _ojc_alt882 = {}, {}, {}
+    for _cid882 in [1, 2, 3]:
+        try:
+            _w_alt882[_cid882] = _esi_alt882.fetch_wallet_balance("x", _cid882)
+        except Exception:
+            _w_alt882[_cid882] = 0.0
+        _sv882 = 0.0
+        _be882 = 0.0
+        _b882, _s882 = set(), set()
+        try:
+            for _o882 in _esi_alt882.fetch_character_orders("x", _cid882):
+                _tid882 = _o882.get("type_id")
+                if _o882.get("is_buy_order"):
+                    _be882 += float(_o882.get("escrow", 0) or 0)
+                    if _tid882:
+                        _b882.add(int(_tid882))
+                else:
+                    _sv882 += float(_o882.get("price", 0) or 0) * \
+                        int(_o882.get("volume_remain", 0) or 0)
+                    if _tid882:
+                        _s882.add(int(_tid882))
+        except Exception:
+            pass
+        _ojc_alt882[int(_cid882)] = {"buy": _b882, "sell": _s882}
+        _o_alt882[_cid882] = {"sell_value": _sv882, "buy_escrow": _be882}
+
+    eq("aa882 die Kontostaende sind GENAU dieselben wie vorher",
+       _ns882["wallet"], _w_alt882)
+    eq("aa882 die Order-Werte sind GENAU dieselben wie vorher",
+       _ns882["orders"], _o_alt882)
+    eq("aa882 die Order-Marken je Charakter sind GENAU dieselben",
+       _ns882["orders_je_char"], _ojc_alt882)
+    # Und die Werte selbst - sonst koennten BEIDE Wege gleich falsch sein.
+    eq("aa882 gesunder Charakter: Kontostand kommt an",
+       _ns882["wallet"][1], 100.0)
+    eq("aa882 gesunder Charakter: Sell-Wert = Preis x Restmenge, ueber "
+       "ALLE Sell-Orders (10x5 + 1x2; die dritte hat keine type_id - sie "
+       "zaehlt beim WERT mit, aber nicht als Order-Marke)",
+       _ns882["orders"][1]["sell_value"], 52.0)
+    eq("aa882 gesunder Charakter: Buy-Escrow kommt an",
+       _ns882["orders"][1]["buy_escrow"], 50.0)
+    eq("aa882 Order ohne type_id zaehlt beim Wert mit, aber nicht als Marke",
+       _ns882["orders_je_char"][1], {"buy": {34}, "sell": {35}})
+    eq("aa882 kaputter Kontostand -> 0.0, die Orders kommen trotzdem",
+       (_ns882["wallet"][2], _ns882["orders_je_char"][2]),
+       (0.0, {"buy": {34}, "sell": {35}}))
+    eq("aa882 kaputte Orderliste -> leere Marken und 0.0, Kontostand bleibt",
+       (_ns882["wallet"][3], _ns882["orders_je_char"][3],
+        _ns882["orders"][3]),
+       (7.0, {"buy": set(), "sell": set()},
+        {"sell_value": 0.0, "buy_escrow": 0.0}))
+    check("aa882 jeder Charakter wurde genau einmal abgefragt - der "
+          "Umbau darf ESI nicht doppelt belasten",
+          sorted(_esi882.ruf) == sorted(
+              [("wallet", 1), ("wallet", 2), ("wallet", 3),
+               ("orders", 1), ("orders", 2), ("orders", 3)]))
+    eq("aa882 gemessen wird je Charakter, nicht als eine Summe",
+       sorted(_mess882), [("wallet+orders", 1), ("wallet+orders", 2),
+                          ("wallet+orders", 3)])
+    # emm892: die Phase wird EINMAL vor dem Block gemeldet, nicht je
+    # Charakter - sonst flackerte die Anzeige zwoelfmal mit demselben
+    # Text. `_txt` ist hier die Kennung selbst, darum der englische Text.
+    eq("aa892 die Phase wird einmal vor Kontostand+Orders gemeldet",
+       _ph882, ["Wallet and open orders …"])
+
+    # --- und der Notnagel: wirft etwas AUSSERHALB der beiden try-Blocks,
+    # faengt es nebenlaeufig.je_charakter ab und der Charakter muss mit
+    # Nullwerten dastehen - nicht fehlen und nicht als None. Ohne diesen
+    # Zweig wuerde `_erg882[0]` auf None zugreifen und der GANZE Refresh
+    # mit TypeError sterben, also EIN kranker Charakter alle zwoelf
+    # mitnehmen. Ausgeloest wird es ueber den Messpunkt, die einzige
+    # Zeile dort ohne eigenes except.
+    class _MessKaputt882(dict):
+        def __setitem__(self, k, v):
+            raise RuntimeError("kein Platz fuer Messwerte")
+    _ns_n882 = {"_zeit877": _Zeit882(), "esi": _Esi882(), "client_id": "x",
+                "_mess877": _MessKaputt882(), "nebenlaeufig": _nl882,
+                "cid_list": [1, 2, 3], "wallet": {}, "orders": {},
+                "orders_je_char": {},
+                "_phase892": lambda _s: None, "t": lambda s: s}
+    exec(_src882, _ns_n882)                                   # noqa: S102
+    eq("aa882 Notnagel: jeder Charakter steht mit Kontostand 0.0 da",
+       _ns_n882["wallet"], {1: 0.0, 2: 0.0, 3: 0.0})
+    eq("aa882 Notnagel: leere Order-Marken, kein None",
+       _ns_n882["orders_je_char"],
+       {1: {"buy": set(), "sell": set()}, 2: {"buy": set(), "sell": set()},
+        3: {"buy": set(), "sell": set()}})
+    eq("aa882 Notnagel: Order-Werte 0.0, kein None",
+       _ns_n882["orders"][2], {"sell_value": 0.0, "buy_escrow": 0.0})
+except Exception as _e882:                               # pragma: no cover
+    _fail.append(f"aa882 Kontostand+Orders nebenlaeufig: "
+                 f"{type(_e882).__name__}: {_e882}")
+
+# ============ aa883: unbestaetigte Intervall-Uhr (Verklicker) ==========
+# Nutzerfrage 09.11.2026: "falls ich in 2 Days Anzeige ausloese und ESI
+# trackt, dass ich doch nicht geupdatet habe ingame, sondern mich nur
+# verklickt habe in MoMa, kann MoMa das bei diesem Item zuruecksetzen?"
+#
+# Vorher: NEIN. "Next" startet die Uhr sofort, und nur ein GEAENDERTES
+# `issued` korrigiert sie - ein Verklicker blieb fuer immer als
+# Wartezeit stehen. MoMa behauptete damit eine Aenderung, die es nie
+# gesehen hatte (Regel 1).
+#
+# Der Schluessel ist `Last-Modified`: WANN hat ESI diese Daten erzeugt?
+# Liegt das NACH dem Klick und steht dort immer noch das alte `issued`,
+# ist der Verklicker belegt. Ueber die Cache-DAUER zu raten waere Regel 2.
+try:
+    import os as _os883
+    import tempfile as _tmp883
+    from eve_trader import config as _cfg883, esi as _esi883
+    from eve_trader import store as _store883
+
+    # ---- (1) Das HTTP-Datum, rein und ohne Netz ----------------------
+    eq("aa883 HTTP-Datum in GMT wird zur richtigen Epochensekunde",
+       _esi883.http_datum("Mon, 09 Nov 2026 16:05:00 GMT"),
+       1794240300.0)
+    check("aa883 ein Datum mit Zonen-Offset wird mitgerechnet, nicht "
+          "als GMT gelesen",
+          _esi883.http_datum("Mon, 09 Nov 2026 17:05:00 +0100")
+          == _esi883.http_datum("Mon, 09 Nov 2026 16:05:00 GMT"))
+    for _m883 in (None, "", "gestern", "Mon, 99 Xyz 2026", 17):
+        eq(f"aa883 unbrauchbares Datum gibt None statt einer Zahl: {_m883!r}",
+           _esi883.http_datum(_m883), None)
+    eq("aa883 ohne Abruf kennt MoMa keinen Stand - und erfindet keinen",
+       _esi883.orders_stand(999999999), None)
+
+    # ---- (2) Die Uhr in der Datenbank --------------------------------
+    _dir883 = _tmp883.mkdtemp(prefix="aa883_")
+    _alt883 = _cfg883.db_path
+    _cfg883.db_path = lambda: _os883.path.join(_dir883, "aa883.sqlite")
+    try:
+        _store883.init_db()
+        _ISS883 = "2026-10-01T08:00:00Z"
+        _T883 = 1790000000.0          # Klick
+        # Erste Sicht: keine Uhr, nichts unbestaetigt.
+        _c883, _u883 = _store883.order_intervall_sync(
+            {7001: _ISS883}, now=_T883 - 100, mit_status=True)
+        eq("aa883 erste Sicht: keine Uhr", _c883, {7001: None})
+        eq("aa883 erste Sicht: nichts unbestaetigt", _u883, set())
+
+        # "Next" geklickt - ab jetzt laeuft die Uhr, aber UNBESTAETIGT.
+        _store883.order_intervall_start(7001, _ISS883, now=_T883)
+        _c883, _u883 = _store883.order_intervall_sync(
+            {7001: _ISS883}, now=_T883 + 60, mit_status=True)
+        eq("aa883 nach 'Next' laeuft die Uhr", _c883[7001], _T883)
+        eq("aa883 ... aber sie ist UNBESTAETIGT - MoMa kennt nur den Klick",
+           _u883, {7001})
+
+        # DER SCHUTZ: ein Abruf, den ESI VOR dem Klick erzeugt hat, darf
+        # nichts zuruecksetzen - er kann die Aenderung gar nicht kennen.
+        _c883, _u883 = _store883.order_intervall_sync(
+            {7001: _ISS883}, now=_T883 + 120,
+            stand_ts=_T883 - 300, mit_status=True)
+        eq("aa883 Abruf AELTER als der Klick (ESI-Cache): Uhr bleibt stehen",
+           _c883[7001], _T883)
+        eq("aa883 ... und gilt weiter als unbestaetigt", _u883, {7001})
+
+        # Und ganz ohne Stand wird ebenfalls nichts zurueckgesetzt.
+        _c883, _u883 = _store883.order_intervall_sync(
+            {7001: _ISS883}, now=_T883 + 180, mit_status=True)
+        eq("aa883 ohne Last-Modified wird NIE zurueckgesetzt (nicht raten)",
+           _c883[7001], _T883)
+
+        # DER VERKLICKER: ESI hat die Order NACH dem Klick gesehen, und
+        # `issued` ist immer noch das alte -> im Spiel ist nichts passiert.
+        # EIGENE order_id, nicht 7001: haette ein Test davor die Uhr
+        # schon geloescht, faende dieser hier "None" aus dem falschen
+        # Grund und bliebe gruen, egal was die Logik tut (genau so war
+        # er beim ersten Lauf BLIND).
+        _store883.order_intervall_sync({7011: _ISS883}, now=_T883 - 100)
+        _store883.order_intervall_start(7011, _ISS883, now=_T883)
+        check("aa883 Vorbedingung des Verklicker-Tests: die Uhr LAEUFT",
+              _store883.order_intervall_sync(
+                  {7011: _ISS883}, now=_T883 + 60)[7011] == _T883)
+        _c883, _u883 = _store883.order_intervall_sync(
+            {7011: _ISS883}, now=_T883 + 600,
+            stand_ts=_T883 + 300, mit_status=True)
+        eq("aa883 VERKLICKER erkannt: die Wartezeit faellt weg",
+           _c883[7011], None)
+        eq("aa883 ... und die Zeile gilt nicht mehr als unbestaetigt",
+           _u883, set())
+        check("aa883 die Zeile ist damit wieder faellig",
+              _store883.order_intervall_sync(
+                  {7011: _ISS883}, now=_T883 + 700)[7011] is None)
+
+        # DIE ECHTE AENDERUNG: `issued` springt -> Uhr auf den genauen
+        # Zeitpunkt, und BESTAETIGT (kein Fragezeichen mehr).
+        _store883.order_intervall_start(7002, "2026-10-02T08:00:00Z", now=_T883)
+        _NEU883 = "2026-10-03T14:30:00Z"
+        _c883, _u883 = _store883.order_intervall_sync(
+            {7002: _NEU883}, now=_T883 + 600,
+            stand_ts=_T883 + 300, mit_status=True)
+        check("aa883 im Spiel geaendert: Uhr = Zeitpunkt der Aenderung",
+              abs(_c883[7002] - _store883._iso_ts(_NEU883)) < 1)
+        eq("aa883 ... und sie ist bestaetigt, trotz frischem Stand",
+           _u883, set())
+        check("aa883 die Bestaetigung haelt auch beim naechsten Abruf",
+              _store883.order_intervall_sync(
+                  {7002: _NEU883}, now=_T883 + 900,
+                  stand_ts=_T883 + 800, mit_status=True)[1] == set())
+
+        # Stand JE ORDER: jeder Charakter hat seinen eigenen Cache.
+        _store883.order_intervall_start(7003, "2026-10-04T08:00:00Z", now=_T883)
+        _store883.order_intervall_start(7004, "2026-10-05T08:00:00Z", now=_T883)
+        _c883, _u883 = _store883.order_intervall_sync(
+            {7003: "2026-10-04T08:00:00Z", 7004: "2026-10-05T08:00:00Z"},
+            now=_T883 + 600,
+            stand_ts={7003: _T883 + 300, 7004: _T883 - 300},
+            mit_status=True)
+        eq("aa883 Stand je Order: der frische Charakter wird zurueckgesetzt",
+           _c883[7003], None)
+        eq("aa883 ... der mit altem Cache NICHT", _c883[7004], _T883)
+        eq("aa883 ... und nur der bleibt unbestaetigt", _u883, {7004})
+
+        # Rueckwaertskompatibel: ohne mit_status kommt weiter NUR das Dict.
+        _r883 = _store883.order_intervall_sync({7004: "2026-10-05T08:00:00Z"},
+                                               now=_T883 + 700)
+        check("aa883 ohne mit_status bleibt die Rueckgabe ein einfaches Dict",
+              isinstance(_r883, dict) and _r883[7004] == _T883)
+        eq("aa883 leere Eingabe mit Status: zwei leere Behaelter",
+           _store883.order_intervall_sync({}, mit_status=True), ({}, set()))
+        eq("aa883 leere Eingabe ohne Status: wie bisher ein leeres Dict",
+           _store883.order_intervall_sync({}), {})
+
+        # MIGRATION: eine alte Datenbank ohne die Spalte bekommt sie, und
+        # ihre laufenden Uhren ueberleben (echte Nutzerdaten).
+        with _store883._conn() as _cc883:
+            _cc883.execute("DROP TABLE order_intervall")
+            _cc883.execute("CREATE TABLE order_intervall (order_id INTEGER "
+                           "PRIMARY KEY, last_issued TEXT, clock_ts REAL, "
+                           "seen_at REAL)")
+            _cc883.execute("INSERT INTO order_intervall VALUES (?,?,?,?)",
+                           (7009, _ISS883, _T883, _T883))
+        # UEBER init_db, NICHT die Migration direkt: sonst ist belegt,
+        # dass die Funktion wirkt - aber nicht, dass sie beim Start
+        # ueberhaupt aufgerufen wird (Lehre aus aa424).
+        _store883.init_db()
+        with _store883._conn() as _cc883:
+            _sp883 = [r[1] for r in _cc883.execute(
+                "PRAGMA table_info(order_intervall)")]
+        _hat883 = "klick_issued" in _sp883
+        check("aa883 Migration ergaenzt klick_issued in einer alten Datenbank",
+              _hat883)
+        # ERST FRAGEN, DANN ABFRAGEN: ein SELECT auf die fehlende Spalte
+        # wuerfe OperationalError und risse den ganzen Block mit - der
+        # Check oben kaeme nie dran, und die Rotprobe meldete BLIND,
+        # obwohl die Mutation wirkt (genau so war es beim ersten Lauf).
+        if _hat883:
+            with _store883._conn() as _cc883:
+                _wert883 = _cc883.execute(
+                    "SELECT clock_ts, klick_issued FROM order_intervall "
+                    "WHERE order_id=7009").fetchone()
+            eq("aa883 ... die laufende Uhr bleibt erhalten", _wert883[0], _T883)
+            eq("aa883 ... und gilt als bestaetigt (NULL) - alte Uhren "
+               "behaupten nichts Neues", _wert883[1], None)
+    finally:
+        _cfg883.db_path = _alt883
+
+    # ---- (3) Anker im Quelltext --------------------------------------
+    _mw883 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    check("aa883 der Last-Modified-Stand wird je Order mitgenommen",
+          '_stand883[o.get("order_id")] = \\' in _mw883
+          and "esi.orders_stand(cid)" in _mw883
+          and '"stand883": dict(_stand883)' in _mw883)
+    check("aa883 der Abgleich bekommt Stand UND Status",
+          'stand_ts=res.get("stand883") or {}' in _mw883
+          and "mit_status=True)" in _mw883)
+    check("aa883 jede Zeile weiss, ob ihre Uhr bestaetigt ist",
+          '_r735["uhr_unbestaetigt"] = (' in _mw883
+          and '_r735.get("order_id") in _unbest883)' in _mw883)
+    check("aa883 die Anzeige markiert die unbestaetigte Wartezeit",
+          'if r.get("uhr_unbestaetigt"):\n                    st_txt += t(" (?)")'
+          in _mw883
+          and "st_col = theme.AMBER" in _mw883)
+    check("aa883 der Hinweis sagt 'hier geklickt', nicht 'geaendert' - "
+          "sonst behauptet er eine Tat, die MoMa nicht gesehen hat",
+          # Der Text ist im Quelltext umgebrochen - und er steht dort
+          # als \\u-ESCAPE, nicht als Zeichen (die Lehre aus Sitzung 21:
+          # beide Formen koennen vorkommen, der Anker muss die
+          # treffen, die wirklich dasteht).
+          "NOT CONFIRMED. \\u201eNext\\u201c was clicked here on " in _mw883
+          and '"{since} \\u2013 but the order has to be changed IN "' in _mw883)
+    _spr883 = open("eve_trader/sprache.py", encoding="utf-8").read()
+    check("aa883 beide neuen Texte stehen zweisprachig im Katalog (Regel 6)",
+          '" (?)": " (?)",' in _spr883
+          and "NICHT BEST\\u00c4TIGT." in _spr883)
+except Exception as _e883:                               # pragma: no cover
+    _fail.append(f"aa883 unbestaetigte Intervall-Uhr: "
+                 f"{type(_e883).__name__}: {_e883}")
+
+# ======= aa884: erledigte Orders leuchten nach (BOUGHT/SOLD) ==========
+# Community-Wunsch (Spaceballs 2, Discord 09.11.2026): "when I buy an
+# item in buy orders it disappears from that page. Could you maybe keep
+# the item listed on that page on the bottom of the page with the
+# status text BOUGHT for few days."
+#
+# DIE GEFAHR DABEI ist eine falsche Behauptung: eine verschwundene
+# Order ist NICHT immer verkauft. Sie kann abgelaufen oder storniert
+# sein. Ein pauschales "SOLD" waere ein Regel-1-Verstoss. Deshalb wird
+# hier jede der drei Arten einzeln belegt.
+try:
+    import os as _os884
+    import tempfile as _tmp884
+    import textwrap as _tw884
+    from eve_trader import config as _cfg884, store as _store884
+    from eve_trader import sprache as _spr884
+
+    def _order884(oid, tid=34, buy=True, rest=10, state=None, loc=60003760):
+        d = {"order_id": oid, "type_id": tid, "is_buy_order": buy,
+             "price": 5.0, "volume_total": 10, "volume_remain": rest,
+             "issued": "2026-10-01T08:00:00", "duration": 90,
+             "location_id": loc}
+        if state:
+            d["state"] = state
+        return d
+
+    _dir884 = _tmp884.mkdtemp(prefix="aa884_")
+    _alt884 = _cfg884.db_path
+    _cfg884.db_path = lambda: _os884.path.join(_dir884, "aa884.sqlite")
+    try:
+        _store884.init_db()
+        _TAG884 = 86400.0
+        _T884 = 1790000000.0
+        _ISO884 = "2026-10-20T12:00:00"
+
+        # (1) ERSTER ABRUF: eine laengst geschlossene Order aus der
+        # Historie darf NICHT als "heute erledigt" auftauchen - sonst
+        # behauptete die Liste einen Verkauf von heute.
+        _store884.save_orders(42, [_order884(9001, state="expired")],
+                              jetzt_iso=_ISO884)
+        eq("aa884 eine alte Order aus der Historie gilt NICHT als gerade "
+           "erledigt - wir haben ihren Uebergang nie gesehen",
+           _store884.kuerzlich_erledigte_orders(30 * _TAG884, now=_T884), [])
+
+        # (2) DER BEOBACHTETE UEBERGANG: erst offen, dann weg.
+        _store884.save_orders(42, [_order884(1, buy=True),
+                                   _order884(2, tid=35, buy=False)],
+                              jetzt_iso=_ISO884, nur_offene=True)
+        eq("aa884 solange beide offen sind, leuchtet nichts nach",
+           _store884.kuerzlich_erledigte_orders(30 * _TAG884, now=_T884), [])
+        _ISO2 = "2026-10-21T12:00:00"
+        _T2 = _store884._iso_ts(_ISO2)
+        _store884.save_orders(42, [_order884(2, tid=35, buy=False, rest=4)],
+                              jetzt_iso=_ISO2, nur_offene=True)
+        _e884 = _store884.kuerzlich_erledigte_orders(30 * _TAG884, now=_T2)
+        eq("aa884 die verschwundene Order leuchtet nach - genau eine",
+           [x["order_id"] for x in _e884], [1])
+        eq("aa884 ... und zwar als ERFUELLT (ESI listet erfuellte Orders "
+           "nirgends - sie verschwinden einfach)",
+           _e884[0]["art"], "erfuellt")
+        eq("aa884 ... als Buy-Order", _e884[0]["is_buy"], True)
+        check("aa884 ... frisch erledigt, also Alter rund null",
+              _e884[0]["alter_s"] < 60)
+        check("aa884 die noch offene Order ist NICHT dabei",
+              2 not in [x["order_id"] for x in _e884])
+
+        # (3) ABGELAUFEN UND STORNIERT kommen von ESI selbst - und heissen
+        # auch so. Hier war die Order vorher offen, der Uebergang also
+        # beobachtet.
+        _store884.save_orders(42, [_order884(3, tid=36),
+                                   _order884(4, tid=37)],
+                              jetzt_iso=_ISO2, nur_offene=True)
+        _ISO3 = "2026-10-22T12:00:00"
+        _T3 = _store884._iso_ts(_ISO3)
+        _store884.save_orders(42, [_order884(3, tid=36, state="expired"),
+                                   _order884(4, tid=37, state="cancelled")],
+                              jetzt_iso=_ISO3)
+        _arten884 = {x["order_id"]: x["art"] for x in
+                     _store884.kuerzlich_erledigte_orders(30 * _TAG884,
+                                                          now=_T3)}
+        eq("aa884 eine abgelaufene Order heisst abgelaufen, nicht verkauft",
+           _arten884.get(3), "abgelaufen")
+        eq("aa884 eine stornierte heisst storniert", _arten884.get(4),
+           "storniert")
+
+        # (4) DER ZEITSTEMPEL RUECKT NICHT VOR. Sonst bliebe die Zeile
+        # ewig stehen, weil sie bei jedem Abruf wieder "neu" waere.
+        _ISO4 = "2026-10-25T12:00:00"
+        _T4 = _store884._iso_ts(_ISO4)
+        _store884.save_orders(42, [_order884(2, tid=35, buy=False, rest=4)],
+                              jetzt_iso=_ISO4, nur_offene=True)
+        # DAS FLACKERN: Order 1 taucht noch einmal als offen auf und
+        # ist beim naechsten Abruf wieder weg. Der erste Zeitpunkt muss
+        # gelten - sonst waere sie jedes Mal wieder "frisch erledigt".
+        _store884.save_orders(42, [_order884(1, buy=True),
+                                   _order884(2, tid=35, buy=False, rest=4)],
+                              jetzt_iso=_ISO4, nur_offene=True)
+        _store884.save_orders(42, [_order884(2, tid=35, buy=False, rest=4)],
+                              jetzt_iso=_ISO4, nur_offene=True)
+        _alt_e884 = [x for x in _store884.kuerzlich_erledigte_orders(
+            30 * _TAG884, now=_T4) if x["order_id"] == 1]
+        check(f"aa884 der Erledigt-Zeitpunkt bleibt stehen - die Order ist "
+              f"jetzt rund 4 Tage alt ({_alt_e884[0]['alter_s'] / _TAG884:.1f})",
+              3.5 * _TAG884 < _alt_e884[0]["alter_s"] < 4.5 * _TAG884)
+
+        # (5) HERAUSALTERN: mit kleinerem Fenster ist sie weg.
+        check("aa884 mit 3-Tage-Fenster ist die 4 Tage alte Order raus",
+              1 not in [x["order_id"] for x in
+                        _store884.kuerzlich_erledigte_orders(3 * _TAG884,
+                                                             now=_T4)])
+        # GEFRAGT WIRD ZUM ZEITPUNKT DER ERLEDIGUNG (_T2): dort ist
+        # ts == now. Ohne den Abschalt-Guard rechnete die Funktion
+        # grenze = now - 0 = now und liesse diese Zeile durch. Zu einem
+        # spaeteren Zeitpunkt zu fragen waere blind - dann kaeme auch
+        # ohne Guard nichts zurueck.
+        # (Spaeter erledigte Orders liegen zu _T2 noch in der Zukunft
+        # und werden nicht herausgefiltert - im Betrieb kann das nicht
+        # vorkommen, hier zaehlt nur, dass Order 1 ueberhaupt da WAERE.)
+        check("aa884 Vorbedingung: zum Zeitpunkt _T2 WAERE etwas da",
+              1 in [x["order_id"] for x in
+                    _store884.kuerzlich_erledigte_orders(_TAG884, now=_T2)])
+        eq("aa884 0 Tage = Nachleuchten aus, die Liste bleibt leer",
+           _store884.kuerzlich_erledigte_orders(0, now=_T2), [])
+        eq("aa884 None genauso - nie raten, nie alles zeigen",
+           _store884.kuerzlich_erledigte_orders(None, now=_T2), [])
+
+        # (6) NUR DIE GEWAEHLTEN CHARAKTERE.
+        check("aa884 nach Charakter gefiltert: der fremde liefert nichts",
+              _store884.kuerzlich_erledigte_orders(
+                  30 * _TAG884, now=_T4, character_ids=[99]) == []
+              and len(_store884.kuerzlich_erledigte_orders(
+                  30 * _TAG884, now=_T4, character_ids=[42])) > 0)
+    finally:
+        _cfg884.db_path = _alt884
+
+    # ---- Der Statustext, aus dem GELIEFERTEN Quelltext ---------------
+    _mw884 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    _i884 = _mw884.index("    def _ord_erledigt_text(erl, is_buy):")
+    _j884 = _mw884.index("    def _ord_faellig(self, r, jetzt=None):", _i884)
+    _ns884 = {"t": _spr884.t}
+    exec(_tw884.dedent(_mw884[_i884:_j884]), _ns884)        # noqa: S102
+    _txt884 = _ns884["_ord_erledigt_text"]
+    eq("aa884 erfuellte Buy-Order: BOUGHT",
+       _txt884({"art": "erfuellt", "alter_s": 0}, True), "✔ BOUGHT · today")
+    eq("aa884 erfuellte Sell-Order: SOLD",
+       _txt884({"art": "erfuellt", "alter_s": 0}, False), "✔ SOLD · today")
+    eq("aa884 abgelaufen heisst EXPIRED - auch bei einer Buy-Order",
+       _txt884({"art": "abgelaufen", "alter_s": 0}, True),
+       "⌛ EXPIRED · today")
+    eq("aa884 storniert heisst CANCELLED",
+       _txt884({"art": "storniert", "alter_s": 0}, False),
+       "✖ CANCELLED · today")
+    eq("aa884 unbekannte Art: CLOSED statt einer Behauptung",
+       _txt884({"art": "irgendwas", "alter_s": 0}, True),
+       "✔ CLOSED · today")
+    eq("aa884 das Alter steht dabei - 'BOUGHT' allein sagt nicht, ob "
+       "gestern oder vor vier Tagen",
+       _txt884({"art": "erfuellt", "alter_s": 4.2 * 86400}, True),
+       "✔ BOUGHT · 4d ago")
+    eq("aa884 angebrochene Tage zaehlen nicht hoch (23 h = heute)",
+       _txt884({"art": "erfuellt", "alter_s": 23 * 3600}, True),
+       "✔ BOUGHT · today")
+    eq("aa884 ohne Angaben wird nichts erfunden",
+       _txt884({}, True), "✔ CLOSED · today")
+
+    # ---- Anker im Quelltext ------------------------------------------
+    check("aa884 geholt wird im Hintergrund-Job, nicht im UI-Thread",
+          "store.kuerzlich_erledigte_orders(" in _mw884
+          and '_tg884 * 86400.0, character_ids=cid_list)' in _mw884)
+    check("aa884 nur Orders am AKTIVEN Hub - sonst stuenden dort Zeilen, "
+          "die zu keiner Order darueber gehoeren",
+          'if _e.get("location_id") == active_loc' in _mw884)
+    check("aa884 die Namen der erledigten Items werden mitaufgeloest",
+          'if int(_e884["type_id"]) not in tids:' in _mw884)
+    check("aa884 erledigte Zeilen tragen flag=False - damit ist 'Price' "
+          "aus (dieselbe Regel wie bei jeder Zeile ohne Nachbesserung)",
+          '"flag": False, "newp": 0.0, "best_sell": 0.0,' in _mw884)
+    check("aa884 'Next' laeuft nie auf eine erledigte Order zu",
+          'if r["flag"] and not r.get("loss")]' in _mw884)
+    check("aa884 erledigte Zeilen stehen IMMER unten - vor dem Sortieren "
+          "abgetrennt, danach angehaengt",
+          '_erl884 = [r for r in rows if r.get("erledigt884")]' in _mw884
+          and 'rows = [r for r in rows if not r.get("erledigt884")]' in _mw884
+          and "return rows + _erl884" in _mw884
+          and "return mit + ohne + _erl884" in _mw884)
+    check("aa884 die Dauer ist einstellbar, mit 5 Tagen als Standard",
+          "ORD_ERLEDIGT_TAGE_STD = 5" in _mw884
+          and 'self.settings.get("ord_erledigt_tage",' in _mw884)
+    check("aa884 eine neue Dauer wird gespeichert UND neu geladen - die "
+          "Zeilen kommen aus dem Hintergrund-Job",
+          'self.settings["ord_erledigt_tage"] = _neu884' in _mw884
+          and "config.save_settings(self.settings)" in _mw884
+          and "self._load_order_mods()" in _mw884)
+    _sp884 = open("eve_trader/sprache.py", encoding="utf-8").read()
+    for _k884 in ('"\\u2714 BOUGHT": "\\u2714 GEKAUFT",',
+                  '"\\u2714 SOLD": "\\u2714 VERKAUFT",',
+                  '"\\u231b EXPIRED": "\\u231b ABGELAUFEN",',
+                  '"\\u2716 CANCELLED": "\\u2716 STORNIERT",',
+                  '"today": "heute",', '"{n}d ago": "vor {n} T",'):
+        check(f"aa884 zweisprachig im Katalog (Regel 6): {_k884[:28]}",
+              _k884 in _sp884)
+except Exception as _e884x:                              # pragma: no cover
+    _fail.append(f"aa884 erledigte Orders nachleuchten: "
+                 f"{type(_e884x).__name__}: {_e884x}")
+
+# ========== aa885: Kantenrundung und Tiefe als EINE Entscheidung ======
+# Nutzer 09.11.2026: "alle deine Programme sehen am Ende etwa gleich aus
+# und das hat einen starken wiedererkennungswert. das ist ein wenig
+# schlecht angesehn bei vielen Leuten", dazu "die runden ecken stoeren
+# mich auch sehr" und "ganz Eckig will ich die kanten auch nicht".
+#
+# Vorher standen 130 Rundungen in zehn Dateien, in zwoelf Werten. Jetzt
+# entscheidet je Stufe EINE Zahl (Regel 9). Diese Pruefung haelt fest,
+# dass keine neue nackte Zahl dazukommt - sonst waere der Token in
+# einem halben Jahr wieder eine Zahl unter vielen.
+try:
+    import glob as _gl885
+    import re as _re885
+    from eve_trader.ui import theme as _th885
+
+    # ---- (1) KEINE NACKTEN RUNDUNGEN MEHR -------------------------
+    _nackt885 = []
+    for _p885 in sorted(_gl885.glob("eve_trader/ui/*.py")):
+        for _i885, _z885 in enumerate(
+                open(_p885, encoding="utf-8").read().split("\n"), 1):
+            for _m885 in _re885.finditer(
+                    r'border(?:-top|-bottom)?(?:-left|-right)?-radius: ?'
+                    r'([0-9.]+)px', _z885):
+                # 0px ist kein Rundungswert, sondern die Aussage "eckig"
+                # (NavItem, Reiter-Unterkante). Die bleibt erlaubt.
+                if float(_m885.group(1)) != 0:
+                    _nackt885.append(f"{_p885}:{_i885} {_z885.strip()[:58]}")
+    check(f"aa885 keine fest eingetippte Rundung mehr in der Oberflaeche "
+          f"({len(_nackt885)} gefunden)", not _nackt885)
+    if _nackt885:                                    # pragma: no cover
+        _fail.append("aa885 Fundstellen: " + " | ".join(_nackt885[:4]))
+
+    # ---- (2) DIE STUFEN SIND EINE SKALA ---------------------------
+    def _px885(wert):
+        return float(str(wert).rstrip("px"))
+    for _n885 in ("RAD_KLEIN", "RAD", "RAD_GROSS", "RAD_PILLE",
+                  "RAD_REITER"):
+        check(f"aa885 Stufe {_n885} existiert und traegt die Einheit",
+              hasattr(_th885, _n885)
+              and str(getattr(_th885, _n885)).endswith("px"))
+    check("aa885 die Stufen steigen an: klein <= normal <= gross",
+          _px885(_th885.RAD_KLEIN) <= _px885(_th885.RAD)
+          <= _px885(_th885.RAD_GROSS))
+    check("aa885 Pillen bleiben rund - die Form IST dort die Bedeutung",
+          _px885(_th885.RAD_PILLE) >= _px885(_th885.RAD_GROSS) + 4)
+    check("aa885 die Nutzer-Vorgabe steht da: knapp, aber nicht eckig "
+          f"(RAD = {_th885.RAD})",
+          0 < _px885(_th885.RAD) <= 4)
+
+    # ---- (3) DAS QSS NIMMT DIE STUFEN AUCH AN ---------------------
+    _q885 = _th885.QSS
+    check("aa885 im fertigen Stylesheet steht kein Platzhalter mehr",
+          "{RAD" not in _q885 and "{theme.RAD" not in _q885)
+    _werte885 = {m.group(1) for m in _re885.finditer(
+        r'border(?:-top|-bottom)?(?:-left|-right)?-radius: ?([0-9.]+px)',
+        _q885)}
+    _erlaubt885 = {_th885.RAD_KLEIN, _th885.RAD, _th885.RAD_GROSS,
+                   _th885.RAD_PILLE, _th885.RAD_REITER, "0px"}
+    check(f"aa885 jede Rundung im Stylesheet kommt aus der Skala "
+          f"({sorted(_werte885)})", _werte885 <= _erlaubt885)
+
+    # ---- (4) TIEFE: AUS DER FARBE GERECHNET, NICHT EINGETIPPT -----
+    # Ein Verlauf mit festen Hex-Werten saehe in "Graphite" falsch und in
+    # "Daylight" kaputt aus. Deshalb wird er aus der Grundfarbe gebaut -
+    # dieselbe Lehre wie bei `schleier` (dort war ein fester weisser
+    # Schleier im hellen Theme unsichtbar).
+    check("aa885 es gibt eine Funktion fuer die Tiefe",
+          callable(getattr(_th885, "tiefe", None)))
+    _dunkel885 = _th885.tiefe("#0C1424")
+    _hell885 = _th885.tiefe("#F2F4F8")
+    check("aa885 der Verlauf ist ein echter Qt-Verlauf",
+          _dunkel885.startswith("qlineargradient(")
+          and _dunkel885.count("stop:") == 3)
+    check("aa885 die Grundfarbe steht als mittlerer Halt darin",
+          "#0C1424" in _dunkel885)
+
+    def _hell_wert885(hexfarbe):
+        _h = hexfarbe.lstrip("#")
+        return sum(int(_h[i:i + 2], 16) for i in (0, 2, 4))
+    # NUR INS DUNKLE (Nutzer nach dem ersten Lauf: "Verlauf zu stark,
+    # lieber ins dunkle rein gehen nicht ins helle"). Die erste Fassung
+    # hellte nach unten auf und drehte beim hellen Theme um - das sah
+    # nach Lichtquelle aus statt nach Tiefe. Kein Halt darf heller sein
+    # als die Grundfarbe, in KEINEM Theme.
+    _stops885 = _re885.findall(r'stop:[0-9.]+ (#[0-9A-Fa-f]{6})', _dunkel885)
+    _stops_h885 = _re885.findall(r'stop:[0-9.]+ (#[0-9A-Fa-f]{6})', _hell885)
+    check(f"aa885 auf dunklem Grund wird NIE aufgehellt ({_stops885})",
+          all(_hell_wert885(_s) <= _hell_wert885("#0C1424")
+              for _s in _stops885))
+    check(f"aa885 auf hellem Grund genauso - abdunkeln liest sich in "
+          f"JEDEM Theme als Schatten ({_stops_h885})",
+          all(_hell_wert885(_s) <= _hell_wert885("#F2F4F8")
+              for _s in _stops_h885))
+    check("aa885 unten ist es am dunkelsten, oben nur angedeutet",
+          _hell_wert885(_stops885[2]) < _hell_wert885(_stops885[0])
+          < _hell_wert885(_stops885[1]))
+    # DEZENT WIRD RELATIV GEMESSEN, nicht absolut. Die erste Fassung
+    # verglich mit einem festen Abstand (<60) - bei einer so dunklen
+    # Grundfarbe wie #0C1424 (Summe 68) liegt aber selbst SCHWARZ nur 68
+    # entfernt, und ein greller Verlauf kam mit 58 gerade so durch. Die
+    # Rotprobe blieb deshalb gruen, obwohl die Mutation wirkte.
+    for _grund885, _st885 in (("#0C1424", _stops885), ("#F2F4F8", _stops_h885)):
+        _g885 = _hell_wert885(_grund885)
+        _dunkelster885 = min(_hell_wert885(_s) for _s in _st885)
+        check(f"aa885 die Tiefe ist dezent: der dunkelste Halt behaelt den "
+              f"Grossteil der Grundhelligkeit ({_grund885}: "
+              f"{_dunkelster885}/{_g885})",
+              _dunkelster885 >= 0.6 * _g885)
+
+    # ---- (5) WO DIE TIEFE WIRKT -----------------------------------
+    check("aa885 Hauptfenster und Sidebar bekommen den Verlauf",
+          "QMainWindow, QDialog {{ background: {tiefe(BG)}; }}"
+          in open("eve_trader/ui/theme.py", encoding="utf-8").read()
+          and "{tiefe(PANEL2, 0.12)}"
+          in open("eve_trader/ui/theme.py", encoding="utf-8").read())
+    _mw885 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    check("aa885 auch das eigene Sidebar-Stylesheet des Fensters - es "
+          "gewinnt gegen das globale und bliebe sonst flach",
+          "theme.tiefe(theme.PANEL2, 0.12)" in _mw885)
+
+    # ---- (6) EINE FARBE FUER NAVIGATION ---------------------------
+    check("aa885 der aktive Navigationseintrag spricht Amber - dieselbe "
+          "Farbe wie der aktive Reiter, nicht das Cyan der Daten",
+          "#NavItem:checked{{background:{theme.PANEL}; "
+          "color:{theme.AMBER}; " in _mw885)
+    check("aa885 die Reiter bleiben bei Amber (unveraendert)",
+          "#NavTab:checked{{background:{theme.BG}; color:{theme.AMBER}; "
+          in _mw885)
+except Exception as _e885:                               # pragma: no cover
+    _fail.append(f"aa885 Kantenrundung und Tiefe: "
+                 f"{type(_e885).__name__}: {_e885}")
+
+# ============ aa886: Firesales sieht aus wie die anderen =============
+# Nutzer 09.11.2026: "Das Aussehen von Firesale genau gleich machen wie
+# die anderen trading tabs, also auch eine rechte sidebar mit scan
+# knopf." Firesales war der einzige Handels-Reiter ohne rechte Leiste;
+# sein Scan-Knopf sass mitten in der Kopfzeile zwischen den
+# Einstellungen.
+try:
+    _fs886 = _fn_src("_build_firesales_tab")
+    check("aa886 Firesales hat das zweispaltige Geruest wie die anderen",
+          "outer = QHBoxLayout(w)" in _fs886
+          and "content = QWidget()" in _fs886
+          and "root = QVBoxLayout(content)" in _fs886)
+    check("aa886 und haengt eine Werkzeugleiste an - dieselbe Funktion, "
+          "die Daytrade, Swing Trade und Regional benutzen",
+          "self._build_tool_rail([" in _fs886)
+    check("aa886 der Scan-Knopf steht in der Leiste unter DEALS",
+          't("DEALS"), theme.AMBER, [self.fs_go]' in _fs886)
+    check("aa886 ... und NICHT mehr in der Kopfzeile",
+          "kopf.addWidget(self.fs_go)" not in _fs886)
+    check("aa886 der Inhalt bekommt den Platz, die Leiste nur ihre Breite",
+          "outer.addWidget(content, 1)" in _fs886)
+    check("aa886 der Knopf sieht aus wie die Scan-Knoepfe der anderen "
+          "Reiter (gleiche Hoehe, gleiche Schrift)",
+          "self.fs_go.setMinimumHeight(40)" in _fs886
+          and 'self.fs_go.setStyleSheet(\n            "font-size:15px; '
+              'font-weight:800; padding:8px 12px;")' in _fs886)
+    # DIE GRUPPEN-GRAMMATIK ist bei allen vier Reitern dieselbe.
+    for _name886, _fn886 in (("Daytrade", "_build_deals_tab"),
+                             ("Regional", "_build_region_tab")):
+        _q886 = _fn_src(_fn886)
+        if _q886:
+            check(f"aa886 Vergleich {_name886}: benutzt dieselbe Leiste",
+                  "self._build_tool_rail([" in _q886)
+    # KEIN EINKAUFSWAGEN: Firesales kauft ganze Contracts, keine
+    # Einzelposten. Ein leerer Wagen waere Gleichheit im Aussehen und
+    # eine Luege in der Sache (Regel 1).
+    check("aa886 Firesales bekommt KEINEN Einkaufswagen - dort kauft man "
+          "ganze Contracts, keine Einzelposten",
+          "_wagen_block" not in _fs886)
+except Exception as _e886:                               # pragma: no cover
+    _fail.append(f"aa886 Firesales-Leiste: {type(_e886).__name__}: {_e886}")
+
+# ====== aa887: Assets zieht in den Industry-Reiter =====================
+# Nutzer 09.11.2026: "Assets kommt in den Industry Tab unterhalb von
+# Industry Jobs." War seit emm863 ein eigener Hauptreiter ganz rechts.
+#
+# DIE GEFAHR BEI DIESEM UMBAU ist nicht das Verschieben, sondern was
+# daran haengt: die Reiter-Schluesselliste ordnet NACH POSITION zu (ein
+# Eintrag ohne addTab verschiebt ALLE folgenden), und der Ausloeser
+# "beim ersten Oeffnen laden" sass am Tab-Wechsel - der kann seit dem
+# Umzug nie wieder greifen.
+try:
+    _mw887 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    _as887 = open("eve_trader/ui/mw_assets.py", encoding="utf-8").read()
+
+    # (1) Die Seite haengt im Stapel, nicht in den Reitern.
+    check("aa887 die Assets-Seite geht in den Industry-Stapel",
+          "self.b_stack.addWidget(page)" in _as887)
+    check("aa887 ... und NICHT mehr als eigener Reiter",
+          'self.tabs.addTab(page, t("Assets"))' not in _as887)
+
+    # (2) DIE POSITIONS-FALLE: die Schluesselliste ordnet ueber den
+    # Index zu. Ein "assets" darin ohne addTab dahinter wuerde ALLE
+    # folgenden Reiter um eins verschieben.
+    _shell887 = _fn_src("_build_shell") or _mw887
+    # emm894: "mstats" ist dahinter gekommen - der Anker darf den
+    # Listenanfang pruefen, nicht das Listenende, sonst bricht jeder neue
+    # Reiter diese Zusage, obwohl "assets" weiter draussen ist.
+    check("aa887 'assets' steht nicht mehr in der Reiter-Schluesselliste",
+          '"transactions", "market", "characters", "settings"' in _mw887
+          and '"settings", "assets"' not in _mw887
+          and '"assets", "settings"' not in _mw887)
+    check("aa887 ... und nicht mehr unter den Haupt-Reitern",
+          '"deals", "swing", "region", "firesales", "build",\n'
+          '                           "stocks"]' in _mw887)
+
+    # (3) DER AUSLOESER ist mit umgezogen.
+    check("aa887 der Ausloeser 'beim ersten Oeffnen laden' sitzt jetzt in "
+          "_bau_nav - am Tab-Wechsel koennte er nie wieder greifen",
+          "_asw887 = getattr(self, \"_as_w\", None)" in _mw887
+          and "self.b_stack.currentWidget() is _asw887" in _mw887)
+    _nav887 = _fn_src("_bau_nav")
+    check("aa887 ... und zwar im Seiten-Wechsel selbst",
+          "self._assets_seite_gezeigt()" in _nav887)
+    check("aa887 gefragt wird nach dem WIDGET, nicht nach der "
+          "Seitennummer - eine Nummer waere eine zweite Wahrheit",
+          "self.b_stack.currentWidget() is _asw887" in _nav887
+          and "if idx == 7" not in _nav887)
+    check("aa887 die alte Stelle im Tab-Wechsel ist raus (toter Code, der "
+          "aussaehe, als tue er etwas)",
+          "_asw863 = getattr(self, \"_as_w\", None)" not in _mw887)
+
+    # (4) Der Knopf steht UNTER "Industry jobs" - das war der Auftrag.
+    _rail887 = _fn_src("_build_bau_rail") or _mw887
+    _i_jobs887 = _rail887.find('page_btn(t("Industry jobs"), 4')
+    _i_as887 = _rail887.find('page_btn(t("Assets"), 7')
+    _i_lager887 = _rail887.find('page_btn(t("Stock locations"), 6')
+    check("aa887 der Assets-Knopf existiert in der Leiste", _i_as887 > 0)
+    check(f"aa887 ... und steht zwischen 'Industry jobs' und 'Stock "
+          f"locations' ({_i_jobs887} < {_i_as887} < {_i_lager887})",
+          0 < _i_jobs887 < _i_as887 < _i_lager887)
+    check("aa887 er steht unter UEBERSICHT, nicht unter SETUP - die Seite "
+          "ZEIGT nur, sie stellt nichts ein",
+          _rail887.find('header(t("OVERVIEW")') < _i_as887 < _rail887.find(
+              'header(t("SETUP")'))
+    check("aa887 der Knopf haengt in der Knopfliste (sonst bleibt er beim "
+          "Oeffnen seiner Seite unbeleuchtet)",
+          "b_lager, b_assets]" in _mw887)
+except Exception as _e887:                               # pragma: no cover
+    _fail.append(f"aa887 Assets im Industry-Reiter: "
+                 f"{type(_e887).__name__}: {_e887}")
+
+# ===== aa889/aa890: Einstellungen - Rueckfrage und neuer Aufbau =======
+# Nutzer 10.11.2026, zwei Meldungen:
+#  (1) "wenn man in Settings etwas aendert, und ohne speichern aus dem
+#      Settings tab raus geht, sollte ein popup kommen"
+#  (2) "ueberarbeite bitte das Settings Tab, der Ganze Tab ist veraltet,
+#      kathegoriesire schoener ... Trenne Industry und trading, mache
+#      links rechts links trading rechts industry ... Achte auf eine
+#      gleichmaessige Breite der beiden Karten. Achte darauf das nichts
+#      abgeschnitten wirkt."
+try:
+    _fs889 = _fn_src("_einstellungen_feldstand")
+    # (1) DAS POPUP GAB ES SCHON (Sitzung 17) - es kam nur bei Farbwelt
+    # und Groesse nicht, weil die beiden im Feldstand fehlten. Kein
+    # Grund dafuer stand im Code; sie sind beim Nachruesten (emm835,
+    # emm836) schlicht vergessen worden.
+    check("aa889 die Farbwelt zaehlt zum offenen Stand",
+          '"theme": str(self.s_theme.currentData() or "")' in _fs889)
+    check("aa889 die Oberflaechen-Groesse ebenso",
+          '"scale": float(self.s_scale.currentData() or 1.0)' in _fs889)
+    _wp889 = _fn_src("_einstellungen_wechsel_pruefen")
+    check("aa889 der Riegel fragt nur beim Verlassen der Seite",
+          "self.tabs.widget(alt) is not _seite" in _wp889)
+    check("aa889 ... und nur wenn wirklich etwas offen ist",
+          "if not self._einstellungen_offen():" in _wp889)
+
+    # (2) VIER KARTEN IN ZWEI SPALTEN statt einer Liste mit 16 Zeilen.
+    _st890 = _fn_src("_build_settings_tab")
+    check("aa890 die alte Sammelliste 'fields' ist weg",
+          "fields = [" not in _st890)
+    for _t890 in ("TRADING", "INDUSTRY", "DATA & PERMISSIONS",
+                  "DISPLAY & CONNECTION"):
+        check(f"aa890 es gibt die Karte {_t890}", f't("{_t890}")' in _st890)
+    check("aa890 Handel links, Industrie rechts - so wie bestellt",
+          "(_links890, t(\"TRADING\"), _handel890)" in _st890
+          and "(_rechts890, t(\"INDUSTRY\"), _industrie890)" in _st890)
+    check("aa890 beide Spalten bekommen denselben Dehnfaktor - sonst "
+          "waeren die Karten verschieden breit",
+          "_spalten890.addLayout(_links890, 1)" in _st890
+          and "_spalten890.addLayout(_rechts890, 1)" in _st890)
+    _kt890 = _fn_src("_einst_karte")
+    check("aa890 alle Karten kommen aus EINER Funktion (Regel 9)",
+          "def _einst_karte" in _fn_src("_einst_karte") or bool(_kt890))
+    check("aa890 ... mit fester Beschriftungsspalte und dehnbarer "
+          "Feldspalte, damit die Felder links und rechts auf einer "
+          "Linie stehen",
+          "raster.setColumnMinimumWidth(0, breite)" in _kt890
+          and "raster.setColumnStretch(0, 0)" in _kt890
+          and "raster.setColumnStretch(1, 1)" in _kt890)
+    check("aa890 die Karte haengt ihre Hinweise selbst an - nur sie "
+          "kennt Feld UND Beschriftung",
+          "self._install_tip(_feld, _lab)" in _kt890)
+
+    # DIE SIEBEN HANGARS: vorher eine Reihe, die aus dem Fenster lief.
+    check("aa890 die Corp-Hangars brechen um statt in einer Reihe zu "
+          "stehen", "_SPALTEN890 = 2" in _st890
+          and "_dl.addWidget(_cb, _i // _SPALTEN890, _i % _SPALTEN890)"
+          in _st890)
+
+    # DIE CLIENT-ID IST KEIN EINSTELLFELD MEHR (emm890) - UND SEIT emm891
+    # GANZ ZU: Nutzer 10.11.2026, "komplett sperren, kein button um
+    # selber was einzugeben, ESI Client ID mit sternen versehen *****,
+    # nur ich will das aufmachen koennen ueber den Code".
+    check("aa890 die Client-ID ist schreibgeschuetzt",
+          "self.s_client.setReadOnly(True)" in _st890)
+    check("aa891 ... und steht als Sterne da, nicht als Punkte",
+          "self.s_client.setEchoMode(QLineEdit.Password)" in _st890
+          and 'setStyleSheet("lineedit-password-character: 42;")' in _st890)
+    # KEIN WEG MEHR AUF IN DER OBERFLAECHE - weder Knopf noch Methode,
+    # und auch nicht ueber das Rechtsklick-Menue des Feldes.
+    _mw891 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+    check("aa891 es gibt keinen Entsperr-Knopf mehr",
+          "s_client_btn" not in _mw891)
+    # AUF DIE DEFINITION, NICHT AUF DEN NAMEN: der Kommentar an der
+    # Client-ID-Zeile nennt die geloeschte Methode ausdruecklich, damit
+    # spaeter niemand raetselt, wo sie geblieben ist. Ein Check auf den
+    # blossen Namen waere daran haengen geblieben - und zwar an einem
+    # Kommentar, nicht an Code (beim ersten Lauf genau so passiert).
+    check("aa891 ... und keine Entsperr-Methode",
+          "def _client_id_entsperren" not in _mw891
+          and "self._client_entsperrt" not in _mw891
+          and "self.s_client.setReadOnly(False)" not in _mw891)
+    check("aa891 ... und kein Rechtsklick-Menue am Feld",
+          "self.s_client.setContextMenuPolicy(Qt.NoContextMenu)" in _st890)
+    check("aa890 das Feld bleibt erhalten - es ist der Notausgang, wenn "
+          "die eingebaute ID fehlt (open_setup)",
+          "self.s_client = QLineEdit(" in _st890)
+    # DER WEG NACH AUSSEN STEHT IM TOOLTIP. Ein gesperrtes Feld ohne
+    # Begruendung liest sich wie ein Fehler.
+    check("aa891 der Tooltip sagt, wo man sie trotzdem aendern kann",
+          "client_id in your settings.json." in _st890)
+except Exception as _e890:                               # pragma: no cover
+    _fail.append(f"aa890 Einstellungen: {type(_e890).__name__}: {_e890}")
+
+# ===== aa888: Ladeanzeige beim Farbwelt-Wechsel =======================
+# Nutzer 10.11.2026: "aktuell wenn man das theme aendert und auf speichern
+# drueckt bleibt MoMa '' scheinbar'' stehen bis das theme geladen ist, ein
+# Ladescreen dafuer waere gut, damit man nicht denkt, MoMa stuerzt ab".
+#
+# GEMESSEN am laufenden Fenster (offscreen, 53 Farbpaare):
+#   theme.umschalten()           0,4 ms
+#   app.setStyleSheet(theme.QSS) 1131 ms   <- der Grund
+#   stile_nachziehen            53,4 ms
+# UND KORRIGIERT: `config.save_settings` kostete an MEINER fast leeren
+# settings.json 1-12 ms und galt damit als "nicht der Grund" - an der
+# ECHTEN des Nutzers (7,6 MB, 185 Schluessel) sind es 113-452 ms. Der
+# Schirm umfasst darum AUCH das Speichern, aber nur im Wechsel-Fall.
+try:
+    _ss888 = _fn_src("save_settings")
+    _fw888 = _fn_src("_farbwelt_schleier")
+
+    # DER SCHLEIER KOMMT NUR BEIM WECHSEL. Bei jedem Speichern waere er
+    # ein Blitzen ohne Grund - dort ist das Speichern alles, was passiert.
+    _i_w888 = _ss888.find("_wechsel888 = _thm_neu != _thm_vorher")
+    check("aa888 der Schleier haengt am Farbwelt-Wechsel, nicht an jedem "
+          "Speichern",
+          _i_w888 >= 0
+          and _ss888.count("self._farbwelt_schleier(") == 1
+          and "self._farbwelt_schleier(" not in _ss888[:_i_w888]
+          and "if _wechsel888:\n            _schleier888 = "
+              "self._farbwelt_schleier(" in _ss888)
+
+    # ER STEHT VOR DEM TEUREN AUFRUF. Danach gezeigt waere er sinnlos:
+    # waehrend setStyleSheet laeuft, zeichnet Qt nichts mehr.
+    _i_schl = _ss888.find("_schleier888 = self._farbwelt_schleier(")
+    _i_qss = _ss888.find("_app.setStyleSheet(theme.QSS)")
+    check("aa888 ... und wird VOR dem teuren setStyleSheet gezeigt",
+          _i_schl >= 0 and _i_qss > _i_schl)
+
+    # ER UMFASST AUCH DAS SPEICHERN. 113-452 ms an der echten
+    # settings.json des Nutzers - diese Zehntelsekunde stand vorher
+    # ungedeckt still.
+    _i_save = _ss888.find("config.save_settings(self.settings)")
+    check("aa888 ... und deckt auch das Speichern ab (113-452 ms an der "
+          "echten settings.json)",
+          _i_save > _i_schl and _i_qss > _i_save)
+
+    # ER GEHT IMMER WIEDER WEG. Ohne finally bliebe MoMa bei einem Fehler
+    # im Wechsel hinter einem Vorhang stehen - genau der Absturz-Eindruck,
+    # den der Schleier verhindern soll.
+    check("aa888 der Schleier verschwindet auch, wenn der Wechsel "
+          "scheitert (finally)",
+          "finally:" in _ss888[_i_schl:]
+          and "self._farbwelt_schleier_weg(_schleier888)" in _ss888)
+    _i_fin = _ss888.find("finally:", _i_schl)
+    check("aa888 ... und der Wartecursor wird dort mit zurueckgesetzt",
+          "QApplication.setOverrideCursor(Qt.WaitCursor)" in _ss888
+          and _i_fin >= 0
+          and "QApplication.restoreOverrideCursor()" in _ss888[_i_fin:])
+
+    # ER ZEICHNET SICH SOFORT. processEvents kaeme erst im naechsten
+    # Durchlauf der Ereignisschleife - und den gibt es waehrend des
+    # Wechsels nicht mehr.
+    check("aa888 der Schleier zeichnet sich auf der Stelle (repaint)",
+          "_ov888.repaint()" in _fw888)
+    check("aa888 ... und wird ueber den gewohnten Weg gezeigt",
+          "self._show_overlay_now()" in _fw888
+          and "self._overlay_want = 1" in _fw888)
+
+    # ES IST MOMAS EIGENER LADESCHIRM, KEIN ZWEITER (Regel 9). Ein
+    # eigener haette seine Farben am Theme vorbei eingetippt - aa836
+    # faengt genau das - und ein zweites Aussehen zu pflegen gegeben.
+    check("aa888 der Schleier ist MoMas Ladeschirm, kein zweiter Vorhang",
+          'getattr(self, "_overlay", None)' in _fw888
+          and "QFrame(" not in _fw888)
+
+    # DER VORHERIGE STAND WIRD GEMERKT. Laeuft gleichzeitig ein echter
+    # Abruf, gehoert der Schirm ihm; blind zuklappen haette dessen
+    # Anzeige mitgerissen.
+    _fz888 = _fn_src("_farbwelt_schleier_weg")
+    check("aa888 der Schleier merkt sich den vorherigen Stand",
+          "_vorher = (self._overlay_want, self._overlay_text.text()," in _fw888
+          and "_ov888.isVisible())" in _fw888)
+    check("aa888 ... und laesst einen laufenden Abruf seinen Schirm "
+          "behalten",
+          "if _sichtbar888:" in _fz888
+          and "self._overlay_want = _want888" in _fz888
+          and "self._hide_overlay()" in _fz888)
+
+    # BEIDE ZEILEN SIND UEBERSETZT (Regel 6).
+    check("aa888 der Schleier sagt, was laeuft, und dass MoMa lebt",
+          't("Switching colour scheme ...")' in _ss888
+          and 't("Eve MoMa is not stuck, this only takes a moment.")'
+          in _ss888)
+except Exception as _e888:                               # pragma: no cover
+    _fail.append(f"aa888 Ladeanzeige: {type(_e888).__name__}: {_e888}")
+
+# ---------------------------------------------------------------- (aa909)
+# DER KNOPF "AUS EVE UEBERNEHMEN" BLINKT, SOLANGE DER SKILL FEHLT.
+# Nutzer 13.11.2026: "das wird jetzt jeder nutzer machen muessen koennen
+# wir den aus eve uebernehmen button blinken lassen bei fehlendem skill?"
+# NICHT an "Skill ist 0" festgemacht: Level 0 und "nie abgefragt" sehen
+# am gespeicherten Wert gleich aus, und wer den Skill wirklich nicht hat,
+# saehe sonst ewig ein Blinken.
+try:
+    from eve_trader import config as _cfg909
+    check("aa909 es gibt einen Merker, ob der Skill je geholt wurde",
+          "skill_adv_broker_geholt" in _cfg909.DEFAULT_SETTINGS)
+    eq("aa909 ... und er steht am Anfang auf Falsch",
+       _cfg909.DEFAULT_SETTINGS.get("skill_adv_broker_geholt"), False)
+    _bn909 = _fn_src("_blink909_noetig")
+    check("aa909 geblinkt wird am Merker, nicht am Skill-Wert",
+          "skill_adv_broker_geholt" in _bn909
+          and "skill_adv_broker_relations" not in _bn909)
+    check("aa909 der Merker wird beim Holen gesetzt",
+          'self.settings["skill_adv_broker_geholt"] = True' in _src_txt)
+    # AUCH BEI LEVEL 0: eine gueltige Antwort von EVE beendet das Blinken.
+    _ps909 = _src_txt[_src_txt.find("_abr908 = skills.get("):]
+    _ps909 = _ps909[:_ps909.find("if acc is not None:")]
+    check("aa909 auch Level 0 beendet das Blinken",
+          "if _abr908 is not None:" in _ps909
+          and 'self.settings["skill_adv_broker_geholt"] = True' in _ps909)
+    _bs909 = _fn_src("_blink909_schlag")
+    check("aa909 ein totes Widget stoppt den Takt (emm480)",
+          "zerstoert(_b)" in _bs909)
+    check("aa909 unsichtbar wird nicht gefaerbt",
+          "_b.isVisible()" in _bs909)
+    _bp909 = _fn_src("_blink909_pruefen")
+    check("aa909 beim Stoppen wird der Knopf zurueckgesetzt",
+          '_b.setStyleSheet("")' in _bp909 and "_takt909.stop()" in _bp909)
+    check("aa909 die Farbe kommt aus dem Theme (aa836)",
+          "theme.AMBER" in _bs909)
+    from eve_trader import sprache as _spr909
+    check("aa909 der Hinweis ist deutsch hinterlegt",
+          bool(_spr909.KATALOG["de"].get(
+              "Advanced Broker Relations has never been read from EVE. "
+              "Without it MoMa assumes level 0 and calculates the fees for "
+              "changing an order too high \u2013 press this once.")))
+except Exception as _e909:                               # pragma: no cover
+    _fail.append(f"aa909 blinkender Knopf: "
+                 f"{type(_e909).__name__}: {_e909}")
+
+# ------------------------------------------------------- (aa907 + aa908)
+# DIE GEBUEHREN FUERS AENDERN EINER ORDER - EXAKT, NICHT GESCHAETZT.
+# Nutzer 13.11.2026: "weiss moma wie man die modifizierungsegebuehren
+# korrekt berrechnet? ich hoffe es" - NEIN. MoMa rechnete
+# `mod_count * Broker-% * Preis * Restmenge`, also die VOLLE Broker Fee
+# je Aenderung. Darauf: "wir machen das was wir machen muessen damit die
+# rechnungen exakt stimmen".
+#
+# CCP (Dev-Blog "Broker Relations"):
+#     Fee = max(0, BR*(W2-W1)) + (1-RD)*BR*W2 ,  min. 100 ISK
+#     RD  = 50 % + 5 Prozentpunkte je Level Advanced Broker Relations
+# Dazu Nutzer-Auftrag emm907: "counter nur hochstellen wenn sich der
+# preis meiner order veraendert hat ... Es muss aber exakt diese order
+# sein. nicht eine neue die gleich heisst oder so ein fehler."
+try:
+    import tempfile as _tf907
+    from eve_trader import config as _cfg908
+    from eve_trader import esi as _esi908
+    from eve_trader import store as _sto907
+
+    # ---- DIE RECHNUNG, VON HAND NACHGERECHNET ------------------------
+    eq("aa908 der Skill Advanced Broker Relations ist bekannt",
+       _esi908.SKILL_ADV_BROKER_RELATIONS, 16597)
+    eq("aa908 Relist-Rabatt ohne Skill: 50 %", _cfg908.relist_rabatt(0), 0.50)
+    eq("aa908 ... auf Level V: 75 %", _cfg908.relist_rabatt(5), 0.75)
+    eq("aa908 ... Level 3 dazwischen", _cfg908.relist_rabatt(3), 0.65)
+    check("aa908 unsinnige Level werden gekappt",
+          _cfg908.relist_rabatt(-2) == 0.50 and _cfg908.relist_rabatt(99) == 0.75)
+    # PREISSENKUNG: nur der rabattierte Relist-Teil.
+    # 10 Mio -> 9,5 Mio, Broker 3 %, ABR 0: 0.5 * 0.03 * 9'500'000
+    eq("aa908 Senkung ABR 0 = (1-0,5)*3%*9,5 Mio",
+       round(_cfg908.relist_gebuehr(10e6, 9.5e6, 3.0, 0), 2), 142500.0)
+    eq("aa908 Senkung ABR 5 = (1-0,75)*3%*9,5 Mio",
+       round(_cfg908.relist_gebuehr(10e6, 9.5e6, 3.0, 5), 2), 71250.0)
+    # ERHOEHUNG: zusaetzlich der VOLLE Satz auf die Differenz.
+    # 10 -> 11 Mio: 0.03*1 Mio + 0.5*0.03*11 Mio = 30'000 + 165'000
+    eq("aa908 Erhoehung kostet zusaetzlich den vollen Satz auf die Differenz",
+       round(_cfg908.relist_gebuehr(10e6, 11e6, 3.0, 0), 2), 195000.0)
+    check("aa908 Hochbieten ist teurer als Senken auf denselben Wert",
+          _cfg908.relist_gebuehr(10e6, 11e6, 3.0, 0)
+          > _cfg908.relist_gebuehr(12e6, 11e6, 3.0, 0))
+    # UNTERGRENZE 100 ISK.
+    eq("aa908 Untergrenze 100 ISK",
+       _cfg908.relist_gebuehr(1000, 900, 3.0, 0), 100.0)
+    # ABER NICHT AUS DEM NICHTS: ohne Orderwert oder ohne Broker-Satz
+    # gibt es nichts zu zahlen - sonst erfaende die Rechnung eine
+    # Gebuehr fuer eine Aenderung, die es nicht gab.
+    eq("aa908 ohne Orderwert keine Gebuehr",
+       _cfg908.relist_gebuehr(0, 0, 3.0, 0), 0.0)
+    eq("aa908 ohne Broker-Satz keine Gebuehr",
+       _cfg908.relist_gebuehr(10e6, 9e6, 0.0, 0), 0.0)
+    # DIE ALTE RECHNUNG WAR ZU HOCH - das ist der Grund der Aenderung.
+    check("aa908 die alte Naeherung lag deutlich hoeher",
+          0.03 * 9.5e6 > _cfg908.relist_gebuehr(10e6, 9.5e6, 3.0, 0) * 1.9)
+    # KEINE FESTE ZAHL IM CODE (Regel 9).
+    _src908 = open(os.path.join(_ROOT, "eve_trader", "config.py"),
+                   encoding="utf-8").read()
+    check("aa908 Rabatt und Untergrenze stehen als Konstanten da",
+          "RELIST_RABATT_BASIS = 0.50" in _src908
+          and "RELIST_RABATT_JE_LEVEL = 0.05" in _src908
+          and "GEBUEHR_MINIMUM_ISK = 100.0" in _src908)
+
+    # ---- DER ZAEHLER, AN EINER ECHTEN DATENBANK ----------------------
+    _alt907 = _cfg908.db_path
+    _tmp907 = _tf907.mkdtemp(prefix="aa907_")
+    try:
+        _cfg908.db_path = lambda: os.path.join(_tmp907, "aa907.db")
+        _sto907.init_db()
+        # (1) ERSTE BEGEGNUNG ZAEHLT NICHT - sonst zaehlte die Umstellung
+        # selbst bei jeder Order eine Aenderung, die nie stattfand.
+        # EIGENES try: faellt die Erkennung "noch nie gesehen" weg, laeuft
+        # die Funktion in einen TypeError (sie liest dann aus einer Zeile,
+        # die es nicht gibt). Ohne diese Klammer meldete der ganze Block
+        # nur "TypeError" und die Rotprobe sah ihre Pruefung gruen (BLIND).
+        try:
+            _r1 = _sto907.order_preise_abgleichen(
+                [(111, 100.0, 10), (222, 50.0, 4)], broker_pct=3.0)
+            _erst907 = (_r1[111]["mod_count"], _r1[222]["mod_count"])
+            _geb907 = _r1[111]["gebuehr"]
+        except Exception as _ee907:
+            _erst907 = f"{type(_ee907).__name__}: {_ee907}"
+            _geb907 = _erst907
+        eq("aa907 erste Begegnung zaehlt nicht", _erst907, (0, 0))
+        eq("aa907 ... und kostet nichts", _geb907, 0.0)
+        # (2) GLEICHER PREIS = KEINE AENDERUNG.
+        _r2 = _sto907.order_preise_abgleichen(
+            [(111, 100.0, 10)], broker_pct=3.0)
+        eq("aa907 gleicher Preis zaehlt nicht", _r2[111]["mod_count"], 0)
+        # (3) ECHTE AENDERUNG ZAEHLT - UND KOSTET GENAU DIE FORMEL.
+        _r3 = _sto907.order_preise_abgleichen(
+            [(111, 90.0, 10)], broker_pct=3.0, adv_broker_level=0)
+        eq("aa907 eine echte Preisaenderung zaehlt", _r3[111]["mod_count"], 1)
+        eq("aa908 ... und kostet genau die Relist-Formel",
+           round(_r3[111]["gebuehr"], 4),
+           round(_cfg908.relist_gebuehr(100.0 * 10, 90.0 * 10, 3.0, 0), 4))
+        # (4) NUR DIESE ORDER - die andere bleibt unberuehrt.
+        _r4 = _sto907.order_preise_abgleichen(
+            [(222, 50.0, 4)], broker_pct=3.0)
+        eq("aa907 die andere Order wurde NICHT mitgezaehlt",
+           _r4[222]["mod_count"], 0)
+        # (5) EINE NEUE ORDER MIT GLEICHEM PREIS IST EINE NEUE ORDER.
+        # Genau die Verwechslung, vor der der Nutzer gewarnt hat.
+        _r5 = _sto907.order_preise_abgleichen(
+            [(333, 90.0, 10)], broker_pct=3.0)
+        eq("aa907 eine fremde order_id startet bei null",
+           _r5[333]["mod_count"], 0)
+        eq("aa907 ... und erbt keine Gebuehren", _r5[333]["gebuehr"], 0.0)
+        # (6) ZWEITE AENDERUNG SUMMIERT AUF.
+        _vor6 = _r3[111]["gebuehr"]
+        _r6 = _sto907.order_preise_abgleichen(
+            [(111, 80.0, 10)], broker_pct=3.0)
+        eq("aa907 die zweite Aenderung zaehlt weiter", _r6[111]["mod_count"], 2)
+        check("aa908 die Gebuehren summieren sich auf",
+              _r6[111]["gebuehr"] > _vor6)
+        eq("aa908 ... um genau die zweite Gebuehr",
+           round(_r6[111]["gebuehr"] - _vor6, 4),
+           round(_cfg908.relist_gebuehr(90.0 * 10, 80.0 * 10, 3.0, 0), 4))
+        # (7) RAUSCHEN ERFINDET KEINE GEBUEHR. ISK hat zwei
+        # Nachkommastellen - ein Tausendstel ist keine Aenderung.
+        _r7 = _sto907.order_preise_abgleichen(
+            [(111, 80.001, 10)], broker_pct=3.0)
+        eq("aa907 ein Tausendstel ISK ist keine Aenderung",
+           _r7[111]["mod_count"], 2)
+        # (8) DER SKILL WIRKT WIRKLICH.
+        _sto907.order_preise_abgleichen([(444, 1e6, 100)], broker_pct=3.0)
+        _o907 = _sto907.order_preise_abgleichen(
+            [(444, 0.9e6, 100)], broker_pct=3.0, adv_broker_level=0)
+        _sto907.order_preise_abgleichen([(555, 1e6, 100)], broker_pct=3.0)
+        _m907 = _sto907.order_preise_abgleichen(
+            [(555, 0.9e6, 100)], broker_pct=3.0, adv_broker_level=5)
+        check(f"aa908 Advanced Broker Relations V halbiert die Gebuehr "
+              f"({_o907[444]['gebuehr']:.0f} -> {_m907[555]['gebuehr']:.0f})",
+              _m907[555]["gebuehr"] < _o907[444]["gebuehr"] * 0.55)
+    finally:
+        _cfg908.db_path = _alt907
+        import shutil as _sh907
+        _sh907.rmtree(_tmp907, ignore_errors=True)
+
+    # ---- VERDRAHTUNG -------------------------------------------------
+    _ra907 = _fn_src("_load_order_mods") if "_load_order_mods" in _src_txt \
+        else _src_txt
+    check("aa907 die Seite gleicht die Preise ab",
+          "store.order_preise_abgleichen(" in _src_txt)
+    check("aa908 ... mit dem Advanced-Broker-Level",
+          'self.settings.get(\n                    "skill_adv_broker_relations", 0)' in _src_txt
+          or '"skill_adv_broker_relations", 0' in _src_txt)
+    check("aa908 die Gebuehr kommt aus der Datenbank, nicht aus einer Schaetzung",
+          '"gebuehr", 0.0' in _src_txt
+          and "cum_fee = mod_count * broker * price * vol_remain" not in _src_txt)
+    # DER KLICK ZAEHLT NICHT MEHR.
+    _sn907 = _fn_src("_ord_step_next")
+    check("aa907 der Next-Klick zaehlt NICHT mehr hoch",
+          "bump_order_mod_count" not in _sn907)
+    # DIE RUECKNAHME IST WEG (emm911). Nutzer 14.11.2026: "heute schaut
+    # MoMa nach, also gibt es auch keinen grund den ticker
+    # zurueckzusetzen". Ein falscher Stand entsteht seit emm907 gar nicht
+    # mehr - und die Ruecknahme war ohnehin halb: sie senkte den Zaehler
+    # und liess die Gebuehrensumme stehen (eine Zahl, zwei Wahrheiten).
+    check("aa911 der Zaehler kann nicht mehr von Hand gesenkt werden",
+          "undo_order_mod_count" not in _src_txt
+          and "undo_order_mod_count" not in open(
+              os.path.join(_ROOT, "eve_trader", "store.py"),
+              encoding="utf-8").read())
+    # DER SKILL WIRD AUS EVE MITGELESEN.
+    check("aa908 Advanced Broker Relations wird aus EVE uebernommen",
+          "skills.get(esi.SKILL_ADV_BROKER_RELATIONS)" in _src_txt
+          and 'self.settings["skill_adv_broker_relations"] = int(_abr908)'
+          in _src_txt)
+    check("aa908 der Schluessel hat einen Standardwert",
+          '"skill_adv_broker_relations": 0' in _src908)
+    # DER TOOLTIP SAGT, WAS SACHE IST (Nutzer-Punkt b).
+    # DER TEXT IST UMBROCHEN - geprueft werden Stuecke, die WIRKLICH
+    # zusammenhaengend dastehen (sonst findet die Suche nichts, obwohl
+    # der Satz da ist).
+    check("aa907 der Tooltip erklaert das Ueberspringen",
+          "SKIPS " in _src_txt and "this order, because repricing again" in _src_txt)
+    # UND SEIT emm911 AUCH, WORAN ES LIEGT: Gebuehr je Stueck, Marge,
+    # Ziel. "Counter reset" steht nicht mehr drin - es gibt ihn nicht mehr.
+    check("aa911 ... und nennt Gebuehr je Stueck, Marge und Ziel",
+          "per remaining unit ON TOP of your " in _src_txt
+          # seit emm915 "the minimum is" statt "your target is" (die
+          # Schwelle ist fees_eat_min_margin, nicht die Ziel-Marge).
+          and "the margin is {have} %, the minimum is " in _src_txt
+          and "Counter reset" not in _src_txt)
+    check("aa911 ... und rechnet die Gebuehr je Stueck wirklich aus",
+          'float(r.get("cum_fee", 0) or 0) / _vr911' in _src_txt)
+    from eve_trader import sprache as _spr907
+    check("aa907 ... und ist deutsch hinterlegt",
+          any("UEBERSPRINGT" in (_v or "").replace("\u00dc", "UE")
+              or "\u00dcBERSPRINGT" in (_v or "")
+              for _v in _spr907.KATALOG["de"].values()))
+except Exception as _e907:                               # pragma: no cover
+    _fail.append(f"aa907/908 Order-Gebuehren: "
+                 f"{type(_e907).__name__}: {_e907}")
+
+# ---------------------------------------------------------------- (aa927)
+# AUSVERKAUFT IST NICHT ABGELAUFEN (emm927): ESI meldet leer verkaufte
+# Orders als "expired" mit volume_remain 0. Gegen echte SQLite.
+try:
+    import time as _ti927
+    from eve_trader import store as _st927
+    _st927.init_order_history()
+    _jetzt927 = _ti927.time()
+    with _st927._conn() as _c927:
+        _c927.execute("DELETE FROM order_history WHERE order_id IN (927001, 927002, 927003)")
+        _c927.execute("DELETE FROM order_erledigt WHERE order_id IN (927001, 927002, 927003)")
+        for _oid927, _st, _rest in ((927001, "expired", 0), (927002, "expired", 1),
+                                    (927003, "cancelled", 0)):
+            _c927.execute(
+                "INSERT INTO order_history (order_id, character_id, type_id, "
+                "is_buy_order, price, volume_total, volume_remain, state, "
+                "location_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                (_oid927, 92700, 34, 0, 1.0, 5, _rest, _st, 1))
+            _c927.execute("INSERT INTO order_erledigt (order_id, ts) VALUES (?, ?)",
+                          (_oid927, _jetzt927))
+    try:
+        _art927 = {_e["order_id"]: _e["art"] for _e in
+                   _st927.kuerzlich_erledigte_orders(3600, character_ids=[92700])}
+        eq("aa927 expired mit Restmenge 0 = verkauft, mit Rest = abgelaufen, "
+           "storniert bleibt storniert",
+           (_art927.get(927001), _art927.get(927002), _art927.get(927003)),
+           ("erfuellt", "abgelaufen", "storniert"))
+    finally:
+        with _st927._conn() as _c927:
+            _c927.execute("DELETE FROM order_history WHERE order_id IN (927001, 927002, 927003)")
+            _c927.execute("DELETE FROM order_erledigt WHERE order_id IN (927001, 927002, 927003)")
+except Exception as _e927:                               # pragma: no cover
+    _fail.append(f"aa927 Ausverkauft: {type(_e927).__name__}: {_e927}")
+
+# ---------------------------------------------------------------- (aa926)
+# MINDESTGEWINN-PREIS IN ORDER UPDATE (emm926, Nutzer 14.11.2026: "wenn
+# ich loss status habe ... Preis ins clipboard ... sodass ich mindestens
+# 5% gewinn mache"). Ausgefuehrt, nicht gelesen.
+try:
+    from eve_trader.ui.mw_helpers import MainWindowHelpers as _H926
+    eq("aa926 Tick aufwaerts: krummer Preis auf vier Stellen hoch",
+       _H926.naechster_tick_ab(1234567), 1235000.0)
+    eq("aa926 Tick aufwaerts: gueltiger Preis bleibt",
+       _H926.naechster_tick_ab(1000000), 1000000.0)
+    eq("aa926 Tick aufwaerts: an der Potenzgrenze",
+       _H926.naechster_tick_ab(999950), 1000000.0)
+    eq("aa926 Tick aufwaerts: Cent-Untergrenze",
+       _H926.naechster_tick_ab(0.123), 0.13)
+    # 100 Einstand, 10 % Gebuehren, 5 % Mindestgewinn: 105 / 0,9 =
+    # 116,67 -> 116,7; netto 105,03 >= 105.
+    _p926 = _H926.min_gewinn_preis(100, 0.10, 5)
+    eq("aa926 Mindestgewinn-Preis 100 / 10 % / 5 %", _p926, 116.7)
+    check("aa926 netto mindestens 5 % ueber Einstand",
+          _p926 * 0.9 >= 105 - 1e-9)
+    # Gegenfall echter Groessenordnung (Heavy Stasis Grappler II aus dem
+    # Nutzer-Screenshot: Einstand 4'428'406).
+    _p926b = _H926.min_gewinn_preis(4428406, 0.06, 5)
+    check(f"aa926 grosser Preis gueltig und ausreichend ({_p926b})",
+          _p926b * 0.94 >= 4428406 * 1.05 and _p926b % 1000 == 0)
+    eq("aa926 ohne Einstand kein Preis", _H926.min_gewinn_preis(0, 0.1, 5),
+       None)
+except Exception as _e926:                               # pragma: no cover
+    _fail.append(f"aa926 Mindestgewinn-Preis: {type(_e926).__name__}: {_e926}")
+
+# ---------------------------------------------------------------- (aa922)
+# Orte mit bekannter Region zeigen die Top-Handelsware (emm922) - die
+# Rechnung selbst prueft b922 gegen die echte Datenbank.
+try:
+    _tz922 = _fn_src("_ms_top_zeilen")
+    check("aa922 Orte mit Region zeigen die Top-Handelsware",
+          "if _reg922:\n            return self._ms_top_gehandelt_zeilen("
+          "source, _reg922)" in _tz922)
+except Exception as _e922:                               # pragma: no cover
+    _fail.append(f"aa922 Top-Handelsware: {type(_e922).__name__}: {_e922}")
+
+# ---------------------------------------------------------------- (aa918)
+# CYAN RUHIGER, STOCK LOCATIONS OHNE CYAN (Nutzer 14.11.2026: "Stock
+# locations Uebertitel nicht Amber, Cyan blau tut mir ueberall in den
+# Augen weh"; Rueckfrage: Seitentitel Amber, Karten weiss, Cyan in der
+# ganzen App abschwaechen).
+try:
+    from eve_trader.ui import theme as _th918
+    # Vorgabe-Theme "caldari": CYAN steht als Modulwert in theme.py.
+    _h918 = _th918.CYAN
+    _r918, _g918, _b918 = [int(_h918[_i:_i + 2], 16) / 255 for _i in (1, 3, 5)]
+    _s918 = ((max(_r918, _g918, _b918) - min(_r918, _g918, _b918))
+             / max(_r918, _g918, _b918))
+    # 40 % ist die neue Obergrenze (vorher 55 %, Grenze aa834: 65 %).
+    check(f"aa918 Cyan ist ruhiger als vorher ({_s918 * 100:.0f} % <= 40)",
+          _s918 <= 0.40)
+    _st918 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                               "mw_bauplan_tabs.py"), encoding="utf-8").read()
+    check("aa918 der Seitentitel STOCK LOCATIONS ist Amber",
+          'titel = QLabel(t("STOCK LOCATIONS"))\n'
+          '        # AMBER WIE JEDE ANDERE UEBERSCHRIFT' in _st918
+          and 'f"color:{theme.AMBER};")' in _st918)
+    check("aa918 die Ortsnamen der Karten stehen in Textfarbe",
+          "theme.RED if fehlt else theme.TEXT" in _st918
+          and "theme.RED if fehlt else theme.CYAN" not in _st918)
+except Exception as _e918:                               # pragma: no cover
+    _fail.append(f"aa918 Cyan ruhiger: {type(_e918).__name__}: {_e918}")
+
+# ---------------------------------------------------------------- (aa912)
+# STOCK LOCATIONS NACH SORTEN, NICHT NACH MENGE (Nutzer 14.11.2026).
+# Ein ERSTMALIG gesehener Ort startet AN, wenn dort mindestens
+# LAGER_ARTEN_AN (50) verschiedene Items liegen, sonst AUS. Bekannte Orte
+# (= die Schalter des Nutzers) werden NIE angefasst. Ein Knopf schaltet
+# eingeschaltete "Kruemel" (< LAGER_ARTEN_MINI = 2 Sorten) aus.
+try:
+    import types as _ty912
+    from eve_trader import lagerorte as _lo912
+    from eve_trader.ui import mw_bauplan_tabs as _mbt912
+    _BT912 = _mbt912.BauplanTabs
+    eq("aa912 ab 50 Sorten startet ein neuer Ort AN", _BT912.LAGER_ARTEN_AN, 50)
+    eq("aa912 unter 2 Sorten ist ein Ort ein Kruemel", _BT912.LAGER_ARTEN_MINI, 2)
+
+    # ---- arten_je_ort: SORTEN, nicht Menge ---------------------------
+    _z912 = [{"ort": 1, "tid": 34, "menge": 1000000},
+             {"ort": 1, "tid": 34, "menge": 5},          # dieselbe Sorte
+             {"ort": 2, "tid": 34, "menge": 1},
+             {"ort": 2, "tid": 35, "menge": 1},
+             {"ort": 2, "tid": 36, "menge": 1},
+             {"ort": 3, "tid": 37, "menge": 0}]          # ohne Menge
+    eq("aa912 arten_je_ort zaehlt verschiedene Items, nicht Stueck",
+       _lo912.arten_je_ort(_z912), {1: 1, 2: 3})
+    eq("aa912 ... und leer bleibt leer", _lo912.arten_je_ort([]), {})
+
+    # ---- WIRKLICH AUSFUEHREN, mit einem Mini-Fenster -----------------
+    _gesp912 = []
+
+    class _Fake912:
+        LAGER_ARTEN_AN = _BT912.LAGER_ARTEN_AN
+        LAGER_ARTEN_MINI = _BT912.LAGER_ARTEN_MINI
+
+        def __init__(self, settings):
+            self.settings = settings
+
+        def _lager_aus(self):
+            return {str(x) for x in (self.settings.get("lager_orte_aus")
+                                     or [])}
+
+    def _fn912(name):
+        _f = getattr(_BT912, name)
+        return _ty912.FunctionType(_f.__code__, _f.__globals__, name,
+                                   _f.__defaults__)
+    _neu912 = _fn912("_lager_neue_orte_aus")
+    _kr912 = _fn912("_lager_kruemel_aus")
+    _echt912 = _mbt912.config.save_settings_async
+    _mbt912.config.save_settings_async = lambda s: _gesp912.append(1)
+    try:
+        _w912 = _Fake912({"lager_orte_bekannt": ["1"],
+                          "lager_orte_aus": ["1"]})
+        _o912 = [(1, "Alt", 9), (2, "Lager", 9), (3, "Grenze", 9),
+                 (4, "Vertrag", 9999999)]
+        _a912 = {1: 80, 2: 50, 3: 49, 4: 1}
+        eq("aa912 neuer Ort mit 50 Sorten AN, mit 49 AUS, Menge egal",
+           _neu912(_w912, _o912, _a912), (["Grenze", "Vertrag"], ["Lager"]))
+        _aus912 = set(_w912.settings.get("lager_orte_aus") or [])
+        check("aa912 ... der 50er steht NICHT in der Aus-Liste",
+              "2" not in _aus912)
+        check("aa912 ... der 49er und der Kruemel schon",
+              {"3", "4"} <= _aus912)
+        # DEIN SCHALTER BLEIBT: Ort 1 hat 80 Sorten, ist aber bekannt und
+        # vom Nutzer AUS - er wird nicht angefasst.
+        check("aa912 ein bekannter, von Hand AUS geschalteter Ort bleibt AUS",
+              "1" in _aus912)
+        eq("aa912 alle gesehenen Orte gelten danach als bekannt",
+           sorted(_w912.settings.get("lager_orte_bekannt")),
+           ["1", "2", "3", "4"])
+        eq("aa912 ein zweiter Aufbau schaltet nichts mehr",
+           _neu912(_w912, _o912, _a912), ([], []))
+        # Der Nutzer schaltet den 50er von Hand AUS - ein neuer Aufbau
+        # darf ihn nicht wieder einschalten.
+        _w912.settings["lager_orte_aus"] = sorted(_aus912 | {"2"})
+        _neu912(_w912, _o912, _a912)
+        check("aa912 ... und ueberschreibt deinen Schalter nicht",
+              "2" in (_w912.settings.get("lager_orte_aus") or []))
+        # ERSTE BEGEGNUNG: auch ein 50er wird nur gemerkt.
+        _w912b = _Fake912({"lager_orte_aus": ["9"]})
+        eq("aa912 erste Begegnung schaltet nichts, auch nicht AN",
+           _neu912(_w912b, _o912, _a912), ([], []))
+        eq("aa912 ... die Aus-Liste bleibt unberuehrt",
+           _w912b.settings.get("lager_orte_aus"), ["9"])
+
+        # ---- KRUEMEL-KNOPF ---------------------------------------
+        _w912c = _Fake912({"lager_orte_aus": ["5"]})
+        _o912c = [(1, "Lager", 9), (2, "Zwei", 9), (3, "Eins", 9),
+                  (4, "Leer", 9), (5, "SchonAus", 9)]
+        _a912c = {1: 80, 2: 2, 3: 1, 5: 1}
+        _n912 = len(_gesp912)
+        eq("aa912 Kruemel: eingeschaltete Orte unter 2 Sorten gehen aus",
+           sorted(_kr912(_w912c, _o912c, _a912c)), ["Eins", "Leer"])
+        eq("aa912 ... genau 2 Sorten bleibt AN, der Rest wie vorher",
+           sorted(_w912c.settings.get("lager_orte_aus")), ["3", "4", "5"])
+        eq("aa912 ... und es wird gespeichert", len(_gesp912) - _n912, 1)
+        eq("aa912 ohne Kruemel aendert der Knopf nichts",
+           _kr912(_w912c, _o912c, _a912c), [])
+        eq("aa912 ... und speichert auch nicht", len(_gesp912) - _n912, 1)
+    finally:
+        _mbt912.config.save_settings_async = _echt912
+
+    # ---- VERDRAHTUNG -------------------------------------------------
+    _s912 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                              "mw_bauplan_tabs.py"), encoding="utf-8").read()
+    _zi912 = _s912.find("    def _lager_zeichnen(self):")
+    _zf912 = _s912[_zi912:_s912.find("\n    def ", _zi912 + 10)]
+    check("aa912 das Zeichnen meldet auch die EINgeschalteten Orte",
+          "found and switched ON: {namen}." in _zf912 and "_an912" in _zf912)
+    # NIE AUTOMATISCH: der Kruemel-Abschalter laeuft nur auf Knopfdruck.
+    check("aa912 das Zeichnen schaltet KEINE Kruemel ab",
+          "_lager_kruemel_aus" not in _zf912)
+    check("aa912 der Knopf haengt am Kruemel-Abschalter",
+          "self._lager_kruemel_btn.clicked.connect(\n"
+          "            lambda: self._lager_kruemel_knopf())" in _s912)
+    _ki912 = _s912.find("    def _lager_kruemel_knopf(self):")
+    _kf912 = _s912[_ki912:_s912.find("\n    def ", _ki912 + 10)]
+    check("aa912 der Knopf rechnet mit den Sorten je Ort",
+          "self._lager_kruemel_aus(orte, lagerorte.arten_je_ort(zeilen))"
+          in _kf912)
+    from eve_trader import sprache as _spr912
+    for _k912 in ("Switch off crumb locations",
+                  "{n} new location(s) with at least {k} different items "
+                  "found and switched ON: {namen}.",
+                  "{n} location(s) with fewer than {k} different items "
+                  "switched off."):
+        check(f"aa912 deutsch hinterlegt: {_k912[:30]}",
+              bool(_spr912.KATALOG["de"].get(_k912)))
+except Exception as _e912:                               # pragma: no cover
+    _fail.append(f"aa912 Lagerorte nach Sorten: "
+                 f"{type(_e912).__name__}: {_e912}")
+
+# ---------------------------------------------------------------- (aa913)
+# EIGENER ZUSTAND "OHNE EINKAUFSPREIS" (Nutzer 14.11.2026). Vorher stand
+# dort "Halten" - das klang nach einem Rat, den MoMa ohne Einkaufspreis
+# gar nicht geben kann. Die zwei alten Zweige sind EINER.
+try:
+    _pf913 = _fn_src("_render_portfolio")
+    eq("aa913 der Zustand 'no purchase price' wird genau einmal vergeben",
+       _pf913.count('signal = t("\u25cf no purchase price")'), 1)
+    check("aa913 die alten zwei Zweige sind zusammengelegt",
+          "elif not has_cost and at_price:" not in _pf913
+          and _pf913.count("elif not has_cost:") == 1)
+    check("aa913 srank bleibt 1 beim Normalpreis, sonst 0",
+          "srank = 1 if at_price else 0" in _pf913)
+    _i913 = _pf913.find("elif not has_cost:")
+    _blk913 = _pf913[_i913:_pf913.find("else:", _i913)]
+    check("aa913 dieser Zweig vergibt KEIN Halten mehr",
+          "Hold" not in _blk913.split("sig_tip")[0])
+    check("aa913 der Tooltip sagt, dass es sich mit der Wallet aendert",
+          "shows up in your wallet, this changes by itself." in _blk913
+          and "never switch to SELL" in _blk913)
+    from eve_trader import sprache as _spr913
+    eq("aa913 deutsch: ohne Einkaufspreis",
+       _spr913.KATALOG["de"].get("\u25cf no purchase price"),
+       "\u25cf ohne Einkaufspreis")
+    check("aa913 der Tooltip ist deutsch hinterlegt",
+          any(k.startswith("MoMa does not know what you paid for this item")
+              for k in _spr913.KATALOG["de"]))
+    check("aa913 die Legende nennt den vierten Zustand",
+          "\\u00b7 no purchase price (MoMa does not know" in _src_txt)
+except Exception as _e913:                               # pragma: no cover
+    _fail.append(f"aa913 ohne Einkaufspreis: {type(_e913).__name__}: {_e913}")
+
+# ---------------------------------------------------------------- (aa914)
+# "OPEN" IN DEN TRANSAKTIONEN IST EINE ZELLE, KEIN KNOPF (gemessen
+# 14.11.2026: 500 Zeilen 107 ms mit QPushButton, 12 ms mit Zelle).
+try:
+    import types as _ty914
+    _rt914 = _fn_src("_render_transactions")
+    check("aa914 kein Knopf mehr je Zeile",
+          "QPushButton" not in _rt914 and "setCellWidget" not in _rt914)
+    check("aa914 die Zelle traegt type_id und Charakter",
+          '_ob914.setData(Qt.UserRole + 1, int(tx["type_id"]))' in _rt914
+          and '_ob914.setData(Qt.UserRole + 2, tx.get("character_id"))'
+          in _rt914)
+    check("aa914 die Zelle ist cyan und sitzt in Spalte 7",
+          "_ob914.setForeground(QColor(theme.CYAN))" in _rt914
+          and "self.tx_table.setItem(i, 7, _ob914)" in _rt914)
+    _bt914 = _fn_src("_build_transactions_tab")
+    eq("aa914 EINE cellClicked-Verbindung an der Tabelle",
+       _bt914.count("self.tx_table.cellClicked.connect("), 1)
+    # DER KLICK, WIRKLICH AUSGEFUEHRT.
+    from eve_trader.ui import main_window as _mw914
+    _k914 = _mw914.MainWindow._tx_zelle_klick
+    _f914 = _ty914.FunctionType(_k914.__code__, _k914.__globals__,
+                                "_tx_zelle_klick")
+    from PySide6.QtCore import Qt as _Qt914
+
+    class _It914:
+        def data(self, rolle):
+            return {_Qt914.UserRole + 1: 34,
+                    _Qt914.UserRole + 2: 9001}.get(rolle)
+
+    class _Tab914:
+        def item(self, r, c):
+            return _It914() if c == 7 else None
+
+    class _W914:
+        def __init__(self):
+            self.tx_table = _Tab914()
+            self.rufe = []
+
+        def open_ingame_market(self, tid, cid):
+            self.rufe.append((tid, cid))
+    _w914 = _W914()
+    _f914(_w914, 0, 6)
+    eq("aa914 ein Klick in Spalte 6 tut nichts", _w914.rufe, [])
+    _f914(_w914, 0, 7)
+    eq("aa914 Spalte 7 oeffnet den Markt fuer Item UND Zeilen-Charakter",
+       _w914.rufe, [(34, 9001)])
+except Exception as _e914:                               # pragma: no cover
+    _fail.append(f"aa914 Open-Zelle: {type(_e914).__name__}: {_e914}")
+
+# ---------------------------------------------------------------- (aa915)
+# EIGENE SCHWELLE FUER "FEES EAT THE PROFIT" (Nutzer 14.11.2026):
+# `fees_eat_min_margin`, Vorgabe 5 %, statt der Ziel-Marge.
+try:
+    from eve_trader import config as _cfg915
+    eq("aa915 neue Einstellung mit Vorgabe 5.0",
+       _cfg915.DEFAULT_SETTINGS.get("fees_eat_min_margin"), 5.0)
+    _ord915 = _fn_src("_load_order_mods")
+    eq("aa915 die Schwelle wird EINMAL je Durchgang geholt",
+       _ord915.count('"fees_eat_min_margin"'), 2)   # Schluessel + Vorgabe
+    check("aa915 ... und zwar VOR der Schleife ueber die Orders",
+          0 <= _ord915.find("_feemin915 = float(self.settings.get(")
+          < _ord915.find("for tid, price, is_buy, order_id, char_id, "
+                         "vol_remain in res[\"orders\"]:"))
+    eq("aa915 beide Zweige vergleichen mit der neuen Schwelle",
+       _ord915.count("and _marge_neu < _feemin915)"), 2)
+    # Uebrig bleibt nur `under_target` (Verkaufsrat), der an der
+    # Ziel-Marge haengen MUSS.
+    eq("aa915 ... und keiner mehr mit der Ziel-Marge",
+       _ord915.count("_marge_neu < _ziel)"), 1)
+    eq("aa915 beide Zeilen tragen die Schwelle weiter",
+       _ord915.count('"fee_min": _feemin915,'), 2)
+    check("aa915 der Tooltip nennt die Schwelle, nicht das Ziel",
+          "want=f\"{float(r.get('fee_min', 0) or 0):.0f}\"" in _src_txt
+          and "want=f\"{float(r.get('ziel', 0) or 0):.0f}\"" not in _src_txt)
+    from eve_trader import sprache as _spr915
+    check("aa915 der Tooltip ist deutsch hinterlegt",
+          any("the minimum is {want} %" in k for k in _spr915.KATALOG["de"]))
+except Exception as _e915:                               # pragma: no cover
+    _fail.append(f"aa915 Gebuehren-Schwelle: {type(_e915).__name__}: {_e915}")
+
+# ---------------------------------------------------------------- (aa911)
+# DIE BEZAHLTEN GEBUEHREN STEHEN JE STUECK AUF DEM EINSTAND.
+# Nutzer 14.11.2026: "Die Modifizierungsgebuehren muessen jetzt pro Item
+# ganz genau obendraufgerechnet werden" und "sobald die gebuehren den
+# moeglichen verkaufspreis ueberschreiten und kein 12% Profit mehr
+# moeglich ist, wechselt der Status auf 'Fees eat the profit'".
+# VORHER: die Summe wurde EINMAL vom Gesamtgewinn abgezogen, und die
+# Warnung kam erst bei Verlust. Die angezeigte Marge kannte die
+# Gebuehren gar nicht.
+try:
+    from eve_trader import config as _cfg911
+    _cfgtxt911 = open(os.path.join(_ROOT, "eve_trader", "config.py"),
+                      encoding="utf-8").read()
+    # ---- DIE RECHNUNG ----------------------------------------------
+    eq("aa911 ohne Gebuehr bleibt der Einkauf stehen",
+       _cfg911.kosten_je_stueck(100.0, 0.0, 10), 100.0)
+    eq("aa911 die Gebuehr wird auf die Restmenge verteilt",
+       _cfg911.kosten_je_stueck(100.0, 500.0, 10), 150.0)
+    # OHNE EINKAUFSPREIS KEINE ERFUNDENE ZAHL (Regel 1).
+    eq("aa911 ohne Einkaufspreis gibt es keinen Einstand",
+       _cfg911.kosten_je_stueck(0.0, 500.0, 10), 0.0)
+    eq("aa911 ohne Restmenge wird nicht durch null geteilt",
+       _cfg911.kosten_je_stueck(100.0, 500.0, 0), 100.0)
+    # HALB GEFUELLT -> AUFSCHLAG JE STUECK STEIGT (Regel 3, sichere
+    # Richtung): bezahlt ist bezahlt, verdient werden muss sie am Rest.
+    check("aa911 bei halber Restmenge ist der Aufschlag hoeher",
+          _cfg911.kosten_je_stueck(100.0, 500.0, 5)
+          > _cfg911.kosten_je_stueck(100.0, 500.0, 10))
+    check("aa911 die Rechnung steht an EINER Stelle (Regel 9)",
+          _cfgtxt911.count("def kosten_je_stueck(") == 1
+          and _src_txt.count("config.kosten_je_stueck(") == 2)
+
+    # ---- BEIDE ZWEIGE BENUTZEN SIE ---------------------------------
+    _ord911 = _fn_src("_load_order_mods")
+    check("aa911 der Kauf-Zweig rechnet den Einstand je Stueck",
+          "_basis911 = config.kosten_je_stueck(_kauf911, cum_fee," in _ord911)
+    check("aa911 der Verkauf-Zweig ebenso",
+          "_basis911 = config.kosten_je_stueck(cost, cum_fee, vol_remain)"
+          in _ord911)
+    # DIE SCHWELLE IST NICHT MEHR DIE NULL. ANGEPASST 14.11.2026
+    # (emm915): sie ist auch nicht mehr die Ziel-Marge, sondern die eigene
+    # Einstellung `fees_eat_min_margin` - aa915 prueft das im Einzelnen.
+    check("aa911 Kauf: der Status greift an der Ziel-Marge",
+          "fee_wiped_out = bool(mod_count > 0 and best_sell > 0\n"
+          "                                         and _marge_neu < "
+          "_feemin915)" in _ord911)
+    check("aa911 Verkauf: der Status greift an der Ziel-Marge",
+          "fee_wiped_out = bool(mod_count > 0 and cost > 0\n"
+          "                                         and _marge_neu < "
+          "_feemin915)" in _ord911)
+    check("aa911 ... und die alte Null-Schwelle ist weg",
+          "(total_profit - cum_fee) <= 0" not in _ord911
+          and "total_profit" not in _ord911)
+    # ROT BLEIBT DEM ECHTEN VERLUST: zwischen Null und Ziel verdient man
+    # noch, nur zu wenig - das ist keine rote Zeile.
+    check("aa911 Verkauf: rot nur bei echtem Verlust",
+          "loss = bool(flag and cost > 0 and net_at_new < _basis911)" in _ord911)
+    check("aa911 Kauf: rot nur bei echtem Verlust",
+          "loss = bool(flag and best_sell > 0 and _netto911 < _basis911)"
+          in _ord911)
+    check("aa911 ... und nicht mehr allein wegen der Gebuehren",
+          "or fee_wiped_out)" not in _ord911)
+    # DIE ZIEL-MARGE IST DIE EINGESTELLTE (Vorgabe 12 %).
+    check("aa911 die Schwelle ist die eingestellte Ziel-Marge",
+          'float(self.settings.get("target_margin", 0) or 0)' in _ord911)
+    check("aa911 ... und steht per Vorgabe auf 12",
+          '"target_margin": 12.0' in _cfgtxt911)
+    # DIE ANGEZEIGTE MARGE KENNT DIE GEBUEHREN JETZT.
+    check("aa911 die Marge-Spalte rechnet mit demselben Einstand",
+          "(net_at_new - _basis911)\n"
+          "                                          / _basis911 * 100.0"
+          in _ord911)
+except Exception as _e911:                               # pragma: no cover
+    _fail.append(f"aa911 Gebuehren je Stueck: "
+                 f"{type(_e911).__name__}: {_e911}")
+
+# ---------------------------------------------------------------- (aa905)
+# NEUE LAGERORTE STARTEN AUSGESCHALTET. Nutzer 13.11.2026 mit
+# Bildschirmfoto: "Stock Locations sind einfach neu voellig zufaellig
+# Stationen hinzugefuegt worden. das will ich so nicht" - 29 Orte, 15
+# abgeschaltet. Die Liste ist `lagerorte.orte_mit_bestand`, also JEDER
+# Ort mit Bestand; seit emm760 zaehlt auch Vertragsmaterial mit, und
+# zwar am START-Ort des Vertrags.
+#
+# DER HEIKLE FALL IST DIE ERSTE BEGEGNUNG: wer MoMa schon benutzt, darf
+# nicht beim naechsten Start alles ausgeschaltet vorfinden. Darum wird
+# beim allerersten Mal nur GEMERKT.
+try:
+    import types as _ty905
+    _src905 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                "mw_bauplan_tabs.py"), encoding="utf-8").read()
+    # SEIT emm912 mit `arten` (Sorten je Ort) und Rueckgabe (aus, an).
+    _i905 = _src905.find("    def _lager_neue_orte_aus(self, orte, arten=None):")
+    _j905 = _src905.find("\n    def ", _i905 + 10)
+    _fn905 = _src905[_i905:_j905]
+    check("aa905 die Funktion wurde gefunden", 0 <= _i905 < _j905)
+
+    # ---- WIRKLICH AUSFUEHREN, mit einem Mini-Fenster -----------------
+    # Die Rechnung haengt nur an `self.settings` und `config` - dafuer
+    # braucht es kein Qt.
+    _gespeichert905 = []
+
+    from eve_trader.ui import mw_bauplan_tabs as _mbt905k
+
+    class _Fake905:
+        LAGER_ARTEN_AN = _mbt905k.BauplanTabs.LAGER_ARTEN_AN
+        LAGER_ARTEN_MINI = _mbt905k.BauplanTabs.LAGER_ARTEN_MINI
+
+        def __init__(self, settings):
+            self.settings = settings
+
+        def _lager_aus(self):
+            return {str(x) for x in (self.settings.get("lager_orte_aus")
+                                     or [])}
+
+    from eve_trader.ui import mw_bauplan_tabs as _mbt905
+    _echt905 = _mbt905.config.save_settings_async
+    _mbt905.config.save_settings_async = lambda s: _gespeichert905.append(1)
+    try:
+        _f905 = _ty905.FunctionType(
+            _mbt905.BauplanTabs._lager_neue_orte_aus.__code__,
+            _mbt905.BauplanTabs._lager_neue_orte_aus.__globals__,
+            "_lager_neue_orte_aus",
+            # seit emm912 hat `arten` eine Vorgabe (None)
+            _mbt905.BauplanTabs._lager_neue_orte_aus.__defaults__)
+        _orte905 = [(60003760, "Jita IV-4", 900), (1234, "Dockside", 500)]
+
+        # (1) ERSTE BEGEGNUNG: nichts schalten, nur merken.
+        _w1 = _Fake905({})
+        eq("aa905 erste Begegnung schaltet NICHTS ab",
+           _f905(_w1, _orte905), ([], []))
+        eq("aa905 ... und laesst die Aus-Liste in Ruhe",
+           _w1.settings.get("lager_orte_aus"), None)
+        eq("aa905 ... merkt sich aber alle Orte",
+           _w1.settings.get("lager_orte_bekannt"), ["1234", "60003760"])
+
+        # (2) NICHTS NEU: nichts passiert.
+        eq("aa905 bekannte Orte aendern nichts", _f905(_w1, _orte905), ([], []))
+
+        # (3) EIN NEUER ORT: der startet AUS.
+        _orte905b = _orte905 + [(99, "Thera XII", 7)]
+        eq("aa905 ein neuer Ort wird gemeldet",
+           _f905(_w1, _orte905b), (["Thera XII"], []))
+        check("aa905 ... und steht in der Aus-Liste",
+              "99" in (_w1.settings.get("lager_orte_aus") or []))
+        check("aa905 ... die alten Orte bleiben AN",
+              "1234" not in (_w1.settings.get("lager_orte_aus") or [])
+              and "60003760" not in (_w1.settings.get("lager_orte_aus") or []))
+        check("aa905 ... und er gilt jetzt als bekannt",
+              "99" in (_w1.settings.get("lager_orte_bekannt") or []))
+        eq("aa905 ein zweiter Aufbau meldet ihn NICHT noch einmal",
+           _f905(_w1, _orte905b), ([], []))
+
+        # (4) EIN VON HAND EINGESCHALTETER ORT BLEIBT AN.
+        # Sonst schaltete MoMa dem Nutzer seine Entscheidung wieder weg.
+        _w1.settings["lager_orte_aus"] = []
+        eq("aa905 von Hand eingeschaltet bleibt eingeschaltet",
+           _f905(_w1, _orte905b), ([], []))
+        eq("aa905 ... die Aus-Liste bleibt leer",
+           _w1.settings.get("lager_orte_aus"), [])
+
+        # (5) BESTEHENDE AUS-LISTE WIRD NICHT UEBERSCHRIEBEN.
+        _w2 = _Fake905({"lager_orte_aus": ["1234"],
+                        "lager_orte_bekannt": ["1234", "60003760"]})
+        eq("aa905 ein neuer Ort kommt zur bestehenden Aus-Liste dazu",
+           _f905(_w2, _orte905b), (["Thera XII"], []))
+        eq("aa905 ... und der alte bleibt drin",
+           sorted(_w2.settings.get("lager_orte_aus")), ["1234", "99"])
+
+        # (6) ES WIRD GESPEICHERT - UND NUR DANN, WENN SICH ETWAS
+        # AENDERT. Ohne Speichern waere beim naechsten Start alles
+        # wieder an; bei jedem Aufbau zu speichern waere eine
+        # 7,6-MB-Datei je Zeichnen (emm888 hat gemessen, was das kostet:
+        # 113-452 ms).
+        # Geschrieben wurde in (1) erste Begegnung, (3) neuer Ort,
+        # (5) neuer Ort bei _w2 - also genau dreimal.
+        eq("aa905 gespeichert wird genau bei den drei Aenderungen",
+           len(_gespeichert905), 3)
+    finally:
+        _mbt905.config.save_settings_async = _echt905
+
+    # ---- VERDRAHTUNG -------------------------------------------------
+    _zi905 = _src905.find("    def _lager_zeichnen(self):")
+    _zj905 = _src905.find("\n    def ", _zi905 + 10)
+    _zf905 = _src905[_zi905:_zj905]
+    _ruf905 = ("self._lager_neue_orte_aus(\n"
+               "            orte, lagerorte.arten_je_ort(zeilen))")
+    check("aa905 _lager_zeichnen ruft es auf",
+          _ruf905 in _zf905)
+    # VOR dem Bauen der Schalter - sonst stuenden die neuen Orte beim
+    # ersten Zeichnen noch auf AN und haetten einmal mitgerechnet.
+    check("aa905 ... und zwar VOR dem Bauen der Schalter",
+          0 <= _zf905.find(_ruf905)
+          < _zf905.find("self._lager_schalter_bauen(orte)"))
+    check("aa905 das Abschalten wird GEMELDET, nicht still gemacht",
+          "new location(s) found and switched OFF" in _zf905)
+    from eve_trader import sprache as _spr905
+    check("aa905 die Meldung ist deutsch hinterlegt",
+          bool(_spr905.KATALOG["de"].get(
+              "{n} new location(s) found and switched OFF: {namen}. "
+              "Switch them on in the list on the right if you want them "
+              "counted.")))
+except Exception as _e905:                               # pragma: no cover
+    _fail.append(f"aa905 neue Lagerorte aus: "
+                 f"{type(_e905).__name__}: {_e905}")
+
+# ---------------------------------------------------------------- (aa902)
+# DIE AKTIVE WORK-THROUGH-ZEILE IST AMBER (Nutzer 13.11.2026: "kann man
+# die aktuelle row das der work through mode gerade waehlt farblichem
+# hintergrund machen? ein leichtes amber oder so was?").
+# ERSTE FASSUNG WAR WIRKUNGSLOS - Nutzer: "man sieht gar nichts kein
+# amber". Grund: MoMas QSS hat eine Regel auf `QTableWidget::item`, und
+# sobald die greift, zeichnet Qts Stylesheet-Stil den Zellhintergrund
+# SELBST und ignoriert `setBackground`. GEMESSEN, offscreen, mit dem
+# echten QSS: Alpha 255 per setBackground -> Zeile bleibt (26,29,33);
+# Delegate mit Alpha 70 -> Zeile wird (83,74,62).
+try:
+    _hl902 = _fn_src("_highlight_order_row")
+    _dg902 = _fn_src("_aktiv_delegate903")
+    _src902d = _src_txt[_src_txt.find("class AktiveZeileDelegate"):
+                        _src_txt.find("class TastenFangDialog")]
+    check("aa902 der Faerbe-Delegate wurde gefunden", len(_src902d) > 500)
+
+    # KEIN setBackground MEHR: das war der Fehler.
+    check("aa902 gefaerbt wird NICHT mehr ueber setBackground",
+          "setBackground" not in _hl902.split('"""')[-1])
+    check("aa902 sondern im Delegate, der selbst malt",
+          "painter.fillRect(option.rect, _c)" in _src902d)
+    # FARBE AUS DEM THEME, nie als festes rgba - aa836.
+    check("aa902 die Farbe kommt aus dem Theme",
+          "QColor(theme.AMBER)" in _src902d)
+    check("aa902 ... und wird nur leicht aufgetragen",
+          "_c.setAlpha(AMBER_AKTIV_ALPHA)" in _src902d)
+    check("aa902 die Deckkraft steht an EINER Stelle (Regel 9)",
+          _src_txt.count("AMBER_AKTIV_ALPHA = ") == 1)
+    from eve_trader.ui import main_window as _mw902
+    check(f"aa902 die Deckkraft ist leicht ({_mw902.AMBER_AKTIV_ALPHA})",
+          0 < _mw902.AMBER_AKTIV_ALPHA < 128)
+    # DIE ZEILE WIRD UEBER DIE type_id GEFUNDEN, nicht ueber den Index:
+    # die Tabelle laesst sich sortieren.
+    check("aa902 der Delegate erkennt die Zeile an der type_id",
+          "index.sibling(index.row(), 0).data(self.ROLLE)" in _src902d)
+    check("aa902 ... und malt nur, wenn eine gesetzt ist",
+          "if self.tid is not None:" in _src902d)
+    check("aa902 der Text wird danach normal gezeichnet",
+          "super().paint(painter, option, index)" in _src902d)
+
+    # KEINE AUSWAHL: `QTableWidget::item:selected` laege ueber dem Amber.
+    check("aa902 die Auswahl wird weggenommen",
+          "table.clearSelection()" in _hl902)
+    check("aa902 ... und selectRow nicht mehr benutzt",
+          "selectRow(" not in _hl902.split('"""')[-1])
+    check("aa902 die Zeile wird weiter in den Blick gescrollt",
+          "table.scrollToItem(it0)" in _hl902)
+    check("aa902 die Anzeige wird neu gezeichnet",
+          "table.viewport().update()" in _hl902)
+    # NUR EINE ZEILE IN GANZ MoMa: beim Wechsel Kauf/Verkauf darf die
+    # andere Tabelle nicht weiterleuchten.
+    check("aa902 alle anderen Tabellen werden zuerst geloescht",
+          "_d903.tid = None" in _hl902
+          and 0 <= _hl902.find("_d903.tid = None")
+          < _hl902.find("self._aktiv_delegate903(table).tid = tid"))
+    check("aa902 der Delegate wird nur einmal je Tabelle gesetzt",
+          "isinstance(_d, AktiveZeileDelegate)" in _dg902)
+except Exception as _e902:                               # pragma: no cover
+    _fail.append(f"aa902 aktive Zeile amber: "
+                 f"{type(_e902).__name__}: {_e902}")
+
+# ---------------------------------------------------------------- (aa904)
+# DIE STERN-ZEILEN UND DER ERFINDBAR-HAUCH WERDEN WIEDER SICHTBAR.
+# emm903 brachte ans Licht, dass MoMas QSS (`QTableWidget::item`) den
+# Zellhintergrund selbst zeichnet und die Hintergrundrolle ignoriert.
+# FOLGE: die vier Toene in Deals, Blaupausen, Swing/Daytrade und
+# Regional Trading haben NIE geleuchtet. Nutzer 13.11.2026: "3 ja bitte".
+# GEMESSEN (offscreen, echtes QSS, Pixel in der Zellmitte, VIEWPORT
+# gegrabbt): Delegate mit Alpha 28 -> (55,54,53) gegen (36,40,46).
+# HIER steht die Verdrahtung der vier Stellen; b904 misst den Bildpunkt.
+try:
+    _src904 = _src_txt[_src_txt.find("class ZellenTonDelegate"):
+                       _src_txt.find("class AktiveZeileDelegate")]
+    check("aa904 der Zellton-Zeichner wurde gefunden", len(_src904) > 500)
+    check("aa904 er malt den Ton selbst",
+          "painter.fillRect(option.rect, QColor(_c))" in _src904)
+    check("aa904 ... und holt ihn aus der Tonrolle",
+          "index.data(TON_ROLLE)" in _src904)
+    check("aa904 ... und malt nur, wenn eine Farbe dasteht",
+          "if _c is not None:" in _src904)
+    check("aa904 der Text wird danach normal gezeichnet",
+          "super().paint(painter, option, index)" in _src904)
+    # EINE STELLE JE ROLLE (Regel 9) - sonst driften zwei Zahlen.
+    check("aa904 die Tonrolle steht an EINER Stelle",
+          _src_txt.count("TON_ROLLE = Qt.UserRole + ") == 1)
+    # DER AMBER-DELEGATE ERBT, sonst malte er den Ton weg, sobald eine
+    # Order-Tabelle beides braucht.
+    check("aa904 der Amber-Delegate erbt vom Zellton-Zeichner",
+          "class AktiveZeileDelegate(ZellenTonDelegate):" in _src_txt)
+    _setz904 = _fn_src("_ton_delegate904")
+    check("aa904 der Zeichner wird nur einmal je Tabelle gesetzt",
+          "isinstance(table.itemDelegate(), ZellenTonDelegate)" in _setz904)
+    check("aa904 ... und sonst gesetzt",
+          "table.setItemDelegate(ZellenTonDelegate(table))" in _setz904)
+
+    # ---- DIE VIER STELLEN ------------------------------------------
+    # Je Tabelle: der Zeichner muss gesetzt sein UND der Ton ueber die
+    # Rolle gehen. Fehlt eines von beidem, bleibt die Zeile grau - genau
+    # der Zustand, den der Nutzer gemeldet hat.
+    for _fn904, _tb904, _ton904 in (
+            ("_render_deals", "self.deals_table", "tint"),
+            ("_reload_my_blueprints", "_tbl", "_inv_tint"),
+            ("_render_hold", "self.hold_table", "tint"),
+            ("_render_arbitrage", "self.rg_table", "tint")):
+        _q904 = _fn_src(_fn904)
+        check(f"aa904 {_fn904}: der Zellton-Zeichner wird gesetzt",
+              f"self._ton_delegate904({_tb904})" in _q904)
+        check(f"aa904 {_fn904}: der Ton geht ueber die Tonrolle",
+              f"setData(TON_ROLLE, {_ton904})" in _q904)
+        check(f"aa904 {_fn904}: und NICHT mehr ueber setBackground",
+              ".setBackground(" not in _q904)
+        # DIE FARBE KOMMT AUS DEM THEME, nie als festes rgba (aa836).
+        check(f"aa904 {_fn904}: die Farbe kommt aus dem Theme",
+              f"{_ton904} = QColor(theme." in _q904)
+    # DIE BAEUME BLEIBEN UNANGETASTET: bei QTreeWidget wirkt
+    # setBackground - gemessen, Alpha 255 ergibt sauber (207,163,105).
+    # Wer sie "mitzieht", baut einen Fehler ein, den es nicht gibt.
+    check("aa904 die Bauplan-Baeume faerben weiter ueber setBackground",
+          open("eve_trader/ui/mw_bauplan_tabs.py",
+               encoding="utf-8").read().count(".setBackground(") >= 4)
+except Exception as _e904:                               # pragma: no cover
+    _fail.append(f"aa904 Stern-Zeilen sichtbar: "
+                 f"{type(_e904).__name__}: {_e904}")
+
+# ---------------------------------------------------------------- (aa910)
+# MoMa HOLT DEN SKILL VON SELBST. Nutzer 14.11.2026: "Denkst du Nutzer
+# werden von alleine auf die Idee kommen sich in settings rein zu klicken
+# und dort auf fetch klicken?" Nein - der Blinker aus emm909 sieht nur,
+# wer schon in den Einstellungen steht.
+# DER WEG WAR SCHON DA, nur in `link_character` (still nach dem Login).
+# Wer laengst verknuepft ist, loggt sich nie wieder ein. Weil
+# `fees_from_skills` Vorgabe AN ist, traegt das vorhandene Token
+# SKILL_READ_SCOPE schon - MoMa durfte lesen und hat nur nie gefragt.
+try:
+    _lies_cfg910 = open(os.path.join(_ROOT, "eve_trader", "config.py"),
+                        encoding="utf-8").read()
+    _abr910 = _fn_src("_abr910_still_holen")
+    check("aa910 das stille Nachholen wurde gefunden", len(_abr910) > 400)
+    # BELEGTES RECHT, SONST NICHTS: eine Abfrage ohne Recht endet im 403.
+    check("aa910 geholt wird nur mit belegtem Recht",
+          "config.SKILL_READ_SCOPE in _sc" in _abr910)
+    check("aa910 das Recht hat EINEN Namen, keinen Positionsindex",
+          "SKILL_SCOPES[0]" not in _src_txt
+          and "SKILL_READ_SCOPE = " in _lies_cfg910)
+    check("aa910 ... und steht an EINER Stelle (Regel 9)",
+          _lies_cfg910.count("SKILL_READ_SCOPE = ") == 1)
+    check("aa910 ... und die Scope-Liste benutzt genau diesen Namen",
+          "SKILL_SCOPES = [SKILL_READ_SCOPE," in _lies_cfg910)
+    # "TOKEN NICHT LESBAR" IST NICHT "RECHT FEHLT" (Regel 1).
+    check("aa910 ein unlesbares Token gilt als unbekannt, nicht als fehlend",
+          "_unklar = True" in _abr910
+          and '"no-scope" if (erteilt and not _unklar) else None' in _abr910)
+    # EINMAL, AM SELBEN MERKER WIE DER BLINKER (Regel 9).
+    check("aa910 geholt wird nur, solange der Wert noch nie aus EVE kam",
+          'self.settings.get("skill_adv_broker_geholt")' in _abr910)
+    check("aa910 ... und nur, wenn die Gebuehren aus Skills kommen",
+          'self.settings.get("fees_from_skills")' in _abr910)
+    check("aa910 geholt wird still (kein Fenster, kein Schleier)",
+          "self._pull_skills_for(int(_cid), silent=True)" in _abr910)
+    # NUR EIN CHARAKTER: der Skill haengt am Charakter, aber fuer die
+    # Relist-Gebuehr reicht einer - zwoelf Abfragen beim Start waeren
+    # zwoelf ESI-Aufrufe fuer dieselbe Zahl.
+    check("aa910 gefragt wird genau einer, dann ist Schluss",
+          "return int(_cid)" in _abr910)
+    # VERDRAHTUNG: der Start holt die erteilten Rechte sowieso schon.
+    _start910 = _fn_src("_scope_check_beim_start")
+    check("aa910 der Start ruft es mit den erteilten Rechten auf",
+          "self._abr910_still_holen(erteilt)" in _start910)
+    check("aa910 ... und zwar NACH dem Scope-Fenster",
+          0 <= _start910.find("self._scope_fenster_zeigen(soll, erteilt, namen)")
+          < _start910.find("self._abr910_still_holen(erteilt)"))
+    # ZWEI GRUENDE, ZWEI TEXTE: "druecke das einmal" ist falsch, wenn
+    # der Knopf im 403 endet.
+    _bl910 = _fn_src("_blink909_pruefen")
+    check("aa910 der Blinker unterscheidet die zwei Gruende",
+          '== "no-scope"' in _bl910)
+    check("aa910 ... und sagt dann, was statt des Knopfes zu tun ist",
+          "not allowed to read it yet" in _bl910
+          and "re-link one character once" in _bl910)
+    check("aa910 der alte Text bleibt fuer den anderen Fall",
+          "press this once" in _bl910)
+except Exception as _e910:                               # pragma: no cover
+    _fail.append(f"aa910 Skill von selbst holen: "
+                 f"{type(_e910).__name__}: {_e910}")
+
+# ---------------------------------------------------------------- (aa901)
+# SYSTEMWEITE TASTE FUER "NEXT" (Nutzer 12.11.2026): "rechtsklick auf
+# den 'next button' und dann kann man da eine Taste wie bsp 'b'
+# zuweisen, wenn man dann b drueckt waehrend MoMa im hintergrund offen
+# ist, wird der next button verwendet".
+# "IM HINTERGRUND" ist der Punkt - ein QShortcut braucht den Fokus, den
+# MoMa dann nicht hat. Darum Windows `RegisterHotKey`.
+# NUTZER-ENTSCHEID 12.11.2026 (auf Rueckfrage): BEIDES erlauben (nackte
+# Taste und Zusatztaste), beim Zuweisen vor der nackten warnen. Und nur
+# der "Next"-Knopf - "der next button macht punkt 2 bereits" (er oeffnet
+# im Spiel UND kopiert den Preis).
+try:
+    from eve_trader import hotkey as _hk901
+    _mn901 = _fn_src("_ord_next_taste_menue")
+    _nu901 = _fn_src("_hotkey901_neu")
+    _ne901 = _fn_src("nativeEvent")
+    _ce901 = _fn_src("closeEvent")
+
+    # ---- DIE REINE TEXTARBEIT, GERECHNET STATT GEGLAUBT --------------
+    # Hier sitzen die Fehler, die man sonst erst beim Nutzer sieht: eine
+    # falsche VK-Nummer loest die falsche Taste aus, eine verschluckte
+    # Zusatztaste macht aus Strg+B ein nacktes B.
+    eq("aa901 teile() trennt Zusatztasten und Taste",
+       _hk901.teile("ctrl+shift+b"), (["Ctrl", "Shift"], "B"))
+    eq("aa901 ... und vereinheitlicht die Reihenfolge",
+       _hk901.normal("shift+ctrl+b"), "Ctrl+Shift+B")
+    eq("aa901 leere Eingabe gibt leer zurueck", _hk901.normal(""), "")
+    check("aa901 nackte Taste wird als nackt erkannt",
+          _hk901.ist_nackt("B") and not _hk901.ist_nackt("Ctrl+B"))
+    # VK-NUMMERN: fuer A-Z und 0-9 ist VK == ASCII des Grossbuchstabens,
+    # VK_F1 == 0x70. Beides hier festgenagelt.
+    eq("aa901 Ctrl+B -> (MOD_CONTROL|MOD_NOREPEAT, VK_B)",
+       _hk901.zerlege("Ctrl+B"),
+       (_hk901.MOD_NOREPEAT | _hk901.MOD_CONTROL, 0x42))
+    eq("aa901 nacktes B -> nur MOD_NOREPEAT",
+       _hk901.zerlege("B"), (_hk901.MOD_NOREPEAT, 0x42))
+    eq("aa901 F5 -> VK_F5 (0x74)",
+       _hk901.zerlege("F5"), (_hk901.MOD_NOREPEAT, 0x74))
+    eq("aa901 F12 -> VK_F12 (0x7B)",
+       _hk901.zerlege("F12"), (_hk901.MOD_NOREPEAT, 0x7B))
+    eq("aa901 Ziffer 7 -> VK_7 (0x37)",
+       _hk901.zerlege("7"), (_hk901.MOD_NOREPEAT, 0x37))
+    eq("aa901 Alt+Shift+Win+A sammelt ALLE Zusatztasten",
+       _hk901.zerlege("Alt+Shift+Win+A"),
+       (_hk901.MOD_NOREPEAT | _hk901.MOD_ALT | _hk901.MOD_SHIFT
+        | _hk901.MOD_WIN, 0x41))
+    # KLARE ABSAGE STATT STILLER FALSCHBELEGUNG.
+    for _k901 in ("Tab", "F13", "F0", "", "+", "Space", "AB"):
+        eq(f"aa901 unbekannte Taste wird abgelehnt: {_k901!r}",
+           _hk901.zerlege(_k901), (None, None))
+    # MOD_NOREPEAT: ein liegengebliebener Finger darf nicht die ganze
+    # Orderliste durchblaettern.
+    check("aa901 jedes Kuerzel bekommt MOD_NOREPEAT",
+          _hk901.zerlege("Ctrl+B")[0] & _hk901.MOD_NOREPEAT
+          and _hk901.zerlege("F5")[0] & _hk901.MOD_NOREPEAT)
+
+    # ---- AUF NICHT-WINDOWS WIRD NICHTS BEHAUPTET --------------------
+    # `moeglich()` sagt genau das System an.
+    # SEIT emm916 (14.11.2026) AUF JEDEM SYSTEM: vorher verlangte der
+    # Test `moeglich() is False` - unter Windows war er damit IMMER rot
+    # und meldete Strg+B sogar wirklich beim Betriebssystem an. Jetzt
+    # wird der Nicht-Windows-Weg durch Ersetzen von `moeglich` gefahren.
+    eq("aa901 systemweite Tasten gelten nur unter Windows",
+       _hk901.moeglich(), sys.platform.startswith("win"))
+    _altmoeg901 = _hk901.moeglich
+    _hk901.moeglich = lambda: False
+    try:
+        eq("aa901 registrieren() scheitert hier sauber mit Grund",
+           _hk901.registrieren(0, _hk901.ID_ORD_NEXT, "Ctrl+B"),
+           (False, "windows-only"))
+        eq("aa901 loesen() tut hier nichts und wirft nicht",
+           _hk901.loesen(0, _hk901.ID_ORD_NEXT), False)
+        eq("aa901 ist_hotkey_nachricht() ebenso",
+           _hk901.ist_hotkey_nachricht(b"windows_generic_MSG", 0,
+                                       _hk901.ID_ORD_NEXT), False)
+    finally:
+        _hk901.moeglich = _altmoeg901
+    # KEIN DEUTSCH IN DEN GRUENDEN: die gehen durch den Code, nicht auf
+    # den Schirm - de_scan4 hat genau das gefangen.
+    check("aa901 die Gruende sind englische Kennungen",
+          '"windows-only"' in open(
+              os.path.join(_ROOT, "eve_trader", "hotkey.py"),
+              encoding="utf-8").read())
+
+    # ---- DIE VERDRAHTUNG -------------------------------------------
+    check("aa901 der Next-Knopf hat ein Rechtsklick-Menue",
+          "self._ord_next_btn.setContextMenuPolicy(Qt.CustomContextMenu)"
+          in _src_txt
+          and "self._ord_next_btn.customContextMenuRequested.connect("
+          in _src_txt)
+    check("aa901 der Linksklick bleibt Next",
+          "self._ord_next_btn.clicked.connect(self._ord_step_next)"
+          in _src_txt)
+    check("aa901 das Menue bietet Zuweisen, Aendern und Entfernen",
+          "self._ord_next_taste_zuweisen" in _mn901
+          and "self._ord_next_taste_loeschen" in _mn901)
+    check("aa901 ... und sagt auf anderen Systemen, dass es nicht geht",
+          "if not hotkey.moeglich():" in _mn901)
+    # GESPEICHERT WIRD ENGLISCH: sonst haengt der Inhalt der
+    # Einstellungen an der Sprachwahl, und ein Sprachwechsel verlor die
+    # Taste.
+    check("aa901 gespeichert wird die englische Schreibweise",
+          "self.settings[self._HK901] = hotkey.normal(_neu)"
+          in _fn_src("_ord_next_taste_zuweisen"))
+    check("aa901 ... und sofort geschrieben",
+          "config.save_settings(self.settings)"
+          in _fn_src("_ord_next_taste_zuweisen"))
+    # DAS ALTE KUERZEL WIRD FREIGEGEBEN, BEVOR DAS NEUE KOMMT - sonst
+    # blieben beide belegt, bis MoMa endet.
+    check("aa901 beim Wechsel wird das alte Kuerzel zuerst freigegeben",
+          0 <= _nu901.find("hotkey.loesen(")
+          < _nu901.find("hotkey.registrieren("))
+    # JEDER FEHLSCHLAG WIRD GEMELDET. Das ist der wichtigste Teil: ohne
+    # Meldung glaubt der Nutzer, die Taste sei zugewiesen, und sie tut
+    # nie etwas.
+    for _g901 in ("windows-only", "already-taken"):
+        check(f"aa901 der Grund {_g901} wird dem Nutzer gemeldet",
+              f'_grund == "{_g901}"' in _nu901)
+    check("aa901 ... und jeder andere Grund auch",
+          "could not be registered ({why})" in _nu901)
+    # UND DER GRUND MUSS AUCH ENTSTEHEN. Die Pruefungen darueber sehen
+    # nur main_window; ob `hotkey.registrieren` "already-taken"
+    # ueberhaupt je zurueckgibt, stand nirgends - eine Rotprobe, die
+    # genau diese Zeile entfernte, blieb darum BLIND. Hier als
+    # Quelltext-Pruefung, weil der Zweig unter Linux nicht laufen KANN
+    # (`moeglich()` ist False, `RegisterHotKey` gibt es nicht).
+    # Kommentare raus, sonst findet die Pruefung den Namen im
+    # Erklaertext (Docstring-Falle).
+    _src901h = open(os.path.join(_ROOT, "eve_trader", "hotkey.py"),
+                    encoding="utf-8").read()
+    _i901r = _src901h.find("\ndef registrieren(")
+    _j901r = _src901h.find("\ndef ", _i901r + 1)
+    _reg901 = "\n".join(
+        _z for _z in _src901h[_i901r:_j901r].splitlines()
+        if not _z.lstrip().startswith("#"))
+    check("aa901 registrieren() wurde gefunden", 0 <= _i901r < _j901r)
+    check("aa901 ein fehlgeschlagenes RegisterHotKey ergibt already-taken",
+          "RegisterHotKey(" in _reg901
+          and 'return False, "already-taken"' in _reg901)
+    check("aa901 Erfolg wird ebenfalls gemeldet",
+          "now also responds to {k}" in _nu901)
+    # BEIM START WIRD DAS GEMERKTE KUERZEL WIEDER ANGEMELDET - und zwar
+    # verzoegert, weil `winId()` ein echtes Fensterhandle braucht.
+    check("aa901 beim Start wird das gemerkte Kuerzel wieder angemeldet",
+          "QTimer.singleShot(0, self._hotkey901_neu)" in _src_txt)
+    # BEIM SCHLIESSEN FREIGEBEN - und als ERSTES, damit es auch dann
+    # zurueckgeht, wenn das Speichern darunter scheitert.
+    check("aa901 beim Schliessen wird die Taste freigegeben",
+          "hotkey.loesen(int(self.winId()), hotkey.ID_ORD_NEXT)" in _ce901)
+    check("aa901 ... und zwar vor dem Speichern der Einstellungen",
+          0 <= _ce901.find("hotkey.loesen(")
+          < _ce901.find('self.settings["ui_geom_main"]'))
+
+    # ---- DIE TASTE WIRKT NUR, WENN DER KNOPF DA IST ------------------
+    # Sonst arbeitete MoMa unsichtbar Orders ab, waehrend der Nutzer in
+    # EVE etwas voellig anderes macht.
+    check("aa901 nativeEvent prueft auf unser Kuerzel",
+          "hotkey.ist_hotkey_nachricht(" in _ne901
+          and "hotkey.ID_ORD_NEXT" in _ne901)
+    # AM MODUS-SCHALTER, NICHT AN isVisible(): Qt meldet den Knopf auch
+    # dann als unsichtbar, wenn MoMa minimiert ist oder ein anderer
+    # Reiter vorne steht - genau die Lage, fuer die der Nutzer das
+    # Kuerzel bestellt hat. b901 hat das gefunden.
+    check("aa901 ... und loest nur bei laufendem Work-through-Modus aus",
+          'getattr(self, "_step_mode", False)' in _ne901
+          and "self._ord_step_next()" in _ne901)
+    check("aa901 ... und NICHT an isVisible() (minimiert = unsichtbar)",
+          "isVisible()" not in _ne901.split('"""')[-1])
+    check("aa901 ... und gibt jede fremde Nachricht weiter",
+          "return super().nativeEvent(eventType, message)" in _ne901)
+
+    # ---- DAS ZUWEIS-FENSTER ----------------------------------------
+    _src901d = _src_txt[_src_txt.find("class TastenFangDialog"):
+                        _src_txt.find("class TabNav")]
+    check("aa901 das Zuweis-Fenster wurde gefunden", len(_src901d) > 500)
+    check("aa901 Escape bricht ab",
+          "if e.key() == Qt.Key_Escape:" in _src901d
+          and "self.reject()" in _src901d)
+    check("aa901 eine Zusatztaste allein ist keine Zuweisung",
+          "_NUR_MOD" in _src901d and "Qt.Key_Control" in _src901d)
+    check("aa901 es warnt vor der nackten Taste (Nutzer-Entscheid)",
+          "hotkey.ist_nackt(self._gewaehlt)" in _src901d
+          and "belongs to MoMa system-wide" in _src901d)
+    check("aa901 und sagt ab, was es nicht kann",
+          "Only letters, digits and F1" in _src901d)
+    # ZWEISPRACHIG (Regel 6) - alle Texte dieser Aenderung.
+    from eve_trader import sprache as _spr901
+    for _tx901 in ("Assign a key …", "Remove key",
+                   "Assign a key for „Next“", "Use this key",
+                   "Key: {k}", "Ctrl", "Shift",
+                   "(System-wide keys only work on Windows)",
+                   "Only letters, digits and F1–F12 can be used.",
+                   "Right-click to assign a key.",
+                   "Key for „Next“ removed."):
+        check(f"aa901 deutsch hinterlegt: {_tx901[:34]}",
+              bool(_spr901.KATALOG["de"].get(_tx901)))
+    eq("aa901 Ctrl heisst auf Deutsch Strg",
+       _spr901.KATALOG["de"].get("Ctrl"), "Strg")
+except Exception as _e901:                               # pragma: no cover
+    _fail.append(f"aa901 systemweite Taste: "
+                 f"{type(_e901).__name__}: {_e901}")
+
+# ---------------------------------------------------------------- (aa900)
+# DAS PORTFOLIO WARTET NICHT MEHR AUF DIE PREISHISTORIEN. Nutzer
+# 12.11.2026: "kann man denn nicht zuerst das laden was wirklich im
+# Portfolio ist und alles andere im Hintergrund?"
+#
+# BELEGT AUS motor_market_perf.log, der ERSTE Lauf dreier Tage in Folge:
+#   Di 17:31  WALL 85.8s  normal-levels 55.0s
+#   Mi 17:45  WALL 55.0s  normal-levels 42.4s
+#   Do 18:23  WALL 71.8s  normal-levels 54.4s  held=2191 hist-cached=8
+#                                              hist-fetched=2183
+# Jeder spaetere Lauf desselben Tages: 12-24 s, normal-levels 5-11 s.
+# Ursache: die Historie gilt 24 h, und weil alle 2191 im selben Lauf
+# geholt wurden, rissen sie auch alle GLEICHZEITIG die Frist.
+try:
+    _ra900 = _fn_src("refresh_all")
+    _nn900 = _fn_src("_normals_nachladen900")
+    _lt900 = _fn_src("_lade_tick")
+    _hz900 = _fn_src("_hintergrund_laden_zeigen")
+
+    # (1) DIE LADEPHASE RUEHRT ESI NICHT MEHR AN. Das ist der ganze
+    # Gewinn - und es muss im Quelltext NACHWEISBAR sein, nicht nur
+    # wahrscheinlich.
+    _i900a = _ra900.find("def _normals877():")
+    _i900b = _ra900.find('_dauer877("normal-levels"', max(0, _i900a))
+    check("aa900 die Ladephase wurde gefunden", 0 <= _i900a < _i900b)
+    # KOMMENTARE WEG (Docstring-Falle, zum vierten Mal): der
+    # emm878-Kommentar in dieser Phase ERKLAERT, warum
+    # `scanner.history_cached` je Item zweimal die DB fragte - der Name
+    # steht also im Kommentar, ohne dass er aufgerufen wird. Ohne diesen
+    # Schnitt meldete aa900 beim ersten Lauf falsch.
+    _phase900 = "\n".join(
+        _z for _z in _ra900[_i900a:_i900b].splitlines()
+        if not _z.lstrip().startswith("#"))
+    check("aa900 die Ladephase ruft history_cached NICHT mehr auf",
+          "history_cached" not in _phase900)
+    check("aa900 ... und startet dort auch keinen Thread-Pool mehr",
+          "ThreadPoolExecutor" not in _phase900)
+    check("aa900 ... sie rechnet nur aus EINER Sammelabfrage",
+          "store.get_histories(held_ids, config.FORGE_REGION)" in _phase900)
+    # NORMALPREIS AUCH AUS VERALTETEN ZEILEN: vorher bekamen nur
+    # `_frisch`-Items einen Normalpreis, der Rest wartete auf den Abruf.
+    # Jetzt rechnet jedes Item mit Zeilen sofort - ein Tag Alter bewegt
+    # einen 90-Tage-Median nicht messbar.
+    check("aa900 jedes Item MIT Zeilen bekommt sofort seinen Normalpreis",
+          "_zeilen900 = _hist.get(_ti) or []" in _phase900
+          and "if _zeilen900:" in _phase900)
+    check("aa900 ... und die veralteten landen trotzdem in der Liste",
+          "if _ti not in _frisch:" in _phase900
+          and "_nachholen.append(_ti)" in _phase900)
+    check("aa900 die Liste geht an den Aufrufer",
+          "_nach900[:] = _nachholen" in _phase900
+          and '"nachholen": list(_nach900)}' in _ra900)
+    check("aa900 done() startet den Hintergrund-Job",
+          'self._normals_nachladen900(res.get("nachholen") or [])' in _ra900)
+    # ERST RENDERN, DANN NACHLADEN - andernfalls waere nichts gewonnen.
+    check("aa900 ... und zwar NACH _recompute()",
+          0 <= _ra900.find("self._recompute()")
+          < _ra900.find("self._normals_nachladen900("))
+
+    # (2) DER ZAEHLER SAGT DIE WAHRHEIT. `hist-fetched` hiesse jetzt die
+    # Unwahrheit: diese Phase holt nichts.
+    check("aa900 der Zaehler heisst hist-queued, nicht hist-fetched",
+          '_mess877[("#", "hist-queued")] = len(_nachholen)' in _ra900
+          and '"hist-fetched"' not in _ra900)
+    check("aa900 und er nennt, wie viele Normalpreise sofort dastehen",
+          '_mess877[("#", "normals-sofort")] = len(normals)' in _ra900)
+
+    # (3) DER HINTERGRUND-JOB.
+    check("aa900 er laeuft OHNE Ladeschirm (das Portfolio steht schon)",
+          "overlay=False" in _nn900)
+    check("aa900 er traegt nur nach und zeichnet neu",
+          "self._normal_levels.update(erg)" in _nn900
+          and "self._recompute()" in _nn900)
+    # EIN NEUER LADEVORGANG GEWINNT: sonst schriebe ein alter Job dem
+    # neuen seine Zahlen in die Tabelle.
+    check("aa900 ein veraltetes Ergebnis wird verworfen",
+          "_meine900 != getattr(self, \"_gen900\", 0)" in _nn900
+          and "self._gen900 = getattr(self, \"_gen900\", 0) + 1" in _nn900)
+    check("aa900 ... und zwar BEVOR etwas uebernommen wird",
+          0 <= _nn900.find("_meine900 != getattr")
+          < _nn900.find("self._normal_levels.update("))
+    # DROSSELUNG: hoeflich aufhoeren mit dem, was da ist.
+    check("aa900 bei ESI-Drosselung bricht er sauber ab",
+          "except esi.RateLimited:" in _nn900 and "raise" in _nn900)
+    check("aa900 leere Liste = kein Job",
+          "if not ids:" in _nn900)
+    # NICHT JEDES ITEM MELDEN: 2183 Signale in den UI-Thread waeren
+    # teurer als der Nutzen.
+    check("aa900 der Fortschritt wird gebuendelt gemeldet",
+          "_zahl900[0] % 50 == 0" in _nn900)
+    # DIE ANZEIGE WIRD IMMER ABGERAEUMT - auch im Fehlerfall, sonst
+    # laeuft der Sekundenzaehler oben fuer immer weiter.
+    check("aa900 die Anzeige wird im done UND im fail abgeraeumt",
+          _nn900.count("self._hintergrund_laden_zeigen(False)") >= 2)
+    # DIESELBE FALLE WIE b126/emm892: vor `_run` steht der Job nicht in
+    # `_workers`, und die Sicherung in `_lade_tick` loescht die Anzeige
+    # sofort wieder.
+    check("aa900 die Anzeige wird erst NACH _run eingeschaltet",
+          0 <= _nn900.find("self._run(_w900,")
+          < _nn900.find('self._hintergrund_laden_zeigen(True, was="normals")'))
+
+    # (4) DIE ANZEIGE SAGT, WAS WIRKLICH LAEUFT - nicht "Loading
+    # portfolio", denn das Portfolio steht.
+    check("aa900 die Anzeige hat eine eigene Zeile fuer den Nachlauf",
+          '_was900 == "normals"' in _lt900
+          and "Price history in the background" in _lt900)
+    check("aa900 ... und haengt auch dort die Phase an (emm892)",
+          "_z900 += " in _lt900)
+    # KEIN "wird geladen"-LEERHINWEIS: das waere eine Luege.
+    check("aa900 der Nachlauf setzt _portfolio_laedt NICHT",
+          '_portfolio_laedt = bool(an) and was == "portfolio"' in _hz900)
+    check("aa900 der Nachlauf hat seinen eigenen Tooltip",
+          'elif was == "normals":' in _hz900
+          and "The portfolio is complete." in _hz900)
+    # ZWEISPRACHIG (Regel 6).
+    from eve_trader import sprache as _spr900
+    for _tx900 in ("⟳ Price history in the background … {s} s",
+                   "Price history {n} of {m} …",
+                   "The portfolio is complete. Only the price history of "
+                   "some items is still being fetched – the „Normal"
+                   "“ column fills in afterwards."):
+        check(f"aa900 deutsch hinterlegt: {_tx900[:40]}",
+              bool(_spr900.KATALOG["de"].get(_tx900)))
+except Exception as _e900:                               # pragma: no cover
+    _fail.append(f"aa900 Historien im Hintergrund: "
+                 f"{type(_e900).__name__}: {_e900}")
+
+# ---------------------------------------------------------------- (aa892)
+# DER LADESCHIRM SAGT, WAS GERADE LAEUFT. Nutzer 11.11.2026, bestellt mit
+# "1 j": das Portfolio-Laden stand eine Minute lang unter einer einzigen
+# Zeile ("Refreshing portfolio + prices ..."), ohne Lebenszeichen. Die
+# Phasen sind dieselben, die emm877 schon STOPPT - sie werden jetzt auch
+# ANGEZEIGT.
+#
+# ZWEI ANZEIGEN, ZWEI WEGE - und der zweite ist der wichtigere: `_run`
+# haengt `worker.status` ans grosse Overlay, aber nur fuer den Job, dem
+# das Overlay gehoert (emm537). Bei `overlay=False` gehoert es keinem,
+# und genau dann arbeitet der Nutzer weiter und wartet am laengsten.
+# Darum bekommt die Hintergrund-Anzeige oben ihre eigene Verbindung.
+try:
+    _ra892 = _fn_src("refresh_all")
+    _lt892 = _fn_src("_lade_tick")
+    _ps892 = _fn_src("_phase892_setzen")
+    _hz892 = _fn_src("_hintergrund_laden_zeigen")
+
+    # DER WORKER MUSS DEN STATUS-KANAL UEBERHAUPT AUFMACHEN. Ohne
+    # `with_status=True` bekommt `job` kein `status`-Argument - dann
+    # meldet `_phase892` still ins Leere und nichts ist zu sehen.
+    check("aa892 der Portfolio-Worker wird mit Status-Kanal gestartet",
+          "Worker(job, with_status=True)" in _ra892)
+    check("aa892 job nimmt den Kanal an",
+          "def job(status=None):" in _ra892)
+    check("aa892 ohne Kanal laeuft es weiter (kein Absturz ohne Anzeige)",
+          "if status is None:" in _ra892 and "return" in _ra892)
+    check("aa892 die Anzeige darf das Laden nie abbrechen",
+          "status(text)" in _ra892
+          and "except Exception:" in _ra892.split("status(text)")[1][:200])
+
+    # DIE EIGENE VERBINDUNG FUER DIE HINTERGRUND-ANZEIGE.
+    check("aa892 der Status geht ausserdem an die Hintergrund-Anzeige",
+          "_w892.status.connect(self._phase892_setzen)" in _ra892)
+    # `find` statt `index`: fehlt eine der beiden Zeilen, soll GENAU
+    # diese Pruefung rot werden - `index` haette den ganzen Block mit
+    # einem ValueError abgebrochen und die Meldung unbrauchbar gemacht.
+    check("aa892 ... und zwar BEVOR der Worker laeuft (_run startet ihn)",
+          0 <= _ra892.find("_w892.status.connect(")
+          < _ra892.find("self._run(_w892,"))
+    check("aa892 die Phase wird beim Start geleert",
+          'self._phase892 = ""' in _ra892)
+    check("aa892 ... und beim Ausblenden der Anzeige auch",
+          'self._phase892 = ""' in _hz892)
+    # SOFORT ZEICHNEN, NICHT AUF DEN TAKT WARTEN: `_lade_takt` schlaegt
+    # jede Sekunde, `db-tx` und `prices` dauern 0,1-0,2 s.
+    check("aa892 eine neue Phase zeichnet die Anzeige sofort neu",
+          "self._lade_tick()" in _ps892)
+    check("aa892 ... nur wenn die Anzeige ueberhaupt sichtbar ist",
+          "lbl.isVisible()" in _ps892)
+    check("aa892 und nur an einem lebenden Widget (zerstoert, emm480)",
+          "zerstoert(lbl)" in _ps892)
+
+    # DIE ANZEIGE SETZT DIE PHASE HINTER DIE SEKUNDEN.
+    check("aa892 die Hintergrund-Anzeige haengt die Phase an",
+          'getattr(self, "_phase892", "")' in _lt892
+          and "_z892 += " in _lt892)
+    check("aa892 ohne Phase bleibt die Zeile genau wie vorher",
+          "if _p892:" in _lt892)
+    # DER MARKT-SCAN BLEIBT UNBERUEHRT: er hat eigene Phasen und teilt
+    # sich die Anzeige (`was`), seine Zeile darf keine Portfolio-Phase
+    # bekommen.
+    # ENDE DES SCAN-ZWEIGS IST DAS NAECHSTE elif/else, NICHT das erste
+    # "else:" - seit emm900 steht zwischen beiden ein `elif`-Zweig
+    # ("normals"), der eine Phase anhaengen DARF. Ohne diese Korrektur
+    # reichte der Ausschnitt in den fremden Zweig hinein und die
+    # Pruefung meldete falsch (von der Suite gefangen).
+    _i892s = _lt892.find('== "scan"')
+    _i892e = min(_i for _i in (_lt892.find("elif ", max(0, _i892s)),
+                               _lt892.find("else:", max(0, _i892s)))
+                 if _i >= 0)
+    check("aa892 der Scan-Zweig wurde gefunden", 0 <= _i892s < _i892e)
+    check("aa892 der Markt-Scan-Zweig bekommt KEINE Portfolio-Phase",
+          "_phase892" not in _lt892[_i892s:_i892e])
+
+    # ALLE ACHT PHASEN GEMELDET - UND JEDE ZWEISPRACHIG (Regel 6).
+    # `_fn_src` schreibt `_txt(` zu `t(` um, darum hier `t(`.
+    _PH892 = ["Transactions from ESI …",
+              "Reading transactions from the database …",
+              "Assets from ESI …",
+              "Resolving item names …",
+              "Prices from the market snapshot …",
+              "Normal price levels (90 days) …",
+              "Wallet and open orders …",
+              "Live prices for your holdings …"]
+    from eve_trader import sprache as _spr892
+    for _p892 in _PH892:
+        check(f"aa892 Phase gemeldet: {_p892}",
+              '_phase892(t("%s"))' % _p892.replace("…", "\\u2026")
+              in _ra892 or '_phase892(t("%s"))' % _p892 in _ra892)
+        check(f"aa892 Phase ist deutsch hinterlegt: {_p892}",
+              bool(_spr892.KATALOG["de"].get(_p892)))
+    # DIE REIHENFOLGE IM QUELLTEXT IST DIE REIHENFOLGE DES LADENS -
+    # sonst stuende im Ladeschirm eine Phase, die noch nicht laeuft.
+    _pos892 = [_ra892.find('_phase892(t("%s"))' % _p) for _p in _PH892]
+    check("aa892 alle acht Meldungen gefunden", all(_i >= 0 for _i in _pos892))
+    check("aa892 sie stehen in der Reihenfolge des echten Ablaufs",
+          _pos892 == sorted(_pos892))
+    # JEDE PHASE STEHT UNMITTELBAR VOR IHRER MESSUNG (emm877). Faellt
+    # eine Messung weg, muss die Meldung mitwandern - sonst meldet der
+    # Ladeschirm etwas, das gar nicht mehr passiert.
+    for _p892, _m892 in ((_PH892[1], '_dauer877("db-tx"'),
+                         (_PH892[3], '_dauer877("names"'),
+                         (_PH892[4], '_dauer877("prices"'),
+                         (_PH892[5], '_dauer877("normal-levels"'),
+                         (_PH892[7], '_dauer877("live-prices"')):
+        _a892 = _ra892.find('_phase892(t("%s"))' % _p892)
+        _b892 = _ra892.find(_m892)
+        check(f"aa892 Meldung steht direkt vor {_m892}) ",
+              0 <= _a892 < _b892 and _ra892.count("\n", _a892, _b892) <= 1)
+except Exception as _e892:                               # pragma: no cover
+    _fail.append(f"aa892 Lade-Phasen: {type(_e892).__name__}: {_e892}")
+
+# ---------------------------------------------------------------- (aa899)
+# EIN 404 VON ESI IST DAUERHAFT - UND WURDE TROTZDEM JEDEN LAUF NEU
+# ABGEFRAGT. Beleg: `werkzeuge/pruefe_historie.py` beim Nutzer am
+# 11.11.2026 - 7 von 60 Items ohne Historie antworten mit
+# "404 Client Error: Not Found" (`91999`, `Expired Capsuleer Day XXIII
+# Amarr Booster Crate`, ...). Diese type_ids gibt es im Spiel nicht mehr,
+# die SDE kennt sie auch nicht ("Gruppe unbekannt": 78 Stueck). Der Abruf
+# kann NIE gelingen - er lief nur in den allgemeinen `except Exception`
+# und galt damit als vorruebergehender Fehlschlag, den die 1-Stunden-
+# Regel jede Stunde wiederholte.
+#
+# WAS DIESER BLOCK ABSICHERT, UND WAS AUSDRUECKLICH NICHT: die
+# 1-Stunden-Regel fuer LEERE Antworten muss BLEIBEN. Dieselbe Pruefung
+# fand 10 von 60 Items, die inzwischen doch Historie haben (SKINs, 1-2
+# Tage alt) - eine laengere Ruhefrist fuer leere Antworten haette genau
+# die versteckt. Nur der 404 ruht lange.
+try:
+    import tempfile as _tf899
+    import time as _zt899
+    from eve_trader import config as _cfg899
+    from eve_trader import esi as _esi899
+    from eve_trader import scanner as _scn899
+    from eve_trader import store as _sto899
+
+    def _abschnitt899(src, name):
+        """Quelltext einer Funktion aus einer anderen Datei als
+        main_window.py (`_fn_src` kann nur diese)."""
+        _i = src.find("\ndef %s(" % name)
+        if _i < 0:
+            return ""
+        _j = src.find("\ndef ", _i + 1)
+        return src[_i:_j if _j > 0 else len(src)]
+
+    _s899e = open(os.path.join(_ROOT, "eve_trader", "esi.py"),
+                  encoding="utf-8").read()
+    _s899s = open(os.path.join(_ROOT, "eve_trader", "scanner.py"),
+                  encoding="utf-8").read()
+    _s899t = open(os.path.join(_ROOT, "eve_trader", "store.py"),
+                  encoding="utf-8").read()
+    _fmh899 = _abschnitt899(_s899e, "fetch_market_history")
+    _hc899 = _abschnitt899(_s899s, "history_cached")
+    check("aa899 beide Funktionen gefunden", bool(_fmh899) and bool(_hc899))
+
+    # DER 404 WIRD UEBERHAUPT UNTERSCHIEDEN. Ohne eigene Ausnahme kommt er
+    # beim Aufrufer als "irgendein Fehler" an - nicht unterscheidbar von
+    # einer Zeitueberschreitung, die man SEHR WOHL wiederholen will.
+    check("aa899 esi hat eine eigene Ausnahme fuer den 404",
+          "class UnknownType(Exception):" in _s899e)
+    check("aa899 fetch_market_history wirft sie beim 404",
+          "if r.status_code == 404:" in _fmh899
+          and "raise UnknownType(type_id)" in _fmh899)
+    # SIE STEHT VOR raise_for_status. Danach waere sie unerreichbar -
+    # raise_for_status wirft den 404 selbst als HTTPError.
+    _i899a = _fmh899.find("raise UnknownType(type_id)")
+    _i899b = _fmh899.find("r.raise_for_status()")
+    check("aa899 ... und zwar VOR raise_for_status (danach unerreichbar)",
+          _i899a >= 0 and _i899b > _i899a)
+    # DIE DROSSELUNG BEHAELT VORRANG (420/429 sind vorruebergehend).
+    check("aa899 die Drosselung wird weiter zuerst geprueft",
+          0 <= _fmh899.find("raise RateLimited()") < _i899a)
+
+    # STORE HAELT DEN FALL DAUERHAFT FEST. `touch_history` kann das nicht:
+    # es datiert absichtlich nur 20 h zurueck.
+    check("aa899 store hat eine Tabelle fuer die 404-Vermerke",
+          "CREATE TABLE IF NOT EXISTS history_tot (" in _s899t)
+    check("aa899 ... und die drei Funktionen dazu",
+          "def mark_history_tot(" in _s899t
+          and "def history_ist_tot(" in _s899t
+          and "def history_tot_ids(" in _s899t)
+
+    # SCANNER FAENGT DEN 404 EIGENS - UND VOR except Exception. Danach
+    # waere der Zweig unerreichbar.
+    # AB DEM ABRUF SUCHEN: weiter oben steht ein eigenes
+    # `except Exception` um die DB-Abfrage des Vermerks - `find` ohne
+    # Anker haette DAS gefunden und die Reihenfolge am falschen Block
+    # gemessen (genau der Fehler, den aa899 zuerst meldete).
+    _i899f = _hc899.find("data = esi.fetch_market_history(type_id, region)")
+    check("aa899 der ESI-Abruf gefunden", _i899f >= 0)
+    _i899c = _hc899.find("except esi.UnknownType:", _i899f)
+    _i899d = _hc899.find("except Exception:", _i899f)
+    check("aa899 history_cached faengt den 404 eigens ab", _i899c >= 0)
+    check("aa899 ... vor dem allgemeinen except (sonst unerreichbar)",
+          _i899c >= 0 and _i899d > _i899c)
+    check("aa899 ... und vermerkt ihn dort",
+          "store.mark_history_tot(type_id, region)" in _hc899[_i899c:_i899d])
+    # DIE DROSSELUNG BLEIBT VORNE: sie muss weitergeworfen werden, damit
+    # find_deals global zurueckfaehrt.
+    check("aa899 RateLimited wird weiter zuerst geprueft und geworfen",
+          _i899f <= _hc899.find("except esi.RateLimited:", _i899f) < _i899c)
+
+    # VERMERKTE 404 RUHEN LANGE - ABER NICHT FUER IMMER. CCP kann eine
+    # type_id wieder aufnehmen.
+    check("aa899 vermerkte 404 ruhen 30 Tage",
+          "stale = age > 30 * 24 * 3600" in _hc899)
+    # DIE DB-ABFRAGE TRIFFT NUR DIE OHNEHIN FAELLIGEN. Je Item abgefragt
+    # waere derselbe Fehler, den emm336/emm878 gekostet haben.
+    check("aa899 der Vermerk wird nur fuer faellige Items nachgesehen",
+          "if not have and age is not None and age > 3600:" in _hc899)
+
+    # DIE 1-STUNDEN-REGEL FUER LEERE ANTWORTEN BLEIBT. 10 von 60
+    # geprueften Items hatten inzwischen doch Historie.
+    check("aa899 leere Antworten werden weiter nach 1 h erneut geholt",
+          "elif not stale and not have and age is not None and age > 3600:"
+          in _hc899)
+
+    # ---- UND JETZT WIRKLICH LAUFEN LASSEN ------------------------------
+    # Die Quelltext-Pruefungen oben sagen, dass es dasteht. Erst der Lauf
+    # sagt, dass es WIRKT.
+    _altdb899 = _cfg899.db_path
+    _altfm899 = _esi899.fetch_market_history
+    _tmp899 = _tf899.mkdtemp(prefix="aa899_")
+    try:
+        _cfg899.db_path = lambda: os.path.join(_tmp899, "aa899.db")
+        _sto899.init_db()
+        _ruf899 = []
+
+        def _esi899_404(type_id, region=10000002):
+            _ruf899.append(type_id)
+            if type_id == 91999:
+                raise _esi899.UnknownType(type_id)
+            raise RuntimeError("Zeitueberschreitung")   # vorruebergehend
+
+        _esi899.fetch_market_history = _esi899_404
+        # VORBEDINGUNG: noch kein Vermerk da - sonst wuerde der Lauf
+        # unten etwas bestaetigen, was vorher schon so war (blind).
+        check("aa899 (Lauf) vorher ist kein 404 vermerkt",
+              _sto899.history_tot_ids(10000002) == set()
+              and not _sto899.history_ist_tot(91999, 10000002))
+        # ERSTER ABRUF: beide gehen an ESI (kein Zeitstempel vorhanden).
+        _r899a = _scn899.history_cached(91999, 10000002)
+        _r899b = _scn899.history_cached(34, 10000002)
+        check("aa899 (Lauf) beide werden zuerst einmal geholt",
+              _ruf899 == [91999, 34] and _r899a == [] and _r899b == [])
+        check("aa899 (Lauf) der 404 ist jetzt vermerkt",
+              _sto899.history_ist_tot(91999, 10000002)
+              and _sto899.history_tot_ids(10000002) == {91999})
+        check("aa899 (Lauf) der VORRUEBERGEHENDE Fehler ist NICHT vermerkt",
+              not _sto899.history_ist_tot(34, 10000002))
+        # ZWEITER ABRUF - DAS IST DER EIGENTLICHE PUNKT: der 404 geht nicht
+        # mehr an ESI, der vorruebergehende Fehler schon wieder.
+        del _ruf899[:]
+        _scn899.history_cached(91999, 10000002)
+        _scn899.history_cached(34, 10000002)
+        check("aa899 (Lauf) der 404 wird NICHT mehr abgefragt - das war der "
+              "Abruf, der jede Stunde umsonst lief",
+              91999 not in _ruf899)
+        check("aa899 (Lauf) der vorruebergehende Fehler wird sehr wohl "
+              "wiederholt (sonst versteckten wir echte Daten)",
+              34 in _ruf899)
+        # NACH 30 TAGEN WIRD DOCH WIEDER NACHGESEHEN.
+        with _sto899._conn() as _c899:
+            _c899.execute(
+                "UPDATE history_meta SET updated_at=? WHERE type_id=?",
+                (_zt899.time() - 31 * 24 * 3600, 91999))
+        del _ruf899[:]
+        _scn899.history_cached(91999, 10000002)
+        check("aa899 (Lauf) nach 30 Tagen wird der 404 doch noch einmal "
+              "versucht (CCP kann eine type_id wieder aufnehmen)",
+              91999 in _ruf899)
+    finally:
+        _cfg899.db_path = _altdb899
+        _esi899.fetch_market_history = _altfm899
+        import shutil as _sh899
+        _sh899.rmtree(_tmp899, ignore_errors=True)
+
+    # DER LADESCHIRM ZEIGT, WIE VIELE ES SIND. Ohne Zahl liesse sich nicht
+    # nachsehen, ob der Vermerk ueberhaupt greift (emm897-Zaehler).
+    check("aa899 der Ladezeit-Bericht zaehlt die 404-Items mit",
+          '_mess877[("#", "hist-404")]' in _src_txt
+          and "store.history_tot_ids(config.FORGE_REGION)" in _src_txt)
+except Exception as _e899:                               # pragma: no cover
+    _fail.append(f"aa899 404-Historie: {type(_e899).__name__}: {_e899}")
 
 print(f"(aa) Bestand-Herkunft: {_ok}/{_ok + len(_fail)} gruen")
 for f in _fail:

@@ -86,7 +86,7 @@ class Optimizer:
 
         head_card = QFrame(); head_card.setObjectName("Card")
         head_card.setStyleSheet(
-            f"QFrame#Card {{ border: 1px solid rgba(79,209,122,0.4); }}")
+            f"QFrame#Card {{ border: 1px solid {theme.toenung(theme.GREEN, 0.4)}; }}")
         head_v = QVBoxLayout(head_card)
         head_v.setContentsMargins(14, 10, 14, 10); head_v.setSpacing(8)
         head_title = QLabel(_txt("OPTIMAL BUILD QUANTITY \u2013 {name}").format(name=name))
@@ -455,7 +455,42 @@ class Optimizer:
                     return industry.production_plan(cur_tid, n, self._bd_pricemap.get,
                                                      cur_recipes, opts)
 
+                # DIESELBE MULTI-HUB-FRAGE WIE IM ORDERBUCH-FENSTER
+                # (emm839): kauft der Plan an mehreren Hubs ein, waere ein
+                # Abruf an EINEM Hub nicht nur ungenau, sondern
+                # irrefuehrend - er meldete Engpaesse ("Material am Hub
+                # nicht in voller Tiefe verfuegbar") fuer Material, das
+                # ueber die Hubs zusammen reichlich da ist, und wuerde die
+                # empfohlene Menge dadurch kuenstlich klein rechnen.
+                _mh_books_opt = {}
+                _mh_fracht_opt = {}
+                _mh_vols_opt = {}
+                try:
+                    if (getattr(self, "_bd_multi_hub_an", False)
+                            and len(self._bd_buy_hub_locs() or ()) > 1):
+                        _mh_books_opt = self._bd_multihub_books() or {}
+                        _mh_fracht_opt = (getattr(self, "_bd_buy_hub_fracht",
+                                                  None) or {})
+                except Exception:
+                    _mh_books_opt = {}
+
                 def orderbook_fn(mtid):
+                    if _mh_books_opt:
+                        # Die zusammengelegte Leiter ueber alle Plan-Hubs,
+                        # nach Landepreis sortiert - genau die Reihenfolge,
+                        # in der der Plan einkauft.
+                        try:
+                            if int(mtid) not in _mh_vols_opt:
+                                _v, _ = self._item_volumes_with_esi_fix(
+                                    [int(mtid)])
+                                _mh_vols_opt[int(mtid)] = (_v or {}).get(
+                                    int(mtid), 0) or 0
+                            _lt = industry.multihub_leiter(
+                                _mh_books_opt, int(mtid), _mh_fracht_opt,
+                                _mh_vols_opt.get(int(mtid), 0) or 0)
+                            return [(_lp, _m) for _lp, _m, _h, _roh in _lt]
+                        except Exception:
+                            return []
                     try:
                         ob = self._hub_orders(int(mtid), region, station, structure)
                         return ob.get("sell", [])
@@ -917,6 +952,42 @@ class Optimizer:
         self._persist_window(dlg, "optimizer")
         self._show_tool_window(dlg)
 
+    def _ladder_hubs_jetzt(self):
+        """Die Kauf-Hubs des Plans JETZT, fuer das Orderbuch-Fenster
+        (emm858, Nutzer 07.11.2026: "ich sehe keine zwei hubs obwohl
+        multi hub aktiviert und 2 verschiedene Hubs gewählöt"). Die
+        alte Weiche lief NUR beim Oeffnen des Fensters und schluckte
+        Aufloesungsfehler still - wer Multi-Hub bei offenem Fenster
+        einschaltete oder eine nicht mehr verlinkte Struktur gewaehlt
+        hatte, sah kommentarlos den Einzel-Hub-Modus.
+        -> ([(key, label)], schalter_an) - Fehler werden GELOGGT."""
+        _an = bool(getattr(self, "_bd_multi_hub_an", False))
+        try:
+            _locs = [(str(_k), (_l.get("label") or str(_k)))
+                     for _k, _l in self._bd_buy_hub_locs()]
+        except Exception as _e:
+            self._log_exception("Orderbuch: Kauf-Hubs aufloesen", str(_e))
+            _locs = []
+        return _locs, _an
+
+    def _ladder_kopf_text(self, hubs, an):
+        """Kopfzeile des Orderbuch-Fensters: (text, warnung?). Die
+        Warnung ist der Kern von emm858 - "Multi-Hub an, aber nur ein
+        Hub aufloesbar" war vorher UNSICHTBAR (stiller Rueckfall auf
+        den Einzel-Hub), und genau das stand dann im Screenshot des
+        Nutzers als Raetsel."""
+        if len(hubs) > 1:
+            return (t("Hubs: ") + ", ".join(n for _, n in hubs), False)
+        if an:
+            return (t("Multi-Hub is ON, but only {n} buy hub(s) could "
+                      "be resolved – check „Buy from“ A/B/C in the "
+                      "build plan (an unsaved plan starts with them "
+                      "empty; a structure may no longer be linked). "
+                      "Single-hub check against: {hub}").format(
+                          n=len(hubs), hub=self._active_hub_label()),
+                    True)
+        return (t("Hub: ") + self._active_hub_label(), False)
+
     def open_ladder_check(self):
         """Ersetzt den flachen Materialpreis der aktuellen Einkaufsliste durch
         ECHTE Orderbuch-Preise (ein Live-Abruf pro ben\u00f6tigtem Material) \u2013
@@ -942,44 +1013,139 @@ class Optimizer:
         v = QVBoxLayout(dlg); v.setContentsMargins(18, 14, 18, 14); v.setSpacing(9)
         qtxt = f"{qty:,}".replace(",", "'")
 
+        # MEHRERE EINKAUFS-HUBS (emm839). Nutzer 06.11.2026: "Pruefe wie
+        # sich bei multihub eingestelltem Bauplan das Tools-> orderbook
+        # exakt Fenster verhaelt". Antwort: es verhielt sich, als gaebe es
+        # sie nicht - jedes Material wurde gegen den EINEN Hub aus der
+        # Kopfleiste geprueft, auch wenn der Plan es woanders kauft. Fuer
+        # genau die Materialien, um die es bei Multi-Hub geht, war die
+        # Pruefung damit wertlos.
+        # DIE HUBS DES PLANS, nicht der Kopfleiste - und zwar bei JEDEM
+        # Rechnen frisch (emm858): die Weiche nur beim Oeffnen liess
+        # ein offenes Fenster im Einzel-Modus zurueck, wenn Multi-Hub
+        # erst danach eingeschaltet wurde.
+        _mh_hubs, _mh_an0 = self._ladder_hubs_jetzt()
+        if not _mh_an0 and len(_mh_hubs) < 2:
+            _mh_hubs = []
         head_card = QFrame(); head_card.setObjectName("Card")
         head_card.setStyleSheet(
-            f"QFrame#Card {{ border: 1px solid rgba(70,224,200,0.4); }}")
+            f"QFrame#Card {{ border: 1px solid {theme.toenung(theme.CYAN, 0.4)}; }}")
         head_v = QVBoxLayout(head_card)
         head_v.setContentsMargins(14, 10, 14, 10); head_v.setSpacing(8)
         head_title = QLabel(t("ORDER-BOOK EXACT \u2013 {name} \u00d7{qty}").format(name=name, qty=qtxt))
         head_title.setStyleSheet(
-            f"color:{theme.CYAN}; font-size:13px; font-weight:800; letter-spacing:1px;")
+            f"color:{theme.AMBER}; font-size:13px; font-weight:800; letter-spacing:1px;")
         head_v.addWidget(head_title)
-        head_desc = QLabel(t("Replaces the flat price of the shopping list with real "
-                             "order-book prices \u2013 one live fetch per material, may "
-                             "take a moment with many reaction materials."))
+        # ZWEI GETRENNTE t()-AUFRUFE statt eines bedingten Ausdrucks: der
+        # Katalog-Scanner (aa235/aa257) liest die Schluessel aus dem
+        # Quelltext und kann einen ueber ein `if ... else` zerrissenen
+        # Aufruf nicht zuordnen - er meldete den Eintrag als "ohne
+        # Fundstelle". So ist es auch schlicht besser zu lesen.
+        if len(_mh_hubs) > 1:
+            _desc_txt = t("Replaces the flat price of the shopping list with "
+                          "real order-book prices. This plan buys from several "
+                          "hubs, so the prices come from its last hub scan "
+                          "\u2013 the same data the plan itself calculated with.")
+        else:
+            _desc_txt = t("Replaces the flat price of the shopping list with real "
+                          "order-book prices \u2013 one live fetch per material, may "
+                          "take a moment with many reaction materials.")
+        head_desc = QLabel(_desc_txt)
         head_desc.setWordWrap(True); head_desc.setObjectName("Muted")
         head_v.addWidget(head_desc)
         row = QHBoxLayout()
-        _ahub_lbl = QLabel(t("Hub: ") + self._active_hub_label())
+        _ahub_lbl = QLabel("")
         _ahub_lbl.setObjectName("Muted")
-        _ahub_lbl.setToolTip(t(
-            "The hub is chosen at the top left of the tool and applies "
-              "to all tabs."))
-        self._register_tool_hub_label(_ahub_lbl)
+        _ahub_lbl.setWordWrap(True)
+        self._ladder_hub_lbl = _ahub_lbl        # b-Suite
+
+        def _kopf_setzen(hubs, an):
+            _txt858, _warn858 = self._ladder_kopf_text(hubs, an)
+            _ahub_lbl.setText(_txt858)
+            _ahub_lbl.setStyleSheet(
+                f"color:{theme.AMBER};" if _warn858 else "")
+            if len(hubs) > 1:
+                _ahub_lbl.setToolTip(t(
+                    "This build plan buys from several hubs. Each material is "
+                    "checked against the hub (or hubs) the plan actually buys "
+                    "it from - one column per hub shows how many units come "
+                    "from where. The prices come from the last hub scan of the "
+                    "build plan window, not from a fresh fetch."))
+            else:
+                _ahub_lbl.setToolTip(t(
+                    "The hub is chosen at the top left of the tool and applies "
+                    "to all tabs."))
+        _kopf_setzen(_mh_hubs, _mh_an0)
+        if len(_mh_hubs) <= 1 and not _mh_an0:
+            self._register_tool_hub_label(_ahub_lbl)
         row.addWidget(_ahub_lbl)
         btn = QPushButton(t("Calculate"))
         btn.setIcon(icons.icon("check"))
         btn.setObjectName("Primary")
         btn.setMinimumHeight(34)
         btn.setStyleSheet("font-size:13px; font-weight:800; padding:6px 18px;")
-        row.addWidget(btn); row.addStretch()
+        row.addWidget(btn)
+        # PREISE UEBERNEHMEN - HIER STATT IM WERKZEUGE-MENUE (emm840).
+        # Dort war "Orderbuch-Preise in den Plan laden" ein eigener
+        # Eintrag neben "Orderbuch-genau": zwei Menuepunkte fuer dieselbe
+        # Rechnung, einer zeigt sie, einer uebernimmt sie ungesehen. Wer
+        # Preise in seinen Plan uebernimmt, will sie vorher gesehen haben -
+        # also gehoert der Knopf hierher, unter die Zahlen.
+        uebern_btn = QPushButton(t("Apply prices to the plan"))
+        uebern_btn.setIcon(icons.icon("chart"))
+        uebern_btn.setMinimumHeight(34)
+        uebern_btn.setToolTip(t(
+            "Uses these order-book prices for the build cost of the plan, "
+            "instead of the flat estimate. Same fetch as the numbers above - "
+            "nothing is requested twice."))
+        uebern_btn.setEnabled(False)      # erst nach dem Rechnen sinnvoll
+
+        def _preise_uebernehmen():
+            _fn = getattr(self, "_bd_ladder_refresh", None)
+            if _fn is None:
+                self._flash_tip(t("Open the build plan again, then retry."))
+                return
+            dlg.close()
+            _fn()
+
+        uebern_btn.clicked.connect(_preise_uebernehmen)
+        row.addWidget(uebern_btn)
+        row.addStretch()
         head_v.addLayout(row)
         v.addWidget(head_card)
         summary = QLabel(t("Choose a hub, then \u201eCalculate\u201c."))
         summary.setWordWrap(True); summary.setStyleSheet("font-size:15px; font-weight:600;")
         v.addWidget(summary)
-        tbl = QTableWidget(0, 4)
-        tbl.setHorizontalHeaderLabels([t("Material"), t("Quantity"), t("Markup %"), t("Status")])
+        # EINE SPALTE JE HUB (emm839) - so sieht man auf einen Blick, wo
+        # die Menge herkommt. `multihub_split` teilt ein Material naemlich
+        # AUF MEHRERE Hubs auf, wenn die billigste Order den Bedarf nicht
+        # deckt; eine einzelne "Hub"-Spalte waere also schon falsch.
+        _mh_spalten = [_k for _k, _n in _mh_hubs] if len(_mh_hubs) > 1 else []
+        tbl = QTableWidget(0, 4 + len(_mh_spalten))
+        self._ladder_tbl = tbl                  # b-Suite
+
+        def _spalten_setzen():
+            tbl.setColumnCount(4 + len(_mh_spalten))
+            tbl.setHorizontalHeaderLabels(
+                [t("Material"), t("Quantity")]
+                + [_n for _, _n in (_mh_hubs if _mh_spalten else [])]
+                + [t("Markup %"), t("Status")])
+            # STATUS IST DIE STRETCH-SPALTE (emm858, Nutzer: "Fenster zu
+            # breit, zu viel leere Platz, status column wirkt abgedrückt
+            # auf dedr rechten seite"): vorher dehnte sich die MATERIAL-
+            # Spalte ueber die ganze Fensterbreite und drueckte alles
+            # andere an den rechten Rand. Jetzt sitzen die Zahlen neben
+            # den Namen, und der Leerraum liegt harmlos hinter dem
+            # linksbuendigen Status.
+            _hh858 = tbl.horizontalHeader()
+            for _c858 in range(tbl.columnCount()):
+                _hh858.setSectionResizeMode(_c858,
+                                            QHeaderView.ResizeToContents)
+            _hh858.setSectionResizeMode(tbl.columnCount() - 1,
+                                        QHeaderView.Stretch)
+        _spalten_setzen()
         tbl.verticalHeader().setVisible(False)
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
-        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         v.addWidget(tbl, 1)
         note = QLabel(t("\u201eMarkup %\u201c = how much more your purchase costs because "
                         "you clear out the cheap sell orders (order-book price vs. best "
@@ -1002,6 +1168,17 @@ class Optimizer:
                 return
             cur_qty = int(getattr(self, "_bd_qty", 1) or 1)
             region, station, structure = self._active_hub()
+            # DIE HUBS DES PLANS JETZT (emm858): wer Multi-Hub bei
+            # offenem Fenster einschaltet, bekommt beim naechsten
+            # "Calculate" die Hub-Spalten - nicht erst nach Schliessen
+            # und Neuoeffnen. Die Listen werden IN PLACE erneuert,
+            # damit job/done dieselben Closures weiterlesen.
+            _hubs858, _an858 = self._ladder_hubs_jetzt()
+            _mh_hubs[:] = _hubs858
+            _mh_spalten[:] = ([_k for _k, _n in _hubs858]
+                              if len(_hubs858) > 1 else [])
+            _spalten_setzen()
+            _kopf_setzen(_hubs858, _an858)
             summary.setText(t("Calculating \u2026 (\u00d7{qty}, one live fetch per material, "
                               "please wait)").format(qty=f"{cur_qty:,}".replace(",", "'")))
             opts = dict(self._bd_opts)
@@ -1011,17 +1188,54 @@ class Optimizer:
                                                 self._bd_pricemap.get, cur_recipes, opts)
                 buy = plan.get("buy") or {}
                 orderbooks = {}
-                for mtid in buy:
+                # MULTI-HUB: DIE BUECHER DES PLANS, nicht ein frischer
+                # Abruf an einem Hub (emm839). Zwei Gruende, und der
+                # zweite wiegt schwerer:
+                #   * Es sind dieselben Daten, mit denen der Plan selbst
+                #     gerechnet hat - eine zweite Quelle waere eine zweite
+                #     Wahrheit (Arbeitsregel 9).
+                #   * Ein frischer Abruf MUSSTE sich fuer EINEN Hub
+                #     entscheiden - und damit fuer den falschen, sobald
+                #     der Plan das Material woanders kauft.
+                # Die Bedarfsaufteilung kommt aus denselben Funktionen wie
+                # im Bauplan-Fenster: multihub_leiter + multihub_split.
+                mh_split = {}
+                if _mh_spalten:
+                    _books = self._bd_multihub_books() or {}
+                    _fracht = getattr(self, "_bd_buy_hub_fracht", None) or {}
                     try:
-                        ob = self._hub_orders(int(mtid), region, station, structure)
-                        orderbooks[mtid] = ob.get("sell", [])
+                        _vols, _ = self._item_volumes_with_esi_fix(
+                            [int(_t) for _t in buy])
                     except Exception:
-                        orderbooks[mtid] = []
+                        _vols = {}
+                    for mtid in buy:
+                        _lt = industry.multihub_leiter(
+                            _books, int(mtid), _fracht,
+                            (_vols or {}).get(int(mtid), 0) or 0)
+                        if not _lt:
+                            orderbooks[mtid] = []
+                            continue
+                        _sp, _rest = industry.multihub_split(
+                            _lt, int(buy.get(mtid) or 0))
+                        mh_split[int(mtid)] = (_sp, _rest)
+                        # Fuer die Aufschlag-Rechnung: die Leiter als eine
+                        # Verkaufsliste, hub-uebergreifend nach Landepreis
+                        # sortiert - genau so kauft der Plan auch ein.
+                        orderbooks[mtid] = [(_lp, _m) for _lp, _m, _h, _roh in _lt]
+                else:
+                    for mtid in buy:
+                        try:
+                            ob = self._hub_orders(int(mtid), region, station,
+                                                  structure)
+                            orderbooks[mtid] = ob.get("sell", [])
+                        except Exception:
+                            orderbooks[mtid] = []
                 res = industry.refine_plan_with_ladder(plan, orderbooks,
                                                        price_fn=self._bd_pricemap.get)
                 names = esi.resolve_names(list(buy.keys())) if buy else {}
                 return {"res": res, "names": names, "orderbooks": orderbooks,
-                        "buy": dict(buy), "station": station, "region": region}
+                        "buy": dict(buy), "station": station, "region": region,
+                        "mh_split": mh_split}
 
             def done(r):
                 res = r["res"]; names = r["names"]
@@ -1039,7 +1253,31 @@ class Optimizer:
                         t("Order-book exact: ") + isk(res['total_cost']),
                         t("Total markup: {pct} % ({isk})").format(
                             pct=f"{res['delta_pct']:+.1f}", isk=isk(res['delta']))]
+                # WOVON DIE SUMME NICHT VOM ORDERBUCH KOMMT (emm842).
+                # Materialien ohne einzige Order gehen seit emm842 zum
+                # Scan-Preis in die Summe (vorher mit 0 - beim Nutzer
+                # sah das wie "-34.8 % Ersparnis" aus und war ein
+                # 35-Mio-Loch). Dieser Anteil ist KEINE Orderbuch-
+                # Messung, also steht er dabei.
+                if res.get("no_book_n"):
+                    parts.append(t("incl. {isk} for {n} material(s) "
+                                   "without an order book (scan price)")
+                                 .format(isk=isk(res["no_book_cost"]),
+                                         n=res["no_book_n"]))
+                if res.get("unpriced_n"):
+                    parts.append(t("\u26a0 {n} material(s) have neither "
+                                   "an order book nor a scan price \u2013 "
+                                   "the total is missing them")
+                                 .format(n=res["unpriced_n"]))
+                if _mh_spalten:
+                    # EHRLICH SAGEN, WOHER DIE ZAHLEN KOMMEN: bei Multi-Hub
+                    # sind es die Buecher des letzten Hub-Scans, kein
+                    # frischer Abruf. Wer das nicht weiss, haelt eine alte
+                    # Momentaufnahme fuer den Markt von jetzt.
+                    parts.append(t("from the build plan's hub scan "
+                                   "({n} hubs)").format(n=len(_mh_spalten)))
                 summary.setText("   \u00b7   ".join(parts))
+                uebern_btn.setEnabled(True)   # jetzt gibt es etwas zu uebernehmen
                 rows = res["rows"]
 
                 # Aufschlag % je Material (Orderbuch vs. Flachpreis) berechnen und
@@ -1063,6 +1301,12 @@ class Optimizer:
                     q_it = NumericItem(f"{rr['qty']:,}".replace(",", "'"), rr["qty"])
                     mk = rr["_markup"]
                     if mk is not None:
+                        # "-0.0 %" ist ein Rundungsartefakt (Scan-Preis
+                        # minimal neben dem Live-Buch), kein Rabatt -
+                        # auf eine Nachkommastelle gerundet gehoert die
+                        # Null auf die Plus-Seite (emm842).
+                        if round(mk, 1) == 0:
+                            mk = 0.0
                         mk_it = NumericItem(f"+{mk:.1f} %" if mk >= 0 else f"{mk:.1f} %", mk)
                         # Ampel-Farbe nach Schwellen 5 / 20 %.
                         if mk <= 5:
@@ -1096,7 +1340,45 @@ class Optimizer:
                         it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     status.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                     tbl.setItem(i, 0, nm_it); tbl.setItem(i, 1, q_it)
-                    tbl.setItem(i, 2, mk_it); tbl.setItem(i, 3, status)
+                    # JE HUB EINE ZELLE (emm839): wie viele Stueck dieses
+                    # Materials der Plan DORT kauft. Leer heisst "von hier
+                    # nichts" - das ist eine Aussage und keine Luecke,
+                    # darum ein Strich und kein leeres Feld.
+                    _sp_r = (r.get("mh_split") or {}).get(int(mtid))
+                    for _ci, _hk in enumerate(_mh_spalten):
+                        _n_h = 0
+                        if _sp_r:
+                            _n_h = int((_sp_r[0].get(_hk) or (0, 0, 0))[0])
+                        if _n_h > 0:
+                            _c = NumericItem(f"{_n_h:,}".replace(",", "'"), _n_h)
+                            _c.setForeground(QColor(theme.TEXT))
+                        else:
+                            _c = NumericItem("\u2013", -1)
+                            _c.setForeground(QColor(theme.MUTED))
+                        _c.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                        if 2 + _ci < tbl.columnCount() - 2:
+                            tbl.setItem(i, 2 + _ci, _c)
+                    # VOM ENDE HER GEZAEHLT, nicht von `_mh_spalten` aus
+                    # (emm840). Markup und Status sind IMMER die letzten
+                    # beiden Spalten. Solange die Tabelle mit
+                    # `4 + len(_mh_spalten)` Spalten gebaut wird und die
+                    # Breite danach nicht mehr angefasst wird, ist das
+                    # ZAHLENGLEICH zu `2 + len(_mh_spalten)` - dieser
+                    # Umbau behebt also NICHTS, was heute kaputt ist, und
+                    # er ist auch nicht die Ursache des Nutzer-Befunds
+                    # "keine Farben werden angezeigt" (die ist noch
+                    # offen). Er nimmt nur die Moeglichkeit weg, dass ein
+                    # spaeterer Spalten-Umbau die beiden Zellen lautlos
+                    # ins Leere schreibt: setItem auf eine Spalte
+                    # ausserhalb der Tabelle wirft nicht, es verwirft.
+                    _sp_n = tbl.columnCount()
+                    tbl.setItem(i, _sp_n - 2, mk_it)
+                    tbl.setItem(i, _sp_n - 1, status)
+                # Nach dem Fuellen an den Inhalt anpassen; seit emm858
+                # ist die LETZTE Spalte (Status) die Stretch-Spalte,
+                # alle anderen tragen ihre Inhaltsbreite.
+                for _c842 in range(0, tbl.columnCount() - 1):
+                    tbl.resizeColumnToContents(_c842)
                 tbl.setSortingEnabled(True)
 
             def fail(msg):
@@ -1191,6 +1473,13 @@ class Optimizer:
 
         btn.clicked.connect(compute)
         self._persist_window(dlg, "ladder_check", {"table": tbl.horizontalHeader()})
+        # NACH dem Wiederherstellen (emm858): _persist_window spielt den
+        # GESPEICHERTEN Header-Zustand frueherer Sitzungen ein - samt
+        # alter Interactive-Modi und einer Material-Spalte ueber die
+        # halbe Fensterbreite (genau das Bild des Nutzers: "zu viel
+        # leere Platz, status column wirkt abgedrückt"). Die Modi
+        # gehoeren diesem Fenster, nicht dem Gedaechtnis.
+        _spalten_setzen()
         self._show_tool_window(dlg)
 
     def _build_preset_to_custom(self, *args):

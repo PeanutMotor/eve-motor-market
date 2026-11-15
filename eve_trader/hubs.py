@@ -230,11 +230,19 @@ def bewerte_leeren_markt(tid, quell_preis, hist, tax, broker, ziel_eintrag=None)
     """
     if not hist or quell_preis <= 0:
         return None
-    letzte7 = hist[-7:]
+    # NACH DATUM, NICHT NACH POSITION (emm848, Begruendung bei
+    # market.fenster_nach_datum): hist[-7:] waren die letzten 7
+    # HANDELSTAGE - bei einem toten Item liegen die Monate zurueck, und
+    # genau diese Funktion haette ihn dann "mit nachgewiesenem Absatz"
+    # geadelt.
+    from . import market as _mk_fnd
+    _fnd = _mk_fnd.fenster_nach_datum
+    letzte7 = _fnd(hist, 7)
     tage_mit_umsatz = sum(1 for r in letzte7 if (r.get("volume") or 0) > 0)
     if tage_mit_umsatz < 1:
         return None                       # am Ziel wird gar nicht gehandelt
-    preise = [r.get("average") or 0 for r in hist[-30:]
+    letzte30 = _fnd(hist, 30)
+    preise = [r.get("average") or 0 for r in letzte30
               if (r.get("volume") or 0) > 0 and (r.get("average") or 0) > 0]
     if not preise:
         return None
@@ -243,7 +251,7 @@ def bewerte_leeren_markt(tid, quell_preis, hist, tax, broker, ziel_eintrag=None)
     gewinn = netto - quell_preis
     if gewinn <= 0:
         return None
-    tagesmenge = sum((r.get("volume") or 0) for r in hist[-30:]) / 30.0
+    tagesmenge = sum((r.get("volume") or 0) for r in letzte30) / 30.0
     t = ziel_eintrag or {}
     return {
         "type_id": tid,
@@ -264,6 +272,7 @@ def bewerte_leeren_markt(tid, quell_preis, hist, tax, broker, ziel_eintrag=None)
         # destination" ein Strich, ausgerechnet bei den Zeilen, deren
         # ganzer Sinn der nachgewiesene Absatz ist.
         "target_vol": tagesmenge,
+        "target_frisch": _mk_fnd.tage_seit_handel(hist),
         "score": gewinn * max(1, min(int(tagesmenge), 10_000)),
     }
 

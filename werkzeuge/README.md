@@ -9,5 +9,6 @@ Small helpers for development and support. None of them is needed to run EVE Mot
 - `szenario_prioritaet` - simulates re-ordering build plans and shows where material and jobs end up.
 - `messung_bau_vs_bauplan.py` - compares the build calculation with the build plan window.
 - `suiten_parallel.bat` / `suiten_parallel.py` - runs both GUI test suites (aa + b) and the two language scans AT THE SAME TIME instead of one after another (measured 25.10.2026: 84 s sequential -> 64 s parallel on this machine). Exit code 0 only if all four are green.
+- `rotprobe_parallel.bat` / `rotprobe_parallel.py` - runs the whole mutation testing suite (`tests/rotprobe.py`) on several cores at once, each run with its own working copy, and resumes where it stopped. Replaces the 16 `rotprobe_nacht_*.bat` packages: measured 02.11.2026, ~40 h sequentially -> ~7 h with four parallel runs. Defaults to half the cores so the machine stays usable; set `EMM_ROTPROBE_PROZESSE` for more. Findings land in `berichte\rotprobe_parallel_BLIND.txt`.
 
 All tools only read your data; reports are written to `berichte\` (not part of the repository).

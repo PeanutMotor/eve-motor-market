@@ -1828,7 +1828,7 @@ class BauplanFenster:
 
         endp_card = QFrame(); endp_card.setObjectName("Card")
         endp_card.setStyleSheet(
-            f"QFrame#Card {{ border: 1px solid rgba(242,162,60,0.4); }}")
+            f"QFrame#Card {{ border: 1px solid {theme.toenung(theme.AMBER, 0.4)}; }}")
         endp_v = QVBoxLayout(endp_card)
         endp_v.setContentsMargins(14, 10, 14, 10); endp_v.setSpacing(6)
         # Nutzer-Vorgabe: die Zeile "ENDPRODUKT - DAS ZU BAUENDE ITEM" ist
@@ -2279,14 +2279,14 @@ class BauplanFenster:
             if on:
                 frozen_btn.setStyleSheet(
                     f"QPushButton{{background:{theme.AMBER}; color:{theme.BG}; "
-                    f"border:2px solid {theme.AMBER}; border-radius:6px; "
+                    f"border:2px solid {theme.AMBER}; border-radius:{theme.RAD}; "
                     f"padding:6px 16px; font-size:13px; font-weight:800;}}")
             else:
                 frozen_btn.setStyleSheet(
                     f"QPushButton{{background:transparent; color:{theme.AMBER}; "
-                    f"border:2px solid {theme.AMBER}; border-radius:6px; "
+                    f"border:2px solid {theme.AMBER}; border-radius:{theme.RAD}; "
                     f"padding:6px 16px; font-size:13px; font-weight:700;}}"
-                    f"QPushButton:hover{{background:rgba(242,162,60,0.16); "
+                    f"QPushButton:hover{{background:{theme.toenung(theme.AMBER, 0.16)}; "
                     f"border-color:{theme.AMBER};}}")
 
         # Sichtbarkeits-Sync für den Rebase-Knopf über einen HOLDER, nicht
@@ -2340,7 +2340,7 @@ class BauplanFenster:
         # eine eigenständige Zuweisung statt einer Vorwärts-Referenz.
         refz_btn.setStyleSheet(
             f"QPushButton{{background:transparent; color:{theme.TEXT}; "
-            f"border:1px solid {theme.BORDER}; border-radius:6px; "
+            f"border:1px solid {theme.BORDER}; border-radius:{theme.RAD}; "
             f"padding:6px 14px; font-size:13px;}}"
             f"QPushButton:hover{{border-color:{theme.CYAN}; color:{theme.CYAN};}}")
         refz_btn.setToolTip(
@@ -2456,7 +2456,7 @@ class BauplanFenster:
         # fallen. Einheitlicher, ruhiger Stil statt drei verschiedener,
         # kräftiger Farbrahmen.
         _secondary_btn_css = (
-            f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:6px; "
+            f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:{theme.RAD}; "
             f"padding:6px 12px; color:{theme.MUTED}; font-size:13px; "
             f"background:transparent;}}"
             f"QPushButton:hover{{border-color:{theme.CYAN}; color:{theme.TEXT};}}")
@@ -2543,20 +2543,28 @@ class BauplanFenster:
             icons.icon("trend_up"), _txt("Optimal quantity"))
         _lad_act = _tools_menu.addAction(
             icons.icon("chart"), _txt("Order-book exact"))
-        # ORDERBUCH-PREISE IN DEN PLAN (30.09.2026): das war der Teil von
-        # "Recalculate", der Preise holt - der Knopf ist jetzt "Reset", der
-        # Abruf lebt hier weiter (ohne Runplaner-Haken anzufassen).
-        _lplan_act = _tools_menu.addAction(
-            icons.icon("chart"), _txt("Load order-book prices into the plan"))
-        _lplan_act.triggered.connect(lambda *_a: _ladder_refresh())
+        # ORDERBUCH-PREISE IN DEN PLAN: STAND HIER ALS EIGENER EINTRAG
+        # (emm840 raus). Nutzer 06.11.2026 zum Werkzeuge-Menue: "eniges
+        # Davon braeuchte es meiner meinung nach nicht". Zwei Eintraege
+        # fuer dieselbe Rechnung - einer zeigt sie ("Orderbuch-genau"),
+        # einer uebernimmt sie blind. Wer Preise uebernimmt, will sie
+        # vorher gesehen haben; der Vorgang sitzt jetzt als Knopf IM
+        # Orderbuch-Fenster, direkt unter den Zahlen.
+        # Die Funktion wird dem Fenster UNTEN angehaengt, wo sie definiert
+        # ist (`self._bd_ladder_refresh`) - hier oben gibt es sie noch
+        # nicht, das Menue entsteht frueher.
         _tools_menu.addSeparator()
         # NUTZER-VORFAELLE (Sitzung 8: Ferrofluid 290, Ferrogel 805, Hexite):
         # der eingefrorene Plan haelt am Einfrier-Bestand fest (max-Merge,
         # bewusst) und ist blind fuer real verschwundenen Bestand. Diese
         # Vorschau sagt VORHER, was beim Abarbeiten der restlichen Runs
         # fehlen wird - statt es am Reaktor zu merken.
-        _fehl_act = _tools_menu.addAction(
-            icons.icon("target"), _txt("Check shortfall"))
+        # "FEHLBEDARF PRUEFEN" STAND HIER (emm840 raus): der Eintrag zeigte
+        # nur an, was "Fehlendes nachkaufen" gleich danach bucht - und die
+        # Zahlen stehen ohnehin rot in der Materialzeile der Einkaufsliste
+        # und als Banner darueber. Vier Wege fuer eine Information waren
+        # drei zu viel. "Fehlendes nachkaufen" legt sie jetzt selbst vor,
+        # bevor es etwas tut.
         # NACHKAUFEN NUR AUF KLICK (Nutzer-Wunsch Sitzung 12: "gekauft ist
         # gekauft" - die Einkaufsliste darf nicht von selbst wachsen).
         # Dieser Eintrag nimmt AUSSCHLIESSLICH echte Verluste auf: Material,
@@ -2564,6 +2572,11 @@ class BauplanFenster:
         # Rest-Bedarf kommt hier nie hinein.
         _nach_act = _tools_menu.addAction(
             icons.icon("cart"), _txt("Buy missing again"))
+        _nach_act.setToolTip(_txt(
+            "Shows what is missing and offers to buy it back: material that "
+            "was already covered and is gone now. The ordinary remaining "
+            "demand is listed too, but never bought automatically "
+            "(\u201ebought is bought\u201c)."))
         _nach_act.triggered.connect(self._buy_missing_again)
         # CONTRACT-PREISE (Nutzer, Sitzung 9): Capitals haben in Jita
         # praktisch keine echten Sell-Orders - der Verkaufswert kommt dann
@@ -2572,11 +2585,6 @@ class BauplanFenster:
         # wird GEZIELT NUR dieses Item frisch gescannt.
         _ct_act = _tools_menu.addAction(
             _txt("Load contract prices (New Eden)"))
-        _fehl_act.setToolTip(_txt(
-            "Checks the REMAINING runs of the plan against the real current stock "
-            "(hangar + pipeline): what will be missing, and how much? Finds "
-            "vanished stock before it is missing at build time."))
-        _fehl_act.triggered.connect(self._check_shortfall)
         _ct_act.triggered.connect(
             lambda *_a, _tid=type_id: self._bd_load_contract_prices_for(_tid))
         # MULTIPLAN-VORSCHLAG (Nutzer 30.09.2026): passende Endprodukte aus
@@ -2618,15 +2626,6 @@ class BauplanFenster:
                      "fetches LIVE order-book prices and would replace the pinned "
                      "purchase prices. Unfreeze first ( button at the top).")
                 if _frozen_now else ladder_btn.toolTip())
-            _lplan_act.setEnabled(not _frozen_now)
-            _lplan_act.setToolTip(
-                _txt("Not possible while the prices are frozen \u2013 the tool "
-                     "fetches LIVE order-book prices and would replace the pinned "
-                     "purchase prices. Unfreeze first ( button at the top).")
-                if _frozen_now else _txt(
-                    "Fetches the real sell order book of the hub for every "
-                    "material and uses it for the build cost of this plan (one "
-                    "live request per material, may take a moment)."))
             _has_live = getattr(self, "_bd_live_stock", None) is not None
             _refz_act.setEnabled(_has_live)
             _refz_act.setText(_txt("Reset frozen stock")
@@ -2650,6 +2649,28 @@ class BauplanFenster:
                 "prices; a contract price per end product is not supported "
                 "yet. Open the single build plan of that product for it.")
                 if _ist_b else "")
+            # NUR BEI CAPITALS ZEIGEN (emm840). Nutzer 06.11.2026: "Load
+            # Contract prices,.. fuer was? --> nur wenn Capital bauen". Er
+            # hat recht, und die Begruendung stand schon immer im Code:
+            # Capitals haben in Jita praktisch keine echten Sell-Orders,
+            # der Verkaufswert kommt dann nur aus oeffentlichen Contracts.
+            # Fuer alles andere war der Eintrag toter Platz im Menue.
+            # DIESELBE ERKENNUNG WIE UEBERALL SONST (_CAP_SHIP_HINTS ueber
+            # capital_ship_products) - keine zweite Definition von "ist das
+            # ein Capital", die auseinanderlaufen koennte (Regel 9).
+            _ist_cap = False
+            try:
+                _rec_ct = getattr(self, "_bd_recipes", None)
+                if _rec_ct is not None and not _ist_b:
+                    _ist_cap = any(
+                        int(_pid) == int(type_id)
+                        for _pid, _bp, _gn
+                        in industry.capital_ship_products(_rec_ct))
+            except Exception:
+                _ist_cap = False     # im Zweifel zeigen, nicht verstecken
+                _ct_act.setVisible(True)
+            else:
+                _ct_act.setVisible(bool(_ist_cap))
         _tools_menu.aboutToShow.connect(_sync_tools_menu)
         _sync_tools_menu()
         # Fuer die b-Suite: Menue und Eintraege erreichbar (b114 prueft die
@@ -2657,8 +2678,12 @@ class BauplanFenster:
         self._bd_tools_menu = _tools_menu
         self._bd_tools_actions = {"refz": _refz_act, "esi": _esi_act,
                                   "opt": _opt_act, "ladder": _lad_act,
-                                  "ladder_plan": _lplan_act,
-                                  "fehl": _fehl_act, "nach": _nach_act,
+                                  # "ladder_plan" und "fehl" sind in emm840
+                                  # entfallen (siehe oben). Die Schluessel
+                                  # bleiben WEG statt auf None zu zeigen -
+                                  # ein None hier haette jede Pruefung
+                                  # stillschweigend durchgewunken.
+                                  "nach": _nach_act,
                                   "contract": _ct_act, "vorschlag": _vor_act}
         # Holder-Muster wie gehabt: der Einfrier-Handler ruft _refz_sync["fn"],
         # egal wann er das erste Mal laeuft.
@@ -2707,7 +2732,7 @@ class BauplanFenster:
         # Blinken um ein Pixel und schiebt die ganze Leiste (derselbe
         # Nutzer-Befund wie beim Markt-Scan-Knopf, Sitzung 20).
         _ct_btn_css = (
-            f"QPushButton{{border:2px solid {theme.BORDER}; border-radius:6px; "
+            f"QPushButton{{border:2px solid {theme.BORDER}; border-radius:{theme.RAD}; "
             f"padding:6px 12px; color:{theme.MUTED}; font-size:13px; "
             f"background:transparent;}}"
             # NUR DIE FARBE, nicht die ganze Rahmenregel: die Staerke bleibt
@@ -2978,7 +3003,7 @@ class BauplanFenster:
         # Nachbarn springen, deshalb Farbe statt Bewegung.
         stock_scope_cb.setCursor(Qt.PointingHandCursor)
         stock_scope_cb.setStyleSheet(
-            f"QComboBox{{border:2px solid {theme.BLUE}; border-radius:6px; "
+            f"QComboBox{{border:2px solid {theme.BLUE}; border-radius:{theme.RAD}; "
             f"padding:4px 8px; background:{theme.PANEL2}; color:{theme.TEXT};}}"
             f"QComboBox:hover{{border-color:{theme.CYAN}; "
             f"background:{theme.PANEL};}}"
@@ -3151,7 +3176,7 @@ class BauplanFenster:
             chip = QFrame()
             chip.setStyleSheet(
                 f"QFrame{{background:{theme.PANEL2}; "
-                f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
+                f"border:1px solid {theme.BORDER}; border-radius:{theme.RAD};}}")
             cl = QVBoxLayout(chip)
             cl.setContentsMargins(8, 6, 8, 6); cl.setSpacing(3)
             lbl = QLabel(label)
@@ -3326,7 +3351,7 @@ class BauplanFenster:
             chip = QFrame()
             chip.setStyleSheet(
                 f"QFrame{{background:{theme.PANEL2}; border:1px solid {theme.BORDER}; "
-                f"border-radius:8px;}}")
+                f"border-radius:{theme.RAD_GROSS};}}")
             col = QVBoxLayout(chip); col.setContentsMargins(14, 9, 14, 9); col.setSpacing(2)
             cap = QLabel(caption); cap.setObjectName("Muted")
             cap.setStyleSheet("font-size:11px;")
@@ -3436,7 +3461,7 @@ class BauplanFenster:
         # sah aus wie Text. Jetzt Rahmen, Cyan-Schrift und ein Hover.
         st_details_toggle.setCursor(Qt.PointingHandCursor)
         st_details_toggle.setStyleSheet(
-            f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:5px; "
+            f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:{theme.RAD_KLEIN}; "
             f"color:{theme.CYAN}; font-size:11px; padding:2px 8px; "
             f"background:{theme.PANEL2};}}"
             f"QPushButton:hover{{border-color:{theme.CYAN}; "
@@ -3448,7 +3473,7 @@ class BauplanFenster:
         st_details_panel = QFrame()
         st_details_panel.setStyleSheet(
             f"QFrame{{background:{theme.PANEL2}; border:1px solid {theme.BORDER}; "
-            f"border-radius:6px;}}")
+            f"border-radius:{theme.RAD};}}")
         # Nutzer-Vorgabe: nicht \u00fcber die ganze Fensterbreite ziehen
         # ("ich bin kein Cham\u00e4leon und kann nicht nach links und rechts
         # gleichzeitig schauen"). Label und Wert stehen jetzt dicht
@@ -3744,8 +3769,8 @@ class BauplanFenster:
         st_struct = QLabel(""); st_struct.setWordWrap(True)
         st_struct.setStyleSheet(
             f"color:{theme.CYAN}; font-size:13px; padding:6px 10px; "
-            f"background:rgba(70,224,200,0.08); border:1px solid rgba(70,224,200,0.25); "
-            f"border-radius:6px;")
+            f"background:{theme.toenung(theme.CYAN, 0.08)}; border:1px solid {theme.toenung(theme.CYAN, 0.25)}; "
+            f"border-radius:{theme.RAD};")
         # Die Struktur-Zeile ("Fertigung: X (Auto) - Reaktionen: Y (Auto)")
         # ist reine Information und aendert sich waehrend eines Plans nie.
         # Sie wandert in den Tooltip der Baukosten-Karte; das Label bleibt
@@ -3782,7 +3807,7 @@ class BauplanFenster:
         tw.setStyleSheet(
             "QTreeWidget{border:none; outline:none; font-size:13px;}"
             "QTreeWidget::item{padding:4px 2px; "
-            "border-bottom:1px solid rgba(255,255,255,0.04);}"
+            f"border-bottom:1px solid {theme.schleier(0.04)};}}"
             f"QHeaderView::section{{border:none; "
             f"border-bottom:1px solid {theme.BORDER}; padding:6px 2px; "
             f"color:{theme.MUTED}; font-size:11px;}}")
@@ -3892,7 +3917,8 @@ class BauplanFenster:
             f"QTabBar::tab {{ background: {theme.PANEL2}; color: {theme.MUTED}; "
             f"padding: 13px 28px; font-size: 15px; font-weight: 700; "
             f"border: 1px solid {theme.BORDER}; border-bottom: none; "
-            f"border-top-left-radius: 8px; border-top-right-radius: 8px; "
+            f"border-top-left-radius: {theme.RAD_GROSS}; "
+            f"border-top-right-radius: {theme.RAD_GROSS}; "
             f"margin-right: 4px; }}"
             f"QTabBar::tab:selected {{ background: {theme.CYAN_FILL}; color: {theme.CYAN}; "
             f"font-weight: 800; border: 1px solid {theme.CYAN}; }}"
@@ -4514,7 +4540,7 @@ class BauplanFenster:
             blk = QFrame()
             blk.setStyleSheet(
                 f"QFrame{{background:{theme.PANEL2}; "
-                f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
+                f"border:1px solid {theme.BORDER}; border-radius:{theme.RAD};}}")
             bv = QVBoxLayout(blk); bv.setContentsMargins(8, 7, 8, 7); bv.setSpacing(5)
             lbl = QLabel(_lab)
             lbl.setStyleSheet(f"color:{_stage_colors[_key]}; font-weight:800; "
@@ -4597,7 +4623,7 @@ class BauplanFenster:
         # Palette (Highlight-Rolle) und lässt die eigene Zeilenfarbe in Ruhe.
         sched_tree.setStyleSheet(
             f"QTreeWidget {{ border:none; background:{theme.PANEL2}; "
-            f"selection-background-color:rgba(70,224,200,0.15); }}"
+            f"selection-background-color:{theme.toenung(theme.CYAN, 0.15)}; }}"
             f"QTreeWidget::item {{ padding:5px 4px; }}")
         # Qt überschreibt beim Selektieren einer Zeile sonst die eigene Textfarbe
         # (z.B. das Orange für "mehrere Blaupausen nötig" oder das Violett für
@@ -4966,7 +4992,7 @@ class BauplanFenster:
         _jf_btn.setStyleSheet(
             f"QPushButton{{background:{theme.PANEL2}; "
             f"border:1px solid {theme.AMBER_DIM}; color:{theme.AMBER}; "
-            f"border-radius:5px; padding:3px 12px; font-weight:700;}}"
+            f"border-radius:{theme.RAD_KLEIN}; padding:3px 12px; font-weight:700;}}"
             f"QPushButton:hover{{border-color:{theme.AMBER}; "
             f"background:{theme.PANEL};}}")
         _jf_btn.clicked.connect(lambda: self._job_frage_dialog())
@@ -5073,12 +5099,12 @@ class BauplanFenster:
         bp_tab_tbl.setAlternatingRowColors(False)
         bp_tab_tbl.setIconSize(QSize(22, 22))
         bp_tab_tbl.setStyleSheet(
-            "QTableWidget{{border:none; outline:none; font-size:13px;}}"
-            "QTableWidget::item{{padding:5px 4px; "
-            "border-bottom:1px solid rgba(255,255,255,0.04);}}"
-            f"QHeaderView::section{{{{border:none; "
+            f"QTableWidget{{border:none; outline:none; font-size:13px;}}"
+            f"QTableWidget::item{{padding:5px 4px; "
+            f"border-bottom:1px solid {theme.schleier(0.04)};}}"
+            f"QHeaderView::section{{border:none; "
             f"border-bottom:1px solid {theme.BORDER}; padding:6px 4px; "
-            f"color:{theme.MUTED}; font-size:11px;}}}}")
+            f"color:{theme.MUTED}; font-size:11px;}}")
         bp_tab_tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         bp_tab_tbl.setSortingEnabled(True)
         bp_tab_v.addWidget(bp_tab_tbl, 1)
@@ -5583,7 +5609,7 @@ class BauplanFenster:
         mat_tab_tbl.setStyleSheet(
             "QTreeWidget{border:none; outline:none; font-size:13px;}"
             "QTreeWidget::item{padding:5px 4px; "
-            "border-bottom:1px solid rgba(255,255,255,0.04);}"
+            f"border-bottom:1px solid {theme.schleier(0.04)};}}"
             "QHeaderView::section{border:none; "
             "border-bottom:1px solid " + theme.BORDER + "; padding:6px 4px; "
             "color:" + theme.MUTED + "; font-size:11px;}")
@@ -5617,7 +5643,7 @@ class BauplanFenster:
         # kein Zustand.
         paste_panel.setStyleSheet(
             f"QFrame{{background:{theme.PANEL2}; border:2px solid {theme.AMBER}; "
-            f"border-radius:8px;}}")
+            f"border-radius:{theme.RAD_GROSS};}}")
         pp = QVBoxLayout(paste_panel)
         pp.setContentsMargins(12, 10, 12, 10); pp.setSpacing(7)
         # KEIN EIGENER TITEL MEHR (26.09.2026): das Panel sitzt jetzt in der
@@ -5684,7 +5710,7 @@ class BauplanFenster:
         paste_clear_btn = QPushButton(_txt("Clear"))
         paste_clear_btn.setIcon(icons.icon("trash"))
         paste_clear_btn.setStyleSheet(
-            f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:6px; "
+            f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:{theme.RAD}; "
             f"padding:5px 12px; color:{theme.MUTED};}}"
             f"QPushButton:hover{{border-color:{theme.RED}; color:{theme.RED};}}")
         pp_btns.addWidget(paste_apply_btn); pp_btns.addWidget(paste_clear_btn)
@@ -5852,7 +5878,7 @@ class BauplanFenster:
         pp_hint = QFrame()
         pp_hint.setStyleSheet(
             f"QFrame{{background:{theme.PANEL2}; border:1px solid {theme.AMBER}; "
-            f"border-radius:8px;}}")
+            f"border-radius:{theme.RAD_GROSS};}}")
         pp_hint_v = QVBoxLayout(pp_hint)
         pp_hint_v.setContentsMargins(12, 10, 12, 10); pp_hint_v.setSpacing(8)
         pp_hint_lbl = QLabel(_txt(
@@ -6257,7 +6283,7 @@ class BauplanFenster:
         from PySide6.QtWidgets import QFrame as _QFrame727
         from PySide6.QtCore import QObject as _QObj727, QEvent as _QEv727
         _mh_lade = _QFrame727(dlg)
-        _mh_lade.setStyleSheet("background: rgba(10,15,20,0.82);")
+        _mh_lade.setStyleSheet(f"background: {theme.vorhang(0.82)};")
         _lv727 = QVBoxLayout(_mh_lade)
         _lv727.setAlignment(Qt.AlignCenter)
         _mh_lade_spin = QLabel("⠋")
@@ -6505,6 +6531,7 @@ class BauplanFenster:
         inv_tab_info.setMaximumWidth(1200)
         self._bd_inv_cards_v = inv_cards_v
         self._bd_decryptor_map = getattr(self, "_bd_decryptor_map", {}) or {}
+        self._bd_relic_map = getattr(self, "_bd_relic_map", {}) or {}   # emm826
         tab_icon_at(_tabs, 1, inv_tab_w, "Invention", "flask")
 
         # ZIELREIHENFOLGE (Nutzer): zuerst das, was man beim Bauen wirklich
@@ -7088,6 +7115,29 @@ class BauplanFenster:
                     if _neu_tree:
                         tree_ref["tree"] = _neu_tree
                         self._bd_tree_cache = (_plan_fp, _neu_tree)
+            # FEHLENDE ITEM-NAMEN NACHLADEN -> keine "#12345". MUSS VOR dem
+            # Fuellen der Tabellen stehen (emm828, zweiter Anlauf): der Block
+            # sass 250 Zeilen WEITER UNTEN, also nach `_fill_material_tab` -
+            # die Tabelle bekam die Namen erst beim naechsten Neuaufbau zu
+            # sehen. Und er zaehlte `build_runs`/`buy`/`stock_used` VON HAND
+            # auf, also ohne die Invention-Schluessel: nach einem Decryptor-
+            # oder Relic-Wechsel standen Accelerant Decryptor und Small
+            # Wrecked Hull Section als "#34201"/"#34416" im Materialien-Tab
+            # (Nutzer-Screenshots Confessor, 05.11.2026). Beides behoben:
+            # frueh genug UND ueber PLAN_QTY_KEYS, die EINE Liste dieser
+            # Schluessel - genau davor warnt ihr Kommentar.
+            if plan:
+                _alle_ids = set()
+                for _k828 in self.PLAN_QTY_KEYS:
+                    _d828 = plan.get(_k828) or {}
+                    if isinstance(_d828, dict):
+                        _alle_ids |= {int(x) for x in _d828}
+                miss = [t for t in _alle_ids if t not in names]
+                if miss:
+                    try:
+                        names.update(esi.resolve_names(miss))
+                    except Exception:
+                        pass
             if hasattr(self, "_bd_mat_tab_tbl"):
                 self._fill_material_tab(plan, names, self._bd_mat_tab_tbl,
                                         getattr(self, "_bd_mat_tab_status", None))
@@ -7139,7 +7189,12 @@ class BauplanFenster:
             # komplett, sobald Invention greift).
             try:
                 _bp0 = self._bd_recipes.product_to_bp.get(type_id)
-                _inv0 = _bp0 and self._bd_recipes.invention_for_bpc.get(_bp0[0])
+                # EINE Stelle fuer die Quellen-Wahl (emm826): die Runs je
+                # erfundener Kopie (unten _out0["runs"]) haengen bei T3 an
+                # der gewaehlten Relic-Qualitaet.
+                _inv0 = _bp0 and industry.invention_quelle_fuer_bp(
+                    _bp0[0], self._bd_recipes,
+                    getattr(self, "_bd_opts", None) or {})
                 # HAKEN NACHZIEHEN (emm712, Nutzer 25.10.2026: "own bpc ist
                 # beim oeffnen per rechtsklick ueber my blueprints nicht
                 # angehackt und auf standard" - Anathema, waehrend der Tab
@@ -7338,16 +7393,6 @@ class BauplanFenster:
             # Entscheidungen aus dem Plan an die Rezept-Struktur weiterreichen
             # (production_plan ist die Quelle, der Baum zeigt sie nur an).
             plan_dec_ref["decision"] = (plan or {}).get("decision", {}) or {}
-            # Fehlende Item-Namen des (evtl. geänderten) Plans nachladen → keine #12345
-            if plan:
-                miss = [t for t in (set(plan.get("build_runs", {}))
-                                    | set(plan.get("buy", {}))
-                                    | set(plan.get("stock_used", {}))) if t not in names]
-                if miss:
-                    try:
-                        names.update(esi.resolve_names(miss))
-                    except Exception:
-                        pass
             total = plan["total_cost"] if plan else tree_ref["tree"]["per_unit"] * qty
             # BESTAND ZU ERSATZKOSTEN (Nutzer-Entscheid: er betreibt die
             # Reaktionskette weiter). Bewertet wird mit
@@ -9056,8 +9101,8 @@ class BauplanFenster:
                         f'<span style="color:{theme.AMBER}; font-weight:800; '
                         f'font-size:15px;">{w}</span>' for w in warn_lines)
                     st_transport.setStyleSheet(
-                        "font-size:13px; background:rgba(242,162,60,0.14); "
-                        "border:1px solid rgba(242,162,60,0.5); border-radius:6px; "
+                        f"font-size:13px; background:{theme.toenung(theme.AMBER, 0.14)}; "
+                        f"border:1px solid {theme.toenung(theme.AMBER, 0.5)}; border-radius:{theme.RAD}; "
                         "padding:8px 10px;")
                 else:
                     st_transport.setStyleSheet("font-size:13px;")
@@ -10417,7 +10462,7 @@ class BauplanFenster:
             ov = getattr(dlg, "_calc_overlay", None)
             if ov is None:
                 ov = QFrame(dlg)
-                ov.setStyleSheet("background: rgba(10,15,20,0.90); border-radius:10px;")
+                ov.setStyleSheet(f"background: {theme.vorhang(0.90)}; border-radius:{theme.RAD_GROSS};")
                 ovl = QVBoxLayout(ov)
                 ovl.setAlignment(Qt.AlignCenter); ovl.setSpacing(6)
                 spin = QLabel("\u280B"); spin.setAlignment(Qt.AlignCenter)
@@ -10699,6 +10744,11 @@ class BauplanFenster:
                 rebuild()
             self._run(Worker(_ladder_job), _ladder_done, fail_cb=_ladder_fail,
                       label=_txt("Order book prices \u2026"), overlay=False)
+        # FUER DAS ORDERBUCH-FENSTER ERREICHBAR MACHEN (emm840): dort
+        # sitzt seit dem Ausduennen des Werkzeuge-Menues der Knopf
+        # "Preise in den Plan uebernehmen". Es ruft GENAU DIESE
+        # Funktion - kein zweiter Abrufweg, keine zweite Wahrheit.
+        self._bd_ladder_refresh = _ladder_refresh
         # ME/TE AUTOMATISCH UEBERNEHMEN (Nutzer 30.09.2026): nach kurzer Pause
         # wie bei der Menge; ohne Orderbuch-Abruf (der liegt unter Tools) und
         # OHNE die Runplaner-Haken zu loeschen. Eingefroren: Felder gesperrt.
@@ -11108,17 +11158,64 @@ class BauplanFenster:
             _offen_id = getattr(self, "_bd_open_plan_id", None)
             _offen = next((p for p in (self.settings.get("bau_saved_plans", []) or [])
                            if _offen_id is not None and p.get("id") == _offen_id), None)
-            # KEIN NAMENSFELD BEIM GESPEICHERTEN PLAN (Nutzer 02.10.2026: "ich
-            # moechte aber kein Duplikat erstellen auf diese Weise"): Speichern
-            # schreibt in GENAU diesen Plan zurueck, ueber seine id. Umbenennen
-            # geht per Rechtsklick auf die Karte ("Rename...").
+            # UEBERSCHREIBEN ODER DUPLIKAT? (emm864, Nutzer 08.11.2026:
+            # "mit 'speichern button' will ich ja eigentlich ein dublikat
+            # erstellen, normalerweise". Am 02.10.2026 wollte derselbe
+            # Nutzer beim Speichern ausdruecklich KEIN Duplikat - beides
+            # stimmt fuer je einen Fall, also fragt ein Popup bei JEDEM
+            # Speichern eines offenen gespeicherten Plans. Standard bleibt
+            # Ueberschreiben (das Verhalten bis heute): es schreibt ueber
+            # die id in GENAU diesen Plan zurueck, ohne Namensfeld;
+            # Umbenennen geht weiter per Rechtsklick ("Rename...").
             plans = self.settings.setdefault("bau_saved_plans", [])
             overwrite_id = None
             existing = None
             if _offen is not None and _offen.get("label"):
                 label = str(_offen["label"])
-                overwrite_id = _offen.get("id")
-                existing = _offen          # Quellen-Stand des Buendels bleibt
+                box = QMessageBox(dlg)
+                box.setWindowTitle(_txt("Save build plan"))
+                box.setText(_txt("„{name}“ is a saved build plan. "
+                                 "Write the changes back into it, or save "
+                                 "them as a duplicate next to it?")
+                            .format(name=label))
+                _ow_btn = box.addButton(_txt("Overwrite"),
+                                        QMessageBox.AcceptRole)
+                _du_btn = box.addButton(_txt("Save as duplicate"),
+                                        QMessageBox.DestructiveRole)
+                box.addButton(_txt("Cancel"), QMessageBox.RejectRole)
+                box.setDefaultButton(_ow_btn)
+                box.exec()
+                _kl = box.clickedButton()
+                if _kl is _ow_btn:
+                    overwrite_id = _offen.get("id")
+                    existing = _offen      # Quellen-Stand des Buendels bleibt
+                elif _kl is _du_btn:
+                    # Namensfeld NUR hier - beim bewussten Duplikat ist das
+                    # kein Widerspruch zum 02.10.-Entscheid. Vorgabe: der
+                    # naechste freie "{Name} (n)".
+                    _vergeben = {p.get("label") for p in plans}
+                    _n = 2
+                    _kand = f"{label} ({_n})"
+                    while _kand in _vergeben:
+                        _n += 1
+                        _kand = f"{label} ({_n})"
+                    _neu, ok = QInputDialog.getText(
+                        dlg, _txt("Save as duplicate"),
+                        _txt("Name of the duplicate:"), text=_kand)
+                    _neu = config.plan_name_bereinigen(_neu)
+                    if not ok or not _neu:
+                        return
+                    # Ein Duplikat darf NIE stillschweigend einen
+                    # bestehenden Plan ueberschreiben - ein vergebener
+                    # Name wird hochnummeriert.
+                    if _neu in _vergeben:
+                        _n = 2
+                        while f"{_neu} ({_n})" in _vergeben:
+                            _n += 1
+                        _neu = f"{_neu} ({_n})"
+                    label = _neu
+                else:
+                    return                 # Abbrechen
             else:
                 label, ok = QInputDialog.getText(
                     dlg, _txt("Save build plan"),
@@ -11280,6 +11377,10 @@ class BauplanFenster:
                           # verloren und springt zurück auf "Kein Decryptor".
                           "decryptor_map": dict(getattr(self, "_bd_decryptor_map", {})
                                                 or {}),
+                          # Relic-Qualitaet je T3-Ende (emm826, bp_id ->
+                          # type_id der Quelle) - dasselbe Muster.
+                          "relic_map": dict(getattr(self, "_bd_relic_map", {})
+                                            or {}),
                           # Manuelle Versuchszahl je Item (bp_id -> (manuell an/aus,
                           # Wert)) mitsichern, sonst springt beim Neu-Öffnen alles
                           # zurück auf die automatische ≥75%-Zahl.

@@ -115,6 +115,29 @@ def main():
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     except Exception:
         pass
+    # OBERFLAECHEN-SKALIERUNG (emm835). Discord-Meldung eines Nutzers mit
+    # 4K-Monitor: die Schrift ist ihm zu klein. GEMESSEN: im Code stecken
+    # 1267 feste Masse (281 Schriftgroessen, 239 Abstaende, 237 Raender,
+    # 138 Mindestbreiten ...). Die einzeln umzustellen waere Wochenarbeit
+    # mit hohem Risiko - Qt kann es in einer Zeile: QT_SCALE_FACTOR
+    # vergroessert Schrift, Tabellen, Spaltenbreiten und Zeilenhoehen
+    # gemeinsam (nachgemessen an einem echten Fenster: 380x230 bei 100 %,
+    # 570x345 bei 150 %, auch krumme Faktoren rendern sauber).
+    # MUSS VOR DER QApplication STEHEN - danach liest Qt die Variable nicht
+    # mehr. Deshalb aendert die Einstellung erst nach einem Neustart etwas,
+    # und genau das sagt die Oberflaeche dort auch.
+    # DER FAKTOR KOMMT ZUR SYSTEM-SKALIERUNG HINZU, er ersetzt sie nicht:
+    # wer in Windows schon 150 % hat und hier 150 % waehlt, landet bei
+    # 225 %. Steht so im Tooltip.
+    # Eine von Hand gesetzte Umgebungsvariable gewinnt (Sonderfall/Diagnose).
+    if not os.environ.get("QT_SCALE_FACTOR"):
+        try:
+            from . import config as _cfg_skal
+            _skal = float((_cfg_skal.load_settings() or {}).get("ui_scale", 1.0))
+            if 1.0 < _skal <= 3.0:
+                os.environ["QT_SCALE_FACTOR"] = f"{_skal:g}"
+        except Exception:
+            pass          # eine kaputte Einstellung darf den Start nie kosten
     app = QApplication(sys.argv)
     _install_excepthook(app)
     # SPRACHE VOR DEM FENSTERBAU SETZEN (Sitzung 12). Die Beschriftungen

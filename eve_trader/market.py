@@ -7,6 +7,63 @@ entfernt."""
 from dataclasses import dataclass
 
 
+def fenster_nach_datum(history, tage):
+    """Die Eintraege der letzten `tage` KALENDERTAGE einer ESI-Historie.
+
+    DER UNTERSCHIED ZU `history[-tage:]` IST KEIN DETAIL (emm848,
+    Nutzer-Fund mit Ingame-Beleg: "Items die nicht 1x verkauft wurden
+    in den letzten Wochen, werden einfach als handelbar gelistet in
+    MoMa, sowas ist echt gefaehrlich"): die ESI-Historie enthaelt NUR
+    Tage, an denen gehandelt wurde. Bei einem toten Item sind die
+    letzten 30 EINTRAEGE Monate oder Jahre alt - ein Positionsfenster
+    rechnet dann aus der Steinzeit einen "Tagesumsatz" und das Tool
+    nennt tot "handelbar". Beim Humboldt EC-900-I in Pure Blind stand
+    so "Ø 6/Tag", waehrend die Ingame-Historie seit Monaten 0 zeigt.
+
+    Eintraege ohne "date" (gestellte Historien in Tests, Altbestand)
+    fallen auf das alte Positionsfenster zurueck - ohne Datum ist die
+    Frage nicht beantwortbar, und ein leeres Fenster waere dort die
+    falsche Art von streng.
+    """
+    if not tage:
+        return list(history or [])
+    hist = list(history or [])
+    if not any(r.get("date") for r in hist):
+        return hist[-int(tage):]
+    import datetime as _dt
+    cut = (_dt.datetime.now(_dt.timezone.utc).date()
+           - _dt.timedelta(days=int(tage))).isoformat()
+    return [r for r in hist if str(r.get("date") or "")[:10] >= cut]
+
+
+def tage_seit_handel(history):
+    """Kalendertage seit dem LETZTEN Tag mit Umsatz - oder None, wenn die
+    Historie keinen Umsatztag mit Datum kennt (nie gehandelt, oder
+    gestellte Historie ohne date-Feld: dann gibt es keine Aussage, und
+    None heisst ehrlich "unbekannt", nicht "frisch").
+
+    Das ist das FRISCHE-Signal zu fenster_nach_datum (emm849, Nutzer:
+    "okey 30 Tage durchscnittvolume macht mehr sinn, ich wuerde das
+    aber fuer alle Handelstabs sehen"): der 30-Tage-Schnitt sagt, WIE
+    VIEL ein Markt traegt - diese Zahl sagt, ob er NOCH LEBT. Beides
+    in einer Zahl zu vermatschen war der Humboldt-Fehler (emm848).
+    """
+    import datetime as _dt
+    letzte = None
+    for r in (history or []):
+        if (r.get("volume") or 0) > 0 and r.get("date"):
+            d = str(r["date"])[:10]
+            if letzte is None or d > letzte:
+                letzte = d
+    if letzte is None:
+        return None
+    try:
+        heute = _dt.datetime.now(_dt.timezone.utc).date()
+        return max(0, (heute - _dt.date.fromisoformat(letzte)).days)
+    except (ValueError, TypeError):
+        return None
+
+
 @dataclass
 class Holding:
     type_id: int

@@ -1,5 +1,6 @@
 """Authenticated + public ESI calls."""
 import logging
+import threading
 import time
 
 import requests
@@ -37,21 +38,35 @@ _session.mount("http://", _adapter)
 _access_cache = {}
 
 
+# NUR EIN REFRESH AUF EINMAL (emm869): EVE SSO ROTIERT Refresh-Tokens -
+# zwei gleichzeitige Refreshes desselben Charakters (seit emm866 laufen
+# bis zu 4 Worker nebeneinander, dazu andere Hintergrund-Jobs) wuerden
+# einander das Token entwerten und den Charakter abmelden. Das Lock
+# deckt nur den Refresh-Pfad; wer den Cache trifft, wartet nie.
+_access_lock = threading.Lock()
+
+
 def _access_token(client_id: str, character_id: int) -> str:
     cached = _access_cache.get(character_id)
     if cached and cached[1] - 30 > time.time():
         return cached[0]
-    refresh = tokens.get_token(character_id)
-    if not refresh:
-        from .sprache import t as _txt
-        raise RuntimeError(_txt("No token for character {cid}. Link it again.").format(
-            cid=character_id))
-    data = auth.refresh_tokens(client_id, refresh)
-    if data.get("refresh_token"):
-        tokens.set_token(character_id, data["refresh_token"])  # rotation
-    token = data["access_token"]
-    _access_cache[character_id] = (token, time.time() + data.get("expires_in", 1200))
-    return token
+    with _access_lock:
+        # Zweiter Blick UNTER dem Lock: der Thread vor uns hat das
+        # Token meist schon geholt.
+        cached = _access_cache.get(character_id)
+        if cached and cached[1] - 30 > time.time():
+            return cached[0]
+        refresh = tokens.get_token(character_id)
+        if not refresh:
+            from .sprache import t as _txt
+            raise RuntimeError(_txt("No token for character {cid}. Link it again.").format(
+                cid=character_id))
+        data = auth.refresh_tokens(client_id, refresh)
+        if data.get("refresh_token"):
+            tokens.set_token(character_id, data["refresh_token"])  # rotation
+        token = data["access_token"]
+        _access_cache[character_id] = (token, time.time() + data.get("expires_in", 1200))
+        return token
 
 
 def scopes_from_token(access_token: str) -> set:
@@ -340,6 +355,46 @@ def fetch_wallet_balance(client_id: str, character_id: int) -> float:
     return float(r.json())
 
 
+def http_datum(text):
+    """Ein HTTP-Datum ("Mon, 09 Nov 2026 16:05:00 GMT") als Epochen-Sekunde,
+    oder None (emm883). Rein und ohne Netz pruefbar.
+
+    WOFUER: `Last-Modified` sagt, WANN ESI diese Daten erzeugt hat - nicht,
+    wann wir sie geholt haben. Nur damit laesst sich die Frage beantworten
+    "hat ESI die Order NACH meinem Klick noch unveraendert gesehen?".
+    Ueber die Cache-DAUER zu raten waere genau das, was Regel 2 verbietet;
+    hier steht der Zeitpunkt schwarz auf weiss in der Antwort."""
+    if not text:
+        return None
+    import calendar
+    import email.utils as _eu
+    try:
+        _t = _eu.parsedate_tz(str(text))
+        if not _t:
+            return None
+        # HTTP-Daten sind GMT; parsedate_tz liefert den Offset separat.
+        return float(calendar.timegm(_t[:9]) - (_t[9] or 0))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+# WANN HAT ESI DIE OFFENEN ORDERS ZULETZT ERZEUGT (emm883)? Je Charakter
+# die `Last-Modified`-Zeit der letzten Antwort. Der Order-Intervall
+# braucht sie, um einen Verklicker ("Next" gedrueckt, im Spiel nichts
+# getan) von einer noch nicht sichtbaren Aenderung zu unterscheiden.
+_ORDERS_STAND = {}
+
+
+def orders_stand(character_id):
+    """Epochen-Sekunde, zu der ESI die offenen Orders dieses Charakters
+    zuletzt erzeugt hat - oder None, wenn noch kein Abruf lief oder die
+    Antwort keinen `Last-Modified` trug."""
+    try:
+        return _ORDERS_STAND.get(int(character_id))
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_character_orders(client_id: str, character_id: int) -> list:
     """Open market orders of the character. Needs
     esi-markets.read_character_orders.v1. Each order has price, volume_remain,
@@ -347,6 +402,12 @@ def fetch_character_orders(client_id: str, character_id: int) -> list:
     url = f"{config.ESI_BASE}/characters/{character_id}/orders/"
     r = _get_with_retry(url, headers=_auth_headers(client_id, character_id), timeout=30)
     r.raise_for_status()
+    _lm = http_datum(r.headers.get("Last-Modified"))
+    if _lm is not None:
+        try:
+            _ORDERS_STAND[int(character_id)] = _lm
+        except (TypeError, ValueError):
+            pass
     return r.json()
 
 
@@ -688,6 +749,15 @@ def fetch_assets_structured(client_id: str, character_id: int) -> dict:
     return {"hangar": hangar, "containers": containers}
 
 
+def fetch_assets_raw(client_id: str, character_id: int) -> list:
+    """The character's raw assets list, exactly as ESI pages it out
+    (emm863, Assets tab): the tab needs the item_id/location_id chains
+    to pin every item to its root station - the aggregated views above
+    throw them away. Public wrapper so callers outside this module do
+    not touch the private pager."""
+    return _fetch_all_assets(client_id, character_id)
+
+
 def fetch_assets(client_id: str, character_id: int, only_hangar: bool = True,
                  orte_out=None) -> dict:
     """Return {type_id: total_quantity} for the character's assets.
@@ -920,6 +990,7 @@ def resolve_names(type_ids) -> dict:
 # Market/trade skill type IDs (stable EVE IDs)
 SKILL_ACCOUNTING = 16622
 SKILL_BROKER_RELATIONS = 3446
+SKILL_ADV_BROKER_RELATIONS = 16597   # emm908: Relist-Rabatt
 
 
 def job_is_finished(job: dict, now: float = None) -> bool:
@@ -1469,6 +1540,27 @@ class RateLimited(Exception):
     """ESI returned 420 (error-rate limit) or 429 (too many requests)."""
 
 
+class UnknownType(Exception):
+    """ESI KENNT DIESE type_id NICHT (404) - UND WIRD SIE NIE KENNEN (emm899).
+
+    Belegt am 11.11.2026 durch `werkzeuge/pruefe_historie.py` beim Nutzer:
+    7 von 60 geprueften Items ohne Historie antworteten mit
+    "404 Client Error: Not Found" - durchweg aus dem Spiel entfernte Typen
+    (`91999`, `Expired Capsuleer Day XXIII Amarr Booster Crate`, ...), die
+    auch die SDE nicht mehr kennt ("Gruppe unbekannt": 78 Stueck).
+
+    Vorher lief so ein 404 in den allgemeinen `except Exception` von
+    `scanner.history_cached`, wurde als vorruebergehender Fehlschlag
+    behandelt und darum JEDEN Lauf neu abgefragt - ein Abruf, der niemals
+    gelingen kann. Mit eigener Ausnahme kann der Aufrufer den dauerhaften
+    Fall vom vorruebergehenden unterscheiden.
+
+    NICHT verwechseln mit einer LEEREN Antwort (HTTP 200, []): die heisst
+    nur "bisher nicht gehandelt" und kann sich taeglich aendern - dieselbe
+    Pruefung fand 10 von 60 Items, die inzwischen doch Historie haben.
+    """
+
+
 def fetch_market_history(type_id: int, region: int = config.FORGE_REGION) -> list:
     url = f"{config.ESI_BASE}/markets/{region}/history/"
     # short timeout: a first hub scan fetches ~1700 of these, so one slow/stuck
@@ -1478,6 +1570,9 @@ def fetch_market_history(type_id: int, region: int = config.FORGE_REGION) -> lis
     r = _session.get(url, params={"type_id": type_id}, timeout=8)
     if r.status_code in (420, 429):
         raise RateLimited()
+    if r.status_code == 404:
+        # DAUERHAFT, nicht vorruebergehend (emm899) - siehe UnknownType.
+        raise UnknownType(type_id)
     r.raise_for_status()
     return r.json()
 

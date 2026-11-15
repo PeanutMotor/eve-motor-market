@@ -39,7 +39,13 @@ REM  und Charakter-IDs), ledger.db (Handelsdaten) und .smoke_home in JEDE
 REM  ausgelieferte EXE. Die Pruefung "aa222" in test_bestand_herkunft.py
 REM  schlaegt an, wenn das passiert - Aenderungen hier also erst dort
 REM  gegenlesen.
-pyinstaller --noconfirm --onefile --windowed ^
+REM  --onedir STATT --onefile (emm866, Nutzer: "der generelle
+REM  erststart von Moma dauert lange"): eine onefile-EXE entpackt
+REM  bei JEDEM Start ~200 MB nach %TEMP% (und der Virenscanner
+REM  liest alles mit) - das sind viele Sekunden, bevor ueberhaupt
+REM  Python laeuft. onedir startet direkt aus dem Programmordner;
+REM  der Installer packt den Ordner dist\EVE Motor Market ein.
+pyinstaller --noconfirm --onedir --windowed ^
   --name "EVE Motor Market" ^
   --icon "eve_trader/ui/assets/logo.ico" ^
   --add-data "eve_trader/ui/assets;eve_trader/ui/assets" ^
@@ -61,6 +67,10 @@ REM  Inno Setup ist NICHT Pflicht. Wer nur die EXE weitergeben will,
 REM  braucht es nicht - der Bau darf daran also nicht scheitern.
 set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if not exist "%ISCC%" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+REM  Ohne Adminrechte installiert (winget, "nur fuer mich") liegt Inno
+REM  Setup unter %LOCALAPPDATA%\Programs - emm944: dort stand es bei
+REM  ihm, und der Installer wurde still uebersprungen.
+if not exist "%ISCC%" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if not exist "%ISCC%" (
   echo    Inno Setup 6 nicht gefunden - Installer uebersprungen.
   echo    Die fertige EXE liegt trotzdem in dist\ und laeuft eigenstaendig.
@@ -72,5 +82,5 @@ echo    Installer: dist\EVE-Motor-Market-%MM_VER%-setup.exe
 
 :fertig
 echo.
-echo Done. Your program is in:  dist\EVE Motor Market.exe
+echo Done. Your program is in:  dist\EVE Motor Market\EVE Motor Market.exe
 pause

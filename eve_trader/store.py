@@ -60,7 +60,19 @@ _WAL_GESETZT = set()
 
 def _conn():
     pfad = config.db_path()
-    c = sqlite3.connect(pfad, timeout=30)
+    try:
+        c = sqlite3.connect(pfad, timeout=30)
+    except sqlite3.OperationalError:
+        # DER ORDNER IST WEG ODER UMGEZOGEN (emm873): seit der
+        # Drosselung in config.app_data_dir kann die gemerkte Antwort
+        # bis zu PRUEF_INTERVALL_S alt sein. HIER faellt es auf - also
+        # die Merkung wegwerfen und EINMAL richtig nachsehen;
+        # app_data_dir zieht dabei den alten Ordner um oder legt ihn neu
+        # an (die Zusage "lieber der alte Ordner als verlorene Daten").
+        # Ein zweiter Fehlschlag gehoert dem Aufrufer.
+        config.vergiss_datenordner()
+        pfad = config.db_path()
+        c = sqlite3.connect(pfad, timeout=30)
     c.row_factory = sqlite3.Row
     # WAL + a busy timeout let many threads read/write the same file safely
     # instead of crashing or raising "database is locked".
@@ -133,6 +145,12 @@ def init_db() -> None:
                 updated_at REAL,
                 PRIMARY KEY (type_id, region)
             );
+            CREATE TABLE IF NOT EXISTS history_tot (
+                type_id INTEGER,
+                region  INTEGER DEFAULT 10000002,
+                seit    REAL,
+                PRIMARY KEY (type_id, region)
+            );
             CREATE TABLE IF NOT EXISTS scan_meta (
                 k TEXT PRIMARY KEY,
                 v TEXT
@@ -160,7 +178,8 @@ def init_db() -> None:
                 order_id     INTEGER PRIMARY KEY,
                 last_issued  TEXT,
                 clock_ts     REAL,
-                seen_at      REAL
+                seen_at      REAL,
+                klick_issued TEXT
             );
             """
         )
@@ -168,6 +187,21 @@ def init_db() -> None:
     _migrate_order_mod_counts()
     _migrate_contract_prices_mean()
     _migrate_snapshot_source()
+    _migrate_order_intervall_klick()
+
+
+def _migrate_order_intervall_klick() -> None:
+    """order_intervall aus einer frueheren Version kannte `klick_issued`
+    noch nicht (emm883). Echte Nutzerdaten (laufende Uhren) - NICHT
+    droppen, nur ergaenzen. Alte Zeilen bekommen NULL und gelten damit
+    als bestaetigt; das ist das bisherige Verhalten und behauptet
+    nichts, was wir nicht wissen."""
+    with _conn() as c:
+        cols = [r[1] for r in
+                c.execute("PRAGMA table_info(order_intervall)").fetchall()]
+        if cols and "klick_issued" not in cols:
+            c.execute("ALTER TABLE order_intervall "
+                      "ADD COLUMN klick_issued TEXT")
 
 
 def _migrate_snapshot_source() -> None:
@@ -228,6 +262,20 @@ def _migrate_order_mod_counts() -> None:
         if cols and "last_vol_remain" not in cols:
             c.execute(
                 "ALTER TABLE order_mod_counts ADD COLUMN last_vol_remain INTEGER DEFAULT 0")
+        # emm907/emm908: der zuletzt GESEHENE Preis (zum Erkennen einer
+        # echten Aenderung) und die daraus wirklich angefallene
+        # Gebuehrensumme. BEWUSST NEUE SPALTEN statt `last_price`
+        # mitzubenutzen: dort steht der von MoMa VORGESCHLAGENE Preis aus
+        # einem "Next"-Klick, nicht der, den die Order wirklich hatte.
+        if cols and "preis_gesehen" not in cols:
+            c.execute("ALTER TABLE order_mod_counts "
+                      "ADD COLUMN preis_gesehen REAL")
+        if cols and "vol_gesehen" not in cols:
+            c.execute("ALTER TABLE order_mod_counts "
+                      "ADD COLUMN vol_gesehen INTEGER")
+        if cols and "gebuehr_summe" not in cols:
+            c.execute("ALTER TABLE order_mod_counts "
+                      "ADD COLUMN gebuehr_summe REAL DEFAULT 0")
 
 
 def _migrate_contract_prices_mean() -> None:
@@ -511,8 +559,14 @@ def save_snapshot(rows: list, region: int = 10000002, source: str = None) -> Non
               r.get("sell_best_qty", 0) or 0, r.get("buy_best_qty", 0) or 0)
              for r in rows],
         )
+        # REGION UNBEKANNT WIRD ALS 0 FESTGEHALTEN, nicht als Jita
+        # (emm838). Eine Struktur ohne bekannte Region darf nicht stumm
+        # die Forge-Historie erben - dann stuenden in "Sold/day" Zahlen
+        # aus einer Region, in der der Nutzer gar nicht handelt. Die 0
+        # ist das Signal an die Anzeige, "kein Handelsvolumen" zu
+        # schreiben statt einer erfundenen Zahl.
         c.execute("INSERT OR REPLACE INTO scan_meta(k,v) VALUES('region', ?)",
-                  (str(region),))
+                  (str(int(region) if region else 0),))
         c.execute("INSERT OR REPLACE INTO scan_meta(k,v) VALUES('source', ?)",
                   (src,))
         if src.startswith("hub:"):
@@ -688,18 +742,106 @@ def bump_order_mod_count(order_id: int, type_id: int, is_buy: bool,
     return row["mod_count"] if row else 1
 
 
-def undo_order_mod_count(order_id: int) -> int:
-    """Ein Fehlklick rückgängig - zählt eins runter, nie unter 0. Gibt den
-    neuen Zählerstand zurück."""
+def order_preise_abgleichen(orders, broker_pct_je_order=None,
+                            adv_broker_level: int = 0,
+                            broker_pct: float = 0.0) -> dict:
+    """ZAEHLT EINE AENDERUNG, WENN SICH DER PREIS DIESER ORDER WIRKLICH
+    GEAENDERT HAT - und rechnet dabei die echte Gebuehr dazu (emm907/908).
+
+    Nutzer 13.11.2026: "counter nur hochstellen wenn sich der preis
+    meiner order veraendert hat, das ist die pruefung ob ich modifiziert
+    habe oder nicht. Es muss aber exakt diese order sein. nicht eine neue
+    die gleich heisst oder so ein fehler."
+
+    GENAU DAS LEISTET DIE order_id: EVE behaelt sie beim Aendern einer
+    Order und vergibt fuer eine NEUE Order eine neue - zwei gleichnamige
+    Orders koennen sich hier also nicht vermischen. Der Primaerschluessel
+    der Tabelle ist die order_id, nichts anderes wird verglichen.
+
+    VORHER zaehlte `bump_order_mod_count` schon beim "Next"-KLICK hoch -
+    also auch dann, wenn der Nutzer die Order danach gar nicht aenderte.
+    Jetzt zaehlt nur die TAT.
+
+    `orders`: [(order_id, preis, vol_remain)] oder Dicts mit diesen
+    Schluesseln. `broker_pct_je_order`: optional {order_id: Prozentsatz}
+    (die Fee haengt am Charakter und am Hub); sonst gilt `broker_pct`.
+
+    ERSTE BEGEGNUNG ZAEHLT NICHT. Eine Order, deren Preis MoMa noch nie
+    gesehen hat (`preis_gesehen` ist NULL), wird nur aufgenommen. Sonst
+    zaehlte der erste Aufbau nach dieser Aenderung bei jeder Order eine
+    Aenderung, die nie stattfand - dieselbe Regel wie bei den neuen
+    Lagerorten (emm905).
+
+    -> {order_id: {"mod_count", "gebuehr"}}
+    """
     import time
+    from . import config as _cfg
+    _liste = []
+    for _o in (orders or []):
+        if isinstance(_o, dict):
+            _oid = _o.get("order_id")
+            _pr = _o.get("price")
+            _vol = _o.get("vol_remain")
+        else:
+            _oid, _pr, _vol = (list(_o) + [None, None, None])[:3]
+        if not _oid:
+            continue
+        _liste.append((int(_oid), float(_pr or 0), int(_vol or 0)))
+    if not _liste:
+        return {}
+    _jetzt = time.time()
+    _raus = {}
     with _conn() as c:
-        c.execute(
-            """UPDATE order_mod_counts SET mod_count = MAX(0, mod_count - 1),
-                   updated_at = ? WHERE order_id = ?""",
-            (time.time(), order_id))
-        row = c.execute("SELECT mod_count FROM order_mod_counts WHERE order_id=?",
-                        (order_id,)).fetchone()
-    return row["mod_count"] if row else 0
+        _qs = ",".join("?" * len(_liste))
+        _vorher = {
+            int(r["order_id"]): r for r in c.execute(
+                f"SELECT order_id, mod_count, preis_gesehen, vol_gesehen, "
+                f"gebuehr_summe FROM order_mod_counts "
+                f"WHERE order_id IN ({_qs})",
+                [o for o, _p, _v in _liste]).fetchall()}
+        for _oid, _pr, _vol in _liste:
+            _r = _vorher.get(_oid)
+            if _r is None:
+                # Noch nie gesehen: aufnehmen, NICHT zaehlen.
+                c.execute(
+                    "INSERT OR IGNORE INTO order_mod_counts "
+                    "(order_id, mod_count, updated_at, preis_gesehen, "
+                    " vol_gesehen, gebuehr_summe) VALUES (?,0,?,?,?,0)",
+                    (_oid, _jetzt, _pr, _vol))
+                _raus[_oid] = {"mod_count": 0, "gebuehr": 0.0}
+                continue
+            _alt = _r["preis_gesehen"]
+            _mc = int(_r["mod_count"] or 0)
+            _geb = float(_r["gebuehr_summe"] or 0)
+            if _alt is None:
+                # Zeile aus einer frueheren Fassung: Preis nachtragen,
+                # NICHT zaehlen (sonst zaehlte die Umstellung selbst).
+                c.execute(
+                    "UPDATE order_mod_counts SET preis_gesehen=?, "
+                    "vol_gesehen=?, updated_at=? WHERE order_id=?",
+                    (_pr, _vol, _jetzt, _oid))
+            elif abs(float(_alt) - _pr) > 0.005:
+                # ECHTE AENDERUNG. ISK hat zwei Nachkommastellen, darum
+                # eine halbe davon als Schwelle - Gleitkomma-Rauschen
+                # darf keine Gebuehr erfinden.
+                _bp = (broker_pct_je_order or {}).get(_oid, broker_pct)
+                _vol_alt = int(_r["vol_gesehen"] or _vol or 0)
+                _geb += _cfg.relist_gebuehr(
+                    float(_alt) * _vol_alt, _pr * _vol, _bp, adv_broker_level)
+                _mc += 1
+                c.execute(
+                    "UPDATE order_mod_counts SET mod_count=?, "
+                    "gebuehr_summe=?, preis_gesehen=?, vol_gesehen=?, "
+                    "updated_at=? WHERE order_id=?",
+                    (_mc, _geb, _pr, _vol, _jetzt, _oid))
+            else:
+                # Gleicher Preis: nur die Restmenge nachfuehren (sie
+                # schrumpft beim Fuellen), nichts zaehlen.
+                c.execute(
+                    "UPDATE order_mod_counts SET vol_gesehen=? "
+                    "WHERE order_id=?", (_vol, _oid))
+            _raus[_oid] = {"mod_count": _mc, "gebuehr": _geb}
+    return _raus
 
 
 def get_order_mod_counts(order_ids: list) -> dict:
@@ -739,19 +881,51 @@ def _iso_ts(s):
         return None
 
 
-def order_intervall_sync(issued_by_oid: dict, now: float = None) -> dict:
+def order_intervall_sync(issued_by_oid: dict, now: float = None,
+                         stand_ts=None, mit_status: bool = False):
     """Gleicht die gesehenen Orders mit den gemerkten ab und gibt
     {order_id: clock_ts oder None} zurueck. Eine geaenderte `issued` (im Spiel
-    nachgebessert) startet die Uhr beim Zeitpunkt der Aenderung neu."""
+    nachgebessert) startet die Uhr beim Zeitpunkt der Aenderung neu.
+
+    DER VERKLICKER (emm883, Nutzerfrage 09.11.2026: "falls ich in 2 Days
+    Anzeige ausloese und ESI trackt, dass ich doch nicht geupdatet habe
+    ingame, sondern mich nur verklickt habe in MoMa"): "Next" startet
+    die Uhr SOFORT, ohne dass im Spiel etwas geschehen ist - MoMa kennt
+    nur den Klick, nicht die Tat. `order_intervall_start` merkt sich
+    deshalb in `klick_issued`, welches `issued` beim Klick galt. Solange
+    das gesetzt ist, ist die Uhr UNBESTAETIGT.
+
+    `stand_ts` ist die `Last-Modified`-Zeit der Antwort (esi.orders_stand),
+    also WANN ESI diese Daten erzeugt hat - eine Zahl fuer alle, oder ein
+    {order_id: Zeit} je Charakter. Liegt sie NACH dem Klick und
+    steht dort immer noch dasselbe `issued`, hat ESI die unveraenderte
+    Order nach dem Klick gesehen: die Uhr faellt weg, die Zeile ist
+    wieder faellig. OHNE `stand_ts` wird NICHTS zurueckgesetzt - ein
+    Abruf aus dem Cache koennte aelter sein als der Klick, und die
+    Cache-Dauer zu raten waere genau das, was Regel 2 verbietet. Dann
+    bleibt die Uhr stehen und gilt weiter als unbestaetigt.
+
+    `mit_status=True` liefert (clocks, unbestaetigt_set) statt nur
+    clocks - die Oberflaeche zeigt die unbestaetigten anders an."""
     import time
     now = time.time() if now is None else float(now)
     if not issued_by_oid:
-        return {}
+        return ({}, set()) if mit_status else {}
     out = {}
+    unbestaetigt = set()
+    _stand_je = stand_ts if isinstance(stand_ts, dict) else None
+
+    def _stand_fuer(oid):
+        _v = _stand_je.get(oid) if _stand_je is not None else stand_ts
+        try:
+            return None if _v is None else float(_v)
+        except (TypeError, ValueError):
+            return None
     with _conn() as c:
-        have = {r["order_id"]: (r["last_issued"], r["clock_ts"])
+        have = {r["order_id"]: (r["last_issued"], r["clock_ts"],
+                                r["klick_issued"])
                 for r in c.execute(
-                    "SELECT order_id, last_issued, clock_ts "
+                    "SELECT order_id, last_issued, clock_ts, klick_issued "
                     "FROM order_intervall").fetchall()}
         for oid, iss in issued_by_oid.items():
             if not oid:
@@ -760,29 +934,46 @@ def order_intervall_sync(issued_by_oid: dict, now: float = None) -> dict:
             row = have.get(oid)
             if row is None:
                 c.execute("INSERT OR REPLACE INTO order_intervall "
-                          "(order_id, last_issued, clock_ts, seen_at) "
-                          "VALUES (?, ?, NULL, ?)", (oid, iss, now))
+                          "(order_id, last_issued, clock_ts, seen_at, "
+                          "klick_issued) VALUES (?, ?, NULL, ?, NULL)",
+                          (oid, iss, now))
                 out[oid] = None
                 continue
-            last_iss, clock = row
+            last_iss, clock, klick_iss = row
             if iss and iss != (last_iss or ""):
                 clock = _iso_ts(iss) or now          # im Spiel angefasst
+                klick_iss = None                     # bestaetigt (emm883)
+            elif klick_iss and iss and iss == klick_iss and clock:
+                # Unbestaetigte Uhr: zeigt ein Abruf, den ESI NACH dem
+                # Klick erzeugt hat, immer noch dasselbe `issued`, war es
+                # ein Verklicker.
+                _st = _stand_fuer(oid)
+                if _st is not None and _st > float(clock):
+                    clock = None
+                    klick_iss = None
             # Ein fehlendes issued ueberschreibt das gemerkte NICHT - sonst
             # zaehlte die Rueckkehr des Felds als "im Spiel geaendert".
             c.execute("UPDATE order_intervall SET last_issued=?, clock_ts=?, "
-                      "seen_at=? WHERE order_id=?",
-                      (iss or (last_iss or ""), clock, now, oid))
+                      "seen_at=?, klick_issued=? WHERE order_id=?",
+                      (iss or (last_iss or ""), clock, now, klick_iss, oid))
             out[oid] = clock
+            if klick_iss and clock:
+                unbestaetigt.add(oid)
         c.execute("DELETE FROM order_intervall WHERE seen_at < ?",
                   (now - _INTERVALL_VERGESSEN_S,))
-    return out
+    return (out, unbestaetigt) if mit_status else out
 
 
 def order_intervall_start(order_id: int, issued: str = "",
                           now: float = None) -> None:
     """Startet die Uhr dieser Order jetzt ("Next" wurde benutzt). Eine spaeter
     geaenderte `issued` (im Spiel nachgebessert) setzt sie auf den genauen
-    Zeitpunkt der Aenderung."""
+    Zeitpunkt der Aenderung.
+
+    DIESE UHR IST UNBESTAETIGT (emm883): gedrueckt wurde ein Knopf in
+    MoMa, geaendert werden muss die Order im SPIEL. `klick_issued` haelt
+    fest, welches `issued` dabei galt - bleibt es so, war es ein
+    Verklicker (siehe `order_intervall_sync`)."""
     import time
     now = time.time() if now is None else float(now)
     if not order_id:
@@ -790,10 +981,11 @@ def order_intervall_start(order_id: int, issued: str = "",
     with _conn() as c:
         c.execute(
             """INSERT INTO order_intervall (order_id, last_issued, clock_ts,
-                   seen_at) VALUES (?, ?, ?, ?)
+                   seen_at, klick_issued) VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(order_id) DO UPDATE SET clock_ts = excluded.clock_ts,
-                   seen_at = excluded.seen_at""",
-            (order_id, str(issued or ""), now, now))
+                   seen_at = excluded.seen_at,
+                   klick_issued = excluded.klick_issued""",
+            (order_id, str(issued or ""), now, now, str(issued or "")))
 
 
 def get_buy_mod_fee_raw_by_type() -> dict:
@@ -922,9 +1114,20 @@ def get_scan_label(default: str = "Jita") -> str:
 
 
 def get_scan_region(default: int = 10000002) -> int:
+    """Region des letzten Scans - oder 0, wenn sie UNBEKANNT ist.
+
+    DIE 0 IST EIN ECHTER WERT, kein Fehler (emm838): ein Struktur-Scan
+    ohne bekannte Region schreibt sie absichtlich, damit die Anzeige
+    "kein Handelsvolumen" sagen kann. Wer hier ungeprueft weiterrechnet,
+    holt Historien fuer Region 0 - die es nicht gibt - und bekommt leere
+    Listen; das ist gewollt und besser als Jita-Zahlen an einem
+    Nullsec-Hub.
+    """
     with _conn() as c:
         row = c.execute("SELECT v FROM scan_meta WHERE k='region'").fetchone()
-    return int(row["v"]) if row and row["v"] else default
+    if row is None or row["v"] is None or row["v"] == "":
+        return default
+    return int(row["v"])
 
 
 def save_history(type_id: int, entries: list, region: int = 10000002) -> None:
@@ -971,6 +1174,224 @@ def get_histories(type_ids, region: int = 10000002) -> dict:
     return out
 
 
+def markt_statistik(tage: int = 90) -> list:
+    """RANKING DER REGIONEN aus der gespeicherten Preishistorie (emm894).
+
+    Nutzer 10.11.2026: "ich habe jetzt viele verschiedene Tradehubs schon
+    in denen ich einen Marktscann ausfuehren kann. koennen wir eine
+    'Marktstatistik' ... die zeigt von allen Hubs: Volumen, verschiedene
+    gehandelte Items, wieviel ISK gefossen ist? ... Es geht darum ich
+    brauche ein ranking, von den Regionen wo ich handeln willl."
+
+    KEIN EINZIGER ESI-ABRUF: die `history`-Tabelle traegt je Item, Region
+    und Tag schon `volume`, `average` und `order_count`. Alles Gefragte
+    ergibt sich durch Summieren.
+
+    WAS DIE ZAHLEN EHRLICH SIND - und was nicht: die Historie liegt nur
+    fuer Items vor, die MoMa schon einmal abgerufen hat (Scan, Portfolio,
+    Bauplan). Das ist NICHT der gesamte Handel einer Region, sondern der
+    Teil, den MoMa kennt. Darum kommt `items` mit zurueck: zwei Regionen
+    sind nur vergleichbar, wenn aehnlich viele Items dahinterstehen. Die
+    Oberflaeche muss das dazusagen, sonst liest sich eine schlecht
+    gescannte Region als toter Markt.
+
+    Rueckgabe je Region, nach ISK absteigend:
+      {"region", "items", "volumen", "isk", "orders", "tage"}
+    `volume > 0` haelt Tage OHNE Handel draussen - sie wuerden `tage`
+    aufblaehen und einen Markt lebendiger aussehen lassen, als er ist.
+    """
+    import datetime as _dt
+    ab = (_dt.date.today() - _dt.timedelta(days=max(1, int(tage)))).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT region, "
+            "       COUNT(DISTINCT type_id) AS items, "
+            "       SUM(volume)             AS volumen, "
+            "       SUM(volume * average)   AS isk, "
+            "       SUM(order_count)        AS orders, "
+            "       COUNT(DISTINCT date)    AS tage "
+            "FROM history WHERE date >= ? AND volume > 0 "
+            "GROUP BY region", (ab,)).fetchall()
+    aus = [{"region": int(r["region"]), "items": int(r["items"] or 0),
+            "volumen": int(r["volumen"] or 0), "isk": float(r["isk"] or 0.0),
+            "orders": int(r["orders"] or 0), "tage": int(r["tage"] or 0)}
+           for r in rows]
+    aus.sort(key=lambda x: x["isk"], reverse=True)
+    return aus
+
+
+def ort_top_gehandelt(source: str, region: int, tage: int = 90,
+                      limit: int = 15) -> list:
+    """DIE TOP-HANDELSWARE EINES ORTES (emm922, neu gewichtet emm923).
+
+    Nutzer 14.11.2026: "mich interessiert hier einzig und alleine die Sell
+    orders wieviel kaufen die Leute es muss eine sinnvolle Liste sein die
+    einen kompromiss macht zwischen ISK Flow und Handelsvolumen."
+
+    GEMESSEN (emm922 in seiner DB, Jita): nach ISK allein standen
+    Leviathan Blueprint (0,1 Abschluesse/Tag) und zwei Fortizars (0/Tag)
+    oben - teuer, aber kaum gehandelt. Nach Stueck allein gewinnen
+    Minerale mit Millionen Stueck und duennen Margen.
+
+    KOMPROMISS: Rangfolge = ISK-Umsatz x Zahl der Abschluesse (beides aus
+    der Historie der Region, `tage` Tage). Das ist dieselbe Reihenfolge
+    wie das geometrische Mittel der beiden, also beides gleich gewichtet:
+    ein Item muss VIEL ISK bewegen UND OFT gehandelt werden. Nur Items mit
+    Sell-Orders an diesem Ort (sell_qty > 0).
+
+    GRENZE (ehrlich): die ESI-Historie trennt nicht, ob ein Abschluss eine
+    Sell- oder eine Buy-Order bediente. Es gibt keine Quelle, die nur die
+    Kaeufe aus Sell-Orders zaehlt.
+
+    Rueckgabe [{type_id, menge, gehandelt, isk, abschluesse, sell_min}],
+    Rang absteigend; `sell_min` = guenstigste Sell-Order an DIESEM Ort
+    (Verkaufspreis der Gewinn-Spalte, emm924).
+    """
+    import datetime as _dt
+    ab = (_dt.date.today() - _dt.timedelta(days=max(1, int(tage)))).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT s.type_id AS type_id, COALESCE(s.sell_qty,0) AS menge, "
+            "       COALESCE(s.sell_min,0) AS sell_min, "
+            "       h.vol AS gehandelt, h.isk AS isk, h.abs AS abschluesse "
+            "FROM market_snapshot s JOIN ("
+            "    SELECT type_id, SUM(volume) AS vol, "
+            "           SUM(volume * average) AS isk, "
+            "           SUM(order_count) AS abs FROM history "
+            "    WHERE region = ? AND date >= ? AND volume > 0 "
+            "    GROUP BY type_id) h ON h.type_id = s.type_id "
+            "WHERE s.source = ? AND COALESCE(s.sell_qty,0) > 0 "
+            "ORDER BY h.isk * h.abs DESC LIMIT ?",
+            (int(region), ab, str(source), max(1, int(limit)))).fetchall()
+    return [{"type_id": int(r["type_id"]), "menge": int(r["menge"]),
+             "gehandelt": int(r["gehandelt"] or 0),
+             "isk": float(r["isk"] or 0.0),
+             "abschluesse": int(r["abschluesse"] or 0),
+             "sell_min": float(r["sell_min"] or 0.0)} for r in rows]
+
+
+def item_handel(region: int, tids, tage: int = 90) -> dict:
+    """{type_id: {"vol": Stueck, "abs": Abschluesse}} der Region ueber
+    `tage` Tage (emm930, Doctrines: "Abschluesse/Tag + Stueck/Tag").
+    Dieselbe Quelle wie Market Stats (`history`), nur fuer die genannten
+    Items. Items ohne Historie fehlen im Ergebnis."""
+    import datetime as _dt
+    ids = sorted({int(x) for x in (tids or [])})
+    if not ids:
+        return {}
+    ab = (_dt.date.today() - _dt.timedelta(days=max(1, int(tage)))).isoformat()
+    out = {}
+    with _conn() as c:
+        for i in range(0, len(ids), 500):
+            teil = ids[i:i + 500]
+            for r in c.execute(
+                    "SELECT type_id, SUM(volume) AS vol, "
+                    "       SUM(order_count) AS abs FROM history "
+                    "WHERE region = ? AND date >= ? AND volume > 0 "
+                    f"AND type_id IN ({','.join('?' * len(teil))}) "
+                    "GROUP BY type_id", [int(region), ab] + teil):
+                out[int(r["type_id"])] = {"vol": int(r["vol"] or 0),
+                                          "abs": int(r["abs"] or 0)}
+    return out
+
+
+def region_top_items(region: int, tage: int = 90, limit: int = 15) -> list:
+    """DIE ITEMS MIT DEM MEISTEN ISK-UMSATZ EINER REGION (emm921).
+
+    Nutzer 14.11.2026: "ich muss wissen welche Items am meisten ISK
+    abwerfen koennen, wenn ich diese dort handel" - "Also Handelsvolumen,
+    isk flow". Die Liste "biggest positions in the order book" sagte nur,
+    was im Buch LIEGT; hier steht, was wirklich GEHANDELT wurde.
+
+    Dieselbe Quelle wie `markt_statistik` (die `history`-Tabelle, kein
+    ESI-Abruf), nur je Item statt je Region: Summe Stueck und Summe
+    Stueck x Tagesdurchschnitt ueber die letzten `tage` Tage. Es gilt
+    dieselbe Einschraenkung: nur Items, deren Historie MoMa kennt.
+
+    Rueckgabe [{type_id, volumen, isk, tage}], ISK absteigend; `tage` =
+    Tage mit Handel.
+    """
+    import datetime as _dt
+    ab = (_dt.date.today() - _dt.timedelta(days=max(1, int(tage)))).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT type_id, SUM(volume) AS volumen, "
+            "       SUM(volume * average) AS isk, "
+            "       COUNT(DISTINCT date) AS tage "
+            "FROM history WHERE region = ? AND date >= ? AND volume > 0 "
+            "GROUP BY type_id ORDER BY isk DESC LIMIT ?",
+            (int(region), ab, max(1, int(limit)))).fetchall()
+    return [{"type_id": int(r["type_id"]), "volumen": int(r["volumen"] or 0),
+             "isk": float(r["isk"] or 0.0), "tage": int(r["tage"] or 0)}
+            for r in rows]
+
+
+def snapshot_statistik() -> list:
+    """WAS IN JEDEM GESCANNTEN ORT GERADE IM BUCH STEHT (emm894).
+
+    Fuer eine SPIELERSTRUKTUR gibt es keine Historie - `/markets/{region}/
+    history/` kennt nur Regionen. Ueber eine Keepstar laesst sich darum
+    kein gehandeltes Volumen sagen, nur was ihr Orderbuch beim letzten
+    Scan hergab. Genau das steht hier, GETRENNT von den Regionszahlen,
+    damit niemand das eine fuer das andere haelt.
+
+    Rueckgabe je Quelle (`hub:<region>` / `struct:<id>`), nach Buchwert
+    absteigend: {"source", "items", "sell_wert", "buy_wert", "orders",
+    "alter"}.
+    """
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT source, "
+            "       COUNT(*)                        AS items, "
+            "       SUM(COALESCE(sell_qty,0) * COALESCE(sell_min,0)) "
+            "                                       AS sell_wert, "
+            "       SUM(COALESCE(buy_qty,0) * COALESCE(buy_max,0)) "
+            "                                       AS buy_wert, "
+            "       SUM(COALESCE(sell_orders,0) + COALESCE(buy_orders,0)) "
+            "                                       AS orders, "
+            "       MAX(updated_at)                 AS stand "
+            "FROM market_snapshot GROUP BY source").fetchall()
+    jetzt = time.time()
+    aus = [{"source": str(r["source"] or ""), "items": int(r["items"] or 0),
+            "sell_wert": float(r["sell_wert"] or 0.0),
+            "buy_wert": float(r["buy_wert"] or 0.0),
+            "orders": int(r["orders"] or 0),
+            "alter": (jetzt - float(r["stand"])) if r["stand"] else None}
+           for r in rows]
+    aus.sort(key=lambda x: x["sell_wert"] + x["buy_wert"], reverse=True)
+    return aus
+
+
+def ort_top_items(source: str, nach: str = "wert", limit: int = 15) -> list:
+    """DIE GROESSTEN POSTEN IM ORDERBUCH EINES ORTES (emm896).
+
+    Nutzer 11.11.2026: "die strukturen haben dann nochmal ein dropdown
+    wo man die Highest volume und ISK Value Items der Struktren sieht".
+
+    WAS DIESE ZAHLEN SIND - und der Name muss es sagen: das ist, was
+    dort im BUCH LIEGT, nicht was gehandelt wurde. Fuer eine
+    Spielerstruktur fuehrt ESI keine Handelshistorie, es gibt also gar
+    keine andere Zahl. "Menge" ist die Stueckzahl aller Verkaufs-Orders,
+    "Wert" dieselbe Menge mal dem guenstigsten Preis.
+
+    `nach`: "wert" (Menge x Preis) oder "menge" (reine Stueckzahl).
+    Rueckgabe [{type_id, menge, preis, wert}], groesste zuerst.
+    """
+    _sp = ("COALESCE(sell_qty,0) * COALESCE(sell_min,0)"
+           if nach != "menge" else "COALESCE(sell_qty,0)")
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT type_id, COALESCE(sell_qty,0) AS menge, "
+            "       COALESCE(sell_min,0) AS preis "
+            "FROM market_snapshot "
+            "WHERE source=? AND COALESCE(sell_qty,0) > 0 "
+            f"ORDER BY {_sp} DESC LIMIT ?",
+            (str(source), max(1, int(limit)))).fetchall()
+    return [{"type_id": int(r["type_id"]), "menge": int(r["menge"]),
+             "preis": float(r["preis"]),
+             "wert": int(r["menge"]) * float(r["preis"])} for r in rows]
+
+
 def fresh_history_type_ids(region: int = 10000002, max_age_h: float = 24) -> set:
     """Alle type_ids dieser Region, deren Preishistorie FRISCH im Cache liegt
     (Zeitstempel jünger als max_age_h UND tatsächlich Zeilen vorhanden).
@@ -1015,6 +1436,39 @@ def touch_history(type_id: int, region: int = 10000002) -> None:
     with _conn() as c:
         c.execute("INSERT OR REPLACE INTO history_meta(type_id,region,updated_at) "
                   "VALUES(?,?,?)", (type_id, region, time.time() - 20 * 3600))
+
+
+def mark_history_tot(type_id: int, region: int = 10000002) -> None:
+    """ESI ANTWORTETE MIT 404: DIESE type_id GIBT ES NICHT MEHR (emm899).
+
+    Anders als `touch_history` (vorruebergehender Fehlschlag, bald wieder
+    versuchen) haelt das den Fall dauerhaft fest. Siehe `esi.UnknownType`
+    fuer den Beleg aus `werkzeuge/pruefe_historie.py`.
+    """
+    import time
+    with _conn() as c:
+        c.execute("INSERT OR REPLACE INTO history_tot(type_id,region,seit) "
+                  "VALUES(?,?,?)", (type_id, region, time.time()))
+
+
+def history_ist_tot(type_id: int, region: int = 10000002) -> bool:
+    """Steht diese type_id als 404 vermerkt? (emm899)"""
+    with _conn() as c:
+        row = c.execute("SELECT 1 FROM history_tot WHERE type_id=? AND region=?",
+                        (type_id, region)).fetchone()
+    return bool(row)
+
+
+def history_tot_ids(region: int = 10000002) -> set:
+    """ALLE 404-Vermerke in EINER Abfrage (emm899).
+
+    Fuer Stellen, die viele Items auf einmal pruefen - `history_ist_tot`
+    je Item waere derselbe Fehler, den emm336/emm878 schon einmal gekostet
+    haben (eine neue Verbindung je Item).
+    """
+    with _conn() as c:
+        return {int(r["type_id"]) for r in c.execute(
+            "SELECT type_id FROM history_tot WHERE region=?", (region,))}
 
 
 # ---- region-trading favourites ---------------------------------------------
@@ -1088,6 +1542,45 @@ def save_journal(character_id: int, entries) -> None:
              for e in entries if e.get("journal_id")])
 
 
+def doctrine_verlauf_umbenennen(alt, neu) -> None:
+    """Der Deckungs-Verlauf zieht beim Umbenennen einer Doctrine mit
+    (emm936) - sonst finge die Kurve unter dem neuen Namen bei null an."""
+    with _conn() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS doctrine_verlauf (
+            doctrine TEXT, hub TEXT, ts REAL, pct REAL,
+            fits INTEGER, ziel INTEGER)""")
+        c.execute("UPDATE doctrine_verlauf SET doctrine=? WHERE doctrine=?",
+                  (str(neu), str(alt)))
+
+
+def doctrine_verlauf_merken(eintraege) -> None:
+    """Deckung je Doctrine bei einem "Fetch market" merken (emm933, Nutzer
+    14.11.2026: Idee "Deckungs-Verlauf" - "ja"). `eintraege` =
+    [(doctrine, hub, ts, pct, fits, ziel)]. Eigene Tabelle, NICHT
+    settings.json (waechst mit jedem Abruf)."""
+    with _conn() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS doctrine_verlauf (
+            doctrine TEXT, hub TEXT, ts REAL, pct REAL,
+            fits INTEGER, ziel INTEGER)""")
+        c.executemany("INSERT INTO doctrine_verlauf VALUES (?,?,?,?,?,?)",
+                      [(str(d), str(h), float(ts), float(p), int(f), int(z))
+                       for d, h, ts, p, f, z in (eintraege or [])])
+
+
+def doctrine_verlauf(doctrine: str, hub: str, limit: int = 60) -> list:
+    """[(ts, pct)] einer Doctrine an einem Hub, ALT -> NEU, hoechstens die
+    letzten `limit` Abrufe (emm933)."""
+    with _conn() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS doctrine_verlauf (
+            doctrine TEXT, hub TEXT, ts REAL, pct REAL,
+            fits INTEGER, ziel INTEGER)""")
+        rows = c.execute(
+            "SELECT ts, pct FROM doctrine_verlauf WHERE doctrine=? AND hub=? "
+            "ORDER BY ts DESC LIMIT ?",
+            (str(doctrine), str(hub), max(1, int(limit)))).fetchall()
+    return [(float(r[0]), float(r[1])) for r in reversed(rows)]
+
+
 def init_order_history():
     """Eigene Market-Orders, offen UND geschlossen (Funfact, emm570).
 
@@ -1115,12 +1608,122 @@ def init_order_history():
         c.execute("""CREATE TABLE IF NOT EXISTS order_history_stand (
             character_id INTEGER PRIMARY KEY,
             erster_abruf TEXT)""")
+        # LETZTER ABRUF (emm825): fuer die Frage "liegt davon noch etwas im
+        # Verkauf?" ist nicht nur die Menge wichtig, sondern WIE ALT sie
+        # ist - eine 0 kann "alles verkauft" heissen oder "seit zwei Tagen
+        # nicht nachgesehen". Alte Datenbanken bekommen die Spalte hier
+        # nachtraeglich (Muster wie _migrate_order_mod_counts).
+        _cols = [r[1] for r in
+                 c.execute("PRAGMA table_info(order_history_stand)").fetchall()]
+        if _cols and "letzter_abruf" not in _cols:
+            c.execute("ALTER TABLE order_history_stand "
+                      "ADD COLUMN letzter_abruf TEXT")
+        # WANN WURDE DIESE ORDER ERLEDIGT (emm884)? Eigene Tabelle, nicht
+        # eine Spalte in `order_history`: dort schreibt
+        # `INSERT OR REPLACE` die ganze Zeile neu, und der Zeitstempel
+        # waere bei jedem Abruf wieder weg.
+        c.execute("""CREATE TABLE IF NOT EXISTS order_erledigt (
+            order_id INTEGER PRIMARY KEY,
+            ts       REAL)""")
 
 
-def save_orders(character_id: int, orders, jetzt_iso: str = None) -> int:
+# Wie lange ein erledigter Auftrag ueberhaupt aufgehoben wird - weit
+# ueber jedem einstellbaren Nachleuchten, damit die Einstellung frei
+# bleibt (emm884).
+_ERLEDIGT_VERGESSEN_S = 120 * 86400
+
+
+def _ts_aus_iso884(iso_text):
+    """ISO-Zeitstempel -> Epochensekunde; ohne/unlesbar -> jetzt."""
+    import time as _t884
+    _v = _iso_ts(iso_text) if iso_text else None
+    return float(_v) if _v else _t884.time()
+
+
+def kuerzlich_erledigte_orders(max_alter_s, now: float = None,
+                               character_ids=None) -> list:
+    """Orders, die INNERHALB der letzten `max_alter_s` Sekunden von
+    offen auf erledigt gewechselt sind (emm884).
+
+    Community-Wunsch (Spaceballs 2, Discord 09.11.2026): "Could you
+    maybe keep the item listed on that page on the bottom of the page
+    with the status text BOUGHT for few days. And similar behavior in
+    sell orders with status text SOLD. ... because I could keep on
+    buying/selling the same item without having to check other lists."
+
+    `art` sagt, WAS geschehen ist, und unterscheidet sauber:
+      * "erfuellt" - die Order ist aus den offenen verschwunden, ohne in
+        der ESI-Historie aufzutauchen. Das IST der Verkauf bzw. Kauf:
+        ESI listet unter /orders/history/ nur abgelaufene und
+        stornierte Auftraege (siehe `save_orders`).
+      * "abgelaufen" / "storniert" - so hat ESI sie selbst gemeldet.
+        AUSNAHME (emm927): "expired" mit volume_remain 0 ist ausverkauft,
+        also ebenfalls "erfuellt" - so meldet ESI leer verkaufte Orders.
+    Ein Pauschal-"SOLD" waere hier falsch und wuerde einen Verkauf
+    behaupten, den es nie gab (Regel 1)."""
+    import time as _t884
+    now = _t884.time() if now is None else float(now)
+    grenze = now - float(max_alter_s or 0)
+    if max_alter_s is None or float(max_alter_s) <= 0:
+        return []
+    _wo, _par = "", [grenze]
+    if character_ids:
+        _cids = [int(x) for x in character_ids]
+        _wo = f" AND h.character_id IN ({','.join('?' * len(_cids))})"
+        _par += _cids
+    init_order_history()
+    _ART = {"weg": "erfuellt", "expired": "abgelaufen",
+            "cancelled": "storniert"}
+    out = []
+    with _conn() as c:
+        c.execute("DELETE FROM order_erledigt WHERE ts < ?",
+                  (now - _ERLEDIGT_VERGESSEN_S,))
+        for r in c.execute(
+                "SELECT h.order_id, h.character_id, h.type_id, "
+                "h.is_buy_order, h.price, h.volume_total, h.volume_remain, "
+                "h.state, h.location_id, e.ts "
+                "FROM order_erledigt e JOIN order_history h "
+                "  ON h.order_id = e.order_id "
+                "WHERE e.ts >= ?" + _wo + " ORDER BY e.ts DESC", _par):
+            out.append({
+                "order_id": r[0], "character_id": r[1], "type_id": r[2],
+                "is_buy": bool(r[3]), "price": float(r[4] or 0.0),
+                "volume_total": r[5], "volume_remain": r[6],
+                "state": r[7], "location_id": r[8], "ts": float(r[9] or 0.0),
+                # AUSVERKAUFT IST NICHT ABGELAUFEN (emm927, Nutzer
+                # 14.11.2026: "ich habe keine abgelaufenen Orders mit diesem
+                # Charakter"). ESI meldet eine leer verkaufte Order in der
+                # Historie als state "expired" mit volume_remain 0 -
+                # gemessen in seiner DB: alle "EXPIRED"-Zeilen Restmenge 0,
+                # erst Tage alt bei 90 Tagen Laufzeit; die einzige echte
+                # Ablaufung (90 Tage um) hatte Restmenge 1.
+                "art": ("erfuellt" if str(r[7] or "") == "expired"
+                        and r[6] is not None and int(r[6]) == 0
+                        else _ART.get(str(r[7] or ""), "beendet")),
+                "alter_s": max(0.0, now - float(r[9] or 0.0))})
+    return out
+
+
+def save_orders(character_id: int, orders, jetzt_iso: str = None,
+                nur_offene: bool = False) -> int:
     """Orders eines Charakters speichern (offen oder Historie). Rueckgabe:
     Zahl der geschriebenen Zeilen. Der erste Aufruf je Charakter setzt
-    `erster_abruf` (INSERT OR IGNORE - spaetere aendern ihn nie)."""
+    `erster_abruf` (INSERT OR IGNORE - spaetere aendern ihn nie),
+    `letzter_abruf` wird jedes Mal gesetzt.
+
+    `nur_offene=True` (emm825) sagt: DIESE Liste ist der VOLLSTAENDIGE
+    Bestand der offenen Orders dieses Charakters (aus
+    esi.fetch_character_orders). Dann werden alle bisher als "open"
+    gefuehrten Orders, die NICHT mehr dabei sind, auf "weg" gesetzt.
+
+    WARUM DAS NOETIG IST: ESI listet unter `/orders/history/` nur
+    abgelaufene und stornierte Auftraege. Eine VOLLSTAENDIG ERFUELLTE
+    Order taucht dort nicht wieder auf - sie verschwindet einfach aus
+    den offenen. Ohne dieses Aufraeumen bliebe sie fuer immer als
+    "open" stehen, und die Spalte "noch im Verkauf" zeigte Ware an, die
+    laengst verkauft ist. Genau die Frage des Nutzers ("did I sell
+    everything or do I need still to attend to it?") waere damit falsch
+    beantwortet - und zwar in die beruhigende Richtung."""
     import datetime as _dt
     init_order_history()
     rows = []
@@ -1139,12 +1742,151 @@ def save_orders(character_id: int, orders, jetzt_iso: str = None) -> int:
     if jetzt_iso is None:
         jetzt_iso = _dt.datetime.utcnow().replace(microsecond=0).isoformat()
     with _conn() as c:
+        # WAS KANNTEN WIR BISHER ALS OFFEN (emm884)? Nur der beobachtete
+        # UEBERGANG offen -> nicht mehr offen bekommt einen Zeitstempel.
+        # Wuerde stattdessen jede geschlossene Order beim ersten Abruf
+        # einen bekommen, truege eine Monate alte Order das heutige
+        # Datum - und die Liste behauptete, sie sei gerade erledigt
+        # worden (Regel 1).
+        _war_offen884 = {r[0] for r in c.execute(
+            "SELECT order_id FROM order_history "
+            "WHERE character_id=? AND state='open'", (int(character_id),))}
+        if nur_offene:
+            _ids = [r[0] for r in rows]
+            _frage = ",".join("?" * len(_ids))
+            c.execute(
+                "UPDATE order_history SET state='weg' "
+                "WHERE character_id=? AND state='open'"
+                + (f" AND order_id NOT IN ({_frage})" if _ids else ""),
+                [int(character_id)] + _ids)
         c.executemany(
             "INSERT OR REPLACE INTO order_history VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             rows)
-        c.execute("INSERT OR IGNORE INTO order_history_stand VALUES (?,?)",
+        if _war_offen884:
+            _jetzt884 = _ts_aus_iso884(jetzt_iso)
+            _liste884 = list(_war_offen884)
+            _fr884 = ",".join("?" * len(_liste884))
+            # INSERT OR IGNORE: der ERSTE beobachtete Uebergang gilt -
+            # ein spaeterer Abruf darf den Zeitstempel nicht vorruecken,
+            # sonst wuerde die Zeile nie aus der Nachleuchten-Liste
+            # herausaltern.
+            c.execute(
+                "INSERT OR IGNORE INTO order_erledigt (order_id, ts) "
+                f"SELECT order_id, ? FROM order_history "
+                f"WHERE state != 'open' AND order_id IN ({_fr884})",
+                [_jetzt884] + _liste884)
+        c.execute("INSERT OR IGNORE INTO order_history_stand "
+                  "(character_id, erster_abruf) VALUES (?,?)",
                   (int(character_id), jetzt_iso))
+        if nur_offene:
+            # Nur der Abruf der OFFENEN sagt etwas ueber die Aktualitaet
+            # des Bestands - die Historie kann alt sein, ohne dass das
+            # etwas heisst.
+            c.execute("UPDATE order_history_stand SET letzter_abruf=? "
+                      "WHERE character_id=?", (jetzt_iso, int(character_id)))
     return len(rows)
+
+
+def offene_order_mengen(cid=None) -> dict:
+    """{type_id: {"sell": Stueck, "buy": Stueck}} der eigenen OFFENEN
+    Orders (emm825, Nutzerwunsch aus Discord 04.11.2026: "maybe add next
+    to column QTY another column that shows how many items I am still
+    selling").
+
+    ENTHALTEN IST JEDES ITEM, ZU DEM JE EINE ORDER BEKANNT WAR - mit 0,
+    wenn aktuell nichts mehr offen ist. Dieser Unterschied ist der Kern
+    der Frage ("did I sell everything, or do I need still to attend to
+    it?"): eine 0 heisst "du hattest hier Orders, jetzt ist alles weg" -
+    die gute Nachricht. Ein FEHLENDER Eintrag heisst dagegen "zu diesem
+    Item ist gar keine Order bekannt" - dazu darf die Oberflaeche nichts
+    behaupten und laesst die Zelle leer. Wuerde hier nur `state='open'`
+    gefiltert, fielen beide Faelle zusammen und das erfolgreiche
+    Ausverkaufen saehe aus wie Unwissen.
+
+    Gezaehlt wird nur, was offen IST; was `save_orders(..., nur_offene=
+    True)` als verschwunden erkannt hat, steht auf 'weg'."""
+    init_order_history()
+    sql = ("SELECT type_id,"
+           " SUM(CASE WHEN state='open' AND is_buy_order=0"
+           "          THEN volume_remain ELSE 0 END) AS verkauf,"
+           " SUM(CASE WHEN state='open' AND is_buy_order=1"
+           "          THEN volume_remain ELSE 0 END) AS kauf"
+           " FROM order_history")
+    params = []
+    if cid not in (None, "all"):
+        sql += " WHERE character_id=?"
+        params.append(cid)
+    sql += " GROUP BY type_id"
+    out = {}
+    with _conn() as c:
+        for r in c.execute(sql, params):
+            if r["type_id"] is None:
+                continue
+            out[int(r["type_id"])] = {"sell": int(r["verkauf"] or 0),
+                                      "buy": int(r["kauf"] or 0)}
+    return out
+
+
+def orders_letzter_abruf(cid=None):
+    """Juengster Abruf der OFFENEN Orders als ISO-Text - oder None.
+
+    Bei "alle Charaktere" zaehlt der AELTESTE der Charaktere: solange
+    einer veraltet ist, ist die Gesamtsicht so alt wie er (Regel 3 -
+    lieber zu vorsichtig als faelschlich frisch)."""
+    init_order_history()
+    sql = "SELECT letzter_abruf FROM order_history_stand"
+    params = []
+    if cid not in (None, "all"):
+        sql += " WHERE character_id=?"
+        params.append(cid)
+    with _conn() as c:
+        werte = [r["letzter_abruf"] for r in c.execute(sql, params)
+                 if r["letzter_abruf"]]
+    return min(werte) if werte else None
+
+
+def auslaufende_orders(cid=None, tage=7, jetzt=None) -> list:
+    """Offene eigene Orders, deren Laufzeit in hoechstens `tage` Tagen
+    endet (emm937, Nutzer 14.11.2026: "Items ... die drohen auszulaufen").
+    Ablauf = `issued` + `duration` Tage - beides liefert ESI je Order
+    (`issued` springt beim Aendern der Order neu). Die am fruehesten
+    endende zuerst. Ohne lesbares Datum oder ohne Laufzeit wird die Order
+    NICHT gezeigt (keine erfundene Restzeit, Regel 1).
+    `rest_s` kann negativ sein: laut gespeichertem Stand schon vorbei."""
+    import datetime as _dt
+    init_order_history()
+    now = time.time() if jetzt is None else float(jetzt)
+    sql = ("SELECT order_id, character_id, type_id, location_id, "
+           "is_buy_order, price, issued, duration, volume_total, "
+           "volume_remain FROM order_history WHERE state='open'")
+    params = []
+    if cid not in (None, "all"):
+        sql += " AND character_id=?"
+        params.append(int(cid))
+    out = []
+    with _conn() as c:
+        rows = list(c.execute(sql, params))
+    for r in rows:
+        try:
+            _d = _dt.datetime.fromisoformat(str(r[6]).replace("Z", "+00:00"))
+            if _d.tzinfo is None:
+                _d = _d.replace(tzinfo=_dt.timezone.utc)
+            _dauer = int(r[7] or 0)
+        except (TypeError, ValueError):
+            continue
+        if _dauer <= 0 or not r[2]:
+            continue
+        ablauf = _d.timestamp() + _dauer * 86400.0
+        rest = ablauf - now
+        if rest > float(tage) * 86400.0:
+            continue
+        out.append({"order_id": int(r[0]), "character_id": int(r[1]),
+                    "type_id": int(r[2]), "location_id": r[3],
+                    "is_buy": bool(r[4]), "price": float(r[5] or 0.0),
+                    "volume_total": r[8], "volume_remain": r[9],
+                    "ablauf_ts": ablauf, "rest_s": rest})
+    out.sort(key=lambda x: (x["rest_s"], x["order_id"]))
+    return out
 
 
 def get_orders(cid=None) -> list:

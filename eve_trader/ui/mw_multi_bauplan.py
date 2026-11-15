@@ -190,6 +190,7 @@ class MultiBauplan:
         me_je, te_je = {}, {}
         obpc_je, obpc_runs_je = {}, {}
         dec, man = {}, {}
+        rel = {}      # Relic-Wahl je T3-Ende (emm826), wie dec
         bl_n, bl_g = [], []
         inv = False
         stand = {}
@@ -211,6 +212,10 @@ class MultiBauplan:
                 obpc_runs_je[tid] = int(p.get("own_bpc_runs", 0) or 0)
             for k, v in (p.get("decryptor_map") or {}).items():
                 dec.setdefault(str(k), v)
+            # Relic-Wahl der Einzelplaene mitnehmen (emm826): T1+T2+T3
+            # gemischt muss je Ende mit der dort getroffenen Wahl rechnen.
+            for k, v in (p.get("relic_map") or {}).items():
+                rel.setdefault(str(k), v)
             for k, v in (p.get("manual_attempts") or {}).items():
                 man.setdefault(str(k), list(v))
             for n in (p.get("blacklist_names") or []):
@@ -237,7 +242,7 @@ class MultiBauplan:
                 "own_bpc_runs_je_ende": {str(k): int(v)
                                          for k, v in obpc_runs_je.items()},
                 "me": 0, "te": 0, "checked": [],
-                "decryptor_map": dec, "manual_attempts": man,
+                "decryptor_map": dec, "relic_map": rel, "manual_attempts": man,
                 "blacklist_names": bl_n, "blacklist_gruppen": bl_g,
                 "invention": inv}
 
@@ -497,7 +502,10 @@ class MultiBauplan:
                 aus[tid] = {"copies": _lage["copies"], "runs": _lage["runs"],
                             "bpo": False, "runs_known": True}
                 continue
-            _inv = inv_map.get(bp[0])
+            # EINE Stelle fuer die Quellen-Wahl (emm826): bei T3 haengen die
+            # Runs je erfundener Kopie an der gewaehlten Relic-Qualitaet.
+            _inv = (industry.invention_quelle_fuer_bp(bp[0], rec, opts)
+                    if bp[0] in inv_map else None)
             if not _inv or not opts.get("invention", True):
                 continue              # T1/BPO: unbegrenzt, wie bisher
             _t1, _br, _prob, _dcs = _inv
@@ -653,6 +661,15 @@ class MultiBauplan:
                     continue
             # Gespeicherte Wahl gilt als bewusst getroffen (keine Warnung).
             self._bd_dec_bestaetigt = set(self._bd_decryptor_map)
+            # Relic-Wahl je T3-Ende (emm826), dasselbe Muster wie decryptor_map.
+            self._bd_relic_map = {}
+            for k, v in (eintrag.get("relic_map") or {}).items():
+                try:
+                    self._bd_relic_map[int(k)] = int(v)
+                except (TypeError, ValueError):
+                    continue
+            # Gespeicherte Wahl gilt als bewusst getroffen (emm830).
+            self._bd_relic_bestaetigt = set(self._bd_relic_map)
             # BAU-ODER-KAUF-WAHL MITNEHMEN (emm317): der Neuer-Plan-Zweig in
             # open_build_detail setzt sie zurueck - deshalb als Pending, das
             # NACH dem Zuruecksetzen eingesetzt wird.
@@ -820,12 +837,23 @@ class MultiBauplan:
             plan_id, [{"tid": int(tid), "name": str(name),
                        "qty": qty, "vorgabe": vorgabe}])
 
-    def _multi_mengen_dialog(self, items, titel):
+    def _multi_mengen_dialog(self, items, titel, hinweis=None):
         """MENGEN-DIALOG, VORBEFUELLT (Nutzer 26.09.2026, Bedienidee 2: "den
         Mengen-Dialog aus dem Scanner vorbefuellen"). items = [{tid, name,
         vorgabe}] - EINE Zeile je Item mit eigener Menge, damit eine
         Mehrfachauswahl (Bedienidee 1) nicht N Dialoge nacheinander braucht.
-        Gibt [{tid, name, qty}] zurueck oder None (Abbrechen)."""
+        Gibt [{tid, name, qty}] zurueck oder None (Abbrechen).
+
+        VORGABE ODER qty (emm857, Nutzer 07.11.2026: "das erstellen
+        eines multiplan, stimmen die anzahl Items nicht wie in der
+        Doctrine angegeben"): Market Stocks liefert seine Fehlmengen
+        als "qty" - die wurde hier still ignoriert und JEDES Feld
+        stand auf 1. Beide Schluessel gelten.
+
+        `hinweis` (emm857, zweiter Teil desselben Berichts: "ausserdem
+        fehlen Module und ITems"): was bewusst NICHT im Plan ist (kein
+        Rezept, Faction auf Kaufen), stand nur in einem fluechtigen
+        Flash-Tipp - jetzt steht es dauerhaft IM Dialog."""
         from PySide6.QtWidgets import QDialog, QGridLayout
         dlg = QDialog(self._tool_parent()); dlg.setWindowTitle(titel)
         dlg.setMinimumWidth(420)
@@ -834,13 +862,45 @@ class MultiBauplan:
         g = QGridLayout(); g.setHorizontalSpacing(12); g.setVerticalSpacing(6)
         spins = []
         for _i, it in enumerate(items):
-            g.addWidget(QLabel(str(it["name"])), _i, 0)
+            # Kauf-Enden (emm859: kein Rezept / Faction auf Kaufen)
+            # tragen ihr Etikett direkt in der Zeile.
+            _zn = str(it["name"]) + (" " + t("(buy)")
+                                     if it.get("kauf") else "")
+            g.addWidget(QLabel(_zn), _i, 0)
             sp = QSpinBox(); sp.setRange(1, 100000000)
             sp.setGroupSeparatorShown(True); sp.setMinimumWidth(120)
-            sp.setValue(max(1, int(it.get("vorgabe") or 1)))
+            sp.setValue(max(1, int(it.get("vorgabe")
+                                   or it.get("qty") or 1)))
             g.addWidget(sp, _i, 1)
             spins.append(sp)
         v.addLayout(g)
+        self._multi_mengen_hinweis_lbl = None   # b-Suite
+        if hinweis:
+            _hl = QLabel(str(hinweis))
+            _hl.setWordWrap(True)
+            _hl.setStyleSheet(f"color:{theme.AMBER};")
+            v.addWidget(_hl)
+            self._multi_mengen_hinweis_lbl = _hl
+        # GANZE DOCTRINE xN (emm857, Nutzer: "kann ich die anzahl der
+        # ITems oder direktanzahl vom ganzen bundle nicht erhoehen oder
+        # verringern"): EIN Faktor multipliziert beim Bestaetigen jede
+        # Menge oben - zwei komplette Saetze = x2, ohne zehn Felder
+        # einzeln anzufassen. (Im offenen Buendel ist der "Bundle:"-
+        # Spinner seit 1.0.9 bewusst fest auf 1 - die Stueckzahl wohnt
+        # je Endprodukt; hier beim Erstellen ist der Faktor der
+        # richtige Hebel.)
+        _fr = QHBoxLayout()
+        _fr.addWidget(QLabel(t("Multiply all by:")))
+        fakt = QSpinBox()
+        fakt.setRange(1, 100000)
+        fakt.setValue(1)
+        fakt.setMaximumWidth(110)
+        fakt.setToolTip(t(
+            "Applied to every quantity above when you press Add."))
+        _fr.addWidget(fakt)
+        _fr.addStretch()
+        v.addLayout(_fr)
+        self._multi_mengen_faktor = fakt        # b-Suite
         row = QHBoxLayout(); row.addStretch()
         cancel = QPushButton(t("Cancel")); cancel.clicked.connect(dlg.reject)
         ok = QPushButton(" " + t("Add")); ok.setObjectName("Primary")
@@ -854,7 +914,8 @@ class MultiBauplan:
         if dlg.exec() != QDialog.Accepted:
             return None
         return [{"tid": int(it["tid"]), "name": str(it["name"]),
-                 "qty": int(sp.value())} for it, sp in zip(items, spins)]
+                 "qty": int(sp.value()) * max(1, int(fakt.value()))}
+                for it, sp in zip(items, spins)]
 
     def _multi_enden_zu_plan(self, plan_id, items):
         """EIN ODER MEHRERE Enden an einen gespeicherten Plan haengen (auch
@@ -1001,7 +1062,7 @@ class MultiBauplan:
             titel=t("Add {n} selected to multi build plan").format(n=n))
         return akt, a_neu
 
-    def _multi_neu_aus_auswahl(self, items):
+    def _multi_neu_aus_auswahl(self, items, hinweis=None):
         """NEUER MULTI-BAUPLAN AUS EINER MEHRFACHAUSWAHL (Nutzer 26.09.2026,
         Bedienidee 1): mehrere Zeilen markieren -> Rechtsklick -> "New multi
         build plan from selection". Mengen im vorbefuellten Dialog, dann
@@ -1013,7 +1074,8 @@ class MultiBauplan:
             self._flash_tip(t("Select at least two different items for a multi "
                               "build plan."))
             return None
-        _m = self._multi_mengen_dialog(items, t("New multi build plan"))
+        _m = self._multi_mengen_dialog(items, t("New multi build plan"),
+                                       hinweis=hinweis)
         if _m is None:
             return None
         erst = _m[0]
@@ -2306,7 +2368,7 @@ class MultiBauplan:
             if _eb is not None and _eb.parentWidget() is None:
                 _k1 = QFrame(); _k1.setObjectName("Card")
                 _k1.setStyleSheet(
-                    f"QFrame#Card {{ border: 1px solid rgba(242,162,60,0.4); }}")
+                    f"QFrame#Card {{ border: 1px solid {theme.toenung(theme.AMBER, 0.4)}; }}")
                 _v1 = QVBoxLayout(_k1); _v1.setContentsMargins(14, 10, 14, 10)
                 _h1 = QHBoxLayout(); _h1.setContentsMargins(0, 0, 0, 0)
                 _t1 = QLabel(t("END PRODUCT OF THIS PLAN"))
@@ -2323,7 +2385,7 @@ class MultiBauplan:
                 self._bd_ende_karte_einzel = _k1        # b-Suite
             return None
         card = QFrame(); card.setObjectName("Card")
-        card.setStyleSheet(f"QFrame#Card {{ border: 1px solid rgba(242,162,60,0.4); }}")
+        card.setStyleSheet(f"QFrame#Card {{ border: 1px solid {theme.toenung(theme.AMBER, 0.4)}; }}")
         cv = QVBoxLayout(card); cv.setContentsMargins(14, 10, 14, 10); cv.setSpacing(6)
         # EINKLAPPBAR WIE "DETAILS" (Nutzer 23.09.2026: "ausserdem moechte
         # ich, dass man 'Endprodukte dieses Buendels' einklappen kann wie
@@ -2351,7 +2413,7 @@ class MultiBauplan:
         _klapp.setMinimumWidth(34)
         _klapp.setCursor(Qt.PointingHandCursor)
         _klapp.setStyleSheet(
-            f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:5px; "
+            f"QPushButton{{border:1px solid {theme.BORDER}; border-radius:{theme.RAD_KLEIN}; "
             f"color:{theme.CYAN}; font-size:11px; padding:2px 8px; "
             f"background:{theme.PANEL2};}}"
             f"QPushButton:hover{{border-color:{theme.CYAN}; "
@@ -2429,7 +2491,7 @@ class MultiBauplan:
             f"QScrollBar:vertical{{width:12px; background:{theme.PANEL2}; "
             f"border-left:1px solid {theme.BORDER}; margin:0px;}}"
             f"QScrollBar::handle:vertical{{background:{theme.CYAN}; "
-            f"min-height:28px; border-radius:4px; margin:2px;}}"
+            f"min-height:28px; border-radius:{theme.RAD_KLEIN}; margin:2px;}}"
             f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
             f"{{height:0px;}}"
             f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
@@ -2612,7 +2674,7 @@ class MultiBauplan:
             raus.setMinimumHeight(0)
             raus.setStyleSheet(
                 f"QPushButton{{color:{theme.RED}; border:1px solid {theme.RED}; "
-                f"border-radius:4px; padding:0px; font-weight:800; "
+                f"border-radius:{theme.RAD_KLEIN}; padding:0px; font-weight:800; "
                 f"font-size:13px; background:transparent;}}"
                 f"QPushButton:hover{{background:{theme.RED}; color:{theme.BG}; "
                 f"border:1px solid {theme.RED};}}")
@@ -2794,8 +2856,9 @@ class MultiBauplan:
                 _rec = getattr(self, "_bd_recipes", None)
                 _opt = getattr(self, "_bd_opts", None) or {}
                 _bp = (getattr(_rec, "product_to_bp", None) or {}).get(int(tid))
-                _inv = (getattr(_rec, "invention_for_bpc", None) or {}).get(
-                    _bp[0]) if _bp else None
+                # EINE Stelle fuer die Quellen-Wahl (emm826).
+                _inv = (industry.invention_quelle_fuer_bp(_bp[0], _rec, _opt)
+                        if _bp else None)
                 try:
                     _o = industry.invention_outcome(
                         _inv[1], _inv[2],
@@ -2835,7 +2898,22 @@ class MultiBauplan:
             _bp_je_ende = self._multi_bp_je_ende(plan) or {}
             pm = getattr(self, "_bd_pricemap", None) or {}
             hub_je = getattr(self, "_bd_hub_sell_je_ende", None) or {}
+            # fuers Umsortieren per Spaltenkopf (emm852) gemerkt - der
+            # Klick-Handler ruft _refresh mit genau diesem Plan erneut.
+            self._bd_multi_plan_letzt = plan
             reihen = sorted(je.items(), key=lambda kv: names.get(kv[0], str(kv[0])))
+            # SORTIEREN PER SPALTENKOPF (emm852, Discord Robust: "Can we
+            # possibly have a option to sort these columns under End
+            # Products Of This Bundle"). Die Folge kommt aus den
+            # SICHTBAREN Zellwerten des letzten Stands (_sortieren
+            # unten) - keine zweite Preisformel. Neue Enden, die darin
+            # noch nicht vorkommen, haengen alphabetisch hinten an.
+            _sf852 = getattr(self, "_bd_multi_sortfolge", None)
+            if _sf852:
+                _pos852 = {int(t0): i for i, t0 in enumerate(_sf852)}
+                reihen = sorted(je.items(), key=lambda kv: (
+                    _pos852.get(int(kv[0]), 10**9),
+                    names.get(kv[0], str(kv[0]))))
             if tbl.rowCount() != len(reihen) or not self._bd_multi_zeilen:
                 tbl.setRowCount(0)
                 self._bd_multi_zeilen = {}
@@ -2949,6 +3027,9 @@ class MultiBauplan:
             Aufteilung, mit der buendel_kosten_je_ende die Gesamtkosten
             zerlegt. Damit trifft die Summe der Spalte den Gesamtgewinn."""
             from ..sprache import t as _txt
+            # fuers Umsortieren gemerkt (emm852): nach dem Neuaufbau muss
+            # derselbe Nachzug wieder laufen, sonst stehen Striche.
+            self._bd_multi_gewinn_args = (satz, fracht, extra, gesamt)
             je = getattr(self, "_bd_multi_je", None) or {}
             reihen = getattr(self, "_bd_multi_reihen", None) or []
             lbl = getattr(self, "_bd_multi_gewinn_lbl", None)
@@ -3028,6 +3109,52 @@ class MultiBauplan:
             # schmal wie der Strich (Nutzer 26.09.2026: "Profit/U...").
             self._multi_enden_spalten(tbl)
             return summe
+
+        def _sortieren(col):
+            """Spaltenkopf-Klick (emm852): sortiert nach den SICHTBAREN
+            Zellwerten und baut die Zeilen in dieser Folge neu.
+
+            Qt-setSortingEnabled kommt hier NICHT in Frage: die Zeilen
+            tragen Zell-WIDGETS (Mengen-Spinner, ME/TE, Own-BPC-Haken,
+            Entfernen-Knopf), und Qt sortiert nur die Items - die
+            Widgets blieben an ihren alten Zeilen kleben (dieselbe Lage
+            wie Einkaufs-/Verkaufsliste, gleiche Loesung: die DATEN
+            sortieren, Pfeil von Hand fuehren)."""
+            if col not in (0, 6, 7, 8, 9, 10):
+                return                        # Widget-/Knopf-Spalten
+            reihen852 = getattr(self, "_bd_multi_reihen", None) or []
+            if not reihen852:
+                return
+            cur, cur_asc = getattr(self, "_bd_multi_sort", (None, True))
+            asc = (not cur_asc) if cur == col else True
+            self._bd_multi_sort = (col, asc)
+            werte = {}
+            for r852, tid852 in enumerate(reihen852):
+                it852 = tbl.item(r852, col)
+                v852 = getattr(it852, "_value", None)
+                if v852 is None:
+                    # Spalte 0 ist Text; in den Zahlenspalten darf eine
+                    # fehlende Zelle NIE als Text einsortiert werden
+                    # (str gegen float wirft beim Sortieren).
+                    v852 = ((it852.text().lower() if it852 is not None
+                             else "") if col == 0 else float("-inf"))
+                werte[int(tid852)] = v852
+            self._bd_multi_sortfolge = [t0 for t0, _v in sorted(
+                werte.items(), key=lambda kv: kv[1], reverse=not asc)]
+            tbl.horizontalHeader().setSortIndicator(
+                col, Qt.AscendingOrder if asc else Qt.DescendingOrder)
+            # Neuaufbau in der neuen Folge, dann den Gewinn-Nachzug mit
+            # den zuletzt benutzten Werten wiederholen.
+            self._bd_multi_zeilen = {}
+            _refresh(getattr(self, "_bd_multi_plan_letzt", None))
+            _ga852 = getattr(self, "_bd_multi_gewinn_args", None)
+            if _ga852:
+                _gewinn_nachziehen(*_ga852)
+
+        hh.setSectionsClickable(True)
+        hh.setSortIndicatorShown(True)
+        hh.sectionClicked.connect(_sortieren)
+        self._bd_multi_sortieren = _sortieren     # Tests (b852)
 
         self._bd_multi_refresh = _refresh
         self._multi_gewinn_nachziehen = _gewinn_nachziehen

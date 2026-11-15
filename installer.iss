@@ -38,6 +38,18 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 ; aus dem Logo im Code erzeugt. Sonst traegt ausgerechnet das erste, was ein
 ; neuer Nutzer sieht, das nichtssagende Standardsymbol.
 SetupIconFile=eve_trader\ui\assets\logo.ico
+; DAS LOGO IM ASSISTENTEN (emm943, Nutzer 15.11.2026: "hier ist das Logo
+; bitte bau es ein"): gross auf Willkommens- und Abschluss-Seite, klein
+; oben rechts auf den uebrigen. Die Bilder erzeugt
+; werkzeuge\mache_installer_bilder.py aus demselben Logo wie das Symbol.
+; NUR WENN SIE DA SIND: fehlen sie (jemand baut aus einem alten Stand),
+; nimmt Inno Setup seine Standardbilder, statt den Bau abzubrechen.
+#if FileExists("installer_gross.bmp")
+WizardImageFile=installer_gross.bmp
+#endif
+#if FileExists("installer_klein.bmp")
+WizardSmallImageFile=installer_klein.bmp
+#endif
 OutputDir=dist
 OutputBaseFilename=EVE-Motor-Market-{#MyAppVersion}-setup
 Compression=lzma2
@@ -62,7 +74,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; \
 ; settings.json (mit client_id und Charakter-IDs), ledger.db (Handelsdaten)
 ; und .smoke_home. Die Pruefung aa222 in test_bestand_herkunft.py schlaegt
 ; an, wenn hier etwas anderes auftaucht.
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; onedir (emm866): gepackt wird der GANZE Build-Ordner aus dist\ -
+; die EXE landet wie bisher direkt in {app}, daneben _internal\.
+Source: "dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

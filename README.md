@@ -9,14 +9,14 @@ Industry and trading tool for EVE Online - for players who build and trade acros
 ## What it does
 
 - **Build** - full recipe tree down to ore and reactions, ME/TE from your own blueprints, multi build plans with several end products, invention with decryptor choice, a run planner that spreads jobs across your characters, shopping list with order-book prices. Saved plans reserve their material in your build priority, so you never buy the same stack twice; an industry jobs page shows every character's slots at a glance, build from stock shows what your hangars can build right now, and stock locations shows where your plan material actually sits.
-- **Trade** - trade journal with real profit after your own tax, fees and freight; daytrade, swing and regional deal finders; order update shows which orders were undercut; a firesales tab scans public contracts for items priced below market, and a price-vs-90-day-average column flags market scams.
+- **Trade** - trade journal with real profit after your own tax, fees and freight; daytrade, swing and regional deal finders; order update shows which orders were undercut; a firesales tab scans public contracts for items priced below market, a price-vs-90-day-average column flags market scams, a doctrines tab shows whether your alliance fits are buyable at your hub and builds what is missing, and market stats ranks your regions and their top traded items.
 - **Multi-character** - wallets, orders, assets, skills and industry jobs of all linked characters in one view.
 
 ![A build plan: recipe tree with buy-or-build per item, build cost, total profit and margin](docs/screenshot-build-plan.png)
 
 ## Install
 
-Download the `.exe` from [Releases](https://github.com/PeanutMotor/eve-motor-market/releases) and run it. Windows warns on first launch because the file is not code-signed - click "More info", then "Run anyway". A one-time setup links your first character and downloads the recipe data (about 140 MB).
+Download `EVE-Motor-Market-<version>-setup.exe` from [Releases](https://github.com/PeanutMotor/eve-motor-market/releases) and run it - no admin rights needed; a newer version installs over the old one. Windows warns on first launch because the file is not code-signed - click "More info", then "Run anyway". A one-time setup links your first character and downloads the recipe data (about 140 MB).
 
 ## Your data
 
@@ -28,8 +28,8 @@ Full source in this repository and as a zip on every release (GPL-3.0). `eve_tra
 
 The calculations are guarded, not trusted:
 
-- two test suites, 5'442 and 2'463 checks, run with `python pruefe.py`
-- a mutation harness (`tests/rotprobe.py`) that breaks the code on purpose, 2'134 mutations, to prove the checks catch a regression
+- two test suites, 7'883 and 3'275 checks, run with `python pruefe.py`
+- a mutation harness (`tests/rotprobe.py`) that breaks the code on purpose, 2'932 mutations, to prove the checks catch a regression
 - source-order lint, `pyflakes`, and six scanners that keep the English and German texts in step
 
 ## Community

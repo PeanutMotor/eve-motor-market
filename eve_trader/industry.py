@@ -11,6 +11,7 @@ structure, rigs and system index.
 """
 import csv
 import io
+import re
 import json
 import math
 import os
@@ -1566,9 +1567,22 @@ def buildable_category_options() -> list:
 RIGS_KAT = "rigs"
 
 
+# "Rig" ALS WORT, nicht als Praefix (emm843, Nutzer: "mit Rigs meine
+# ich alle Rigs"). GEMESSEN an der SDE: das alte `startswith("Rig ")`
+# fing die 14 Ship-Rig-Gruppen (Kategorie 7, "Rig Armor", ...), aber
+# KEINE der 86 Structure-Rig-Gruppen (Kategorie 66, "Structure Combat
+# Rig L - ...", "Outpost Conversion Rigs"). Die Wortgrenze fängt beide;
+# "Rigging" (die Skill-Gruppe, Kategorie 16) und "Frigate" matchen
+# NICHT. Die Blueprint-Gruppen ("Rig Blueprint", Kategorie 9) matchen
+# zwar hier, werden aber von den beiden Aufrufern ausgeschlossen:
+# rig_gruppen() ueber den products-Join, rig_group_ids_all() ueber
+# die Kategorie.
+_RIG_WORT = re.compile(r"(^|\s)Rigs?($|[\s,:])")
+
+
 def ist_rig_gruppe(name) -> bool:
     # de_scan4: aus - SDE-Gruppenname, kein Anzeigetext
-    return str(name or "").startswith("Rig ")
+    return bool(_RIG_WORT.search(str(name or "")))
     # de_scan4: an
 
 
@@ -1621,8 +1635,14 @@ def rig_group_ids_all() -> set:
         return set()
     try:
         with _conn() as c:
+            # OHNE Blaupausen-Gruppen (Kategorie 9): "Rig Blueprint" und
+            # "Structure Rig Blueprint" matchen das Rig-Wort, sind aber
+            # keine Rigs - der products-Join, der sie in rig_gruppen()
+            # heraushaelt, fehlt hier absichtlich (emm843).
             return {r["group_id"] for r in c.execute(
-                "SELECT group_id, name FROM group_name")
+                "SELECT DISTINCT gn.group_id, gn.name FROM group_name gn "
+                "JOIN item_cat ic ON ic.group_id=gn.group_id "
+                "WHERE ic.category_id != 9")
                 if ist_rig_gruppe(r["name"])}
     except Exception:
         return set()
@@ -1648,8 +1668,16 @@ def market_category_options() -> list:
     RIGS_KAT-Logik wie bp_kategorien_zeigen in My Blueprints, Nutzer-Wunsch
     29.09.2026 dort war derselbe: "Category Modules gewaehlt, da werden aber
     Rigs aufgelistet")."""
-    opts = list(category_options())
-    if rig_group_ids_all():
+    return mit_rigs_eintrag(category_options())
+
+
+def mit_rigs_eintrag(opts) -> list:
+    """Haengt den konsolidierten "Rigs"-Eintrag an eine Kategorienliste
+    an und sortiert alphabetisch - EINE Stelle fuer alle vier Filter
+    (Daytrade, Swing, Regional, Industrie; emm843). Ohne SDE (keine
+    Rig-Gruppen auffindbar) bleibt die Liste unveraendert."""
+    opts = list(opts)
+    if opts and rig_group_ids_all():
         opts.append((RIGS_KAT, "Rigs"))
     return sorted(opts, key=lambda o: str(o[1]).lower())
 
@@ -3209,6 +3237,12 @@ class Recipes:
         self.bp_materials = {}     # (blueprint_id, activity_id) -> [(mat_id, qty)]
         self.reaction_products = set()
         self.invention_for_bpc = {}  # t2_bpc_id -> (t1_bp, runs, prob, [(dc,qty)])
+        self.invention_quellen = {}  # bpc_id -> [(quelle, runs, prob, mats)],
+                                     # ergiebigste (runs*prob) zuerst (emm826)
+        self.relic_quellen = set()   # Invention-Quellen, die KEIN Blueprint
+                                     # sind (Ancient Relics, Kategorie 34) -
+                                     # sie werden je Versuch VERBRAUCHT und
+                                     # muessen gekauft werden (emm826)
         self.invention_copy_mats = {}  # t2_bpc_id -> [(mat,qty)] fuers KOPIEREN (je Versuch)
         self.activity_time = {}      # (blueprint_id, activity_id) -> base time (s)
         self.activity_max_runs = {}  # (blueprint_id, activity_id) -> max Runs/Job
@@ -3230,7 +3264,15 @@ class Recipes:
             except Exception:
                 published = set()
             use_pub = len(published) > 1000
-            inv_products = {}   # t2_bpc -> (t1_bp, runs)
+            # Ancient Relics (Kategorie 34) als Quell-Erkennung fuer T3:
+            # sie sind published (stehen in item_cat), aber keine Blueprints.
+            relics = set()
+            try:
+                relics = {row["type_id"] for row in c.execute(
+                    "SELECT type_id FROM item_cat WHERE category_id=34")}
+            except Exception:
+                relics = set()
+            inv_products = {}   # bpc -> [(quelle_bp, runs)] - LISTE (emm826)
             for r in c.execute("SELECT * FROM products"):
                 if use_pub and r["blueprint_id"] not in published:
                     continue     # unveröffentlichter Legacy-Blueprint
@@ -3243,10 +3285,19 @@ class Recipes:
                     if act == REACTION:
                         self.reaction_products.add(pid)
                 elif act == INVENTION:
-                    inv_products[pid] = (r["blueprint_id"], r["quantity"] or 1)
+                    # ALLE Quellen sammeln (emm826): T2-BPCs haben genau eine
+                    # (den T1-Blueprint), T3-BPCs DREI (die Relic-Qualitaeten
+                    # Intact/Malfunctioning/Wrecked). Vorher ueberschrieb ein
+                    # Dict-Eintrag die vorigen und behielt willkuerlich die
+                    # zuletzt gelesene Quelle - GEMESSEN die schlechteste
+                    # (Wrecked, 3 Runs/14 % statt Intact 20 Runs/26 %).
+                    inv_products.setdefault(pid, []).append(
+                        (r["blueprint_id"], r["quantity"] or 1))
             probs = {}
             for r in c.execute("SELECT * FROM probabilities WHERE activity_id=?", (INVENTION,)):
-                probs[r["product_id"]] = r["probability"]
+                # Je (Quelle, Produkt) - nur je Produkt ueberschrieb bei drei
+                # Relic-Quellen und liess alle mit derselben Chance rechnen.
+                probs[(r["blueprint_id"], r["product_id"])] = r["probability"]
             for r in c.execute("SELECT * FROM materials"):
                 key = (r["blueprint_id"], r["activity_id"])
                 self.bp_materials.setdefault(key, []).append(
@@ -3261,11 +3312,19 @@ class Recipes:
                     self.activity_max_runs[(r["blueprint_id"], r["activity_id"])] = mr or 0
             except Exception:
                 pass
-            # assemble invention info keyed by the produced T2 BPC
-            for t2_bpc, (t1_bp, runs) in inv_products.items():
-                datacores = self.bp_materials.get((t1_bp, INVENTION), [])
-                prob = probs.get(t2_bpc, 0.0)
-                if prob > 0 and datacores:
+            # assemble invention info keyed by the produced BPC. Je BPC ALLE
+            # Quellen (emm826): invention_for_bpc behaelt sein 4-Tupel-Format
+            # (35 Leser im Projekt) und zeigt auf die ERGIEBIGSTE Quelle
+            # (runs*prob - bei T3 Intact, 20 Runs/26 %); die Wahl einer
+            # anderen Relic-Qualitaet laeuft ueber invention_quellen +
+            # invention_quelle_fuer_bp() (EINE Stelle, wie decryptor_fuer_bp).
+            for t2_bpc, _qliste in inv_products.items():
+                eintraege = []
+                for t1_bp, runs in _qliste:
+                    datacores = self.bp_materials.get((t1_bp, INVENTION), [])
+                    prob = probs.get((t1_bp, t2_bpc), 0.0)
+                    if not (prob > 0 and datacores):
+                        continue
                     # KOPIER-MATERIAL GEHOERT DAZU (Nutzer 29.09.2026: "hast du
                     # gewusst, dass Mobile Warp Disruptors noch zusaetzlich
                     # Materialien brauchen, um Blueprint Copys zu machen? ...
@@ -3278,11 +3337,19 @@ class Recipes:
                     # die Datacores. Hier angehaengt, damit JEDE Stelle, die
                     # Datacores kennt (Kosten, Einkaufsliste, Invention-Reiter,
                     # Decryptor-Wahl), es ohne zweite Rechnung mitnimmt.
+                    # (Relics haben keine Kopier-Aktivitaet -> _cp bleibt leer.)
                     _cp = list(self.bp_materials.get((t1_bp, COPYING), []) or [])
-                    if _cp:
-                        self.invention_copy_mats[t2_bpc] = _cp
-                    self.invention_for_bpc[t2_bpc] = (
-                        t1_bp, runs, prob, list(datacores) + _cp)
+                    eintraege.append((t1_bp, runs, prob,
+                                      list(datacores) + _cp, _cp))
+                    if t1_bp in relics:
+                        self.relic_quellen.add(t1_bp)
+                if not eintraege:
+                    continue
+                eintraege.sort(key=lambda e: e[1] * e[2], reverse=True)
+                self.invention_quellen[t2_bpc] = [e[:4] for e in eintraege]
+                self.invention_for_bpc[t2_bpc] = eintraege[0][:4]
+                if eintraege[0][4]:
+                    self.invention_copy_mats[t2_bpc] = eintraege[0][4]
 
     def is_manufactured(self, type_id) -> bool:
         """True only for real MANUFACTURING end-products. Excludes reaction-only
@@ -3579,7 +3646,9 @@ def build_cost(type_id, price_fn, recipes: Recipes, opts: dict,
     # verschwinden. Am Rueckgabewert aendert das nichts.
     _inv_override = bp_id in (opts.get("inv_manual_override") or {})
     if activity == MANUFACTURING and opts.get("invention", True):
-        inv = recipes.invention_for_bpc.get(bp_id)
+        # EINE Stelle fuer die Quellen-Wahl (emm826): bei T3 entscheidet die
+        # Relic-Qualitaet ueber Runs/Chance - und das Relic selbst kostet.
+        inv = invention_quelle_fuer_bp(bp_id, recipes, opts)
         if inv:
             t1_bp, runs, prob, datacores = inv
             dc_cost = 0.0
@@ -3587,6 +3656,8 @@ def build_cost(type_id, price_fn, recipes: Recipes, opts: dict,
                 p = price_fn(dc_id)
                 if p:
                     dc_cost += p * dc_qty
+            if t1_bp in (getattr(recipes, "relic_quellen", None) or set()):
+                dc_cost += (price_fn(t1_bp) or 0)   # ein Relic je Versuch
             # EINE Stelle fuer die Decryptor-Wahl (emm455).
             _dv = decryptor_fuer_bp(bp_id, opts)
             prob *= _dv[0]
@@ -3879,10 +3950,13 @@ def build_tree(type_id, price_fn, recipes: Recipes, opts: dict,
     mat_per_unit = run_cost / prod_qty if prod_qty else run_cost
     inv_per_unit = 0.0
     if activity == MANUFACTURING and opts.get("invention", True):
-        inv = recipes.invention_for_bpc.get(bp_id)
+        # EINE Stelle fuer die Quellen-Wahl (emm826), Paritaet zu build_cost.
+        inv = invention_quelle_fuer_bp(bp_id, recipes, opts)
         if inv:
             _t1_bp, runs, prob, datacores = inv
             dc_cost = sum((price_fn(dc_id) or 0) * dc_qty for dc_id, dc_qty in datacores)
+            if _t1_bp in (getattr(recipes, "relic_quellen", None) or set()):
+                dc_cost += (price_fn(_t1_bp) or 0)   # ein Relic je Versuch
             # Parität zu build_cost (dort seit dem T2-Boden-Fix vorhanden,
             # hier fehlte es - die Detailansicht zeigte sonst höhere
             # Invention-Kosten als der Scan): per-Item-Decryptor +
@@ -4150,7 +4224,7 @@ def _inv_cost(bp_id, runs, recipes, price_fn, opts, mats_out=None):
         return 0.0
     if not opts.get("invention", True):
         return 0.0
-    inv = recipes.invention_for_bpc.get(bp_id)
+    inv = invention_quelle_fuer_bp(bp_id, recipes, opts)
     if not inv:
         return 0.0
     adj = opts.get("adjusted_prices") or {}
@@ -4161,11 +4235,18 @@ def _inv_cost(bp_id, runs, recipes, price_fn, opts, mats_out=None):
             return v
         return adj.get(t, 0.0) or 0.0
     _t1, inv_runs, prob, datacores = inv
+    # T3 (emm826): die Quelle ist ein Ancient Relic, KEIN Blueprint - es wird
+    # je Versuch VERBRAUCHT und muss gekauft werden (der Hauptkostenblock der
+    # T3-Invention; Datacores sind daneben Kleingeld). Bei T2 kostet die
+    # Quelle nichts: vom eigenen T1-BPO wird nur kopiert.
+    _relic = _t1 in (getattr(recipes, "relic_quellen", None) or set())
     # Offizielle EVE-Formel: SkillModifier VOR dem Decryptor auf die Basis-
     # Erfolgschance anwenden (opts["inv_skill_modifier"][bp_id], vom
     # Invention-Tab/UI berechnet - 1.0, wenn keine Skill-Daten vorhanden).
     prob = min(1.0, prob * (opts.get("inv_skill_modifier") or {}).get(bp_id, 1.0))
     dc = sum(_p(d) * q for d, q in datacores)
+    if _relic:
+        dc += _p(_t1)       # ein Relic je Versuch, wie der Decryptor
     # Per-Item-Decryptor (aus dem Invention-Tab, opts["inv_decryptor_map"]) hat
     # Vorrang vor dem einen globalen Decryptor-Setting - so kann jedes Item
     # seinen eigenen Decryptor nutzen statt nur EINEN für den ganzen Bauplan.
@@ -4202,6 +4283,10 @@ def _inv_cost(bp_id, runs, recipes, price_fn, opts, mats_out=None):
             mats_out[_d] = mats_out.get(_d, 0) + _n * int(_q)
         if dcy:
             mats_out[dcy] = mats_out.get(dcy, 0) + _n
+        if _relic:
+            # Das Relic gehoert auf die Einkaufsliste (eins je Versuch) -
+            # bepreist ist es oben in `dc`, hier nur die Menge (s. ACHTUNG).
+            mats_out[_t1] = mats_out.get(_t1, 0) + _n
     # JOBGEBUEHREN Kopieren + Invention (Sitzung 9, Formel oben in
     # science_job_fee verifiziert). Beide Aktivitaeten skalieren mit der
     # Versuchszahl: 1 Invention-Versuch verbraucht 1 T1-Kopie-Run, also
@@ -4225,7 +4310,10 @@ def _inv_cost(bp_id, runs, recipes, price_fn, opts, mats_out=None):
         if _idx_inv is not None:
             fee += science_job_fee(_eiv_run(bp_id), attempts,
                                    _idx_inv, _sb, _sx)
-        if _idx_cp is not None:
+        if _idx_cp is not None and not _relic:
+            # Bei T3 wird NICHT kopiert - das Relic wird direkt erfunden.
+            # (Die Gebuehr waere ueber die leere Fertigungs-EIV des Relics
+            # ohnehin 0, aber die Rechnung soll das WISSEN, nicht erraten.)
             fee += science_job_fee(_eiv_run(_t1), attempts,
                                    _idx_cp, _sb, _sx)
     return attempts * dc + fee
@@ -4754,11 +4842,29 @@ def refine_plan_with_ladder(plan, orderbooks, price_fn=None):
     flat_cost = float(plan.get("total_cost", 0.0))
     rows = []
     ladder_total = 0.0
+    # MATERIALIEN OHNE ORDERBUCH GEHEN ZUM FLACHPREIS IN DIE SUMME
+    # (emm842). Vorher gingen sie mit 0 hinein - und steckten zugleich
+    # VOLL in flat_cost. Beim Nutzer (Ishtar an einem Nullsec-Hub, das
+    # Moon-Goo ohne einzige Order) stand darum "Total markup -34.8 %
+    # (-35'145'192 ISK)": eine Ersparnis, die in Wahrheit ein Loch war -
+    # die beruhigende Richtung, also die gefaehrliche (Arbeitsregel 3).
+    # Kaufen muss man diese Materialien ja trotzdem, irgendwo; der
+    # Flachpreis ist die beste bekannte Schaetzung dafuer. GENAU SO
+    # macht es die Schwesterfunktion ladder_cost_curve seit jeher
+    # (ihr price_fn-Fallback) - diese hier hatte den Fallback nicht.
+    # Die ZEILE des Materials bleibt unveraendert ehrlich ("ladder_cost"
+    # NaN, has_orderbook False -> "No order book" im Fenster); nur die
+    # SUMME rechnet ihn mit und weist ihn getrennt aus, damit die
+    # Kopfzeile sagen kann, welcher Anteil NICHT vom Orderbuch kommt.
+    no_book_cost = 0.0
+    no_book_n = 0
+    unpriced_n = 0
     for tid, qty in buy.items():
         q = int(round(qty))
         if q < 1:
             continue
         ob = orderbooks.get(tid) or []
+        flat_unit = float(price_fn(tid)) if (price_fn and price_fn(tid) is not None) else None
         ladder_c, bought = buy_cost(ob, q)
         short = q - bought
         if short > 0 and ob:
@@ -4769,8 +4875,14 @@ def refine_plan_with_ladder(plan, orderbooks, price_fn=None):
             ladder_c += short * worst
         elif short > 0:
             ladder_c = float("nan")   # kein Orderbuch da -> nicht sch\u00e4tzbar
+            if flat_unit is not None:
+                no_book_cost += q * flat_unit
+                no_book_n += 1
+            else:
+                # Weder Orderbuch noch Flachpreis: die Summe ist dann
+                # UNVOLLSTAENDIG, und das muss der Aufrufer sagen koennen.
+                unpriced_n += 1
         ladder_total += ladder_c if ladder_c == ladder_c else 0.0  # NaN-sicher
-        flat_unit = float(price_fn(tid)) if (price_fn and price_fn(tid) is not None) else None
         rows.append({"type_id": tid, "qty": q, "ladder_cost": ladder_c,
                      "ladder_unit": (ladder_c / q) if (q and ladder_c == ladder_c) else None,
                      "flat_unit": flat_unit,
@@ -4781,12 +4893,17 @@ def refine_plan_with_ladder(plan, orderbooks, price_fn=None):
     # eigener Bau) bleiben vom flachen Plan \u00fcbernommen \u2013 nur der reine
     # Material-Einkauf wird durch die Ladder-Summe ersetzt.
     other_cost = flat_cost - float(plan.get("mat_cost", flat_cost))
-    total_cost = ladder_total + other_cost
+    total_cost = ladder_total + no_book_cost + other_cost
     rows.sort(key=lambda r: r["ladder_cost"] if r["ladder_cost"] == r["ladder_cost"]
               else -1.0, reverse=True)
+    # DAS DELTA IST JETZT FAIR: die Materialien ohne Orderbuch stehen
+    # auf BEIDEN Seiten zum Flachpreis und heben sich weg - uebrig
+    # bleibt der echte Orderbuch-Aufschlag der kaufbaren Materialien.
     delta = total_cost - flat_cost
     return {"total_cost": total_cost, "flat_cost": flat_cost, "delta": delta,
            "delta_pct": (delta / flat_cost * 100.0) if flat_cost else 0.0,
+           "no_book_cost": no_book_cost, "no_book_n": no_book_n,
+           "unpriced_n": unpriced_n,
            "rows": rows}
 
 
@@ -5368,6 +5485,86 @@ def decryptor_fuer_bp(bp_id, opts):
             opts.get("inv_decryptor_id"))
 
 
+def invention_quelle_fuer_bp(bp_id, recipes, opts):
+    """Welche Invention-QUELLE gilt fuer DIESE Blaupause? (emm826)
+
+    T2-BPCs haben genau eine Quelle (den T1-Blueprint); T3-BPCs entstehen
+    aus DREI Relic-Qualitaeten (GEMESSEN in der SDE: Intact 20 Runs/26 %,
+    Malfunctioning 10/21 %, Wrecked 3/14 % - gleiche Datacores). Erst die
+    Wahl je Item aus dem Invention-Tab (`opts["inv_relic_map"][bp_id]` =
+    type_id der Quelle), sonst die ergiebigste (runs*prob, erste der
+    sortierten Liste). EINE Stelle dafuer (Arbeitsregel 9), wie
+    decryptor_fuer_bp: jede Rechnung, die (quelle, runs, prob, mats)
+    entpackt, fragt HIER - sonst koennten Kosten und Versuchszahl von
+    verschiedenen Relics ausgehen. Rueckgabe im invention_for_bpc-Format
+    (4-Tupel) oder None, wenn das Item keine Invention braucht."""
+    quellen = (getattr(recipes, "invention_quellen", None) or {}).get(bp_id)
+    if not quellen:
+        return recipes.invention_for_bpc.get(bp_id)
+    gewaehlt = (opts.get("inv_relic_map") or {}).get(bp_id)
+    if gewaehlt:
+        for e in quellen:
+            if e[0] == gewaehlt:
+                return e
+    return quellen[0]
+
+
+def beste_relic_quellen(recipes, runs_je_bp, price_fn, opts):
+    """{bp_id: type_id} - je Blaupause mit MEHREREN Invention-Quellen die
+    GUENSTIGSTE (emm830, Nutzer-Entscheid "Billigste automatisch").
+
+    Warum nicht einfach die ergiebigste? GEMESSEN an echten Preisen: ein
+    Intact-Relic (20 Runs / 26 %) kostet ~20 Mio, ein Wrecked (3 / 14 %)
+    ~1,2 Mio - fuer EINEN Confessor sind das 82,8 Mio gegen 11,4 Mio
+    Invention. Welche Sorte gewinnt, entscheidet also der MARKT, nicht die
+    Ergiebigkeit; ein frisch geoeffneter T3-Plan stand deshalb mit -58 %
+    Marge da, obwohl -6,7 % moeglich waren (Nutzer-Praxislauf 05.11.2026).
+
+    Verglichen wird ueber `_inv_cost` - nicht ueber den ganzen Plan: die
+    Quellen-Wahl aendert NUR die Invention (Runs je Erfolg, Erfolgschance,
+    Preis des verbrauchten Relics). ME und TE der erfundenen Kopie haengen
+    am Decryptor, nicht an der Relic-Sorte (invention_outcome), und die
+    Materialliste des Produkts bleibt unberuehrt. Ein voller production_plan
+    je Sorte kaeme also auf dieselbe Rangfolge und kostet ein Vielfaches.
+
+    runs_je_bp: {bp_id: benoetigte Fertigungs-Runs} - aus dem Plan.
+    `opts["inv_relic_fest"]`: bp_ids, deren Wahl der Nutzer selbst getroffen
+    hat (oder die aus einem gespeicherten Plan kommen) - die bleiben, wie
+    sie sind. Ebenso Items mit "Eigene BPC" (inv_manual_override), die gar
+    nicht erfunden werden."""
+    aus = {}
+    quellen_alle = getattr(recipes, "invention_quellen", None) or {}
+    fest = set(opts.get("inv_relic_fest") or ())
+    override = opts.get("inv_manual_override") or {}
+    for bp_id, quellen in quellen_alle.items():
+        if len(quellen) < 2 or bp_id in fest or bp_id in override:
+            continue
+        runs = int(runs_je_bp.get(bp_id, 0) or 0)
+        if runs <= 0:
+            continue
+        bester, bester_preis = None, None
+        for eintrag in quellen:
+            probe = dict(opts)
+            karte = dict(opts.get("inv_relic_map") or {})
+            karte[bp_id] = eintrag[0]
+            probe["inv_relic_map"] = karte
+            try:
+                kosten = _inv_cost(bp_id, runs, recipes, price_fn, probe)
+            except Exception:
+                continue
+            # Eine Quelle ohne Preis (kein Markt, kein Adjusted Price) sieht
+            # GRATIS aus und wuerde jede echte unterbieten - genau die
+            # beruhigende Richtung, vor der Arbeitsregel 3 warnt. Solche
+            # Quellen kommen nur zum Zug, wenn es keine bepreiste gibt.
+            if (price_fn(eintrag[0]) or 0) <= 0 and bester is not None:
+                continue
+            if bester_preis is None or kosten < bester_preis:
+                bester, bester_preis = eintrag[0], kosten
+        if bester is not None:
+            aus[bp_id] = int(bester)
+    return aus
+
+
 def _invention_me_pct(bp_id, recipes, opts):
     """ECHTE ME einer invented BPC (2% Basis-Invention-ME + Decryptor-Bonus)
     statt der geschätzten Kategorie-/Blueprint-ME - eine invented BPC hat NIE
@@ -5385,7 +5582,7 @@ def _invention_me_pct(bp_id, recipes, opts):
         return None
     if not opts.get("invention", True):
         return None
-    inv = recipes.invention_for_bpc.get(bp_id)
+    inv = invention_quelle_fuer_bp(bp_id, recipes, opts)
     if not inv:
         return None
     _t1_bp, base_runs, base_prob, _datacores = inv
@@ -5700,20 +5897,36 @@ def invention_best_decryptor_by_real_cost(type_id, qty, price_fn, recipes, opts,
     komponente sein, deren Decryptor-Wahl über production_plan korrekt durch
     den ganzen Baum propagiert).
 
+    T3 (emm827): hat die Blaupause MEHRERE Invention-Quellen
+    (recipes.invention_quellen, die drei Relic-Qualitaeten), wird jede
+    Kombination Quelle x Decryptor durchgerechnet - welche Qualitaet am
+    billigsten baut, haengt an den Relic-Marktpreisen (gemessen: bei teurem
+    Intact kann Wrecked trotz 3 Runs/14 % gewinnen) und laesst sich nicht
+    vorab entscheiden. Bei einer Quelle (T2) bleibt alles wie bisher.
+
     Rückgabe: nach total_cost sortierte Liste (günstigster/gewinnstärkster
-    zuerst) von {name, decryptor, total_cost}."""
+    zuerst) von {name, decryptor, relic, total_cost} - relic ist die
+    type_id der getesteten Quelle oder None (eine Quelle/T2)."""
+    _quellen = (getattr(recipes, "invention_quellen", None) or {}).get(bp_id) or []
+    _relics = [int(q[0]) for q in _quellen] if len(_quellen) > 1 else [None]
     out = []
-    for name, dv in (decryptor_list or []):
-        test_opts = dict(opts)
-        dm = dict(opts.get("inv_decryptor_map") or {})
-        dm[bp_id] = dv
-        test_opts["inv_decryptor_map"] = dm
-        try:
-            test_plan = production_plan(type_id, qty, price_fn, recipes, test_opts)
-            total_cost = float(test_plan["total_cost"]) if test_plan else float("inf")
-        except Exception:
-            total_cost = float("inf")
-        out.append({"name": name, "decryptor": dv, "total_cost": total_cost})
+    for rel in _relics:
+        for name, dv in (decryptor_list or []):
+            test_opts = dict(opts)
+            dm = dict(opts.get("inv_decryptor_map") or {})
+            dm[bp_id] = dv
+            test_opts["inv_decryptor_map"] = dm
+            if rel is not None:
+                rm = dict(opts.get("inv_relic_map") or {})
+                rm[bp_id] = rel
+                test_opts["inv_relic_map"] = rm
+            try:
+                test_plan = production_plan(type_id, qty, price_fn, recipes, test_opts)
+                total_cost = float(test_plan["total_cost"]) if test_plan else float("inf")
+            except Exception:
+                total_cost = float("inf")
+            out.append({"name": name, "decryptor": dv, "relic": rel,
+                        "total_cost": total_cost})
     out.sort(key=lambda r: r["total_cost"])
     return out
 

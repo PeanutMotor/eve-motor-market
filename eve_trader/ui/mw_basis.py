@@ -177,10 +177,15 @@ class KartenSortierer(QObject):
     # jeden Knopf darin - genau das sah man. Mit `#Name` gilt es fuer das eine
     # Widget, das diesen Objektnamen traegt.
     OBJEKTNAME = "SortierKarte"
-    _CSS_RUHE = "#" + OBJEKTNAME + "{border:1px solid transparent; border-radius:8px;}"
-    _CSS_HOVER = "#" + OBJEKTNAME + "{{border:1px solid {a}; border-radius:8px;}}"
+    # KEINE f-Strings: _CSS_HOVER/_CSS_ZIEHT sind format()-Vorlagen,
+    # dort waere {theme.RAD_GROSS} ein Feldname und floege als KeyError
+    # auf. Die Rundung wird deshalb angesetzt, nicht eingesetzt (emm885).
+    _CSS_RUHE = ("#" + OBJEKTNAME + "{border:1px solid transparent; "
+                 "border-radius:" + theme.RAD_GROSS + ";}")
+    _CSS_HOVER = ("#" + OBJEKTNAME + "{{border:1px solid {a}; "
+                  "border-radius:" + theme.RAD_GROSS + ";}}")
     _CSS_ZIEHT = ("#" + OBJEKTNAME + "{{border:1px solid {a}; "
-                  "border-radius:8px; background:{f};}}")
+                  "border-radius:" + theme.RAD_GROSS + "; background:{f};}}")
 
     def __init__(self, layout, scrollbereich, schluessel_von, beim_ablegen,
                  akzent=None, flaeche=None, parent=None):
@@ -483,11 +488,12 @@ class RasterSortierer(KartenSortierer):
             if zustand == "zieht":
                 widget.setStyleSheet(
                     "#" + _n + "{border:1px solid " + self._akzent
-                    + "; border-radius:8px; background:" + self._flaeche + ";}")
+                    + "; border-radius:" + theme.RAD_GROSS
+                    + "; background:" + self._flaeche + ";}")
             else:
                 widget.setStyleSheet(
                     "#" + _n + "{border:1px solid " + self._akzent
-                    + "; border-radius:8px;}")
+                    + "; border-radius:" + theme.RAD_GROSS + ";}")
         except Exception:
             pass
 
@@ -958,17 +964,35 @@ class IskKompaktEdit(QLineEdit):
 
     @staticmethod
     def _text_aus(v):
-        av = abs(v)
-        if av >= 1e9:
-            s = f"{v / 1e9:.2f}".rstrip("0").rstrip(".")
-            return f"{s}B"
-        if av >= 1e6:
-            s = f"{v / 1e6:.2f}".rstrip("0").rstrip(".")
-            return f"{s}m"
-        if av >= 1e3:
-            s = f"{v / 1e3:.2f}".rstrip("0").rstrip(".")
-            return f"{s}k"
-        return f"{v:.0f}"
+        return isk_kurz(v)
+
+
+def isk_kurz(v):
+    """1234567 -> '1.23m', 7641716080 -> '7.64B' - die EVE-uebliche
+    Kurzschreibweise. EINE Stelle (emm860, Nutzer: "Kompakte
+    ISK-Notation ... 44.3m statt 44,330,701"); vorher lebte die Logik
+    nur als _text_aus der ISK-Spinner, jetzt nutzen auch die
+    Market-Stocks-Anzeigen sie. Exakte Zahlen gehoeren in den Tooltip,
+    nicht in die Zelle."""
+    av = abs(v)
+    # BILLIONEN AUCH KURZ (emm895). Vorher hoerte die Skala bei B auf,
+    # und die Marktstatistik zeigte "28432.89B" - genauso unlesbar wie
+    # die 14-stellige Zahl davor (Nutzer 10.11.2026: "weniger zahlen").
+    # Ueber eine Region summieren sich 90 Tage Handel muehelos in die
+    # Billionen; T ist in EVE die uebliche naechste Stufe.
+    if av >= 1e12:
+        s = f"{v / 1e12:.2f}".rstrip("0").rstrip(".")
+        return f"{s}T"
+    if av >= 1e9:
+        s = f"{v / 1e9:.2f}".rstrip("0").rstrip(".")
+        return f"{s}B"
+    if av >= 1e6:
+        s = f"{v / 1e6:.2f}".rstrip("0").rstrip(".")
+        return f"{s}m"
+    if av >= 1e3:
+        s = f"{v / 1e3:.2f}".rstrip("0").rstrip(".")
+        return f"{s}k"
+    return f"{v:.0f}"
 
 
 class IskGroupedSpin(QSpinBox):

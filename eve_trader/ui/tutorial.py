@@ -238,7 +238,7 @@ class TutorialFenster(QFrame):
         # unter BG (#080D16); das Gold stammt aus dem Programmsymbol.
         self.setStyleSheet(
             f"#TutorFrame{{background:#03060B; "
-            f"border:2px solid {theme.AMBER}; border-radius:8px;}}")
+            f"border:2px solid {theme.AMBER}; border-radius:{theme.RAD_GROSS};}}")
         self.setFixedWidth(380)
 
         v = QVBoxLayout(self)
@@ -381,7 +381,7 @@ class TutorialFenster(QFrame):
             try:
                 _r.setStyleSheet(
                     f"background:transparent; border:3px solid {_farbe}; "
-                    f"border-radius:6px;")
+                    f"border-radius:{theme.RAD};")
                 _r.raise_()
             except RuntimeError:
                 self._blink.stop()

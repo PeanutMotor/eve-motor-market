@@ -52,12 +52,13 @@ def _einheitlich(text):
 _QSS_REGEL = (
     "\nQToolTip{{ font-family:{font}; font-size:{px}px; font-weight:normal; "
     "color:{fg}; background:{bg}; border:1px solid {rand}; "
-    "border-radius:6px; padding:7px 10px; }}")
+    "border-radius:{rad}; padding:7px 10px; }}")
 
 
 def _regel():
     return _QSS_REGEL.format(font=theme.FONT, px=SCHRIFT_PX, fg=theme.TEXT,
-                             bg=theme.PANEL2, rand=theme.CYAN)
+                             bg=theme.PANEL2, rand=theme.CYAN,
+                             rad=theme.RAD)          # emm885
 
 
 _original_tip = QWidget.setToolTip

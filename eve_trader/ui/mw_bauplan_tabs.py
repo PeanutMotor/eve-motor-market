@@ -168,7 +168,7 @@ class JobZeile(QFrame):
         self.tag.setAlignment(Qt.AlignCenter)
         self.tag.setMinimumWidth(40)
         self.tag.setStyleSheet(
-            f"color:{farbe}; border:1px solid {farbe}; border-radius:3px; "
+            f"color:{farbe}; border:1px solid {farbe}; border-radius:{theme.RAD_KLEIN}; "
             f"padding:0px 3px; font-size:{theme.FS_SMALL}; font-weight:700; "
             f"background:transparent;")
         h.addWidget(self.tag)
@@ -181,7 +181,7 @@ class JobZeile(QFrame):
             self.corp_tag.setAlignment(Qt.AlignCenter)
             self.corp_tag.setStyleSheet(
                 f"color:{theme.AMBER}; border:1px solid {theme.AMBER}; "
-                f"border-radius:3px; padding:0px 3px; "
+                f"border-radius:{theme.RAD_KLEIN}; padding:0px 3px; "
                 f"font-size:{theme.FS_SMALL}; font-weight:700; "
                 f"background:transparent;")
             h.addWidget(self.corp_tag)
@@ -351,6 +351,16 @@ class KartenRaster(QWidget):
 
 
 class BauplanTabs:
+    # STOCK LOCATIONS NACH SORTEN, NICHT NACH MENGE (emm912, Nutzer
+    # 14.11.2026). Ein Ort mit 50+ verschiedenen Items ist ein echtes
+    # Lager und startet beim ersten Auftauchen AN; darunter AUS (wie seit
+    # emm905). Ein Ort mit weniger als 2 Sorten ist ein "Kruemel" (ein
+    # Schiff, ein Vertrag) - der Knopf "Switch off crumb locations"
+    # schaltet solche Orte auf Wunsch ab. Klassenkonstanten, damit die
+    # Pruefung dieselbe Zahl liest wie der Code.
+    LAGER_ARTEN_AN = 50
+    LAGER_ARTEN_MINI = 2
+
     def _inv_alle_besten(self):
         """"Best Decryptor for all Blueprints" (Nutzer 26.09.2026).
 
@@ -379,12 +389,26 @@ class BauplanTabs:
                 _dv = next((v for n, v in _dl if n == _name), None)
                 if _dv is None:
                     continue
-                if self._bd_decryptor_map.get(_bp) != _name:
+                # T3 (emm827): der Gewinner traegt ggf. auch die beste
+                # Relic-Qualitaet (die Rangliste rechnet Quelle x Decryptor).
+                _rel = _ranked[0].get("relic")
+                if (self._bd_decryptor_map.get(_bp) != _name
+                        or (_rel is not None
+                            and (getattr(self, "_bd_relic_map", None) or {})
+                            .get(int(_bp)) != int(_rel))):
                     _geaendert += 1
                 self._bd_dec_bestaetigt = set(getattr(self, "_bd_dec_bestaetigt", None) or ())
                 self._bd_dec_bestaetigt.add(int(_bp))
                 self._bd_decryptor_map[_bp] = _name
                 self._bd_opts.setdefault("inv_decryptor_map", {})[_bp] = _dv
+                if _rel is not None:
+                    self._bd_relic_map = getattr(self, "_bd_relic_map", None) or {}
+                    self._bd_relic_map[int(_bp)] = int(_rel)
+                    self._bd_opts.setdefault("inv_relic_map", {})[int(_bp)] = int(_rel)
+                    # Per Knopf gewaehlt -> gilt als bestaetigt (emm830).
+                    self._bd_relic_bestaetigt = set(
+                        getattr(self, "_bd_relic_bestaetigt", None) or ())
+                    self._bd_relic_bestaetigt.add(int(_bp))
         finally:
             _QA.restoreOverrideCursor()
         _cb = getattr(self, "_bd_full_rebuild", None)
@@ -1385,8 +1409,9 @@ class BauplanTabs:
         v.setSpacing(8)
         kopf = QHBoxLayout(); kopf.setSpacing(10)
         titel = QLabel(t("STOCK LOCATIONS"))
+        # AMBER WIE JEDE ANDERE UEBERSCHRIFT (emm918, Nutzer 14.11.2026).
         titel.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
-                            f"color:{theme.GREEN};")
+                            f"color:{theme.AMBER};")
         titel.setToolTip(t(
             "Where the material of your saved, frozen build plans is lying: "
             "one card per station or structure, per item the character (or "
@@ -1459,7 +1484,7 @@ class BauplanTabs:
         self._lager_warn_lbl.setWordWrap(True)
         self._lager_warn_lbl.setStyleSheet(
             f"background:#3A1A18; color:{theme.RED}; "
-            f"border:1px solid {theme.RED}; border-radius:6px; "
+            f"border:1px solid {theme.RED}; border-radius:{theme.RAD}; "
             f"padding:6px 10px; font-weight:700;")
         self._lager_warn_lbl.hide()
         v.addWidget(self._lager_warn_lbl)
@@ -1540,7 +1565,7 @@ class BauplanTabs:
         pv.setContentsMargins(10, 10, 10, 10); pv.setSpacing(6)
         _pt = QLabel(t("LOCATIONS"))
         _pt.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
-                          f"color:{theme.CYAN};")
+                          f"color:{theme.AMBER};")
         pv.addWidget(_pt)
         _ph = QLabel(t("Material at a location you switch off counts nowhere - "
                        "not in the shortfall either."))
@@ -1579,6 +1604,16 @@ class BauplanTabs:
         self._lager_struct_btn.clicked.connect(
             lambda: self._lager_nur_strukturen())
         pv.addWidget(self._lager_struct_btn)
+        # KRUEMEL-ORTE AUS (emm912): ein Knopf, nie automatisch.
+        self._lager_kruemel_btn = QPushButton(t("Switch off crumb locations"))
+        self._lager_kruemel_btn.setIcon(icons.icon("close"))
+        self._lager_kruemel_btn.setToolTip(t(
+            "Switches off every location that is on but holds fewer than "
+            "{k} different items - a single ship, one contract. Your other "
+            "switches stay as they are.").format(k=self.LAGER_ARTEN_MINI))
+        self._lager_kruemel_btn.clicked.connect(
+            lambda: self._lager_kruemel_knopf())
+        pv.addWidget(self._lager_kruemel_btn)
         pv.addStretch()
         body.addWidget(panel)
         v.addLayout(body, 1)
@@ -2143,8 +2178,104 @@ class BauplanTabs:
         self._run(Worker(job), done, fail, overlay=False)
 
     def _lager_aus(self):
-        """Die AUSgeschalteten Orte (Strings) - ein neuer Ort ist von selbst an."""
+        """Die AUSgeschalteten Orte (Strings).
+
+        SEIT emm905 STARTET EIN NEUER ORT AUS, nicht an - siehe
+        `_lager_neue_orte_aus`.
+        """
         return {str(x) for x in (self.settings.get("lager_orte_aus") or [])}
+
+    def _lager_neue_orte_aus(self, orte, arten=None):
+        """EIN NEU AUFGETAUCHTER ORT: AN ODER AUS NACH SORTEN (emm905/912).
+
+        emm905 (Nutzer 13.11.2026, "Stock Locations sind einfach neu
+        voellig zufaellig Stationen hinzugefuegt worden. das will ich so
+        nicht"): bis dahin war jeder neue Ort sofort AN und rechnete mit;
+        ein Kurier-Vertrag brachte Stationen herein, in denen nie etwas
+        gelagert wurde. Seitdem startete JEDER neue Ort AUS.
+
+        emm912 (Nutzer 14.11.2026): entschieden wird nach der Anzahl
+        VERSCHIEDENER Items (`lagerorte.arten_je_ort`), nicht nach der
+        Menge - 1 Mio Tritanium in einem Vertrag ist kein Lager, 60
+        Sorten in einer Station sind eines. Ab `LAGER_ARTEN_AN` Sorten
+        startet ein ERSTMALIG gesehener Ort AN, sonst AUS.
+
+        DIE ERSTE BEGEGNUNG IST DER HEIKLE FALL: wer MoMa schon benutzt,
+        darf nicht beim naechsten Start alles umgeschaltet vorfinden.
+        Darum wird beim allerersten Mal (Schluessel `lager_orte_bekannt`
+        fehlt) der IST-Zustand nur GEMERKT und nichts geschaltet.
+        Bekannte Orte - also alles, was der Nutzer selbst geschaltet hat -
+        werden NIE angefasst.
+
+        Rueckgabe: ([Namen neu AUS], [Namen neu AN]). Die Seite MELDET
+        beides; ein stilles Schalten waere derselbe Fehler wie vorher.
+        """
+        _arten = arten or {}
+        _ids = [str(o) for o, _n, _m in orte]
+        _roh = self.settings.get("lager_orte_bekannt")
+        if _roh is None:
+            # ERSTE BEGEGNUNG: nur merken, nichts schalten.
+            self.settings["lager_orte_bekannt"] = sorted(_ids)
+            config.save_settings_async(self.settings)
+            return [], []
+        _bekannt = {str(x) for x in (_roh or [])}
+        _neu = [(o, n) for o, n, _m in orte if str(o) not in _bekannt]
+        if not _neu:
+            return [], []
+        _aus = self._lager_aus()
+        _neu_aus, _neu_an = [], []
+        for o, n in _neu:
+            if int(_arten.get(int(o), 0) or 0) >= self.LAGER_ARTEN_AN:
+                _aus.discard(str(o))
+                _neu_an.append(n)
+            else:
+                _aus.add(str(o))
+                _neu_aus.append(n)
+        self.settings["lager_orte_aus"] = sorted(_aus)
+        self.settings["lager_orte_bekannt"] = sorted(_bekannt | set(_ids))
+        config.save_settings_async(self.settings)
+        return _neu_aus, _neu_an
+
+    def _lager_kruemel_aus(self, orte, arten):
+        """KRUEMEL-ORTE AUS (emm912): schaltet jeden EINGESCHALTETEN Ort mit
+        weniger als `LAGER_ARTEN_MINI` verschiedenen Items aus. Nur auf
+        Knopfdruck - nie beim Zeichnen, sonst ueberschriebe MoMa die
+        Schalter des Nutzers. Rueckgabe: Namen der abgeschalteten Orte."""
+        _arten = arten or {}
+        _aus = self._lager_aus()
+        _weg = [(o, n) for o, n, _m in orte
+                if str(o) not in _aus
+                and int(_arten.get(int(o), 0) or 0) < self.LAGER_ARTEN_MINI]
+        if not _weg:
+            return []
+        self.settings["lager_orte_aus"] = sorted(
+            _aus | {str(o) for o, _n in _weg})
+        config.save_settings_async(self.settings)
+        return [n for _o, n in _weg]
+
+    def _lager_kruemel_knopf(self):
+        """Knopf "Switch off crumb locations" (emm912)."""
+        from .. import lagerorte
+        res = self._lager_daten or {}
+        zeilen = res.get("zeilen") or []
+        orte = lagerorte.orte_mit_bestand(zeilen, res.get("ort_namen") or {})
+        if not orte:
+            self._flash_tip(t(
+                "No locations loaded yet - open Stock locations first."))
+            return
+        _weg = self._lager_kruemel_aus(orte, lagerorte.arten_je_ort(zeilen))
+        _aus = self._lager_aus()
+        for _ort, _b in (getattr(self, "_lager_schalter", None) or {}).items():
+            _an = str(_ort) not in _aus
+            _b.blockSignals(True)
+            _b.setChecked(_an)
+            _b.blockSignals(False)
+            self._jobs_schalter_stil(_b, _an)
+        self._lager_alle_btn_stand()
+        self._lager_zeichnen()
+        self._flash_tip(t(
+            "{n} location(s) with fewer than {k} different items switched "
+            "off.").format(n=len(_weg), k=self.LAGER_ARTEN_MINI))
 
     def _lager_ort_schalten(self, ort, an):
         aus = self._lager_aus()
@@ -2291,14 +2422,17 @@ class BauplanTabs:
         v.setContentsMargins(12, 10, 12, 10); v.setSpacing(5)
         kopf = QHBoxLayout(); kopf.setSpacing(8)
         name = QLabel(str(k["name"]))
-        name.setStyleSheet(f"color:{theme.RED if fehlt else theme.CYAN}; "
+        # ORTSNAME IN TEXTFARBE statt Cyan (emm918, Nutzer 14.11.2026:
+        # "Cyan blau tut mir ueberall in den Augen weh"). Rot bleibt fuer
+        # die Fehlt-Karte.
+        name.setStyleSheet(f"color:{theme.RED if fehlt else theme.TEXT}; "
                            f"font-weight:800; font-size:{theme.FS_H2};")
         name.setToolTip(str(k["name"]))
         kopf.addWidget(name, 1)
         if k["short"]:
             _b = QLabel(t("{n} items missing").format(n=k["short"]))
             _b.setStyleSheet(f"background:{theme.RED}; color:{theme.BG}; "
-                             f"font-weight:800; border-radius:4px; padding:1px 7px;")
+                             f"font-weight:800; border-radius:{theme.RAD_KLEIN}; padding:1px 7px;")
             kopf.addWidget(_b)
         v.addLayout(kopf)
         unter = QLabel(t("{i} item(s) \u00b7 {n} units").format(
@@ -2460,6 +2594,30 @@ class BauplanTabs:
         namen = res.get("namen") or {}
         ort_namen = res.get("ort_namen") or {}
         orte = lagerorte.orte_mit_bestand(zeilen, ort_namen)
+        # NEUE ORTE ZUERST AUSSCHALTEN (emm905) - VOR dem Bauen der
+        # Schalter, sonst stuenden sie beim ersten Zeichnen noch auf AN
+        # und haetten einmal mitgerechnet.
+        # SEIT emm912 NACH SORTEN: ab LAGER_ARTEN_AN verschiedenen Items
+        # startet ein neuer Ort AN, sonst AUS - beides wird gemeldet.
+        _neu905, _an912 = self._lager_neue_orte_aus(
+            orte, lagerorte.arten_je_ort(zeilen))
+        _meld912 = []
+        if _neu905:
+            _meld912.append(t(
+                "{n} new location(s) found and switched OFF: {namen}. "
+                "Switch them on in the list on the right if you want them "
+                "counted.").format(n=len(_neu905),
+                                   namen=", ".join(_neu905[:4])
+                                   + (" …" if len(_neu905) > 4 else "")))
+        if _an912:
+            _meld912.append(t(
+                "{n} new location(s) with at least {k} different items "
+                "found and switched ON: {namen}.").format(
+                    n=len(_an912), k=self.LAGER_ARTEN_AN,
+                    namen=", ".join(_an912[:4])
+                    + (" …" if len(_an912) > 4 else "")))
+        if _meld912:
+            self._lager_stand_lbl.setText(" ".join(_meld912))
         if [o for o, _n, _m in orte] != (self._lager_schalter_orte or None):
             self._lager_schalter_bauen(orte)
         aus = self._lager_aus()
@@ -3010,7 +3168,7 @@ class BauplanTabs:
         -> (Rahmen, Zahl-Label, Unter-Label)."""
         k = QFrame(); k.setObjectName("Card")
         k.setStyleSheet(f"QFrame#Card{{background:{theme.PANEL2}; "
-                        f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
+                        f"border:1px solid {theme.BORDER}; border-radius:{theme.RAD};}}")
         kv = QVBoxLayout(k)
         kv.setContentsMargins(12, 8, 12, 8); kv.setSpacing(3)
         tl = QLabel(titel)
@@ -3155,7 +3313,7 @@ class BauplanTabs:
         pv.setContentsMargins(10, 10, 10, 10); pv.setSpacing(6)
         _pt = QLabel(t("CHARACTERS"))
         _pt.setStyleSheet(f"font-size:13px; letter-spacing:2px; font-weight:800; "
-                          f"color:{theme.CYAN};")
+                          f"color:{theme.AMBER};")
         pv.addWidget(_pt)
         self._jobs_schalter_box = QVBoxLayout(); self._jobs_schalter_box.setSpacing(4)
         pv.addLayout(self._jobs_schalter_box)
@@ -3376,7 +3534,7 @@ class BauplanTabs:
         card._gruppen = gr
         kopf = QHBoxLayout(); kopf.setSpacing(8)
         name = QLabel(str(e["name"]))
-        name.setStyleSheet(f"color:{theme.CYAN}; font-weight:800; font-size:{theme.FS_H2};")
+        name.setStyleSheet(f"color:{theme.AMBER}; font-weight:800; font-size:{theme.FS_H2};")
         kopf.addWidget(name)
         kopf.addStretch()
         _n_fertig = sum(g["n"] for g in gr["ready"])
@@ -3392,7 +3550,7 @@ class BauplanTabs:
             _cb.setToolTip(t("{n} corp job(s) \u2013 they run on this "
                              "character's job slots.").format(n=_n_corp))
             _cb.setStyleSheet(f"color:{theme.AMBER}; border:1px solid {theme.AMBER}; "
-                              f"border-radius:4px; padding:1px 7px; "
+                              f"border-radius:{theme.RAD_KLEIN}; padding:1px 7px; "
                               f"font-size:{theme.FS_SMALL}; font-weight:800; "
                               f"background:transparent;")
             kopf.addWidget(_cb)
@@ -3406,11 +3564,11 @@ class BauplanTabs:
             # im Theme, nur der Rahmen wird gruen und dicker.
             card.setStyleSheet(
                 f"QFrame#Card{{background:{theme.PANEL}; "
-                f"border:2px solid {theme.GREEN}; border-radius:8px;}}")
+                f"border:2px solid {theme.GREEN}; border-radius:{theme.RAD_GROSS};}}")
             _badge = QLabel(f"\u2713 {_n_fertig}")
             _badge.setToolTip(t("\u2713 {n} ready to deliver").format(n=_n_fertig))
             _badge.setStyleSheet(f"background:{theme.GREEN}; color:{theme.BG}; "
-                                 f"font-weight:800; border-radius:4px; padding:1px 7px;")
+                                 f"font-weight:800; border-radius:{theme.RAD_KLEIN}; padding:1px 7px;")
             kopf.addWidget(_badge)
         v.addLayout(kopf)
         _fertig_je = {"mfg": 0, "react": 0, "sci": 0}
@@ -3500,7 +3658,7 @@ class BauplanTabs:
             pf.setStyleSheet(
                 f"QPushButton{{text-align:left; background:{theme.PANEL2}; "
                 f"color:{theme.TEXT}; border:1px solid {theme.BORDER}; "
-                f"border-radius:4px; padding:3px 8px; font-weight:700;}}"
+                f"border-radius:{theme.RAD_KLEIN}; padding:3px 8px; font-weight:700;}}"
                 f"QPushButton:hover{{background:{theme.CYAN_FILL}; "
                 f"border:1px solid {theme.CYAN}; color:{theme.CYAN};}}"
                 f"QPushButton:checked{{border:1px solid {theme.CYAN};}}"
@@ -3577,10 +3735,10 @@ class BauplanTabs:
         btn.setText(t("On") if an else t("Off"))
         btn.setStyleSheet(
             f"QPushButton{{background:{theme.GREEN}; color:{theme.BG}; font-weight:800; "
-            f"border:1px solid {theme.GREEN}; border-radius:4px; padding:2px 6px;}}"
+            f"border:1px solid {theme.GREEN}; border-radius:{theme.RAD_KLEIN}; padding:2px 6px;}}"
             if an else
             f"QPushButton{{background:transparent; color:{theme.MUTED}; "
-            f"border:1px solid {theme.BORDER}; border-radius:4px; padding:2px 6px;}}")
+            f"border:1px solid {theme.BORDER}; border-radius:{theme.RAD_KLEIN}; padding:2px 6px;}}")
 
     def _jobs_schalter_bauen(self, chars):
         """Eine Zeile je verlinktem Charakter: Name + An/Aus-Knopf."""
@@ -3795,7 +3953,7 @@ class BauplanTabs:
         _pf766.setStyleSheet(
             f"QPushButton{{text-align:left; background:{theme.PANEL2}; "
             f"color:{theme.AMBER}; border:1px solid {theme.AMBER}; "
-            f"border-radius:4px; padding:3px 10px; "
+            f"border-radius:{theme.RAD_KLEIN}; padding:3px 10px; "
             f"font-size:13px; letter-spacing:2px; font-weight:800;}}"
             f"QPushButton:hover{{background:{theme.CYAN_FILL}; "
             f"border-color:{theme.CYAN}; color:{theme.CYAN};}}")
@@ -3807,7 +3965,7 @@ class BauplanTabs:
             _b.setToolTip(t("{n} contract(s) waiting for you to accept "
                             "\u2013 counted once each.").format(n=_ges))
             _b.setStyleSheet(f"background:{theme.AMBER}; color:{theme.BG}; "
-                             f"font-weight:800; border-radius:4px; "
+                             f"font-weight:800; border-radius:{theme.RAD_KLEIN}; "
                              f"padding:1px 7px;")
             kopf.addWidget(_b)
         # KEIN ERKLAERTEXT IN DIE KOPFZEILE (b153): ein Label ohne
@@ -3898,10 +4056,10 @@ class BauplanTabs:
         # umrandet, sonst der normale Kachel-Stil aus _industrie_kachel.
         kc["ready"]["rahmen"].setStyleSheet(
             f"QFrame#Card{{background:{theme.PANEL2}; "
-            f"border:2px solid {theme.GREEN}; border-radius:6px;}}"
+            f"border:2px solid {theme.GREEN}; border-radius:{theme.RAD};}}"
             if su["ready"] else
             f"QFrame#Card{{background:{theme.PANEL2}; "
-            f"border:1px solid {theme.BORDER}; border-radius:6px;}}")
+            f"border:1px solid {theme.BORDER}; border-radius:{theme.RAD};}}")
         kc["ready"]["zahl"].setText(
             f'<span style="color:{_farbe_f};">\u2713 {su["ready"]}</span>')
         kc["ready"]["unter"].setText(t("ready to deliver"))
@@ -4040,7 +4198,7 @@ class BauplanTabs:
         # Primaer-Stil (cyan): das ist DER Ausloese-Knopf des Tabs.
         self.b_compute_btn.setStyleSheet(
             f"QPushButton{{background:{theme.CYAN_FILL}; color:{theme.CYAN}; "
-            f"border:none; border-radius:6px; font-weight:800; "
+            f"border:none; border-radius:{theme.RAD}; font-weight:800; "
             f"padding:6px 14px;}}"
             f"QPushButton:hover{{background:{theme.BLUE};}}")
 
@@ -4049,12 +4207,12 @@ class BauplanTabs:
         strat = QFrame(); strat.setObjectName("StrategyCard")
         strat.setStyleSheet(
             f"#StrategyCard {{ background:{theme.PANEL2}; border:1px solid "
-            f"{theme.CYAN}; border-radius:10px; }}")
+            f"{theme.CYAN}; border-radius:{theme.RAD_GROSS}; }}")
         sg = QGridLayout(strat)
         sg.setContentsMargins(16, 12, 16, 12)
         sg.setHorizontalSpacing(14); sg.setVerticalSpacing(8)
         b_strat_title = QLabel(t("What you want to build"))
-        b_strat_title.setStyleSheet(f"color:{theme.CYAN}; font-size:13px; "
+        b_strat_title.setStyleSheet(f"color:{theme.AMBER}; font-size:13px; "
                                     f"font-weight:700; letter-spacing:1px;")
         # dito - gezeichnetes Symbol statt Emoji (Sitzung 16).
         self.b_cap_mode = QPushButton(t("Capital mode"))
@@ -4069,7 +4227,7 @@ class BauplanTabs:
               "a ship to open its build plan directly."))
         self.b_cap_mode.setStyleSheet(
             f"QPushButton{{background:{theme.PANEL2}; border:1px solid {theme.BORDER}; "
-            f"border-radius:6px; color:{theme.MUTED}; font-weight:700; padding:6px 12px;}} "
+            f"border-radius:{theme.RAD}; color:{theme.MUTED}; font-weight:700; padding:6px 12px;}} "
             f"QPushButton:checked{{background:{theme.CYAN_FILL}; "
             f"color:{theme.CYAN}; "
             f"border-color:{theme.CYAN};}}")
@@ -4714,7 +4872,12 @@ class BauplanTabs:
             bp_id, activity, _oq = bp
             if activity != industry.MANUFACTURING:
                 continue
-            inv = recipes.invention_for_bpc.get(bp_id)
+            # EINE Stelle fuer die Quellen-Wahl (emm826): bei T3 zeigt die
+            # Karte die GEWAEHLTE Relic-Qualitaet (Kopfzeile, Runs, Chance),
+            # nicht stur die ergiebigste - sonst rechnete der Plan mit der
+            # Wahl und der Reiter zeigte eine andere.
+            inv = industry.invention_quelle_fuer_bp(
+                bp_id, recipes, getattr(self, "_bd_opts", None) or {})
             if not inv:
                 continue
             if _obc_an and tid == top_type_id:
@@ -4821,6 +4984,11 @@ class BauplanTabs:
             need_names.add(t1_bp)
             for d, _q in datacores:
                 need_names.add(d)
+            # ALLE Relic-Qualitaeten aufloesen (emm826) - die Auswahl-Combo
+            # nennt jede Sorte namentlich, nicht nur die gerade gewaehlte.
+            for _qe in (getattr(recipes, "invention_quellen", None)
+                        or {}).get(_bp_id) or []:
+                need_names.add(_qe[0])
         # Decryptor-Namen gleich mit auflösen - die Gesamt-Zeilen (je Karte +
         # Gesamt-Karte) nennen sie namentlich statt "#34201". WICHTIG: über
         # die METHODE self._decryptor_list(), nicht die lokale Variable
@@ -4964,8 +5132,11 @@ class BauplanTabs:
         adj_prices = (getattr(self, "_bd_opts", None) or {}).get("adjusted_prices", {}) or {}
         total_box = QLabel(); total_box.setStyleSheet(
             f"color:{theme.AMBER}; font-weight:800; font-size:15px;")
+        self._bd_inv_total_box = total_box      # b-Suite
         _card_costs = {}
-        self._bd_invention_needs = {}   # bp_id -> {datacores:[(id,qty)], decryptor_id, decryptor_qty}
+        # bp_id -> {datacores:[(id,qty)], decryptor_id, decryptor_qty,
+        #           relic_id, relic_qty (emm828, T3)}
+        self._bd_invention_needs = {}
         # Welche Items entstehen per INVENTION? Ihre Blaupausen sind
         # erfundene BPCs - die kopiert man NICHT (Nutzer-Fund, Sitzung 8:
         # bei Rigs braucht das T2 kein T1-Modul, die Endprodukt-"Blueprints"
@@ -5005,21 +5176,19 @@ class BauplanTabs:
             # erneut anbieten.
             txt = (t("Invention total (all items): ")
                    + isk(sum(_card_costs.values())))
-            dc, dcy, att = self._aggregate_invention_needs(
+            dc, dcy, rel, att = self._aggregate_invention_needs(
                 getattr(self, "_bd_invention_needs", None))
             if att:
                 stock = (getattr(self, "_bd_opts", None) or {}).get("stock") or {}
                 bits = []
-                for tid, q in sorted(dc.items(), key=lambda kv: -kv[1]):
-                    have = int(stock.get(tid, 0) or 0)
-                    bits.append(f"{q}\u00d7 {extra_names.get(tid, f'#{tid}')}"
-                                + (t(" ({n} in the hangar)").format(n=min(have, q))
-                                   if have else ""))
-                for tid, q in sorted(dcy.items(), key=lambda kv: -kv[1]):
-                    have = int(stock.get(tid, 0) or 0)
-                    bits.append(f"{q}\u00d7 {extra_names.get(tid, f'#{tid}')}"
-                                + (t(" ({n} in the hangar)").format(n=min(have, q))
-                                   if have else ""))
+                # RELICS ZUERST (emm828): bei T3 ist das verbrauchte Relic
+                # der groesste Posten - es fehlte in dieser Zeile ganz.
+                for _grp in (rel, dc, dcy):
+                    for tid, q in sorted(_grp.items(), key=lambda kv: -kv[1]):
+                        have = int(stock.get(tid, 0) or 0)
+                        bits.append(f"{q}\u00d7 {extra_names.get(tid, f'#{tid}')}"
+                                    + (t(" ({n} in the hangar)").format(n=min(have, q))
+                                       if have else ""))
                 if bits:
                     txt += (t("  \u00b7  {n} attempts in total \u2192 ").format(n=att)
                             + " \u00b7 ".join(bits))
@@ -5235,6 +5404,58 @@ class BauplanTabs:
             dc_row.addWidget(_skill_lbl)
             dc_row.addStretch()
             left.addLayout(dc_row)
+            # RELIC-QUALITAET WAEHLBAR (emm826, Nutzer: "ja das sollten wir
+            # machen"): T3-BPCs (Hulls UND Subsysteme) entstehen aus drei
+            # Relic-Sorten - GEMESSEN in der SDE: Intact 20 Runs/26 %,
+            # Malfunctioning 10/21 %, Wrecked 3/14 %, gleiche Datacores.
+            # Standard ist die ergiebigste (invention_quellen[0]); die Wahl
+            # schreibt self._bd_relic_map + opts["inv_relic_map"] und wird im
+            # Plan gespeichert ("relic_map") - exakt das Decryptor-Muster.
+            # Bei T2 (eine Quelle) erscheint die Zeile nicht.
+            _quellen826 = (getattr(recipes, "invention_quellen", None)
+                           or {}).get(int(bp_id)) or []
+            if len(_quellen826) > 1:
+                rel_row = QHBoxLayout(); rel_row.setSpacing(6)
+                rel_combo = QComboBox()
+                for _q826 in _quellen826:
+                    _qt, _qr, _qp, _qm = _q826
+                    rel_combo.addItem(
+                        t("{name} – {runs} runs · {prob} % base chance")
+                        .format(name=extra_names.get(_qt, f"#{_qt}"),
+                                runs=int(_qr), prob=f"{float(_qp) * 100:.0f}"),
+                        int(_qt))
+                _ri = rel_combo.findData(int(t1_bp))
+                if _ri >= 0:
+                    rel_combo.setCurrentIndex(_ri)
+                rel_combo.setToolTip(t(
+                    "Relic quality for this invention. One relic is CONSUMED "
+                    "per attempt and is on the shopping list. Default is the "
+                    "highest-yield quality (runs × chance) – compare "
+                    "relic market prices before switching."))
+                ohne_mausrad(rel_combo)
+                rel_row.addWidget(rel_combo, 1)
+                left.addLayout(rel_row)
+                self._bd_inv_relic_combos = getattr(
+                    self, "_bd_inv_relic_combos", None) or {}
+                self._bd_inv_relic_combos[int(bp_id)] = rel_combo   # b-Suite
+
+                def _rel_change(_i, _bp=int(bp_id), _c=rel_combo):
+                    _rt = _c.currentData()
+                    if _rt is None:
+                        return
+                    self._bd_relic_map = getattr(self, "_bd_relic_map", None) or {}
+                    self._bd_relic_map[_bp] = int(_rt)
+                    self._bd_opts.setdefault("inv_relic_map", {})[_bp] = int(_rt)
+                    # Selbst gewaehlt -> die Automatik (emm830) laesst sie stehen.
+                    self._bd_relic_bestaetigt = set(
+                        getattr(self, "_bd_relic_bestaetigt", None) or ())
+                    self._bd_relic_bestaetigt.add(_bp)
+                    # Voller Rebuild wie beim Decryptor-Wechsel: Runs/Chance/
+                    # Kosten der Karte UND die Kopfzeile haengen an der Quelle.
+                    cb = getattr(self, "_bd_full_rebuild", None)
+                    if cb:
+                        cb()
+                rel_combo.currentIndexChanged.connect(_rel_change)
             dec_row = QHBoxLayout(); dec_row.setSpacing(6)
             dec_icon_lbl = QLabel(); dec_icon_lbl.setFixedSize(32, 32)
             dec_row.addWidget(dec_icon_lbl)
@@ -5523,7 +5744,17 @@ class BauplanTabs:
             _sl.setMinimumWidth(140)
             _sl.setMaximumWidth(260)
             ohne_mausrad(_sl)
+            # T3 (emm831): "eine T1-Kopie je Job" gilt dort nicht - es ist ein
+            # Relic je Job.
             _sl.setToolTip(t(
+                "How many invention jobs run at the same time \u2013 one relic "
+                "each, one science slot each.\n"
+                "Left = 1 job (slow, 1 slot busy),\n"
+                "right = all free science slots (as fast as possible).\n"
+                "It does NOT change how many blueprints you get \u2013 that "
+                "depends on quantity and decryptor.")
+                if int(t1_bp) in (getattr(recipes, "relic_quellen", None) or set())
+                else t(
                 "How many invention jobs run at the same time \u2013 one T1 copy "
                 "each, one science slot each.\n"
                 "Left = 1 job (slow, 1 slot busy),\n"
@@ -5651,9 +5882,27 @@ class BauplanTabs:
                     # de_scan3: an
                     f'  \u00b7  <span style="color:{theme.MUTED};">' + t("TE") + '</span> '
                     f'<b>{outcome["te_pct"]}%</b>')
-                dc_cost = sum((adj_prices.get(d, 0) or 0) * q for d, q in datacores)
+                # PREIS WIE IN industry._inv_cost: Marktpreis, sonst der
+                # Adjusted Price (emm829). Die Karte nahm NUR den Adjusted
+                # Price - fuer Relics gibt es keinen, sie waren damit gratis.
+                def _p829(_t):
+                    _v = (getattr(self, "_bd_pricemap", None) or {}).get(_t)
+                    if _v is not None and _v > 0:
+                        return float(_v)
+                    return float(adj_prices.get(_t, 0) or 0)
+                dc_cost = sum(_p829(d) * q for d, q in datacores)
+                # DAS RELIC KOSTET - UND ZWAR JE VERSUCH (emm829, Nutzer-
+                # Praxislauf Confessor 05.11.2026): die Karte meldete fuer
+                # Intact "4 Versuche, 1,4 Mio ISK", waehrend der Plan 83 Mio
+                # mehr auswies. Sie zaehlte nur Datacores und Decryptor; das
+                # verbrauchte Ancient Relic - bei T3 der groesste Posten -
+                # fehlte in IHRER Rechnung, obwohl `industry._inv_cost` es
+                # laengst bepreist. Zwei Rechnungen, zwei Zahlen
+                # (Arbeitsregel 9): die Karte lud zur teuren Wahl ein.
+                _rel_cost = (_p829(t1_bp) if int(t1_bp) in (getattr(
+                    recipes, "relic_quellen", None) or set()) else 0.0)
                 dcy_tid = dv[4]
-                dcy_cost = (adj_prices.get(dcy_tid, 0) or 0) if dcy_tid else 0.0
+                dcy_cost = (_p829(dcy_tid) if dcy_tid else 0.0)
                 # Bereits per ESI geladene, eigene BPC-Runs decken einen Teil
                 # ab - egal ob Endprodukt oder Komponente, für JEDES Item hier
                 # mit eigenem bp_id-Eintrag (aus "Eigene BPCs für alle Items
@@ -5662,7 +5911,7 @@ class BauplanTabs:
                 _owned_runs = self._resolve_inv_owned_runs().get(bp_id, 0)
                 _runs_still_needed = max(0, runs_needed - _owned_runs)
                 ap = industry.invention_attempt_plan(
-                    _runs_still_needed, outcome, [dc_cost], dcy_cost,
+                    _runs_still_needed, outcome, [dc_cost, _rel_cost], dcy_cost,
                     confidence=self._bd_inv_confidence())
                 # KEINE ZUSATZZEILEN (Nutzer 26.09.2026: "for runs = successes,
                 # on average it would take, invention cost - die koennen weg").
@@ -5703,6 +5952,14 @@ class BauplanTabs:
                     getattr(self, "_bd_bp_fehler", None))
                 if not combo.isEnabled():
                     _lage512 = "unknown"          # Own BPC: kein Kopierjob
+                # T3: ES GIBT KEIN T1-ORIGINAL (emm831). Die Warnung "du
+                # besitzt das T1-Original nicht" waere hier schlicht falsch -
+                # man kopiert nichts, man VERBRAUCHT Relics. Ob genug Relics
+                # da sind, sagt die Einkaufsliste (sie stehen als Material im
+                # Plan); hier bleibt die Zeile still, statt etwas zu
+                # behaupten, was es nicht gibt (Regel 1).
+                if int(t1_bp) in (getattr(recipes, "relic_quellen", None) or set()):
+                    _lage512 = "unknown"
                 _t1txt512 = _t1farbe512 = ""
                 if _lage512 == "copies_only":
                     _t1farbe512 = theme.RED
@@ -5737,7 +5994,14 @@ class BauplanTabs:
                 # Feld sie ohne vollen Rebuild aufrufen koennen.
                 def _fuelle_aufteilung(_att=_inv_attempts_n, _oc=outcome,
                                        _ipa=inv_time_per_attempt, _bp=int(bp_id),
-                                       _cpr=copy_secs_per_attempt):
+                                       _cpr=copy_secs_per_attempt,
+                                       # T3 (emm831): bei einer Relic-Quelle
+                                       # gibt es KEIN T1-Original - der Name
+                                       # des Relics statt der Kopieranleitung.
+                                       _relic=(int(t1_bp) if int(t1_bp) in (
+                                           getattr(recipes, "relic_quellen",
+                                                   None) or set()) else None),
+                                       _relic_nm=extra_names.get(t1_bp, "")):
                     _sw = (getattr(self, "_bd_inv_split_w", None) or {}).get(_bp)
                     if not _sw:
                         return
@@ -5770,7 +6034,31 @@ class BauplanTabs:
                     # JEDER Sprachfassung.
                     _zahl = (f'font-size:{theme.FS_KPI}; font-weight:800; '
                              f'color:{theme.AMBER}; font-family:{theme.MONO};')
-                    _sw["kopf"].setText(
+                    # T3: NICHTS ZU KOPIEREN (emm831, Nutzerfrage 05.11.2026
+                    # "muss man die ueberhaupt erfinden? ... glaube nicht dass
+                    # das korrekt ist"). Bei T3 gibt es kein T1-Original: das
+                    # Ancient Relic IST das Verbrauchsmaterial, je Versuch
+                    # eines. Die Kopieranleitung zeigte trotzdem "Job Runs 4 -
+                    # Runs per Copy 12" - Zahlen fuer einen Kopierjob, den es
+                    # nicht gibt, und die der Nutzer fuer die Runs der
+                    # T3-Blaupause hielt. Stattdessen steht hier, was er
+                    # WIRKLICH braucht: die Relics.
+                    if _relic:
+                        import html as _h831
+                        _sw["kopf"].setText(
+                            f'<div style="color:{theme.MUTED}; font-size:{theme.FS_BASE};">'
+                            + t("No copying needed \u2013 get these relics \u2192")
+                            + '</div>'
+                            + f'<div style="font-size:15px; font-weight:700;">'
+                            + t("{name}: {n}").format(
+                                name=_h831.escape(str(_relic_nm or f"#{_relic}")),
+                                n=f'<span style="{_zahl}">{int(_att or 0)}</span>')
+                            + '</div>'
+                            + f'<div style="color:{theme.MUTED}; '
+                              f'font-size:{theme.FS_BASE};">'
+                            + t("One relic is consumed per attempt.") + '</div>')
+                    else:
+                        _sw["kopf"].setText(
                         f'<div style="color:{theme.MUTED}; font-size:{theme.FS_BASE};">'
                         + t("Copy your T1 original like this \u2192") + '</div>'
                         # de_scan3: aus  (EVE-Feldnamen, bleiben in jeder Sprache englisch)
@@ -5870,9 +6158,19 @@ class BauplanTabs:
                 self._bd_decryptor_map[bp_id] = key
                 _card_costs[bp_id] = total_cost
                 _attempts_n = max(0, int(_inv_attempts_n or 0))
+                # DAS RELIC GEHOERT IN DEN BEDARF (emm828): bei T3 wird je
+                # Versuch eines VERBRAUCHT. Nur fuer Anzeige und Runplaner -
+                # EINGEKAUFT wird es weiter ueber den normalen Material-Weg
+                # (es steht als Material im Plan, `_inv_cost` meldet es in
+                # mats_out). Wuerde es hier zusaetzlich in den Einkaufs-Pfad
+                # wandern, stuende es zweimal auf der Liste.
+                _relic_id = (int(t1_bp) if int(t1_bp) in (getattr(
+                    recipes, "relic_quellen", None) or set()) else None)
                 self._bd_invention_needs[bp_id] = {
                     "datacores": [(d, q * _attempts_n) for d, q in datacores],
                     "decryptor_id": dv[4], "decryptor_qty": _attempts_n if dv[4] else 0,
+                    "relic_id": _relic_id,
+                    "relic_qty": _attempts_n if _relic_id else 0,
                     "attempts": _attempts_n, "successes_needed": ap["successes_needed"],
                     # für die Runplaner-Gesamtzeile: Invention + Kopieren
                     # (1 x 1-Run-BPC je Versuch; Kopierzeit aus der SDE,
@@ -5966,7 +6264,11 @@ class BauplanTabs:
                            base_prob=base_prob, datacores=datacores,
                            runs_needed=runs_needed, mc0_per_run=mc0_per_run,
                            build_seconds_0dec=build_seconds_0dec, score_lbl=score_lbl,
-                           bp_id=bp_id, top_type_id=top_type_id):
+                           bp_id=bp_id, top_type_id=top_type_id,
+                           # FEST BINDEN (emm829): `t1_bp` wird je Karte neu
+                           # gesetzt - ohne Default saehe die Closure beim
+                           # spaeteren Aufruf das Relic der LETZTEN Karte.
+                           t1_bp=t1_bp):
                 """Rechnet ALLE Decryptoren (inkl. 'Kein Decryptor') mit der
                 ECHTEN production_plan-Formel durch (exakt dieselbe wie die
                 Kopfzeile: Material inkl. Job-Kosten-Kopplung an den
@@ -5993,6 +6295,14 @@ class BauplanTabs:
                             _dm = dict(self._bd_opts.get("inv_decryptor_map") or {})
                             _dm[bp_id] = _r["decryptor"]
                             _test_opts["inv_decryptor_map"] = _dm
+                            # T3 (emm827): die Zeile traegt ggf. IHRE Relic-
+                            # Qualitaet - die Ladder-Neurechnung muss mit
+                            # derselben rechnen, sonst verdirbt sie das
+                            # Ranking genau wie damals der fehlende Bestand.
+                            if _r.get("relic") is not None:
+                                _rm = dict(self._bd_opts.get("inv_relic_map") or {})
+                                _rm[bp_id] = int(_r["relic"])
+                                _test_opts["inv_relic_map"] = _rm
                             try:
                                 _tp = industry.production_plan(
                                     top_type_id, self._bd_qty, self._bd_pricemap.get,
@@ -6020,10 +6330,21 @@ class BauplanTabs:
                                 pass
                         ranked.sort(key=lambda r: r["total_cost"])
                 else:
-                    dc_cost = sum((adj_prices.get(d, 0) or 0) * q for d, q in datacores)
+                    # Rueckfall ohne Top-Item: dieselbe Preisquelle und
+                    # dasselbe Relic je Versuch wie in der Karte (emm829) -
+                    # sonst empfiehlt dieser Zweig an den Relic-Kosten vorbei.
+                    def _p829b(_t):
+                        _v = (getattr(self, "_bd_pricemap", None) or {}).get(_t)
+                        if _v is not None and _v > 0:
+                            return float(_v)
+                        return float(adj_prices.get(_t, 0) or 0)
+                    dc_cost = sum(_p829b(d) * q for d, q in datacores)
+                    _rel_cost_b = (_p829b(t1_bp) if int(t1_bp) in (getattr(
+                        recipes, "relic_quellen", None) or set()) else 0.0)
                     ranked = industry.invention_decryptor_options(
-                        base_runs, base_prob, runs_needed, decryptor_list, [dc_cost],
-                        mc0_per_run, lambda t: adj_prices.get(t, 0) or 0.0,
+                        base_runs, base_prob, runs_needed, decryptor_list,
+                        [dc_cost, _rel_cost_b],
+                        mc0_per_run, _p829b,
                         build_seconds_per_run_0decryptor=build_seconds_0dec)
                 return ranked
 
@@ -7404,11 +7725,11 @@ class BauplanTabs:
                 _bar.setToolTip(t("{pct} % covered\n").format(pct=_pct) + _stip)
                 self._wrap_tooltips(_bar)
                 _bar.setStyleSheet(
-                    f"QProgressBar{{background:rgba(255,255,255,0.05); "
-                    f"border:none; border-radius:5px; color:{_scol}; "
+                    f"QProgressBar{{background:{theme.schleier(0.05)}; "
+                    f"border:none; border-radius:{theme.RAD_KLEIN}; color:{_scol}; "
                     f"font-size:11px; text-align:center;}}"
-                    f"QProgressBar::chunk{{background:rgba(255,255,255,0.10); "
-                    f"border-radius:5px;}}")
+                    f"QProgressBar::chunk{{background:{theme.schleier(0.10)}; "
+                    f"border-radius:{theme.RAD_KLEIN};}}")
                 tbl.setItemWidget(_node, 6, _bar)
         _apply_bars()
         # Nach jedem Klick auf eine Spaltenueberschrift neu zuordnen.
@@ -8426,7 +8747,7 @@ class BauplanTabs:
             b.setStyleSheet(
                 f"QPushButton{{background:{theme.PANEL2}; "
                 f"border:1px solid {theme.AMBER_DIM}; color:{theme.AMBER}; "
-                f"border-radius:5px; padding:0px 10px; font-weight:700;}}"
+                f"border-radius:{theme.RAD_KLEIN}; padding:0px 10px; font-weight:700;}}"
                 f"QPushButton:hover{{border-color:{theme.AMBER}; "
                 f"background:{theme.PANEL};}}")
             b.clicked.connect(slot)
@@ -8529,12 +8850,21 @@ class BauplanTabs:
                    + ("\n" + _txt("Copying and invention use the structure "
                                   "assigned to invention in the Structures "
                                   "tab.") if _sc_struct else ""))
+        # T3 GEHOERT NICHT INS KOPIEREN (emm831, Nutzer-Screenshot 05.11.2026:
+        # der Runplaner plante eine Stufe "Copying" samt belegtem Science-Slot
+        # fuer einen Confessor). Aus einem Ancient Relic wird NICHT kopiert -
+        # es wird je Versuch verbraucht. Die Jobgebuehr dafuer ist seit emm826
+        # weg, die geplante ARBEIT stand noch drin.
+        # ZUERST die Auftraege, DANN der Kopf: bleibt nichts uebrig (reiner
+        # T3-Plan), darf auch keine leere Stufe "Copying" dastehen.
+        _copy_auftr = [(bp, 1) for bp, _i in _sortiert
+                       if _auf[bp].get("kopien")
+                       and not (needs.get(bp) or {}).get("relic_id")]
         _k = _kopf("⚗ " + _txt("Copying") + _sc_suffix,
                    "copying",
                    _txt("Copy your T1 originals for invention. Same numbers "
                         "as the Invention tab – the slider there sets the "
-                        "parallel copies.") + _sc_tip)
-        _copy_auftr = [(bp, 1) for bp, _i in _sortiert if _auf[bp].get("kopien")]
+                        "parallel copies.") + _sc_tip) if _copy_auftr else None
         _k_zust, _k_zeilen = [], []
         _copy_chars = _chars("bau_copy_chars") or [(0, max(1, slots))]
         # AUS EINER KOPIE KANN MAN NICHT KOPIEREN (emm510, Nutzer: "der
@@ -8649,15 +8979,21 @@ class BauplanTabs:
             # Charakterzeilen ZU wie bei den Bau-Stufen; der Nutzer-Klapp
             # gewinnt (emm400-Gedaechtnis).
             ci.setExpanded(bool(klapp_vorher.get(f"char|copy|{cid}{_wsuf}", False)))
-        _k_st = _abschluss(_k, _k_zust, _k_zeilen)
-        _k.setExpanded(bool(klapp_vorher.get("stufe|copying",
-                                             _k_st != "erledigt")))
+        if _k is not None:
+            _k_st = _abschluss(_k, _k_zust, _k_zeilen)
+            _k.setExpanded(bool(klapp_vorher.get("stufe|copying",
+                                                 _k_st != "erledigt")))
 
         # ---- Invention: je Kopie ein Job, verteilt auf die Inv-Charaktere -
+        # OHNE KOPIERSTUFE AUCH KEIN "nach dem Kopieren" (emm831): bei einem
+        # reinen T3-Plan wird nichts kopiert, verbraucht werden Relics.
         _i = _kopf("⚗ " + _txt("Invention") + _sc_suffix,
                    "invention",
-                   _txt("Invention attempts after copying. Datacores and "
-                        "decryptors are on the shopping list.") + _sc_tip)
+                   (_txt("Invention attempts after copying. Datacores and "
+                         "decryptors are on the shopping list.") if _copy_auftr
+                    else _txt("Invention attempts. Relics, datacores and "
+                              "decryptors are on the shopping list \u2013 one "
+                              "relic per attempt.")) + _sc_tip)
         _inv_auftr = [(bp, int(_auf[bp].get("kopien") or 0))
                       for bp, _i2 in _sortiert if _auf[bp].get("kopien")]
         _inv_chars = _chars("bau_invention_chars") or [(0, max(1, slots))]
@@ -9642,8 +9978,8 @@ class BauplanTabs:
                                    + "</span>")
                     bp_warn_lbl.setText(_warn_html)
                     bp_warn_lbl.setStyleSheet(
-                        f"background:rgba(226,54,54,0.12); color:{theme.RED}; "
-                        f"border:1px solid {theme.RED}; border-radius:6px; "
+                        f"background:{theme.toenung(theme.RED, 0.12)}; color:{theme.RED}; "
+                        f"border:1px solid {theme.RED}; border-radius:{theme.RAD}; "
                         f"padding:6px 10px; font-weight:600;")
                     bp_warn_lbl.setVisible(True)
                 elif _only_end_missing:
@@ -9654,8 +9990,8 @@ class BauplanTabs:
                     ).format(n=_n_missing_by_stage.get('Endprodukt', _n_missing)))
                     # de_scan4: an
                     bp_warn_lbl.setStyleSheet(
-                        f"background:rgba(107,114,128,0.12); color:{theme.MUTED}; "
-                        f"border:1px solid {theme.BORDER}; border-radius:6px; "
+                        f"background:{theme.toenung(theme.MUTED, 0.12)}; color:{theme.MUTED}; "
+                        f"border:1px solid {theme.BORDER}; border-radius:{theme.RAD}; "
                         f"padding:6px 10px;")
                     bp_warn_lbl.setVisible(True)
                 elif _n_low:
@@ -9666,8 +10002,8 @@ class BauplanTabs:
                         + "<br><span style='font-size:11px;'>"
                         + _txt("Details in the Blueprints tab.") + "</span>")
                     bp_warn_lbl.setStyleSheet(
-                        f"background:rgba(224,177,44,0.12); color:{theme.AMBER}; "
-                        f"border:1px solid {theme.AMBER}; border-radius:6px; "
+                        f"background:{theme.toenung(theme.AMBER, 0.12)}; color:{theme.AMBER}; "
+                        f"border:1px solid {theme.AMBER}; border-radius:{theme.RAD}; "
                         f"padding:6px 10px; font-weight:600;")
                     bp_warn_lbl.setVisible(True)
                 else:
@@ -10568,7 +10904,7 @@ class BauplanTabs:
                         _b0.setStyleSheet(
                             f"QPushButton{{background:{theme.PANEL2}; "
                             f"border:1px solid {_rand820e}; "
-                            f"color:{_text820e}; border-radius:5px; "
+                            f"color:{_text820e}; border-radius:{theme.RAD_KLEIN}; "
                             f"padding:0px 10px; font-weight:700;}}"
                             f"QPushButton:hover{{border-color:"
                             f"{theme.AMBER}; background:{theme.PANEL};}}")
@@ -12351,7 +12687,7 @@ class BauplanTabs:
                             _kopf.setStyleSheet(
                                 f"QPushButton{{background:{theme.PANEL2}; "
                                 f"border:1px solid {_bp_rand820}; "
-                                f"color:{_bp_text820}; border-radius:5px; "
+                                f"color:{_bp_text820}; border-radius:{theme.RAD_KLEIN}; "
                                 f"padding:0px 8px;}}"
                                 f"QPushButton:hover{{border-color:"
                                 f"{theme.AMBER}; background:{theme.PANEL};}}")
@@ -12385,7 +12721,7 @@ class BauplanTabs:
                                 _b.setStyleSheet(
                                     f"QPushButton{{background:{theme.PANEL2}; "
                                     f"border:1px solid {_bp_rand820}; "
-                                    f"color:{_bp_text820}; border-radius:5px; "
+                                    f"color:{_bp_text820}; border-radius:{theme.RAD_KLEIN}; "
                                     f"padding:0px 10px; font-weight:700;}}"
                                     f"QPushButton:hover{{border-color:"
                                     f"{theme.AMBER}; background:{theme.PANEL};}}")

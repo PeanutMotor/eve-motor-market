@@ -1,6 +1,7 @@
 """Configuration, constants and persisted user settings."""
 import json
 import os
+import time as _time873      # emm873: Drosselung der Ordner-Pruefung
 
 # ORDNERNAME FUER DIE NUTZERDATEN.
 # BEWUSST EIN EIGENES WORT und nicht `APP_NAME` aus eve_trader/__init__.py,
@@ -73,7 +74,13 @@ STRUCTURE_SCOPES = ["esi-markets.structure_markets.v1", STRUCTURE_READ_SCOPE]
 # Optional, only added when the user enables opening items in the game client.
 UI_SCOPE = "esi-ui.open_window.v1"
 # Optional, only added when fees are derived from skills (auto-read levels+standings).
-SKILL_SCOPES = ["esi-skills.read_skills.v1", "esi-characters.read_standings.v1",
+# EINE QUELLE FUER DEN SKILL-LESE-SCOPE (emm910, dieselbe Lehre wie bei
+# STRUCTURE_READ_SCOPE): der Start muss pruefen koennen, ob GENAU dieses
+# Recht erteilt ist, bevor er die Skills von selbst nachholt. Als
+# Positionsindex in SKILL_SCOPES waere das still falsch, sobald jemand
+# die Liste umsortiert.
+SKILL_READ_SCOPE = "esi-skills.read_skills.v1"
+SKILL_SCOPES = [SKILL_READ_SCOPE, "esi-characters.read_standings.v1",
                 "esi-industry.read_character_jobs.v1",
                 "esi-characters.read_blueprints.v1"]
 # Optional, only added when the user enables implant-based time-bonus detection
@@ -165,6 +172,96 @@ def effective_broker_fee(broker_level: int, faction_standing: float = 0.0,
     return round(max(1.0, min(5.0, fee)), 3)
 
 
+# ---- GEBUEHR FUERS AENDERN EINER ORDER (emm908) ---------------------------
+# Nutzer 13.11.2026: "weiss moma wie man die modifizierungsegebuehren
+# korrekt berrechnet? ich hoffe es" - NEIN, tat es nicht. MoMa rechnete
+# `mod_count * Broker-% * Preis * Restmenge`, also die VOLLE Broker Fee je
+# Aenderung, und lag damit um das Zwei- bis Fuenffache zu hoch. Darauf:
+# "wir machen das was wir machen muessen damit die rechnungen exakt
+# stimmen".
+#
+# DIE REGEL VON CCP (Dev-Blog "Broker Relations", eveonline.com):
+#     Fee = max(0, BR * (W2 - W1))  +  (1 - RD) * BR * W2
+# mit BR = effektive Broker-Fee-Rate, W1/W2 = ALTER bzw. NEUER Orderwert
+# (Preis MAL Restmenge, nicht der Stueckpreis) und RD = Relist-Rabatt.
+# Beide Gebuehrenarten haben eine Untergrenze von 100 ISK.
+#
+# RD = 50 % plus 5 PROZENTPUNKTE je Level "Advanced Broker Relations"
+# (frueher Margin Trading): 50 % ohne den Skill, 75 % auf Level V. Der
+# Rabatt gilt NUR fuer den Relist-Teil, nicht fuer den vollen Satz auf
+# eine Werterhoehung - deshalb ist Hochbieten teurer als Unterbieten.
+#
+# QUELLENLAGE, offen gesagt: das EVE-University-Wiki nennt 6 % je Level
+# (50-80 %), CCPs eigener Dev-Blog 5 Prozentpunkte (50-75 %). Hier gilt
+# CCP als Primaerquelle. Aendert sich das je, ist DIESE Stelle zu
+# aendern - und sonst nichts (Regel 9).
+RELIST_RABATT_BASIS = 0.50       # ohne den Skill
+RELIST_RABATT_JE_LEVEL = 0.05    # je Level Advanced Broker Relations
+GEBUEHR_MINIMUM_ISK = 100.0      # CCP: "minimum charge of 100 ISK"
+
+
+def relist_rabatt(adv_broker_level: int = 0) -> float:
+    """Der Relist-Rabatt RD als Anteil (0.50 bis 0.75)."""
+    lvl = max(0, min(5, int(adv_broker_level or 0)))
+    return RELIST_RABATT_BASIS + RELIST_RABATT_JE_LEVEL * lvl
+
+
+def kosten_je_stueck(einkauf: float, gebuehr_summe: float,
+                     rest_menge: int) -> float:
+    """Einstand JE STUECK samt der schon bezahlten Relist-Gebuehren (emm911).
+
+    Nutzer 14.11.2026: "Die Modifizierungsgebuehren muessen jetzt pro Item
+    ganz genau obendraufgerechnet werden."
+
+    VORHER wurde die Gebuehrensumme EINMAL vom Gesamtgewinn abgezogen. Die
+    angezeigte Marge je Stueck kannte die Gebuehren damit gar nicht, und die
+    Ziel-Marge wurde gegen einen Einkauf gerechnet, den es so nicht mehr
+    gibt - deshalb stand die Warnung erst bei Verlust statt bei "Ziel nicht
+    mehr erreichbar".
+
+    DIE SUMME WIRD AUF DIE RESTMENGE VERTEILT, nicht auf die urspruengliche.
+    Bezahlt ist bezahlt, und verdient werden muss sie an dem, was noch
+    dasteht. Bei einer halb gefuellten Order ist der Aufschlag je Stueck
+    damit hoeher, nie niedriger - die sichere Richtung (Regel 3).
+
+    OHNE EINKAUFSPREIS gibt es keinen Einstand: 0.0, damit niemand aus einer
+    unbekannten Zahl eine Marge rechnet (Regel 1).
+
+    EINE STELLE FUER DIESE RECHNUNG (Regel 9): Kauf-Zweig, Verkauf-Zweig und
+    die angezeigte Marge-Spalte holen sie alle hier.
+    """
+    _ek = float(einkauf or 0.0)
+    if _ek <= 0:
+        return 0.0
+    _geb = float(gebuehr_summe or 0.0)
+    _rest = int(rest_menge or 0)
+    if _geb <= 0 or _rest <= 0:
+        return _ek
+    return _ek + _geb / _rest
+
+
+def relist_gebuehr(wert_alt: float, wert_neu: float, broker_pct: float,
+                   adv_broker_level: int = 0) -> float:
+    """Was eine EINZELNE Preisaenderung wirklich kostet (emm908).
+
+    `wert_alt` / `wert_neu`: Orderwert VOR und NACH der Aenderung, also
+    Preis mal Restmenge. `broker_pct` ist die effektive Broker Fee in
+    PROZENT (so wie sie in den Einstellungen steht), nicht als Anteil.
+
+    Ohne Orderwert oder ohne Broker-Satz gibt es nichts zu zahlen - dann
+    0.0 und NICHT die 100-ISK-Untergrenze, sonst erfaende die Rechnung
+    eine Gebuehr fuer eine Aenderung, die es nicht gab.
+    """
+    _br = max(0.0, float(broker_pct or 0)) / 100.0
+    _w2 = max(0.0, float(wert_neu or 0))
+    _w1 = max(0.0, float(wert_alt or 0))
+    if _w2 <= 0 or _br <= 0:
+        return 0.0
+    _erhoehung = max(0.0, _w2 - _w1) * _br
+    _relist = (1.0 - relist_rabatt(adv_broker_level)) * _br * _w2
+    return max(GEBUEHR_MINIMUM_ISK, _erhoehung + _relist)
+
+
 # AUSGELIEFERTE STANDARDWERTE SIND NEUTRAL (Auftrag F1, Sitzung 11).
 #
 # Hier standen bis Sitzung 11 die Standings des Entwicklers zum Jita-4-4-Owner
@@ -206,6 +303,11 @@ DEFAULT_SETTINGS = {
     # sind. GILT NUR FUER NEUE NUTZER: wer schon eine settings.json hat,
     # behaelt seinen eingestellten Wert (Standardwerte fuellen nur Luecken).
     "target_margin": 12.0,    # flag a position once net margin >= this
+    # AB WANN "FEES EAT THE PROFIT" (emm915, Nutzer 14.11.2026): eine schon
+    # nachgebesserte Order kippt in diesen Status, wenn ihre Marge MIT den
+    # bezahlten Relist-Gebuehren unter diese Schwelle faellt - nicht mehr
+    # an der Ziel-Marge (emm911), die fuer den Verkaufsrat gilt.
+    "fees_eat_min_margin": 5.0,
     # Effektive Arbeitswerte - werden bei fees_from_skills=True laufend aus den
     # Formeln oben überschrieben, sobald ein Charakter verlinkt und seine
     # Skills geladen sind. Defaults = Formel mit den Werten unten (KEINE
@@ -219,6 +321,15 @@ DEFAULT_SETTINGS = {
     "fees_from_skills": True,      # an: sobald Skills da sind, gelten die echten
     "skill_accounting": 0,         # Accounting level 0-5 (sales tax)
     "skill_broker_relations": 0,   # Broker Relations level 0-5 (broker fee)
+    # emm908: senkt NUR die Gebuehr fuers AENDERN einer Order
+    # (Relist-Rabatt 50 % + 5 Punkte je Level). Fruehere Fassungen
+    # kannten den Skill gar nicht und rechneten darum zu teuer.
+    "skill_adv_broker_relations": 0,   # Advanced Broker Relations 0-5
+    # emm909: wurde der Skill schon EINMAL aus EVE geholt? Solange
+    # nicht, blinkt der Knopf "Aus EVE uebernehmen". Level 0 und
+    # "nie abgefragt" sehen am Wert gleich aus - erst dieser Merker
+    # unterscheidet beides.
+    "skill_adv_broker_geholt": False,
     # per-hub unmodified standings to the station owner (corp + faction). The
     # broker fee is computed per hub because each hub has a different owner.
     # LEER ausgeliefert - Standings sind persoenlich und kommen aus ESI.
@@ -239,6 +350,13 @@ DEFAULT_SETTINGS = {
     # aus". Folge: der Scope wird beim Verlinken angefragt, er muss also in
     # der EVE-App stehen; der Einrichtungs-Assistent listet ihn deshalb mit.
     "use_location": True,
+    # OBERFLAECHEN-GROESSE (emm835): Faktor, den der Start an Qt weitergibt
+    # (QT_SCALE_FACTOR, s. __main__.main). 1.0 = unveraendert; der Wert
+    # kommt ZUSAETZLICH zur Windows-Skalierung. Nur Werte > 1.0 wirken -
+    # Verkleinern waere eine Falle (Text unter der Lesbarkeit), deshalb
+    # faengt die Auswahl bei 100 % an.
+    "ui_scale": 1.0,
+    "ui_theme": "caldari",
     # CORP-HANGAR ALS BAU-BESTAND (1.0.8). War STANDARD AUS (Entscheid
     # 14.09.2026, Regel 3). STANDARD AN seit 19.09.2026 (Nutzer-Entscheid,
     # s. oben) - ohne gewaehlte Division zaehlt trotzdem nichts, die Karte
@@ -326,6 +444,9 @@ DEFAULT_SETTINGS = {
     # bereiten Positionen heraus, waehrend die Kachel "Ready to sell"
     # weiter 14 zeigte. Wer filtern will, schaltet es im Tools-Menue ein.
     "sell_hide_active_orders": False,
+    # PORTFOLIO-KARTE "ORDERS LAUFEN AUS" (emm937, Nutzer 14.11.2026:
+    # "Dropdown ... 3 Tage 7 Tage / 20 Tage ... Standard auf 7 Tage").
+    "pf_ablauf_tage": 7,
     # FRACHT (Nutzer 29.09.2026): ISK je m3 fuer den Transport. EIN Wert fuer
     # Regional Trading UND Verkaufsliste. 0 = keine Fracht (Standard).
     # Fracht bekommen nur Stueck, die laut Wallet NICHT am Verkaufs-Hub
@@ -461,8 +582,22 @@ def app_data_dir() -> str:
     # echter mkdir-Versuch). Steht der NEUE Ordner schon da, ist die Antwort
     # immer dieselbe: EIN isdir genuegt. Fehlt er (erster Start, Umzug,
     # von Hand geloescht), laeuft der volle Weg darunter wie bisher.
-    if _DATENORDNER_BEKANNT.get(neu) and os.path.isdir(neu):
-        return neu
+    # NOCH SCHNELLER (emm873, UI-Wache-Befund 08.11.2026): auch EIN isdir
+    # je Aufruf ist ein Platten-Zugriff, und der Schnellweg laeuft
+    # hunderte Male je Oberflaechen-Durchgang (gemessen: 1'603 Aufrufe
+    # fuer EIN Portfolio-Rendern mit 200 Zeilen). Unter Windows mit
+    # Virenscanner wird daraus die Sekunden-Blockade, die der Nutzer als
+    # "keine Rueckmeldung" sieht. Der Ordner verschwindet im Betrieb
+    # praktisch nie - also wird hoechstens alle PRUEF_INTERVALL_S
+    # nachgesehen. Wird er doch geloescht, merkt es der naechste
+    # Durchgang, und der volle Weg darunter legt ihn neu an.
+    if _DATENORDNER_BEKANNT.get(neu):
+        _jetzt = _time873.monotonic()
+        if _jetzt - _DATENORDNER_GEPRUEFT.get(neu, 0.0) < PRUEF_INTERVALL_S:
+            return neu
+        if os.path.isdir(neu):
+            _DATENORDNER_GEPRUEFT[neu] = _jetzt
+            return neu
     alt = os.path.join(base, _ALTER_DATENORDNER_NAME)
     if not os.path.exists(neu) and os.path.isdir(alt):
         try:
@@ -488,6 +623,26 @@ def app_data_dir() -> str:
 
 
 _DATENORDNER_BEKANNT = {}
+# emm873: wann wurde der Ordner zuletzt wirklich auf der Platte geprueft?
+# Dazwischen gilt die letzte Antwort - siehe Kommentar in app_data_dir.
+_DATENORDNER_GEPRUEFT = {}
+PRUEF_INTERVALL_S = 5.0
+
+
+def vergiss_datenordner():
+    """Die gemerkte Ordner-Antwort wegwerfen - der naechste
+    `app_data_dir()` sieht wieder richtig auf der Platte nach (emm873).
+
+    WARUM ES DAS GIBT: die Drosselung oben spart den Platten-Zugriff im
+    Hot Path, kann aber bis zu PRUEF_INTERVALL_S lang einen Ordner
+    melden, den es nicht mehr gibt (Nutzer verschiebt oder loescht ihn
+    im laufenden Betrieb). Die Zusage aus Sitzung 1 - "lieber der alte
+    Ordner als verlorene Daten" - darf daran nicht scheitern. Wer
+    merkt, dass der Pfad nicht stimmt (store._conn bei einem
+    Oeffnen-Fehler), ruft das hier und bekommt beim naechsten Blick die
+    Wahrheit samt Umzug."""
+    _DATENORDNER_GEPRUEFT.clear()
+    _DATENORDNER_BEKANNT.clear()
 
 
 def db_path() -> str:

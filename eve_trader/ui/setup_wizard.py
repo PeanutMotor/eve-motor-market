@@ -24,7 +24,7 @@ def _step(num, text):
     badge.setFixedSize(24, 24)
     badge.setAlignment(Qt.AlignCenter)
     badge.setStyleSheet(
-        f"background:{theme.CYAN_FILL};color:{theme.CYAN};border-radius:12px;font-weight:700;")
+        f"background:{theme.CYAN_FILL};color:{theme.CYAN};border-radius:{theme.RAD_PILLE};font-weight:700;")
     lab = QLabel(text)
     lab.setWordWrap(True)
     row.addWidget(badge, 0, Qt.AlignTop)

@@ -418,8 +418,16 @@ check("b1b Kalender-Knopf ist weg",
 # emm327: Seite 4 "Industry jobs" dazu -> fuenf Seiten, fuenf Knoepfe.
 # emm436: Seite 5 "Build from stock" -> sechs. emm458: Seite 6 "Stock
 # locations" -> sieben.
-eq("b1b Kalender-Seite ist aus dem Stapel raus", win.b_stack.count(), 7)
-eq("b1b sieben Navigations-Knoepfe", len(win._bau_page_btns), 7)
+# DIE ZUSAGE IST "EIN KNOPF JE SEITE", nicht eine feste Zahl. Mit der
+# 7 musste diese Stelle bei jedem Einschub angefasst werden - seit
+# emm887 (Assets als Seite 7) zum zweiten Mal. Der Kalender bleibt
+# trotzdem geprueft: er haette eine EIGENE Seite gehabt, und die
+# Knopfliste nennt jede Seite beim Namen.
+eq("b1b jede Stapel-Seite hat genau einen Knopf in der Leiste",
+   len(win._bau_page_btns), win.b_stack.count())
+check("b1b die Kalender-Seite ist aus dem Stapel raus",
+      not any(b.text() in ("Build calendar", "Bau-Kalender")
+              for b in win._bau_page_btns))
 # INDUSTRY JOBS UND STOCK LOCATIONS STEHEN UNTER "SETUP" (Nutzer: "Stock
 # Locations Tab moechte ich unten bei Setup haben und Industry Jobs auch").
 # Geprueft wird die REIHENFOLGE IN DER LEISTE, nicht die Seitennummer -
@@ -1034,6 +1042,7 @@ try:
         win._go_tab(_k2p)
     check("b2p alle vier Reiter lassen sich oeffnen",
           win._nav_buttons[win._paid_keys[-1]].isChecked())
+    from eve_trader.ui import theme as _th2p
     check("b2p Spenden-Hinweis existiert und nennt die Corporation",
           callable(win._show_donation_info)
           and "DONATION_CORP" in _mw2p)
@@ -1047,8 +1056,22 @@ try:
               for k in win._paid_keys)
           and "#NavPaid" not in _mw2p)
     check("b2p und sehen wie Reiter aus: nur oben rund, aktiver buendig",
-          "border-top-left-radius:10px" in _mw2p
+          "border-top-left-radius:{theme.RAD_REITER}" in _mw2p
+          and "border-top-right-radius:{theme.RAD_REITER}" in _mw2p
           and "border-top:3px solid" in _mw2p)
+    # DIE EIGENTLICHE ZUSAGE ist nicht "10px", sondern dass ein Reiter
+    # ALS Reiter erkennbar bleibt (Nutzer, Sitzung 8: "es soll erkennbar
+    # sein, dass es Tabs sind"). Das haelt nur, solange die Oberkante
+    # deutlich runder ist als alles andere - seit emm885 steht das als
+    # eigener Token da und wird hier gegen die uebrigen gemessen.
+    check("b2p die Reiter-Rundung ist DEUTLICH groesser als die normale "
+          f"({_th2p.RAD_REITER} gegen {_th2p.RAD}) - sonst saehen Reiter "
+          "aus wie Knoepfe",
+          int(_th2p.RAD_REITER.rstrip("px"))
+          >= int(_th2p.RAD.rstrip("px")) + 3)
+    check("b2p ... und die Unterkante bleibt eckig (der aktive Reiter "
+          "sitzt buendig auf der Inhaltsflaeche)",
+          "border-bottom-left-radius" not in _mw2p)
 except Exception as _e2p:                                # pragma: no cover
     _fail.append(f"b2p Abo-Rueckbau: {type(_e2p).__name__}: {_e2p}")
 
@@ -1319,10 +1342,19 @@ try:
           and win._sell_split.count() == 2
           and win._sell_paste in [win._sell_split.widget(1)]
           + win._sell_split.widget(1).findChildren(type(win._sell_paste)))
-    check("b2j der Einfuege-Knopf steht UEBER dem Feld",
-          win._sell_split.widget(1).layout().indexOf(
-              win._sell_split.widget(1).findChildren(
-                  type(win._sh_copy_btn))[0]) == 0)
+    # SEIT emm847 teilt sich der Knopf die OBERSTE Zeile mit dem
+    # Prozentfeld (HBox an Position 0) - die Absicht "Knopf UEBER dem
+    # Feld" gilt unveraendert, nur liegt er eine Layoutebene tiefer.
+    _it2j = win._sell_split.widget(1).layout().itemAt(0)
+    _l2j = _it2j.layout()
+    _kn2j = win._sell_split.widget(1).findChildren(type(win._sh_copy_btn))[0]
+    check("b2j der Einfuege-Knopf steht UEBER dem Feld (Knopfzeile oben)",
+          _l2j is not None
+          and any(_l2j.itemAt(_i).widget() is _kn2j
+                  for _i in range(_l2j.count())))
+    check("b2j und daneben sitzt das Prozentfeld (emm847)",
+          any(_l2j.itemAt(_i).widget() is win._sell_paste_pct
+              for _i in range(_l2j.count())))
     _mwsrc2j = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
     check("b2j der Erklaertext ist raus",
           "Portfolio-Items mit Status" not in _mwsrc2j)
@@ -3057,9 +3089,10 @@ finally:
 # Sidebar noch nicht, wo man sich befindet - kannst du das mit derselben
 # Optik machen?"
 from eve_trader.ui import theme as _th7
-check("b7n die sieben Seiten-Knoepfe der Bau-Leiste sind da",
-      len(getattr(win, "_bau_page_btns", [])) == 7)
-if len(getattr(win, "_bau_page_btns", [])) == 7:
+check("b7n jede Stapel-Seite der Bau-Leiste hat ihren Knopf",
+      len(getattr(win, "_bau_page_btns", [])) == win.b_stack.count()
+      and win.b_stack.count() > 0)
+if len(getattr(win, "_bau_page_btns", [])) == win.b_stack.count():
     _akt7n = win._bau_rail_active_css
     _idl7n = win._bau_rail_idle_css
     # DIESELBE HANDSCHRIFT WIE LINKS: Cyan-Schrift, Cyan-Flaeche und der
@@ -4800,7 +4833,7 @@ try:
     # DER AMBERNE RAND EINES GEBUNDENEN PLANS BLEIBT - er sagt "gehoert zu
     # einem Multi-Bauplan" und ist keine Geschmacksfrage.
     check("b99 mit Farbe UND Multi-Bindung bleibt der amberne Rand",
-          "rgba(242,162,60,0.55)" in win._plan_farb_stil("f1", True)
+          _th7.toenung(_th7.AMBER, 0.55) in win._plan_farb_stil("f1", True)
           and "background: rgba(76,144,240" in win._plan_farb_stil("f1", True))
     # ALTBESTAND AM ECHTEN FENSTER: Plan B traegt den Schluessel der ersten
     # Fassung ("amarr"). Er muss auf der Karte die Farbe von Platz 7 zeigen
@@ -4882,7 +4915,7 @@ try:
     # OHNE JEDE WAHL: das Buendel ist schon eingefaerbt, der Einzelplan nicht.
     check("b101 ein Buendel traegt von sich aus den amberne Hauch",
           _kB101 is not None
-          and "rgba(242,162,60,0.10)" in (_kB101.styleSheet() or ""))
+          and _th7.toenung(_th7.AMBER, 0.10) in (_kB101.styleSheet() or ""))
     check("b101 ein gewoehnlicher Plan bleibt farblos",
           _kE101 is not None
           and "background: rgba(" not in (_kE101.styleSheet() or ""))
@@ -4912,9 +4945,9 @@ try:
     check("b101 ... die eigene Wahl gewinnt ueber die Standardfarbe",
           _th101.PLAN_FARBEN["f5"] is not None
           and "rgba(217,95,196,0.18)" in (_kB101.styleSheet() or "")
-          and "rgba(242,162,60,0.10)" not in (_kB101.styleSheet() or ""))
+          and _th7.toenung(_th7.AMBER, 0.10) not in (_kB101.styleSheet() or ""))
     check("b101 ... und der amberne Rand des Buendels bleibt",
-          "rgba(242,162,60,0.55)" in (_kB101.styleSheet() or ""))
+          _th7.toenung(_th7.AMBER, 0.55) in (_kB101.styleSheet() or ""))
     if _m101 is not None:
         _m101.close()
         _m101.deleteLater()
@@ -5724,9 +5757,12 @@ try:
         [_w_en.cont_tree.headerItem().text(_i) for _i in range(3)]],
        [["Handeln / Container", "Menge", "Jita-Wert"],
         ["Trade / container", "Qty", "Hub value"]])
+    # Index 2 ist seit emm850 der neue 20-Tage-Eintrag (den die
+    # Empfohlen-Presets brauchen) - geprueft wird derselbe Eintrag,
+    # nur sein heutiger Platz.
     eq("b23 die Zeitfenster-Auswahl ebenso",
        [_w_de.d_window.itemText(2), _w_en.d_window.itemText(2)],
-       ["30 Tage", "30 days"])
+       ["20 Tage", "20 days"])
     eq("b23 die Swing-Presets ebenso",
        [_w_de.h_preset.itemText(1), _w_en.h_preset.itemText(1)],
        # OHNE MARKER: `_combo_item` trennt das Emoji ab und ersetzt es
@@ -6777,10 +6813,14 @@ for _i44 in range(_bpt44.columnCount()):
 # emm499 (Nutzer: "eine Columne ... wieviel % das Item gerade ueber oder
 # unter dem durchschnittlichen marktpreis liegt ... ein 3 Monate avarage
 # finde ich besser") - die achte: "vs. 90d avg", standardmaessig an.
-check(f"b44 genau acht Spalten sichtbar (sind {len(_sicht44)})",
-      len(_sicht44) == 8)
-check("b44 und es sind die fuer die Profitvorschau + Verkauft/Tag + Marge + Trend",
-      _sicht44 == [0, 6, 8, 10, 11, 16, 17, 18])
+# emm838 (Nutzer: "Vielleicht in solchen faellen eine zusatzspalte (Jita
+# Preis), weil Jita ist so uebers ganze game immer eine Richtlinie") -
+# die neunte: "Jita sell", standardmaessig an. Sie ist an einem Hub ohne
+# eigene Angebote die EINZIGE Spalte, die noch einen Preis zeigt.
+check(f"b44 genau neun Spalten sichtbar (sind {len(_sicht44)})",
+      len(_sicht44) == 9)
+check("b44 und es sind die fuer die Profitvorschau + Verkauft/Tag + Marge + Trend + Jita",
+      _sicht44 == [0, 6, 8, 10, 11, 16, 17, 18, 22])
 check("b44 die Marge steht gleich rechts neben Profit/unit",
       _bpt44.horizontalHeader().visualIndex(17)
       == _bpt44.horizontalHeader().visualIndex(10) + 1)
@@ -6795,8 +6835,9 @@ check("b44 Blueprint-Spalte steht nicht im Menue",
 # Spalten ersatzlos geloescht haette - und damit die Daten mit ihnen.
 # Sitzung 17: +1 Spalte "Profit/m3" (Nutzer) - weiterhin alle vorhanden.
 # emm499: +4 (vs. 90d avg an, Delta 7/30/90 standardmaessig aus) = 22.
-check(f"b44 alle zweiundzwanzig Spalten sind noch da (sind {_bpt44.columnCount()})",
-      _bpt44.columnCount() == 22)
+# emm838: +1 "Jita sell" = 23.
+check(f"b44 alle dreiundzwanzig Spalten sind noch da (sind {_bpt44.columnCount()})",
+      _bpt44.columnCount() == 23)
 check("b44 die Trend-Spalte steht gleich rechts neben Sold/day",
       _bpt44.horizontalHeader().visualIndex(18)
       == _bpt44.horizontalHeader().visualIndex(16) + 1)
@@ -8554,7 +8595,16 @@ try:
             "url": "https://github.com/x/y/releases/tag/9.9.9"}
         win.check_programm_update(still=True)
         _app.processEvents()
-        eq("b75 neue Fassung: die Update-Meldung erscheint", _meldung75, ["9.9.9"])
+        # GEGEN DEN START-TIMER IMMUN (emm834): main_window plant beim
+        # Aufbau `QTimer.singleShot(12000, check_programm_update(still=True))`.
+        # Feuert der waehrend dieses Tests - unter Last im Parallel-Lauf
+        # durchaus -, ruft er DIESELBE Methode mit DERSELBEN gefaelschten
+        # `pruefen` und die Meldung steht zweimal in der Liste. Das war der
+        # sporadisch rote b-Lauf, den ich zuerst emm833 zugeschrieben hatte.
+        # Geprueft wird deshalb, WAS gemeldet wurde, nicht wie oft: die
+        # richtige Version, und nichts anderes daneben.
+        eq("b75 neue Fassung: die Update-Meldung erscheint",
+           sorted(set(_meldung75)), ["9.9.9"])
         # (3) nicht vergleichbar -> beim Start still
         _pu75.pruefen = lambda _r, _v, holen=None: {
             "neuer": False, "hinweis": "keine Antwort", "version": None, "url": None}
@@ -11515,6 +11565,49 @@ try:
     _qs84 = [s for s in _d84.findChildren(QSpinBox) if not s.isEnabled()
              and s.value() == 1 and "multi" in s.toolTip().lower()]
     check("b84 die Menge ist beim Buendel gesperrt und erklaert sich", len(_qs84) == 1)
+    # ---- (b852) SORTIEREN PER SPALTENKOPF (Discord "Robust", 07.11.
+    # 2026: "Can we possibly have a option to sort these columns under
+    # End Products Of This Bundle"). GEKLICKT am lebenden Buendel aus
+    # b84: sortiert wird nach den SICHTBAREN Zellwerten, die Zeilen
+    # (samt ihrer Bedien-Widgets) werden in der Folge NEU GEBAUT -
+    # Qt-Sortierung haette die Widgets an den alten Zeilen kleben
+    # lassen.
+    try:
+        _so852 = getattr(win, "_bd_multi_sortieren", None)
+        check("b852 der Sortier-Handler haengt am Fenster", _so852 is not None)
+        _so852(7)                        # Kosten/Stk aufsteigend
+        _w852a = [_tbl84.item(r, 7)._value
+                  for r in range(_tbl84.rowCount())]
+        check(f"b852 Klick 1: Kosten/Stk aufsteigend ({_w852a})",
+              _w852a == sorted(_w852a))
+        _so852(7)                        # zweiter Klick: absteigend
+        _w852b = [_tbl84.item(r, 7)._value
+                  for r in range(_tbl84.rowCount())]
+        check(f"b852 Klick 2: absteigend ({_w852b})",
+              _w852b == sorted(_w852b, reverse=True))
+        # DIE WIDGETS SIND MITGEWANDERT: die Mengen-Spinner haengen nach
+        # dem Neuaufbau wieder je Ende, nicht je alter Zeilennummer.
+        check("b852 die Bedien-Widgets haengen wieder je Ende",
+              set(win._bd_multi_zeilen.keys()) == {_A83, _B83}
+              and all("menge" in w for w in win._bd_multi_zeilen.values()))
+        # Eine Widget-Spalte sortiert NICHT (kein stiller Kaputt-Klick).
+        # Gemessen wird am SORTIERZUSTAND, nicht an der Reihenfolge:
+        # Spalte 1 traegt nur Widgets, alle Sortierwerte waeren gleich,
+        # und eine stabile Sortierung liesse die Reihenfolge auch dann
+        # unveraendert, wenn der Guard fehlt (so blieb die Rotprobe
+        # zuerst blind).
+        _st852 = getattr(win, "_bd_multi_sort", (None, True))
+        _so852(1)
+        check("b852 Klick auf eine Widget-Spalte aendert den "
+              "Sortierzustand nicht",
+              getattr(win, "_bd_multi_sort", (None, True)) == _st852
+              and getattr(win, "_bd_multi_sort", (None, True))[0] != 1)
+    except Exception as _e852:                           # pragma: no cover
+        import traceback as _tb852
+        _fail.append(f"b852 Buendel-Sortierung: {type(_e852).__name__}: "
+                     f"{_e852} | "
+                     + _tb852.format_exc().splitlines()[-3].strip())
+
     # ---- (b98) BILDER + EINKLAPPEN der Endprodukt-Karte (23.09.2026) ----
     # Nutzer: "danach fehlen mir in einem Multibuildplan immer noch die Icons
     # der Endprodukte ganz oben" und "ich moechte, dass man 'Endprodukte
@@ -11550,6 +11643,26 @@ try:
     # WEGNEHMEN statt auf True setzen - sonst prueft der naechste Lauf den
     # gespeicherten Wert statt der Vorgabe.
     win.settings.pop("bau_multi_enden_offen", None)
+    # ---- (b857c) DIE MENGEN-SPINNER DES OFFENEN BUENDELS WIRKEN ----
+    # (Nutzer 07.11.2026: "nach auf diese weise über doctrine erstelle
+    # multipläne kann ich die anzahl der ITems ... nicht erhöhen oder
+    # verringern") - hier am lebenden Buendel-Fenster belegt: der
+    # Quantity-Spinner der ersten Zeile ist BEDIENBAR und sein Wert
+    # landet in _bd_buendel_enden. (Der "Bundle:"-Kopf-Spinner ist
+    # seit 1.0.9 bewusst fest auf 1 - dafuer gibt es jetzt den
+    # x-Faktor im Mengen-Dialog, b857.)
+    from PySide6.QtWidgets import QSpinBox as _SB857
+    _mw857 = _tbl84.cellWidget(0, 1)
+    if _mw857 is not None and not isinstance(_mw857, _SB857):
+        _mw857 = _mw857.findChild(_SB857)
+    check("b857c der Mengen-Spinner der Buendel-Zeile ist bedienbar",
+          _mw857 is not None and _mw857.isEnabled())
+    _alt857 = int(_mw857.value())
+    _mw857.setValue(_alt857 + 6)
+    check("b857c ein gedrehter Wert landet im Buendel-Zustand",
+          (_alt857 + 6) in [int(q) for _t0, q in
+                            (win._bd_buendel_enden or [])])
+    _mw857.setValue(_alt857)
     _d84.close(); _app.processEvents()
     # DAS PENDING WIRD WIRKLICH VERBRAUCHT (ausgefuehrt, Rotprobe fand die
     # Attrappe unten blind): echtes open_build_detail, aber ohne Markt-Scan
@@ -12175,16 +12288,35 @@ try:
     # ob die Tools-Dropdowns das richtige Ergebnis erzielen; 'optimale
     # Menge' funktioniert bisher nur auf 1 Endprodukt"). Gemessen am
     # offenen Buendel-Fenster (_d85), nicht am Quelltext.
+    # AUSGEDUENNT (emm840, Nutzer 06.11.2026: "generell 'Tools' dropdown
+    # eniges Davon braeuchte es meiner meinung nach nicht"). "Fehlbedarf
+    # pruefen" ("fehl") und "Orderbuch-Preise in den Plan laden"
+    # ("ladder_plan") sind WEG: der erste ging in "Fehlendes nachkaufen"
+    # auf (das jetzt erst zeigt und dann fragt), der zweite wurde zum
+    # Knopf im Orderbuch-Fenster. Die zwei Schluessel ausdruecklich als
+    # FEHLEND zu pruefen ist der Punkt - sonst koennte ein spaeterer
+    # Umbau sie stillschweigend wieder einfuehren.
     _ta114 = getattr(win, "_bd_tools_actions", None) or {}
     check("b114 das Tools-Menue ist am Buendel-Fenster erreichbar",
-          bool(_ta114) and set(_ta114) >= {"opt", "ladder", "contract", "fehl", "nach", "esi"})
+          bool(_ta114) and set(_ta114) >= {"opt", "ladder", "contract", "nach", "esi"})
+    check(f"b114 emm840: die zwei ausgeduennten Eintraege sind weg "
+          f"({sorted(_ta114)})",
+          "fehl" not in _ta114 and "ladder_plan" not in _ta114)
+    # CONTRACT-PREISE NUR BEI CAPITALS (emm840, Nutzer: "Load Contract
+    # prices,.. fuer was? --> nur wenn Capital bauen"). GEMESSEN am
+    # offenen Buendel-Fenster: das baut hier keine Capitals, der Eintrag
+    # muss also unsichtbar sein. Ein Quelltext-Anker auf
+    # `setVisible(bool(_ist_cap))` wuerde nicht merken, wenn die Zeile
+    # nie erreicht wird.
+    check("b114 emm840: 'Contract-Preise' ist ohne Capital unsichtbar",
+          "contract" in _ta114 and not _ta114["contract"].isVisible())
     check("b114 'Contract-Preise' ist beim Buendel gesperrt und sagt warum",
           not _ta114["contract"].isEnabled()
           and ("bundle" in _ta114["contract"].text().lower()
                or "bündel" in _ta114["contract"].text().lower())
           and _ta114["contract"].toolTip() != "")
     check("b114 die uebrigen Werkzeuge bleiben beim Buendel bedienbar",
-          all(_ta114[k].isEnabled() for k in ("opt", "fehl", "nach", "esi")))
+          all(_ta114[k].isEnabled() for k in ("opt", "nach", "esi")))
     # OPTIMALE MENGE: je Endprodukt (Auswahl oben), gerechnet wird das
     # gewaehlte Ende - nie die Buendel-ID.
     import eve_trader.ui.mw_optimizer as _mo114
@@ -12279,11 +12411,114 @@ try:
     _exec_alt114 = _mwm114.QMessageBox.exec
     _mwm114.QMessageBox.exec = lambda self_, *a, **k: _infos114.append(self_.text())
     try:
-        win._check_shortfall(); _app.processEvents()
+        # ---- (b841) DIE RUECKFRAGE IST DER SCHUTZ, UND SIE WIRD HIER
+        # GEFAHREN. emm840 hat "Fehlendes nachkaufen" vom stillen Bucher
+        # zum Zeigen-und-Fragen gemacht. Der b114-Weg unten laeuft mit
+        # LEEREM Verlust - er erreicht die Frage also nie. Gemessen: eine
+        # Mutation, die `QMessageBox.question(...)` ausschaltet, blieb
+        # damit gruen; der Eintrag haette wieder ungesehen auf die
+        # Einkaufsliste gebucht. Darum hier mit ECHTEM Verlust, und
+        # beides festgehalten: Nein bucht nichts, Ja bucht genau das.
+        import eve_trader.store as _st841
+        _as_alt841 = _st841.add_shopping
+        _q_alt841 = _mwm114.QMessageBox.question
+        _gebucht841 = []
+        _gefragt841 = []
+        _st841.add_shopping = lambda *a, **k: _gebucht841.append(a)
+        try:
+            win._bd_verlust = {200: 7}
+            win._bd_names_ref = dict(getattr(win, "_bd_names_ref", None) or {})
+            win._bd_names_ref[200] = "b841 Verlustmaterial"
+            _mwm114.QMessageBox.question = staticmethod(
+                lambda *a, **k: (_gefragt841.append(a),
+                                 _mwm114.QMessageBox.No)[1])
+            win._buy_missing_again(); _app.processEvents()
+            check(f"b841 mit Verlust wird GEFRAGT, nicht gebucht "
+                  f"({len(_gefragt841)} Fragen, {len(_gebucht841)} Buchungen)",
+                  len(_gefragt841) == 1 and not _gebucht841)
+            check(f"b841 die Frage zeigt den Verlust vorher "
+                  f"({str(_gefragt841[0][2])[:60] if _gefragt841 else ''})",
+                  bool(_gefragt841)
+                  and "b841 Verlustmaterial" in str(_gefragt841[0][2])
+                  and "7" in str(_gefragt841[0][2]))
+            _mwm114.QMessageBox.question = staticmethod(
+                lambda *a, **k: _mwm114.QMessageBox.Yes)
+            win._buy_missing_again(); _app.processEvents()
+            check(f"b841 Ja bucht genau das verlorene Material "
+                  f"({[a[:3] for a in _gebucht841]})",
+                  len(_gebucht841) == 1 and int(_gebucht841[0][0]) == 200
+                  and int(_gebucht841[0][2]) >= 7)
+            # ---- WIRKUNGSPROBE STATT QUELLTEXT-ANKER (b841b). Die drei
+            # Dinge, die emm840 aus dem entfernten "Fehlbedarf pruefen"
+            # mitgenommen hat, werden hier AM LAUFENDEN Handler
+            # gemessen - nicht am Quelltext. Ein Anker, der nur prueft,
+            # DASS ein Text im Code steht, faellt gegen `if False:`
+            # durch; das ist in dieser Reihe schon achtmal passiert.
+            _mwm114.QMessageBox.question = staticmethod(
+                lambda *a, **k: (_gefragt841.append(a),
+                                 _mwm114.QMessageBox.No)[1])
+            # (a) ERZ-DECKUNG: sie muss in der Vorlage auftauchen.
+            _erz_alt841 = win._erz_deckung_jetzt
+            win._erz_deckung_jetzt = lambda *a, **k: [
+                {"erz": 200, "da": 10, "soll": 100, "luecke": 90,
+                 "pct": 90.0, "ausfall": {201: 500}}]
+            _gefragt841.clear(); _infos114.clear()
+            try:
+                win._buy_missing_again(); _app.processEvents()
+            finally:
+                win._erz_deckung_jetzt = _erz_alt841
+            _alles841 = " ".join([str(a[2]) for a in _gefragt841]
+                                 + [str(x) for x in _infos114])
+            check(f"b841b die Erz-Warnung steht in der Vorlage "
+                  f"({_alles841[:70]!r})",
+                  "ORE" in _alles841.upper() and "90" in _alles841)
+            # (b) OHNE GERECHNETEN PLAN KEINE ENTWARNUNG. Das ist der
+            # gefaehrliche Fall: die Rest-Rechnung findet dann nichts,
+            # und "alles gedeckt" waere eine Luege, die beruhigt.
+            _pr_alt841 = win._bd_plan_ref
+            win._bd_plan_ref = {"plan": {"buy": {200: 5}}}   # keine build_*
+            win._bd_verlust = {}
+            _gefragt841.clear(); _infos114.clear()
+            try:
+                win._buy_missing_again(); _app.processEvents()
+            finally:
+                win._bd_plan_ref = _pr_alt841
+            _ohne841 = " ".join(str(x) for x in _infos114)
+            check(f"b841b ohne gerechneten Plan: kein 'alles gedeckt' "
+                  f"({_ohne841[:70]!r})",
+                  "Everything is covered" not in _ohne841
+                  and "Alles gedeckt" not in _ohne841
+                  and ("Recalculate" in _ohne841
+                       or "Neu rechnen" in _ohne841
+                       or "build positions" in _ohne841
+                       or "Bau-Positionen" in _ohne841))
+            # (c) DIE VIER ZAHLEN je Fehlposten - gemessen am Text, der
+            # wirklich herauskommt. Nur "fehlt 90" sagt nicht, OB man
+            # kaufen muss: laufende eigene Produktion deckt einen Teil.
+            _fb_alt841 = win._fehlbedarf_jetzt
+            win._fehlbedarf_jetzt = lambda *a, **k: [(200, 90, 100, 4, 6)]
+            win._bd_verlust = {}
+            _gefragt841.clear(); _infos114.clear()
+            try:
+                win._buy_missing_again(); _app.processEvents()
+            finally:
+                win._fehlbedarf_jetzt = _fb_alt841
+            _vier841 = " ".join(str(x) for x in _infos114)
+            check(f"b841b der Fehlposten nennt alle vier Zahlen "
+                  f"({_vier841[-90:]!r})",
+                  all(_z in _vier841 for _z in ("90", "100", "4", "6")))
+        finally:
+            _st841.add_shopping = _as_alt841
+            _mwm114.QMessageBox.question = _q_alt841
+            win._bd_verlust = {}
+        # EIN EINTRAG SEIT emm840 ("Fehlbedarf pruefen" ging darin auf):
+        # er laeuft am Buendel durch und nennt nirgends die Buendel-ID als
+        # Material - die ist eine Rechenhilfe, kein kaufbares Item.
         win._bd_verlust = {}
+        _infos114.clear()      # b841 oben hat selbst eine Meldung erzeugt
         win._buy_missing_again(); _app.processEvents()
-        check("b114 'Fehlbedarf pruefen' und 'Fehlendes nachkaufen' laufen am Buendel durch",
-              len(_infos114) == 2 and all(str(I.BUENDEL_ID) not in x for x in _infos114))
+        check(f"b114 'Fehlendes nachkaufen' laeuft am Buendel durch ({len(_infos114)})",
+              len(_infos114) == 1 and all(str(I.BUENDEL_ID) not in x for x in _infos114))
     finally:
         _mwm114.QMessageBox.information = _inf_alt114
         _mwm114.QMessageBox.exec = _exec_alt114
@@ -12859,9 +13094,27 @@ try:
     #     vorgetaeuschtem Besitz (alles 0 = nichts im Hangar).
     _own_alt119 = getattr(win, "_bd_bp_owned_counts", None)
     _bpc_alt119 = getattr(win, "_bd_bp_owned_bpc_runs", None)
+    _fe_alt119 = getattr(win, "_bd_bp_fehler", None)
+    _vtg_alt119 = getattr(win, "_bd_bp_im_vertrag", None)
+    _oc_alt119 = getattr(win, "_bd_owned_bp_cache", None)
     try:
+        # Der Fill leitet den Besitz aus _bd_owned_bp_cache AB, sobald
+        # der existiert (emm536) - der Hintergrund-Worker (s.u.) kann
+        # ihn gesetzt haben. Fuer diesen Block zaehlt NUR der hier
+        # vorgetaeuschte Zustand.
+        win._bd_owned_bp_cache = None
         win._bd_bp_owned_counts = {}
         win._bd_bp_owned_bpc_runs = {}
+        # WER DEN BESITZ VORTAEUSCHT, MUSS AUCH DIE FEHLERLISTE
+        # VORTAEUSCHEN (emm855-Fund): ein frueherer Test startet den
+        # echten "Alles aus ESI laden"-WORKER; der laeuft im
+        # Hintergrund weiter, scheitert am gekappten Netz und setzt
+        # irgendwann _bd_bp_fehler=["Peanut Motor"] - je nach Timing
+        # VOR diesem Block. Dann zeigte M85 amber "ownership not
+        # loaded" statt rot "missing", und dieser Test mass das
+        # Wetter statt der Logik.
+        win._bd_bp_fehler = []
+        win._bd_bp_im_vertrag = {}
         _bpj119 = [{"tid": _A85, "name": "A85", "bp_id": _BPA85,
                     "activity": I.MANUFACTURING, "runs": 10, "is_end": True},
                    {"tid": _M85, "name": "M85", "bp_id": 975555,
@@ -12888,11 +13141,21 @@ try:
         check(f"b119 'Buy Missing Blueprints' kopiert nur die kaufbare ({_cb119!r})",
               _cb119.startswith("M85") and "\t1" in _cb119
               and "A85" not in _cb119 and len(_cb119.splitlines()) == 1)
+        # HAENGENDE WORKER-CALLBACKS ZUERST ABFEUERN (emm855-Fund): der
+        # "Alles aus ESI laden"-Job eines frueheren Tests liefert sein
+        # done() irgendwann ueber die Event-Schleife nach und fuellt
+        # den Reiter mit SEINEM Besitz neu - danach den Zustand
+        # stellen und SYNCHRON pruefen (kein processEvents zwischen
+        # Fuellen, Klick und Messung).
+        _app.processEvents()
+        win._bd_owned_bp_cache = None
         win._bd_bp_owned_counts = None
+        win._bd_bp_fehler = []
         win._fill_blueprint_tab(_bpj119, [], win._bd_recipes, _tbl119)
         _QA119.clipboard().setText("vorher")
-        win._bd_bp_kauf_btn.click(); _app.processEvents()
-        check("b119 ... ohne geladenen Besitz wird nichts kopiert, der Reiter sagt warum",
+        win._bd_bp_kauf_btn.click()
+        check("b119 ... ohne geladenen Besitz wird nichts kopiert, der "
+              f"Reiter sagt warum (clip={_QA119.clipboard().text()!r})",
               _QA119.clipboard().text() == "vorher"
               and not win._bd_bp_kauf_lbl.isHidden()
               and ("ESI" in win._bd_bp_kauf_lbl.text()))
@@ -12915,6 +13178,9 @@ try:
     finally:
         win._bd_bp_owned_counts = _own_alt119
         win._bd_bp_owned_bpc_runs = _bpc_alt119
+        win._bd_bp_fehler = _fe_alt119
+        win._bd_bp_im_vertrag = _vtg_alt119
+        win._bd_owned_bp_cache = _oc_alt119
     # ------------------------------------------------------------ (b90)
     # GEWINN JE ENDPRODUKT IST NETTO (Nutzer-Befund 20.09.2026: "ich bin mir
     # nicht sicher ob hier auch die Rechnung beider Plaene stimmt, im Profit
@@ -13866,17 +14132,29 @@ try:
                         .get("components") or [])]
             check(f"b87 ... und der Rezeptbaum zeigt C nicht mehr ({_tree87})",
                   _C87 not in _tree87 and _A87 in _tree87)
-            # SPEICHERN EINES GESPEICHERTEN PLANS FRAGT KEINEN NAMEN (Nutzer
-            # 02.10.2026: "ich moechte aber kein Duplikat erstellen auf diese
-            # Weise") - es schreibt ueber die id in genau diesen Plan.
+            # SPEICHERN EINES GESPEICHERTEN PLANS (emm864 loest den
+            # 02.10.-Stand ab): ein Popup fragt "Overwrite / Save as
+            # duplicate / Cancel". OVERWRITE (der Standard) verhaelt sich
+            # wie bisher - kein Namensfeld, KEIN Duplikat, es schreibt
+            # ueber die id in genau diesen Plan.
             from PySide6.QtWidgets import QInputDialog as _QID87
             from eve_trader import config as _cfg87
             _gt_alt87 = _QID87.getText
             _ss_alt87 = _cfg87.save_settings
+            _cb_alt87 = _mmb87.QMessageBox.clickedButton
             _vorg87 = []
             _QID87.getText = staticmethod(
                 lambda *a, **k: (_vorg87.append(k.get("text")), ("", False))[1])
             _cfg87.save_settings = lambda *a, **k: None
+            # Der Knopf wird ueber seine ROLLE gewaehlt (buttons() hat
+            # KEINE verlaessliche Reihenfolge): AcceptRole = "Overwrite".
+            def _knopf87(s, rolle):
+                for _b in s.buttons():
+                    if s.buttonRole(_b) == rolle:
+                        return _b
+                return None
+            _mmb87.QMessageBox.clickedButton = (
+                lambda s: _knopf87(s, _mmb87.QMessageBox.AcceptRole))
             _pid_alt87 = getattr(win, "_bd_open_plan_id", None)
             win.settings["bau_saved_plans"].append(
                 {"id": 8795, "label": "b87 Gespeichert", "type_id": I.BUENDEL_ID,
@@ -13886,17 +14164,53 @@ try:
                 win._bd_open_plan_id = 8795
                 win._bd_save_btn.click(); _app.processEvents()
                 _g87 = [_p for _p in win.settings["bau_saved_plans"] if _p.get("id") == 8795]
-                check(f"b87 Speichern: kein Namensfeld, KEIN Duplikat, derselbe Plan ohne C "
+                check(f"b87 Speichern mit 'Overwrite': kein Namensfeld, KEIN Duplikat, "
+                      f"derselbe Plan ohne C "
                       f"({_vorg87}, {len(win.settings['bau_saved_plans'])} vs {_anz87})",
                       _vorg87 == [] and len(win.settings["bau_saved_plans"]) == _anz87
                       and len(_g87) == 1 and _g87[0].get("label") == "b87 Gespeichert"
                       and [a for a, _b in (_g87[0].get("enden") or [])] == [_A87, _B87])
+                # ---------------------------------------------- (b864)
+                # Nutzer 08.11.2026: "mit 'speichern button' will ich ja
+                # eigentlich ein dublikat erstellen, normalerweise" ->
+                # zweiter Popup-Knopf "Save as duplicate": Namensfeld mit
+                # Vorgabe "{Name} (2)", die Quelle bleibt unangetastet.
+                _mmb87.QMessageBox.clickedButton = (
+                    lambda s: _knopf87(s, _mmb87.QMessageBox.DestructiveRole))
+                _QID87.getText = staticmethod(
+                    lambda *a, **k: (_vorg87.append(k.get("text")),
+                                     ("b864 Kopie", True))[1])
+                win._bd_save_btn.click(); _app.processEvents()
+                _q864 = [_p for _p in win.settings["bau_saved_plans"]
+                         if _p.get("id") == 8795]
+                _k864 = [_p for _p in win.settings["bau_saved_plans"]
+                         if _p.get("label") == "b864 Kopie"]
+                check(f"b864 'Save as duplicate': Vorgabe '{{Name}} (2)', neuer Plan "
+                      f"daneben, Quelle unveraendert ({_vorg87})",
+                      _vorg87 == ["b87 Gespeichert (2)"]
+                      and len(win.settings["bau_saved_plans"]) == _anz87 + 1
+                      and len(_k864) == 1
+                      and _k864[0].get("id") != 8795
+                      and len(_q864) == 1
+                      and _q864[0].get("label") == "b87 Gespeichert")
+                # Noch ein Duplikat mit DEMSELBEN Namen: ein Duplikat darf
+                # nie stillschweigend ueberschreiben -> hochnummeriert.
+                win._bd_save_btn.click(); _app.processEvents()
+                _lbl864 = [str(_p.get("label")) for _p in
+                           win.settings["bau_saved_plans"]]
+                check("b864 vergebener Duplikat-Name wird hochnummeriert",
+                      _lbl864.count("b864 Kopie") == 1
+                      and _lbl864.count("b864 Kopie (2)") == 1)
             finally:
                 _QID87.getText = _gt_alt87
                 _cfg87.save_settings = _ss_alt87
+                _mmb87.QMessageBox.clickedButton = _cb_alt87
                 win._bd_open_plan_id = _pid_alt87
                 win.settings["bau_saved_plans"] = [
-                    _p for _p in win.settings["bau_saved_plans"] if _p.get("id") != 8795]
+                    _p for _p in win.settings["bau_saved_plans"]
+                    if _p.get("id") != 8795
+                    and _p.get("label") not in ("b864 Kopie",
+                                                "b864 Kopie (2)")]
         finally:
             _mmb87.QMessageBox.warning = _w_alt87
             _mmb87.QMessageBox.exec = _x_alt87
@@ -15425,7 +15739,7 @@ try:
         _alt135r = (win.settings.get("target_margin"), win._pf_price_source_ok,
                     win._hat_order)
         win.settings["target_margin"] = 12.0
-        win._pf_price_source_ok = lambda: True
+        win._pf_price_source_ok = lambda *_: True   # emm873: nimmt lbl
         win._hat_order = lambda *a, **k: False
         _bereit135 = win._sell_ready(_h135r)
         win.settings["fracht_aus_items"] = [34]; win._fracht_cache = None
@@ -16363,7 +16677,8 @@ try:
           any("b86 Multi" in (_x or "") and _x != "b86 Einzel A"
               for _x in _zeile86))
     check("b86 ... und ist farblich markiert (amberner Rand wie der Multi-Plan)",
-          "242,162,60" in (_karten86[8601].styleSheet() or ""))
+          _th7.toenung(_th7.AMBER, 0.55)
+          in (_karten86[8601].styleSheet() or ""))
     check("b86 ein Plan ausserhalb bekommt weder Zeile noch Rand",
           not any("b86 Multi" in (_x or "")
                   for _x in [l.text() for l in _karten86[8603].findChildren(QLabel)])
@@ -16873,7 +17188,7 @@ try:
         win._bfs_nur_cb.setChecked(True)
         _btns186 = list(getattr(win, "_bau_page_btns", []) or [])
         check("b186 Leiste hat 'Build from stock' als 6. Seite",
-              len(_btns186) == 7
+              len(_btns186) == win.b_stack.count()
               and _btns186[5].text() in ("Build from stock (Beta)", "Aus Bestand bauen (Beta)"))
         for _ in range(250):
             if not getattr(win, "_bfs_laeuft", False):
@@ -19172,7 +19487,7 @@ try:
         _cfg153.save_settings_async = lambda *a, **k: None   # .smoke_home bleibt sauber
         _btns153 = list(getattr(win, "_bau_page_btns", []) or [])
         check("b153 Leiste hat den Knopf 'Industry jobs' als 5. Seite",
-              len(_btns153) == 7
+              len(_btns153) == win.b_stack.count()
               and _btns153[4].text() in ("Industry jobs", "Industrie-Jobs"))
         # Ein frueherer Lauf (b1b/b7n navigieren ueber Seite 4) darf nicht
         # mehr laufen, sonst landet SEIN Ergebnis hier.
@@ -19588,19 +19903,30 @@ try:
         win._bd_frozen = None
         win._show_build_detail(100, "b144", _res); _app.processEvents()
         _d144 = win._bd_dialog
-        # DIE ORDERBUCH-PREISE LEBEN UNTER TOOLS WEITER (der Teil von
-        # "Recalculate", der Preise holte) - Eintrag startet genau den Abruf.
+        # DIE ORDERBUCH-PREISE LEBEN WEITER - seit emm840 aber NICHT mehr
+        # als Menueeintrag ("ladder_plan"), sondern als Knopf "Preise in
+        # den Plan uebernehmen" im Orderbuch-Fenster. Der Eintrag und der
+        # Knopf riefen DIESELBE Funktion; zwei Wege zu einer Rechnung, von
+        # denen einer sie ungesehen uebernimmt, hat der Nutzer abgeschafft.
+        # GEPRUEFT WIRD DIE FUNKTION, nicht der Knopf: an ihr haengt der
+        # Knopf (mw_optimizer holt sie per getattr), und sie ist der EINE
+        # Abrufweg. Fehlt sie, ist der Knopf im Fenster tot.
+        check("b144 emm840: der Menueeintrag 'ladder_plan' ist weg",
+              "ladder_plan" not in (getattr(win, "_bd_tools_actions", None) or {}))
         _run_alt144 = win._run
         _jobs144 = []
         win._run = lambda *a, **k: _jobs144.append(k.get("label"))
         try:
-            win._bd_tools_actions["ladder_plan"].trigger(); _app.processEvents()
+            _lr144 = getattr(win, "_bd_ladder_refresh", None)
+            if _lr144 is not None:
+                _lr144(); _app.processEvents()
         finally:
             win._run = _run_alt144
-        check(f"b144 Tools: 'Load order-book prices into the plan' holt das Orderbuch "
+        check(f"b144 der Orderbuch-Abruf haengt am offenen Plan und laeuft "
               f"({_jobs144})",
-              len(_jobs144) == 1 and ("Order book" in str(_jobs144[0])
-                                      or "Orderbuch" in str(_jobs144[0])))
+              _lr144 is not None and len(_jobs144) == 1
+              and ("Order book" in str(_jobs144[0])
+                   or "Orderbuch" in str(_jobs144[0])))
         _fr144 = []
         _QMB144.question = staticmethod(
             lambda *a, **k: (_fr144.append(a), _QMB144.No)[1])
@@ -21183,7 +21509,7 @@ try:
              "frozen": {"ts": 1.0, "plan_snapshot": _snap194}}]
         _btns194 = list(getattr(win, "_bau_page_btns", []) or [])
         check("b194 Leiste hat 'Stock locations' als 7. Seite",
-              len(_btns194) == 7
+              len(_btns194) == win.b_stack.count()
               and _btns194[6].text() in ("Stock locations", "Lagerorte"))
         win._lager_daten = None
         _btns194[6].click()
@@ -25892,6 +26218,4986 @@ try:
           <= _schr816)
 except Exception as _e817:                               # pragma: no cover
     _fail.append(f"b817 Dropdown-Liste: {type(_e817).__name__}: {_e817}")
+
+# ---------------------------------------------------------------- (b824)
+# MARKET STOCKS am echten Fenster (Nutzer 03./04.11.2026: "Neuen Industry
+# Tab ... rechts neben Industry. Soll Heissen Market Stocks").
+try:
+    # 1) DER REITER SITZT RICHTIG - und hat nichts verschoben. Genau die
+    # Falle, die bei "firesales" und "pi" dokumentiert ist: keys-Liste und
+    # _build_*_tab()-Reihenfolge muessen deckungsgleich sein. Statt die
+    # Reihenfolge zu glauben, wird je Schluessel ein EINDEUTIGES Kind
+    # gesucht - zeigt ein Schluessel auf ein fremdes Widget, ist die
+    # Zuordnung verrutscht.
+    for _k824, _attr824 in (("deals", "deals_table"), ("swing", "hold_table"),
+                            ("region", "rg_table"), ("stocks", "ms_docs"),
+                            ("firesales", "fs_table")):
+        _w824 = win._tab_widget.get(_k824)
+        _kind824 = getattr(win, _attr824, None)
+        check(f"b824 Tab '{_k824}' zeigt auf sein eigenes Widget",
+              _w824 is not None and _kind824 is not None
+              and (_kind824 is _w824 or _w824.isAncestorOf(_kind824)))
+    _pk824 = win._paid_keys
+    check(f"b824 'stocks' steht DIREKT rechts neben 'build' ({_pk824})",
+          "stocks" in _pk824 and "build" in _pk824
+          and _pk824.index("stocks") == _pk824.index("build") + 1)
+    check("b824 der NAV-Knopf existiert und traegt ein Symbol",
+          "stocks" in win._nav_buttons
+          and not win._nav_buttons["stocks"].icon().isNull())
+
+    # 2) Handelsplatz und Regeln
+    check(f"b824 Hub-Auswahl traegt die NPC-Hubs ({win.ms_hub.count()})",
+          win.ms_hub.count() >= 5)
+    eq("b824 Deckel-Standard 30 % ueber Jita", win.ms_aufschlag.value(), 30)
+    eq("b824 Voll-Standard 250 Schiffe", win.ms_ziel.value(), 250)
+
+    # 3) Doctrine anlegen (ueber den Zustand - der Dialog blockiert) und
+    # rendern: Karte, Itemliste, Status.
+    from eve_trader import doctrinen as _dc824
+    _st824 = win._ms_state()
+    _st824["doctrinen"] = [dict(_dc824.doctrine_aus_text(
+        "Probe", "[Rifter, T]\n200mm AutoCannon II\n"
+        "200mm AutoCannon II\nRepublic Fleet EMP S x1000",
+        {"rifter": 587, "200mm autocannon ii": 2969,
+         "republic fleet emp s": 21896}, ziel=10), id=1)]
+    _st824["abgewaehlt"] = {}
+    win._ms_render()
+    eq("b824 eine Doctrine-Karte steht", win.ms_doc_box.count(), 1)
+    # emm853: die Gesamt-Itemliste ist weg (Nutzerwunsch) - rechts
+    # steht die Doctrine-Uebersicht, eine Zeile je Doctrine.
+    eq("b824 die Doctrine-Uebersicht traegt die Doctrine",
+       win.ms_docs.rowCount(), 1)
+    check("b824 die Statuszeile ist KURZ und traegt das Info-Zeichen",
+          win.ms_status.text().endswith("\u24d8")
+          and len(win.ms_status.text()) < 80
+          and bool(win.ms_status.toolTip()))
+
+    # 4) Markt anlegen -> Balken, Positionen, Haken. Waffen reichen fuer
+    # 7 von 10 Fits (14 kaufbar, 2 je Fit) - der Rest ist voll gedeckt.
+    win._ms_markt = {"buch": {587: {"sell": [(5e6, 50)]},
+                              2969: {"sell": [(1e6, 14)]},
+                              21896: {"sell": [(10.0, 100000)]}},
+                     "jita": {587: 5e6, 2969: 1e6, 21896: 10.0},
+                     "vol": {21896: 250.0}, "ts": 1.0, "hub_name": "Probe"}
+    win._ms_render()
+    _card824 = win.ms_doc_box.itemAt(0).widget()
+    from PySide6.QtWidgets import (QProgressBar as _PB824,
+                                   QPushButton as _KN824,
+                                   QTableWidget as _TB824,
+                                   QCheckBox as _CB824)
+    _bar824 = _card824.findChild(_PB824)
+    eq("b824 der Balken zeigt 7 von 10 Fits = 70 %", _bar824.value(), 70)
+    _tbl824 = _card824.findChild(_TB824)
+    eq("b824 die Positions-Tabelle traegt alle drei Zeilen",
+       _tbl824.rowCount(), 3)
+    check("b824 die knappste Position steht OBEN (die Waffe, 70 %)",
+          _tbl824.item(0, 1).data(Qt.UserRole) == 2969)
+    # DIE VOLL-REGEL SICHTBAR: 1000 Cargo je Fit x Ziel 10 = 10'000 -
+    # die Zeile wird ueber ihre type_id gesucht, nicht ueber die
+    # Sortier-Position geraten.
+    _r21896 = next(r for r in range(_tbl824.rowCount())
+                   if _tbl824.item(r, 1).data(Qt.UserRole) == 21896)
+    # emm874: "voll" hat keine eigene Spalte mehr - die Regel steht im
+    # Tooltip der Fehlt-Spalte ("1,000 per fit x 10 = 10,000 needed").
+    check("b824 'voll' je Position = Menge je Fit x Ziel (10'000 Schuss)",
+          "10,000" in _tbl824.item(_r21896, 2).toolTip()
+          and "1,000" in _tbl824.item(_r21896, 2).toolTip())
+    _cbs824 = [_tbl824.cellWidget(r, 0).findChild(_CB824)
+               for r in range(_tbl824.rowCount())]
+    check("b824 ALLE Haken starten AN (Nutzer: 'alle hacken ON')",
+          all(c.isChecked() for c in _cbs824))
+    _cbs824[0].setChecked(False)
+    check("b824 Abwaehlen landet gespeichert in settings",
+          2969 in (win._ms_state()["abgewaehlt"].get("1") or []))
+    _cbs824[0].setChecked(True)
+    check("b824 Anwaehlen raeumt den gespeicherten Eintrag",
+          2969 not in (win._ms_state()["abgewaehlt"].get("1") or []))
+    # Die Suite laeuft englisch - der Knopf wird ueber beide
+    # Sprachfassungen gefunden, ohne t() zu importieren.
+    _voll824 = next(k for k in _card824.findChildren(_KN824)
+                    if k.text().strip() in ("Untick fully covered",
+                                            "Voll gedeckte abw\u00e4hlen"))
+    _voll824.click()
+    _ab824 = set(win._ms_state()["abgewaehlt"].get("1") or [])
+    check("b824 'voll gedeckte abwaehlen' nimmt NUR die 100%-Zeilen "
+          f"(abgewaehlt: {sorted(_ab824)})",
+          _ab824 == {587, 21896})
+
+    # 5) Reichweite: 100'000 im Buch / 250 je Tag = 400 Tage; ohne
+    # Volumen steht ein Strich, keine erfundene Zahl. Seit emm853
+    # steht die Reichweite in der Positions-Tabelle der KARTE
+    # (Spalte 8), nicht mehr in einer eigenen Gesamt-Itemliste.
+    win._ms_render()
+    _card824b = win.ms_doc_box.itemAt(0).widget()
+    _tbl824b = _card824b.findChild(_TB824)
+    _zeile824 = {_tbl824b.item(r, 1).data(Qt.UserRole): r
+                 for r in range(_tbl824b.rowCount())}
+    # emm874: die Reichweite hat keine eigene Spalte mehr - sie steht im
+    # Tooltip von "im Buch", zusammen mit der Menge unter dem Deckel.
+    check("b824 Reichweite = Bestand / Regions-Tagesvolumen (400 Tage)",
+          "400" in _tbl824b.item(_zeile824[21896], 5).toolTip())
+    check("b824 ohne Volumen ein Strich statt einer erfundenen Zahl",
+          "no number is invented"
+          in _tbl824b.item(_zeile824[587], 5).toolTip())
+    check("b824 'on book' steht in der Karte (100'000 Schuss)",
+          _tbl824b.item(_zeile824[21896], 5).text()
+          .replace(",", "").replace("'", "") == "100000")
+
+    # Aufraeumen: der Probe-Zustand verschwindet wieder.
+    win.settings.pop("market_stocks", None)
+    win._ms_markt = None
+except Exception as _e824:                               # pragma: no cover
+    _fail.append(f"b824 Market Stocks: {type(_e824).__name__}: {_e824}")
+
+# ---------------------------------------------------------------- (b919)
+# DOCTRINES STATT MARKET STOCKS (Nutzer 14.11.2026, Screenshot: "market
+# stocks ... eigentlich auch ein nicht passender Name", "Regions haben
+# keine namen", dazu abgeschnittene Spalte rechts und leere Balken vor
+# dem Abruf; Auftrag "alles machen").
+try:
+    import time as _ti919
+    from PySide6.QtWidgets import (QProgressBar as _PB919,
+                                   QHeaderView as _QHV919)
+    # Sichtbar ist der Knopf in der Reiter-Leiste oben.
+    _txt919 = win._nav_buttons["stocks"].text().strip()
+    check(f"b919 der Reiter heisst Doctrines ({_txt919!r})",
+          _txt919 in ("Doctrines", "Doctrinen"))
+    # ---- LEERE KARTE VOR DEM ABRUF: kein Balken, Hinweis oben ----------
+    from eve_trader import doctrinen as _dc919
+    _st919 = win._ms_state()
+    _alt919 = {k: _st919.get(k) for k in ("doctrinen", "abgewaehlt")}
+    _st919["doctrinen"] = [dict(_dc919.doctrine_aus_text(
+        "Probe919", "[Rifter, T]\n200mm AutoCannon II",
+        {"rifter": 587, "200mm autocannon ii": 2969}, ziel=10), id=1)]
+    _st919["abgewaehlt"] = {}
+    win._ms_markt = None
+    win._ms_render()
+    win._ms_alter_zeigen()
+    _bar919 = win.ms_doc_box.itemAt(0).widget().findChild(_PB919)
+    check("b919 vor dem Abruf steht KEIN leerer Balken in der Karte",
+          _bar919 is not None and _bar919.isHidden())
+    check(f"b919 ... die Zeile oben sagt, was zu tun ist "
+          f"({win.ms_alter_lbl.text()[:40]!r})",
+          "Fetch market" in win.ms_alter_lbl.text()
+          or "Markt abrufen" in win.ms_alter_lbl.text())
+    win._ms_markt = {"buch": {587: {"sell": [(5e6, 50)]},
+                              2969: {"sell": [(1e6, 50)]}},
+                     "jita": {587: 5e6, 2969: 1e6},
+                     "vol": {}, "ts": 1.0, "hub_name": "Probe"}
+    win._ms_render()
+    _bar919b = win.ms_doc_box.itemAt(0).widget().findChild(_PB919)
+    check("b919 ... nach dem Abruf ist der Balken wieder da",
+          _bar919b is not None and not _bar919b.isHidden())
+    for _k919, _v919 in _alt919.items():
+        if _v919 is None:
+            _st919.pop(_k919, None)
+        else:
+            _st919[_k919] = _v919
+    win._ms_markt = None
+    # ---- RECHTE TABELLE OHNE QUERBALKEN --------------------------------
+    _hh919 = win.ms_docs.horizontalHeader()
+    eq("b919 Name und Notiz duerfen schrumpfen, Zahlen nicht",
+       [_hh919.sectionResizeMode(_c) for _c in range(5)],
+       # 14.11.2026 (emm938): Spalte 0 traegt jetzt die Doctrine-
+       # KNOEPFE und ist so breit wie der breiteste (Interactive).
+       [_QHV919.Interactive, _QHV919.ResizeToContents,
+        _QHV919.ResizeToContents, _QHV919.ResizeToContents,
+        _QHV919.Stretch])
+    eq("b919 ... und es gibt keinen Querbalken",
+       win.ms_docs.horizontalScrollBarPolicy(), Qt.ScrollBarAlwaysOff)
+    # ---- STRUKTUREN MIT REGION -----------------------------------------
+    _rn919 = win.settings.get("region_namen")
+    try:
+        win.settings["region_namen"] = {"10000058": "Fountain"}
+        _f919 = {"name": "RD-G2R - RD-Set-Jump", "region_id": 10000058,
+                 "structure_id": 1}
+        eq("b919 eine Struktur traegt ihre Region wie die NPC-Hubs",
+           win._struktur_hub_text(_f919), " RD-G2R - RD-Set-Jump (Fountain)")
+        eq("b919 ... ohne bekannte Region steht der Name allein",
+           win._struktur_hub_text(dict(_f919, region_id=10000002)),
+           " RD-G2R - RD-Set-Jump")
+        # MARKET STATS (emm920): dieselbe Quelle, echter Regionsname
+        # statt "Region 10000058 (your ...)".
+        eq("b920 Market Stats nennt die Region beim Namen",
+           win._mstats_region_name(10000058), "Fountain")
+        check("b920 ... und ohne bekannten Namen bleibt die Id",
+              "10000059" in win._mstats_region_name(10000059))
+        # NACHLADEN: einmal im Hintergrund, Ergebnis in den Einstellungen,
+        # danach die Auswahl neu beschriften.
+        from eve_trader.ui import main_window as _mwm919
+        _echt919 = _mwm919.esi.orts_namen
+        _rufe919, _danach919 = [], []
+        # Der Fensteraufbau hat die Regionen der Test-Strukturen schon
+        # einmal versucht (kein Netz in der Suite) - frisch anfangen.
+        win.__dict__.pop("_regionen_versucht919", None)
+        _mwm919.esi.orts_namen = lambda ids: (_rufe919.append(list(ids))
+                                              or {10000002: "The Forge"})
+        try:
+            win._regionen_nachladen([{"region_id": 10000002},
+                                     {"region_id": 10000058}],
+                                    lambda: _danach919.append(1))
+            _ende919 = _ti919.time() + 5
+            while not _danach919 and _ti919.time() < _ende919:
+                _app.processEvents()
+                _ti919.sleep(0.02)
+            eq("b919 nur die UNBEKANNTE Region wird geholt", _rufe919,
+               [[10000002]])
+            eq("b919 ... der Name landet in den Einstellungen",
+               (win.settings.get("region_namen") or {}).get("10000002"),
+               "The Forge")
+            check("b919 ... und die Auswahl wird neu beschriftet",
+                  _danach919 == [1])
+            win.settings["region_namen"].pop("10000002", None)
+            win._regionen_nachladen([{"region_id": 10000002}],
+                                    lambda: _danach919.append(2))
+            for _ in range(5):
+                _app.processEvents()
+            eq("b919 je Sitzung nur EIN Versuch je Region", _rufe919,
+               [[10000002]])
+        finally:
+            _mwm919.esi.orts_namen = _echt919
+    finally:
+        if _rn919 is None:
+            win.settings.pop("region_namen", None)
+        else:
+            win.settings["region_namen"] = _rn919
+except Exception as _e919:                               # pragma: no cover
+    _fail.append(f"b919 Doctrines: {type(_e919).__name__}: {_e919}")
+
+# ---------------------------------------------------------------- (b921)
+# MARKET STATS: WAS WIRKLICH GEHANDELT WIRD (Nutzer 14.11.2026: "ich muss
+# wissen welche Items am meisten ISK abwerfen koennen, wenn ich diese dort
+# handel" - "Also Handelsvolumen, isk flow"). Gerechnet gegen die echte
+# Datenbank der Suite, in einer Region, die es nicht gibt (19999999), und
+# danach restlos entfernt.
+try:
+    import datetime as _dt921
+    import time as _ti921
+    from eve_trader import store as _st921
+    _heute921 = _dt921.date.today()
+    _tag921 = lambda n: (_heute921 - _dt921.timedelta(days=n)).isoformat()
+    with _st921._conn() as _c921:
+        _c921.execute("DELETE FROM history WHERE region=19999999")
+        _c921.executemany(
+            "INSERT INTO history (type_id, region, date, average, highest, "
+            "lowest, volume, order_count) VALUES (?,?,?,?,?,?,?,?)",
+            [(34, 19999999, _tag921(1), 5.0, 5.0, 5.0, 900000, 10),
+             (34, 19999999, _tag921(2), 5.0, 5.0, 5.0, 900000, 10),
+             (587, 19999999, _tag921(3), 2e6, 2e6, 2e6, 9, 3),
+             # ALT: liegt vor dem Zeitraum, darf NICHT zaehlen.
+             (2969, 19999999, _tag921(200), 1e9, 1e9, 1e9, 99, 1),
+             # Tag OHNE Handel: zaehlt nicht als Handelstag.
+             (35, 19999999, _tag921(4), 10.0, 10.0, 10.0, 0, 0)])
+    try:
+        _top921 = _st921.region_top_items(19999999, 90, 15)
+        eq("b921 sortiert nach ISK-Umsatz, nicht nach Stueck",
+           [_x["type_id"] for _x in _top921], [587, 34])
+        eq("b921 Rifter: 9 x 2 Mio = 18 Mio ISK an 1 Tag",
+           (_top921[0]["volumen"], _top921[0]["isk"], _top921[0]["tage"]),
+           (9, 18e6, 1))
+        eq("b921 Tritanium: 1,8 Mio Stueck, 9 Mio ISK an 2 Tagen",
+           (_top921[1]["volumen"], _top921[1]["isk"], _top921[1]["tage"]),
+           (1800000, 9e6, 2))
+        # ANZEIGE: pro Tag ueber den GANZEN Zeitraum (90), nicht ueber die
+        # Handelstage - 18 Mio / 90 = 200k, nicht 18 Mio.
+        # Seit emm925 eine TABELLE: Item | Stueck/Tag | ISK/Tag.
+        _zw921 = win._ms_region_top_widgets(_top921, 90)
+        from PySide6.QtWidgets import QTableWidget as _QT921
+        _tb921 = _zw921[0]
+        _txt921 = [_tb921.item(0, _c).text() for _c in range(3)]
+        check(f"b921 je Zeile Name, Stueck/Tag und ISK/Tag ({_txt921})",
+              isinstance(_tb921, _QT921) and _tb921.columnCount() == 3
+              and _txt921[1] == "0" and "200" in _txt921[2])
+        # DER ECHTE WEG: Platzhalter sofort, Zeilen nach dem Hintergrund-
+        # Lauf.
+        _box921 = win._ms_region_top_zeilen(19999999)[0]
+        _ende921 = _ti921.time() + 10
+        while (not _box921.findChildren(_QT921)
+               and _ti921.time() < _ende921):
+            _app.processEvents()
+            _ti921.sleep(0.02)
+        _app.processEvents()
+        eq("b921 der Hintergrund-Lauf haengt zwei Zeilen ein",
+           sum(_x.rowCount() for _x in _box921.findChildren(_QT921)), 2)
+    finally:
+        with _st921._conn() as _c921:
+            _c921.execute("DELETE FROM history WHERE region=19999999")
+except Exception as _e921:                               # pragma: no cover
+    _fail.append(f"b921 ISK-Umsatz je Item: {type(_e921).__name__}: {_e921}")
+
+# ---------------------------------------------------------------- (b922)
+# TOP-HANDELSWARE JE ORT (Nutzer 14.11.2026: "ich kann mir nicht
+# vorstellen das ich blueprints handeln kann, die haben fast kein
+# handelsvolumen" / "ich will doch nur die Top trade Items da angezeigt
+# bekommen pro market hub/Region"). Gemessen in seiner DB: NPC-Blaupausen
+# (3'676 im Buch, 30-75 gehandelt) fuehrten die Liste an.
+try:
+    import datetime as _dt922
+    from eve_trader import store as _st922
+    _tag922 = (_dt922.date.today() - _dt922.timedelta(days=2)).isoformat()
+    with _st922._conn() as _c922:
+        _c922.execute("DELETE FROM history WHERE region=19999998")
+        _c922.execute("DELETE FROM market_snapshot WHERE source='test:922'")
+        _c922.executemany(
+            "INSERT INTO market_snapshot (type_id, source, sell_min, buy_max,"
+            " sell_qty, buy_qty, sell_orders, buy_orders, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [(1, "test:922", 1e9, 0, 3676, 0, 1, 0, 1.0),
+             (2, "test:922", 2.0, 0, 9e6, 0, 5, 0, 1.0),
+             (3, "test:922", 7e8, 0, 40, 0, 5, 0, 1.0),
+             # 4: liegt da, wird in der Region nie gehandelt.
+             (4, "test:922", 5e9, 0, 100, 0, 1, 0, 1.0),
+             # 5: gehandelt, aber hier keine Sell-Order.
+             (5, "test:922", 0, 0, 0, 0, 0, 0, 1.0)])
+        _c922.executemany(
+            "INSERT INTO history (type_id, region, date, average, highest, "
+            "lowest, volume, order_count) VALUES (?,?,?,?,?,?,?,?)",
+            [(1, 19999998, _tag922, 1e9, 1e9, 1e9, 2, 1),
+             (2, 19999998, _tag922, 2.0, 2.0, 2.0, 10000000, 1000),
+             (3, 19999998, _tag922, 7e8, 7e8, 7e8, 100, 80),
+             (5, 19999998, _tag922, 9e9, 9e9, 9e9, 50, 50)])
+    try:
+        _top922 = _st922.ort_top_gehandelt("test:922", 19999998, 90, 15)
+        # emm923: ISK-Umsatz x Abschluesse. 3 (7e10 ISK, 80 Abschl.) vor
+        # 2 (Mineral: 2e7 ISK, 1000 Abschl.) vor 1 (Einzelstueck: 2e9 ISK,
+        # 1 Abschluss). Nach ISK allein waere 1 vor 2, nach Abschluessen
+        # allein 2 vor 3. 4 nie gehandelt, 5 ohne Sell-Order hier: raus.
+        eq("b923 Rang = ISK-Umsatz x Abschluesse, nur mit Sell-Order hier",
+           [_x["type_id"] for _x in _top922], [3, 2, 1])
+        eq("b923 Zahlen je Item aus der Historie",
+           (_top922[0]["isk"], _top922[0]["abschluesse"],
+            _top922[0]["gehandelt"]), (7e10, 80, 100))
+        _zw922 = win._ms_top_gehandelt_widgets(_top922, 1)[0]
+        _t922 = [_zw922.item(0, _c).text() for _c in range(5)]
+        check(f"b923 die Zeile nennt Abschluesse/Tag und Stueck/Tag ({_t922})",
+              _zw922.columnCount() == 5 and _t922[1] == "80"
+              and _t922[2] == "100")
+    finally:
+        with _st922._conn() as _c922:
+            _c922.execute("DELETE FROM history WHERE region=19999998")
+            _c922.execute(
+                "DELETE FROM market_snapshot WHERE source='test:922'")
+except Exception as _e922:                               # pragma: no cover
+    _fail.append(f"b922 Top-Handelsware: {type(_e922).__name__}: {_e922}")
+
+# ---------------------------------------------------------------- (b923)
+# RECHTSKLICK IN MARKET STATS (Nutzer 14.11.2026: "Rechtsklick open
+# ingame market, zu einkaufsliste hinzufuegen, zu bauplan hinzufuegen,
+# zu multibauplan hinzufuegen"). Menue gebaut ohne exec(), Ausfuehren mit
+# vorgetaeuschten Zielen.
+try:
+    from PySide6.QtCore import Qt as _Qt923
+    from eve_trader import industry as _ind923
+
+    class _R923:
+        product_to_bp = {777: (7770, 1, 1)}
+    _rc923 = _ind923.recipes_cached
+    _ind923.recipes_cached = lambda: _R923()
+    try:
+        _m923, _a923 = win._ms_item_menue_bauen(777, "Testschiff")
+        _was923 = set(v if isinstance(v, str) else v[0]
+                      for v in _a923.values())
+        check(f"b923 Menue: Markt, Einkaufsliste, Bauplan ({_was923})",
+              {"markt", "einkauf", "bauplan"} <= _was923)
+        check("b923 Menue hat das Multibauplan-Untermenue",
+              any(_ac.menu() is not None for _ac in _m923.actions()))
+        _m923b, _a923b = win._ms_item_menue_bauen(778, "Mineral")
+        check("b923 ohne Rezept kein Bauplan-Eintrag",
+              "bauplan" not in set(_a923b.values()))
+    finally:
+        _ind923.recipes_cached = _rc923
+    _rufe923 = []
+    _alt923 = {}
+    for _nm923, _fn923 in (
+            ("open_ingame_market", lambda tid, cid=None: _rufe923.append(("markt", tid))),
+            ("open_build_detail", lambda tid, n, fresh=False: _rufe923.append(("bau", tid, fresh))),
+            ("_multi_ende_zu_plan", lambda pid, tid, n, qty=None, vorgabe=1: _rufe923.append(("multi", pid, tid))),
+            ("_add_deal_to_cart", lambda tid, n, qty=None: _rufe923.append(("cart", tid)) or False)):
+        _alt923[_nm923] = win.__dict__.get(_nm923)
+        setattr(win, _nm923, _fn923)
+    try:
+        for _w923 in ("markt", "einkauf", "bauplan", ("multi", "p1")):
+            win._ms_item_menue_ausfuehren(_w923, 777, "Testschiff")
+        eq("b923 Ausfuehren trifft die vier Ziele",
+           _rufe923, [("markt", 777), ("cart", 777), ("bau", 777, True),
+                      ("multi", "p1", 777)])
+    finally:
+        for _nm923, _v923 in _alt923.items():
+            if _v923 is None:
+                win.__dict__.pop(_nm923, None)
+            else:
+                setattr(win, _nm923, _v923)
+    _z923 = win._ms_top_gehandelt_widgets(
+        [{"type_id": 34, "menge": 1, "gehandelt": 1, "isk": 1.0,
+          "abschluesse": 1}], 1)[0]
+    _z923b = win._ms_region_top_widgets(
+        [{"type_id": 34, "volumen": 1, "isk": 1.0, "tage": 1}], 1)[0]
+    check("b923 beide Listen haben den Rechtsklick",
+          bool(_z923.property("kopier_menue"))
+          and bool(_z923b.property("kopier_menue")))
+except Exception as _e923:                               # pragma: no cover
+    _fail.append(f"b923 Rechtsklick Market Stats: {type(_e923).__name__}: {_e923}")
+
+# ---------------------------------------------------------------- (b924)
+# BAUGEWINN JE STUECK IN MARKET STATS (Nutzer 14.11.2026: "wir nehmen die
+# Baupreise aus dem angegebenen Global Hub ganz oben" + "Was wenn keine
+# items vorhanden um zu bauen? dann nehmen wir Jita Preis dafuer").
+try:
+    from eve_trader import industry as _ind924, store as _st924
+    _jita924 = _st924.hub_source(10000002)
+    _snaps924 = {"test:924h": [{"type_id": 1, "sell_min": 10.0}],
+                 _jita924: [{"type_id": 1, "sell_min": 99.0},
+                            {"type_id": 2, "sell_min": 5.0}]}
+
+    class _R924:
+        product_to_bp = {777: (7770, 1, 1)}
+    _alt924 = (_ind924.sde_ready, _ind924.recipes_cached, _ind924.build_cost,
+               _st924.get_snapshot)
+    _ind924.sde_ready = lambda: True
+    _ind924.recipes_cached = lambda: _R924()
+    _ind924.build_cost = (lambda tid, pfn, r, o, memo=None:
+                          (pfn(1) or 0) + (pfn(2) or 0))
+    _st924.get_snapshot = lambda src=None: list(_snaps924.get(src, []))
+    try:
+        # Material 2 gibt es nur in Jita: zaehlt NICHT (wie Bauplan,
+        # Nutzer-Entscheid 14.11.2026) -> nur Material 1 vom Hub = 10.
+        eq("b924 Material nur vom globalen Hub, kein Jita-Rueckfall",
+           win._ms_baukosten([777, 34], "test:924h"), {777: 10.0})
+    finally:
+        (_ind924.sde_ready, _ind924.recipes_cached, _ind924.build_cost,
+         _st924.get_snapshot) = _alt924
+    _ah924 = win.__dict__.get("_active_hub")
+    win._active_hub = lambda: (10000002, None, {"structure_id": 5})
+    try:
+        eq("b924 Preisquelle = globaler Hub oben", win._ms_bau_quelle(),
+           "struct:5")
+    finally:
+        if _ah924 is None:
+            win.__dict__.pop("_active_hub", None)
+        else:
+            win._active_hub = _ah924
+    _gs924 = (win.settings.get("sales_tax_pct"),
+              win.settings.get("broker_fee_pct"))
+    win.settings["sales_tax_pct"] = 5.0
+    win.settings["broker_fee_pct"] = 5.0
+    try:
+        _rows924 = win._ms_top_gehandelt_widgets(
+            [{"type_id": 777, "menge": 1, "gehandelt": 1, "isk": 1.0,
+              "abschluesse": 1, "sell_min": 200.0, "baukosten": 100.0,
+              "bau_hub": "Jita"},
+             {"type_id": 34, "menge": 1, "gehandelt": 1, "isk": 1.0,
+              "abschluesse": 1, "sell_min": 5.0, "baukosten": None}], 1)
+        # Seit emm925 eine Tabelle; Zeilen nach Rang (Sortierung aus).
+        _tb924 = _rows924[0]
+        _g924 = _tb924.item(0, 4).text()
+        # 200 x (1 - 10 %) = 180, minus 100 Baukosten = +80.
+        check(f"b924 Gewinn je Stueck nach Gebuehren ({_g924})",
+              _g924.startswith("+80"))
+        eq("b924 nicht baubar: keine Gewinn-Zahl",
+           _tb924.item(1, 4).text(), "\u2013")
+    finally:
+        win.settings["sales_tax_pct"], win.settings["broker_fee_pct"] = _gs924
+    # ---------------------------------------------------------- (b925)
+    # TABELLE WIE IM REST VON MOMA (Nutzer 14.11.2026: "einfach so wie
+    # alle anderen MoMa fenster und Tabs auch"): so hoch wie ihre Zeilen,
+    # die Seite rollt, nicht die Tabelle.
+    _tb925 = win._ms_top_gehandelt_widgets(
+        [{"type_id": 34 + _i, "menge": 1, "gehandelt": 1, "isk": 1.0,
+          "abschluesse": 1, "sell_min": 0} for _i in range(12)], 1)[0]
+    _zh925 = sum(_tb925.rowHeight(_r) for _r in range(_tb925.rowCount()))
+    check(f"b925 Tabelle so hoch wie ihre Zeilen ({_tb925.height()} / "
+          f"{_zh925})",
+          _tb925.maximumHeight() == _tb925.minimumHeight()
+          and _tb925.minimumHeight() >= _zh925)
+except Exception as _e924:                               # pragma: no cover
+    _fail.append(f"b924 Baugewinn Market Stats: {type(_e924).__name__}: {_e924}")
+
+# ---------------------------------------------------------------- (b926)
+# "MIN PROFIT" NUR BEI VERLUST, KOPIERT DEN MINDESTGEWINN-PREIS (emm926).
+try:
+    from PySide6.QtWidgets import QPushButton as _QPB926
+    _alt926 = (win.__dict__.get("_copy_order_price"), list(win._ordmod_sell or []),
+               dict(getattr(win, "_ord_sort", {}) or {}))
+    _kopie926 = []
+    win._copy_order_price = (lambda pr, nm, **kw:
+                             _kopie926.append((pr, nm, kw.get("is_buy"))))
+    try:
+        def _z926(name, oid, loss, minp):
+            return {"tid": 890000 + oid, "name": name, "mine": 100.0,
+                    "best": 90.0, "flag": True, "newp": 89.0, "cost": 95.0,
+                    "loss": loss, "marge_new": -5.0, "cost_known": True,
+                    "order_id": 990000 + oid, "char_id": 0, "mod_count": 0,
+                    "cum_fee": 0.0, "vol_remain": 1, "clock": None,
+                    "issued": "", "minp": minp, "fee_min": 5.0}
+        win._ord_sort = {}
+        win._ordmod_sell = [_z926("Verlust926", 1, True, 116.7),
+                            _z926("Normal926", 2, False, 116.7)]
+        _tb926 = win.sellord_table
+        win._fill_order_table(_tb926, win._ordmod_sell, False)
+        _zl926 = {_tb926.item(i, 0).text(): i for i in range(_tb926.rowCount())}
+
+        def _knoepfe926(n):
+            _w = _tb926.cellWidget(_zl926[n], 8)
+            return {_b.text(): _b for _b in _w.findChildren(_QPB926)} if _w else {}
+        _kv926 = _knoepfe926("Verlust926")
+        _mb926 = _kv926.get("Min profit") or _kv926.get("Min. Gewinn")
+        check(f"b926 Verlust-Zeile hat den Knopf ({list(_kv926)})",
+              _mb926 is not None)
+        _kn926 = _knoepfe926("Normal926")
+        check(f"b926 Zeile ohne Verlust hat ihn nicht ({list(_kn926)})",
+              "Min profit" not in _kn926 and "Min. Gewinn" not in _kn926)
+        if _mb926 is not None:
+            _mb926.click()
+        eq("b926 Klick kopiert den Mindestgewinn-Preis als Sell",
+           _kopie926, [(116.7, "Verlust926", False)])
+    finally:
+        if _alt926[0] is None:
+            win.__dict__.pop("_copy_order_price", None)
+        else:
+            win._copy_order_price = _alt926[0]
+        win._ordmod_sell = _alt926[1]
+        win._ord_sort = _alt926[2]
+        win._fill_order_table(win.sellord_table, win._ordmod_sell, False)
+except Exception as _e926:                               # pragma: no cover
+    _fail.append(f"b926 Min profit: {type(_e926).__name__}: {_e926}")
+
+# ---------------------------------------------------------------- (b928)
+# "VERKAUFT x/y" IN ORDER UPDATE (Nutzer 14.11.2026: "man sieht nirgendwo
+# die Anzahl wieviele schon verkauft wurde von wievielen").
+try:
+    eq("b928 offene Order: 6 von 10 verkauft",
+       win._ord_menge_text({"vol_total": 10, "vol_remain": 4}), "6/10")
+    eq("b928 erfuellte Order ist ganz durch, egal welcher Rest zuletzt",
+       win._ord_menge_text({"vol_total": 10, "vol_remain": 3,
+                            "erledigt884": {"art": "erfuellt"}}), "10/10")
+    eq("b928 abgelaufene Order: was weg ist",
+       win._ord_menge_text({"vol_total": 10, "vol_remain": 3,
+                            "erledigt884": {"art": "abgelaufen"}}), "7/10")
+    eq("b928 ohne Gesamtmenge nichts",
+       win._ord_menge_text({"vol_remain": 3}), "")
+    _alt928 = (list(win._ordmod_sell or []), dict(getattr(win, "_ord_sort", {}) or {}))
+    try:
+        win._ord_sort = {}
+        win._ordmod_sell = [{
+            "tid": 928001, "name": "Menge928", "mine": 100.0, "best": 100.0,
+            "flag": False, "newp": 100.0, "cost": 50.0, "loss": False,
+            "marge_new": 10.0, "cost_known": True, "order_id": 928001,
+            "char_id": 0, "mod_count": 0, "cum_fee": 0.0, "vol_remain": 1200,
+            "vol_total": 2000, "clock": None, "issued": ""}]
+        win._fill_order_table(win.sellord_table, win._ordmod_sell, False)
+        _st928 = win.sellord_table.item(0, 5).text()   # Status = 3 + 2
+        check(f"b928 Status-Spalte zeigt 800/2'000 ({_st928!r})",
+              "800/2'000" in _st928)
+    finally:
+        win._ordmod_sell, win._ord_sort = _alt928
+        win._fill_order_table(win.sellord_table, win._ordmod_sell, False)
+except Exception as _e928:                               # pragma: no cover
+    _fail.append(f"b928 verkauft x/y: {type(_e928).__name__}: {_e928}")
+
+# ---------------------------------------------------------------- (b929)
+# MARKET STATS: ANZAHL WAEHLBAR, NUR BAUBARE, RANG BLEIBT, BILDER
+# (Nutzer 14.11.2026: "es soll mehr Items anzeigen lassen koennen wenn
+# man will"; Screenshot: Liste stand nach Namen Z->A).
+try:
+    from eve_trader import industry as _ind929
+    _alt929 = (win.settings.get("mstats_top_n"),)
+    win.settings["mstats_top_n"] = 100
+    eq("b929 gewaehlte Anzahl gilt", win._ms_top_n(), 100)
+    win.settings["mstats_top_n"] = 37
+    eq("b929 unerlaubte Anzahl faellt auf 15 zurueck", win._ms_top_n(), 15)
+    if _alt929[0] is None:
+        win.settings.pop("mstats_top_n", None)
+    else:
+        win.settings["mstats_top_n"] = _alt929[0]
+    eq("b929 Auswahlfeld hat 15/50/100/250",
+       [win.ms_anzahl.itemData(_i) for _i in range(win.ms_anzahl.count())],
+       [15, 50, 100, 250])
+    _lim929 = []
+
+    def _holen929(lim):
+        _lim929.append(lim)
+        return [{"type_id": _i} for _i in range(1, 11)]
+
+    class _R929:
+        product_to_bp = {2: 0, 5: 0, 9: 0}
+    _rc929 = _ind929.recipes_cached
+    _ind929.recipes_cached = lambda: _R929()
+    try:
+        eq("b929 ohne Filter: die ersten n",
+           [_x["type_id"] for _x in win._ms_top_auswahl(_holen929, 3, False)],
+           [1, 2, 3])
+        eq("b929 nur baubare: n BAUBARE in Rangfolge",
+           [_x["type_id"] for _x in win._ms_top_auswahl(_holen929, 2, True)],
+           [2, 5])
+        check(f"b929 mit Filter wird reichlich geholt ({_lim929})",
+              _lim929[-1] >= 5000)
+    finally:
+        _ind929.recipes_cached = _rc929
+    _tb929 = win._ms_item_tabelle(
+        ["Item", "x"], [(999991, [("1", 1, None, None)]),
+                        (999993, [("2", 2, None, None)]),
+                        (999992, [("3", 3, None, None)])])
+    eq("b929 Tabelle behaelt die Rangfolge (nicht nach Namen sortiert)",
+       [_tb929.item(_r, 0).data(Qt.UserRole) for _r in range(3)],
+       [999991, 999993, 999992])
+except Exception as _e929:                               # pragma: no cover
+    _fail.append(f"b929 Market Stats Anzahl: {type(_e929).__name__}: {_e929}")
+
+# ---------------------------------------------------------------- (b930)
+# DOCTRINES BEKOMMEN MARKET-STATS-WISSEN (Nutzer 14.11.2026: Rechtsklick
+# wie Market Stats, Abschluesse/Tag + Stueck/Tag, Baugewinn/Stk - "alles
+# auch fuer das komplette Schiff in der Doctrine").
+try:
+    import datetime as _dt930
+    from eve_trader import store as _st930, doctrinen as _dc930
+    from PySide6.QtWidgets import QTableWidget as _TB930, QLabel as _QL930
+    _tag930 = (_dt930.date.today() - _dt930.timedelta(days=3)).isoformat()
+    with _st930._conn() as _c930:
+        _c930.execute("DELETE FROM history WHERE region=19999997")
+        _c930.executemany(
+            "INSERT INTO history (type_id, region, date, average, highest, "
+            "lowest, volume, order_count) VALUES (?,?,?,?,?,?,?,?)",
+            [(587, 19999997, _tag930, 1.0, 1.0, 1.0, 900, 180)])
+    try:
+        eq("b930 Handel je Item aus der Historie",
+           _st930.item_handel(19999997, [587, 2969], 90),
+           {587: {"vol": 900, "abs": 180}})
+    finally:
+        with _st930._conn() as _c930:
+            _c930.execute("DELETE FROM history WHERE region=19999997")
+    _alt930 = (getattr(win, "_ms_markt", None), dict(win._ms_state()),
+               win.settings.get("sales_tax_pct"), win.settings.get("broker_fee_pct"))
+    win.settings["sales_tax_pct"] = 5.0
+    win.settings["broker_fee_pct"] = 5.0
+    try:
+        _s930 = win._ms_state()
+        _s930["doctrinen"] = [dict(_dc930.doctrine_aus_text(
+            "Probe930", "[Rifter, T]\n200mm AutoCannon II\n"
+            "200mm AutoCannon II",
+            {"rifter": 587, "200mm autocannon ii": 2969}, ziel=10), id=930)]
+        _s930["abgewaehlt"] = {}
+        # Rifter: 200 am Hub, Bau 100 -> 200 x 0,9 - 100 = +80 je Stueck.
+        # Kanone: am Hub, aber ohne Baukosten -> Strich.
+        win._ms_markt = {"buch": {587: {"sell": [(200.0, 5)]},
+                                  2969: {"sell": [(1e6, 14)]}},
+                         "jita": {587: 200.0, 2969: 1e6}, "vol": {},
+                         "ts": 1.0, "hub_name": "Probe",
+                         "handel": {587: {"vol": 900, "abs": 180}},
+                         "baukosten": {587: 100.0}, "bau_hub": "Jita"}
+        win._ms_render()
+        _card930 = win.ms_doc_box.itemAt(0).widget()
+        _tb930 = _card930.findChild(_TB930)
+        # emm931: +1 "pro Schiff", sichtbar vor dem Namen.
+        eq("b930 Doctrine-Tabelle hat 10 Spalten", _tb930.columnCount(), 10)
+        eq("b931 Spalte 'pro Schiff' steht sichtbar direkt vor dem Namen",
+           (_tb930.horizontalHeader().visualIndex(9),
+            _tb930.horizontalHeader().visualIndex(1)), (1, 2))
+        _r930 = next(r for r in range(_tb930.rowCount())
+                     if _tb930.item(r, 1).data(Qt.UserRole) == 587)
+        eq("b930 Rifter: 2 Abschluesse/Tag, 10 Stueck/Tag, +80 je Stueck",
+           [_tb930.item(_r930, c).text() for c in (6, 7)] +
+           [_tb930.item(_r930, 8).text()[:3]], ["2", "10", "+80"])
+        _rk930 = next(r for r in range(_tb930.rowCount())
+                      if _tb930.item(r, 1).data(Qt.UserRole) == 2969)
+        eq("b931 zwei Kanonen je Schiff stehen als 2x da",
+           (_tb930.item(_rk930, 9).text(), _tb930.item(_r930, 9).text()),
+           ("2×", "1×"))
+        eq("b930 ohne Baukosten kein Baugewinn",
+           _tb930.item(_rk930, 8).text(), "\u2013")
+        # Komplettes Schiff: 1 Rifter x 80 = +80 (Kanone ohne Zahl).
+        _bl930 = win._ms_bau_lbl_letzter.text()
+        check(f"b930 Baugewinn je komplettem Schiff im Kopf ({_bl930!r})",
+              "+80" in _bl930)
+        check("b930 Zeilen-Rechtsklick laeuft ueber kopier_menue",
+              bool(_tb930.property("kopier_menue")))
+    finally:
+        win._ms_markt = _alt930[0]
+        _st_now930 = win._ms_state()
+        _st_now930.clear()
+        _st_now930.update(_alt930[1])
+        win.settings["sales_tax_pct"], win.settings["broker_fee_pct"] = \
+            _alt930[2], _alt930[3]
+        win._ms_render()
+except Exception as _e930:                               # pragma: no cover
+    _fail.append(f"b930 Doctrines: {type(_e930).__name__}: {_e930}")
+
+# ---------------------------------------------------------------- (b933)
+# DECKUNGS-VERLAUF + BAU-RANGLISTE (Nutzer 14.11.2026: Ideen 3 und 4 "ja").
+try:
+    from eve_trader import store as _st933, doctrinen as _dc933
+    with _st933._conn() as _c933:
+        _c933.execute("CREATE TABLE IF NOT EXISTS doctrine_verlauf (doctrine TEXT, "
+                      "hub TEXT, ts REAL, pct REAL, fits INTEGER, ziel INTEGER)")
+        _c933.execute("DELETE FROM doctrine_verlauf WHERE hub='test:933'")
+    try:
+        _st933.doctrine_verlauf_merken([("D933", "test:933", 3.0, 30.0, 3, 10),
+                                        ("D933", "test:933", 1.0, 10.0, 1, 10),
+                                        ("D933", "test:933", 2.0, 20.0, 2, 10)])
+        eq("b933 Verlauf alt -> neu",
+           _st933.doctrine_verlauf("D933", "test:933"),
+           [(1.0, 10.0), (2.0, 20.0), (3.0, 30.0)])
+        _vw933 = win._ms_verlauf_widget(_st933.doctrine_verlauf("D933", "test:933"))
+        check("b933 Kurve ab zwei Punkten, Tooltip nennt Anfang und Ende",
+              _vw933 is not None and "10" in _vw933.toolTip()
+              and "30" in _vw933.toolTip())
+        eq("b933 ein Punkt ist keine Kurve",
+           win._ms_verlauf_widget([(1.0, 5.0)]), None)
+    finally:
+        with _st933._conn() as _c933:
+            _c933.execute("DELETE FROM doctrine_verlauf WHERE hub='test:933'")
+    _alt933 = (getattr(win, "_ms_markt", None), dict(win._ms_state()),
+               win.settings.get("sales_tax_pct"), win.settings.get("broker_fee_pct"))
+    win.settings["sales_tax_pct"] = 0.0
+    win.settings["broker_fee_pct"] = 0.0
+    try:
+        _s933 = win._ms_state()
+        _s933["doctrinen"] = [dict(_dc933.doctrine_aus_text(
+            "R933", "[Rifter, T]\n200mm AutoCannon II\n200mm AutoCannon II",
+            {"rifter": 587, "200mm autocannon ii": 2969}, ziel=10), id=933)]
+        _s933["abgewaehlt"] = {}
+        # Rifter: 10 fehlen, +100 je Stueck -> 1'000. Kanone: 20 fehlen,
+        # +80 -> 1'600 -> steht OBEN, obwohl der Stueckgewinn kleiner ist.
+        win._ms_markt = {"buch": {587: {"sell": [(200.0, 0)]},
+                                  2969: {"sell": [(180.0, 0)]}},
+                         "jita": {587: 200.0, 2969: 180.0}, "vol": {},
+                         "ts": 1.0, "hub_name": "Probe",
+                         "handel": {}, "baukosten": {587: 100.0, 2969: 100.0},
+                         "bau_hub": "Jita"}
+        _rd933 = win._ms_rangliste_daten()
+        eq("b933 Rangliste: Menge x Gewinn, groesster zuerst",
+           [(x["tid"], x["qty"], x["gesamt"]) for x in _rd933],
+           [(2969, 20, 1600.0), (587, 10, 1000.0)])
+        win._ms_rangliste_zeigen(); _app.processEvents()
+        check("b933 das Fenster zeigt die Rangliste als Tabelle",
+              getattr(win, "_ms_rang_tbl", None) is not None
+              and win._ms_rang_tbl.rowCount() == 2
+              and win._ms_rang_tbl.item(0, 0).data(Qt.UserRole) == 2969)
+        win._ms_rang_dlg.close()
+    finally:
+        win._ms_markt = _alt933[0]
+        _sn933 = win._ms_state()
+        _sn933.clear()
+        _sn933.update(_alt933[1])
+        win.settings["sales_tax_pct"], win.settings["broker_fee_pct"] = \
+            _alt933[2], _alt933[3]
+        win._ms_render()
+except Exception as _e933:                               # pragma: no cover
+    _fail.append(f"b933 Verlauf/Rangliste: {type(_e933).__name__}: {_e933}")
+
+# ---------------------------------------------------------------- (b936)
+# ERST DOCTRINE, DANN SCHIFFE (Nutzer 14.11.2026: "Ersetze button Paste
+# Ship mit ... Create New Doctrine. Add Ships soll dann nur innerhalb der
+# Doctrine moeglich sein" / "mache die Doctrine Liste rechts wirklich
+# Knoepfe").
+try:
+    from PySide6.QtWidgets import QPushButton as _QPB936
+    from eve_trader.ui import theme as _th936
+    check("b936 'Create new doctrine' ist da, amber umrahmt; "
+          "'Paste ship' ist weg",
+          isinstance(getattr(win, "ms_neu_btn", None), _QPB936)
+          and ("2px solid " + _th936.AMBER) in win.ms_neu_btn.styleSheet()
+          and not hasattr(win, "ms_add_btn"))
+    _alt936 = (dict(win._ms_state()), dict(win._ms_est or {}))
+    try:
+        _s936 = win._ms_state()
+        _s936["doctrinen"] = []
+        _s936["ordner_leer"] = []
+        _s936.pop("offen_ordner", None)
+        _ok936 = win._ms_doctrine_anlegen("D936"); _app.processEvents()
+        _k936 = (win._ms_ordner_karten or {}).get("D936")
+        check("b936 leere Doctrine steht links (mit Hinweis) und rechts",
+              _ok936 is True and _k936 is not None
+              and _k936._schiffe == []
+              and getattr(_k936, "_leer_lbl", None) is not None
+              and win.ms_docs.rowCount() == 1)
+        check("b936 rechts steht je Doctrine ein echter Knopf",
+              isinstance(win.ms_docs.cellWidget(0, 0), _QPB936)
+              and "D936" in getattr(win, "_ms_doc_kn", {}))
+        # emm938: der Knopf ist nicht zusammengedrueckt - die Spalte
+        # ist so breit wie er, die Zeile hoch genug.
+        _kb938 = win.ms_docs.cellWidget(0, 0)
+        check("b938 Doctrine-Knopf: Spalte >= Knopfbreite, Zeile >= 30 px "
+              f"({win.ms_docs.columnWidth(0)} / "
+              f"{_kb938.sizeHint().width() if _kb938 else None} / "
+              f"{win.ms_docs.rowHeight(0)})",
+              _kb938 is not None
+              and win.ms_docs.columnWidth(0) >= _kb938.sizeHint().width()
+              and win.ms_docs.columnWidth(0) >= win.MS_DOC_KNOPF_MIN
+              and win.ms_docs.rowHeight(0) >= 30)
+        check("b939 das Schiffsbild sitzt nur auf dem Knopf, nicht doppelt",
+              win.ms_docs.item(0, 0).icon().isNull()
+              and not _kb938.icon().isNull())
+        eq("b936 derselbe Name legt keine zweite Doctrine an",
+           (win._ms_doctrine_anlegen("D936"), win.ms_docs.rowCount()),
+           (False, 1))
+        win._ms_doctrine_anlegen("E936"); _app.processEvents()
+        _vor936 = win._ms_state().get("offen_ordner")
+        _kn936 = getattr(win, "_ms_doc_kn", {}).get("D936")
+        if _kn936 is not None:
+            _kn936.click()
+        _app.processEvents()
+        eq("b936 Klick auf den Knopf oeffnet die Doctrine links",
+           (_vor936, win._ms_state().get("offen_ordner"),
+            set(win._ms_ordner_karten)), ("E936", "D936", {"D936"}))
+        # Ein Schiff in D936, dann umbenennen: das Schiff zieht mit.
+        _s936 = win._ms_state()
+        _s936["doctrinen"] = [{"id": 936, "name": "S936", "ordner": "D936",
+                               "ziel": 1, "fits": []}]
+        _um936 = win._ms_ordner_umbenennen("D936", "F936")
+        _app.processEvents()
+        eq("b936 Umbenennen nimmt Schiffe und offene Doctrine mit",
+           (_um936, win._ms_state()["doctrinen"][0].get("ordner"),
+            win._ms_state().get("offen_ordner")), (True, "F936", "F936"))
+        eq("b936 Umbenennen auf einen vergebenen Namen wird abgelehnt",
+           win._ms_ordner_umbenennen("F936", "E936"), False)
+        win._ms_ordner_loeschen("F936", fragen=False); _app.processEvents()
+        eq("b936 Doctrine loeschen nimmt ihre Schiffe mit, die andere bleibt",
+           (win._ms_state()["doctrinen"],
+            [o for o, _d in win._ms_gruppen()]), ([], ["E936"]))
+    finally:
+        _sn936 = win._ms_state()
+        _sn936.clear()
+        _sn936.update(_alt936[0])
+        win._ms_est = _alt936[1]
+        win._ms_render()
+except Exception as _e936:                               # pragma: no cover
+    _fail.append(f"b936 Doctrine anlegen: {type(_e936).__name__}: {_e936}")
+
+# ---------------------------------------------------------------- (b937)
+# PORTFOLIO-KARTE "ORDERS LAUFEN AUS" (Nutzer 14.11.2026: "eine Karte
+# einfuegen die Items anzeigt, die drohen auszulaufen ... Dropdown 3 Tage
+# 7 Tage / 20 Tage ... Standard auf 7 Tage").
+try:
+    import datetime as _dt937
+    from PySide6.QtWidgets import QPushButton as _QPB937
+    from eve_trader import store as _st937
+    _C937 = 937001
+    _J937 = 1_800_000_000.0                       # fester "jetzt"-Zeitpunkt
+
+    def _iso937(tage_alt):
+        return _dt937.datetime.fromtimestamp(
+            _J937 - tage_alt * 86400.0, _dt937.timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _st937.init_order_history()
+    with _st937._conn() as _c937:
+        _c937.execute("DELETE FROM order_history WHERE character_id=?",
+                      (_C937,))
+        _c937.executemany(
+            "INSERT INTO order_history (order_id, character_id, type_id, "
+            "location_id, is_buy_order, price, issued, duration, "
+            "volume_total, volume_remain, state) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [   # 90 Tage Laufzeit, 88 Tage alt -> noch 2 Tage
+                (93701, _C937, 34, 60003760, 0, 5.0, _iso937(88), 90, 100, 40, "open"),
+                # 85 Tage alt -> noch 5 Tage
+                (93702, _C937, 35, 60003760, 1, 7.0, _iso937(85), 90, 10, 10, "open"),
+                # 75 Tage alt -> noch 15 Tage
+                (93703, _C937, 36, 60003760, 0, 9.0, _iso937(75), 90, 10, 10, "open"),
+                # 10 Tage alt -> noch 80 Tage: nie in der Karte
+                (93704, _C937, 37, 60003760, 0, 9.0, _iso937(10), 90, 10, 10, "open"),
+                # laeuft bald aus, ist aber nicht mehr offen
+                (93705, _C937, 38, 60003760, 0, 9.0, _iso937(89), 90, 10, 0, "weg"),
+            ])
+    try:
+        def _ids937(tage):
+            return [x["order_id"] for x in _st937.auslaufende_orders(
+                _C937, tage, jetzt=_J937)]
+        eq("b937 3/7/20 Tage: nur offene Orders, die frueheste zuerst",
+           (_ids937(3), _ids937(7), _ids937(20)),
+           ([93701], [93701, 93702], [93701, 93702, 93703]))
+        _r937 = _st937.auslaufende_orders(_C937, 3, jetzt=_J937)
+        check("b937 Restzeit = issued + Laufzeit - jetzt (2 Tage)",
+              bool(_r937) and abs(_r937[0]["rest_s"] - 2 * 86400.0) < 2.0)
+        # emm941: ein FRISCHES Fenster fuellt die Karte selbst - ohne
+        # dass `_render_portfolio` je lief (Zeilen oder der Leer-Satz).
+        _w941 = MainWindow()
+        _app.processEvents()
+        check("b941 Auslauf-Karte ist nach dem Start gefuellt",
+              _w941.pf_ablauf_tbl.rowCount() > 0
+              or bool(_w941.pf_ablauf_leer.text()))
+        _w941.deleteLater()
+        eq("b937 Auswahl 3 / 7 / 20 Tage",
+           [win.pf_ablauf_cb.itemData(_i)
+            for _i in range(win.pf_ablauf_cb.count())], [3, 7, 20])
+        from eve_trader import config as _cf937
+        eq("b937 Vorgabe 7 Tage", _cf937.DEFAULT_SETTINGS.get("pf_ablauf_tage"), 7)
+        eq("b937 Restzeit-Text: Tage+Stunden, darunter Stunden+Minuten",
+           (win._pf_restzeit_text(2 * 86400 + 5 * 3600)
+            in ("2 d 5 h", "2 T 5 Std"),
+            win._pf_restzeit_text(3 * 3600 + 20 * 60)
+            in ("3 h 20 min", "3 Std 20 Min")), (True, True))
+        # Die KARTE: die Zeilen des gewaehlten Charakters. "jetzt" ist
+        # hier die echte Uhr - die Probe-Orders haengen an einem festen Zeitpunkt
+        # (nicht an heute); dafuer wird die Quelle auf den festen
+        # Zeitpunkt gestellt (nur die Uhr, die Rechnung bleibt die echte).
+        _alt937 = (win._pf_char_cid, _st937.auslaufende_orders,
+                   win.settings.get("pf_ablauf_tage"),
+                   win.pf_ablauf_cb.currentIndex())
+        _echt937 = _st937.auslaufende_orders
+        _oeff937 = []
+        _oim937 = win.open_ingame_market
+        try:
+            win._pf_char_cid = lambda: _C937
+            _st937.auslaufende_orders = (
+                lambda cid=None, tage=7, jetzt=None:
+                _echt937(cid, tage, jetzt=_J937))
+            win.open_ingame_market = lambda tid, cid=None: _oeff937.append(int(tid))
+            win.pf_ablauf_cb.setCurrentIndex(win.pf_ablauf_cb.findData(7))
+            win._pf_ablauf_fuellen(); _app.processEvents()
+            _tb937 = win.pf_ablauf_tbl
+            eq("b937 Karte bei 7 Tagen: zwei Zeilen, die dringendste oben",
+               [_tb937.item(_r, 0).data(Qt.UserRole)
+                for _r in range(_tb937.rowCount())], [34, 35])
+            check("b937 jede Zeile hat einen Knopf 'Markt im Spiel'",
+                  _tb937.rowCount() == 2 and all(
+                      isinstance(_tb937.cellWidget(_r, 5), _QPB937)
+                      and not _tb937.cellWidget(_r, 5).icon().isNull()
+                      for _r in range(2)))
+            if _tb937.rowCount() and _tb937.cellWidget(0, 5) is not None:
+                _tb937.cellWidget(0, 5).click()
+            eq("b937 der Knopf oeffnet den Markt dieses Items", _oeff937, [34])
+            win.pf_ablauf_cb.setCurrentIndex(win.pf_ablauf_cb.findData(20))
+            _app.processEvents()
+            eq("b937 Umschalten auf 20 Tage fuellt neu und merkt die Wahl",
+               (_tb937.rowCount(), win.settings.get("pf_ablauf_tage")),
+               (3, 20))
+        finally:
+            win._pf_char_cid = _alt937[0]
+            _st937.auslaufende_orders = _alt937[1]
+            win.open_ingame_market = _oim937
+            win.pf_ablauf_cb.blockSignals(True)
+            win.pf_ablauf_cb.setCurrentIndex(_alt937[3])
+            win.pf_ablauf_cb.blockSignals(False)
+            if _alt937[2] is None:
+                win.settings.pop("pf_ablauf_tage", None)
+            else:
+                win.settings["pf_ablauf_tage"] = _alt937[2]
+    finally:
+        with _st937._conn() as _c937:
+            _c937.execute("DELETE FROM order_history WHERE character_id=?",
+                          (_C937,))
+        win._pf_ablauf_fuellen()
+except Exception as _e937:                               # pragma: no cover
+    _fail.append(f"b937 Orders laufen aus: {type(_e937).__name__}: {_e937}")
+
+
+# ---------------------------------------------------------------- (b843)
+# "RIGS" IM DAYTRADE- UND INDUSTRIE-FILTER (emm843) - am lebenden
+# Fenster: der Eintrag muss nach dem Neuaufbau der Kategorien WIRKLICH
+# in beiden Auswahlfeldern stehen. Ein Anker auf mit_rigs_eintrag()
+# saehe nicht, ob die Fuellstellen ihn auch aufrufen.
+try:
+    import os as _os843
+    from eve_trader import industry as _I843b
+    # DIE REPO-SDE SICHTBAR MACHEN: mit dem normalen Test-_db_path kam
+    # rig_group_ids_all() leer zurueck, der ganze Block lief als
+    # "uebersprungen" durch, und die Rotprobe "mit_rigs_eintrag haengt
+    # nichts mehr an" blieb BLIND (so gefunden). Ein uebersprungener
+    # Test prueft nichts - also wird die SDE hier verlangt, nicht
+    # erhofft.
+    _dbp_alt843 = _I843b._db_path
+    try:
+        _I843b._db_path = lambda: _os843.path.join(
+            _os843.path.dirname(_os843.path.dirname(
+                _os843.path.abspath(__file__))), "sde_kompakt.db")
+        check("b843 die Repo-SDE ist lesbar (sonst pruefte hier nichts)",
+              len(_I843b.rig_group_ids_all()) >= 50)
+        # BAUBARE KATEGORIEN STELLEN: die Test-DB hat keine Rezepte,
+        # buildable_category_options() ist leer - und bei leeren opts
+        # unterdrueckt die Fuellstelle den Rigs-Eintrag ABSICHTLICH
+        # (sonst stuende "Rigs" allein neben "(load recipes first)").
+        # Gestellt wird also die Lage NACH einem Rezepte-Laden.
+        _bco_alt843 = _I843b.buildable_category_options
+        _I843b.buildable_category_options = lambda: [(6, "Ship"),
+                                                     (7, "Module")]
+        try:
+            win._reload_categories(); _app.processEvents()
+        finally:
+            _I843b.buildable_category_options = _bco_alt843
+        check("b843 Daytrade-Dropdown d_cat enthaelt den Rigs-Eintrag",
+              win.d_cat.findData(_I843b.RIGS_KAT) >= 0)
+        # Die Eintraege sind QWidgetActions mit QCheckBox als Widget -
+        # a.text() ist dort LEER, der Text steht auf der Checkbox.
+        _bc843 = getattr(win, "b_cat", None)
+        _ac843 = []
+        if _bc843 is not None and _bc843.menu():
+            for _a843 in _bc843.menu().actions():
+                _w843 = getattr(_a843, "defaultWidget", lambda: None)()
+                _ac843.append((_w843.text() if _w843 is not None
+                               else _a843.text()) or "")
+        check(f"b843 Industrie-Mehrfachauswahl enthaelt 'Rigs' ({_ac843[-4:]})",
+              any("Rigs" in a for a in _ac843))
+    finally:
+        _I843b._db_path = _dbp_alt843
+        win._reload_categories(); _app.processEvents()   # Normalzustand
+except Exception as _e843b:                              # pragma: no cover
+    import traceback as _tb843b
+    _fail.append(f"b843 Rigs-Filter: {type(_e843b).__name__}: {_e843b} | "
+                 + _tb843b.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b853)
+# MARKET STOCKS UMGEBAUT (emm853, Nutzer 06.11.2026: "unten was ist das
+# fuer eine zusaetzliche Item Liste? ich brauche nur das oben ... ich
+# moechte aber auch eine ganze doctrine oder gar mehrere Doctrinen zu
+# einem Multibauplan machen ... rechts koennen wir eine auflistung
+# erstellen der Doctrinen ... Baukosten/ Profit usw ... wenn da fuer
+# ITems kein Preis gelistet ist, nehmen wir Jita sell Preis mit der
+# info"). Gemessen am lebenden Fenster; die Schaetzung mit dem b83-
+# Mini-Rezept (A/B teilen X), damit ohne SDE WIRKLICH gerechnet wird.
+try:
+    from eve_trader import doctrinen as _dc853
+    _CCC853 = 977777          # absichtlich OHNE Rezept (buy only)
+    check("b853 die alte Gesamt-Itemliste ist weg",
+          not hasattr(win, "ms_items"))
+    check("b853 die Doctrine-Uebersicht und ihr Sammel-Knopf stehen",
+          hasattr(win, "ms_docs") and hasattr(win, "ms_multi_btn")
+          and not win.ms_multi_btn.icon().isNull()
+          and bool(win.ms_multi_btn.toolTip()))
+    _nm853 = {"aaa": _A83, "bbb": _B83, "ccc": _CCC853}
+    _st853 = win._ms_state()
+    _st853["doctrinen"] = [
+        dict(_dc853.doctrine_aus_text(
+            "D-Eins", "[AAA, F]\nBBB x10\nCCC x3", _nm853, ziel=10),
+            id=31),
+        dict(_dc853.doctrine_aus_text(
+            "D-Zwei", "[AAA, G]\nBBB x5", _nm853, ziel=10), id=32)]
+    _st853["abgewaehlt"] = {}
+    win._ms_markt = None
+    _n2t_alt853 = getattr(win, "_ms_name2tid", None)
+    win._ms_name2tid = dict(_nm853)
+    _rec_alt853 = getattr(win, "_bd_recipes", None)
+    win._bd_recipes = _Rec83()
+    _sch_alt853 = win._ms_docs_schaetzen
+    _sch_n853 = []
+    win._ms_docs_schaetzen = lambda: _sch_n853.append(1)
+    _mn_alt853 = win._multi_neu_aus_auswahl
+    _plaene853 = []
+    win._multi_neu_aus_auswahl = \
+        lambda items, **_kw: _plaene853.append(items)
+    try:
+        win._ms_render(); _app.processEvents()
+        eq("b853 die Uebersicht traegt beide Doctrinen",
+           win.ms_docs.rowCount(), 2)
+        check("b853 _ms_render stoesst die Kosten-Schaetzung an",
+              len(_sch_n853) >= 1)
+        check("b853 ohne Abruf steht in der Uebersicht ein Strich",
+              win.ms_docs.item(0, 1).text() == "—")
+        # (a) KNOPF AN DER KARTE: ganze Doctrine -> Multibauplan.
+        # _ms_multi_knopf_letzter ist der der LETZTEN Karte (D-Zwei);
+        # ohne Marktabruf ist die Fehlmenge die volle Zielmenge.
+        # emm932: links steht nur die offene Doctrine - D-Zwei oeffnen.
+        win._ms_ordner_oeffnen("D-Zwei"); _app.processEvents()
+        _kn853 = getattr(win, "_ms_multi_knopf_letzter", None)
+        check("b853 der Multiplan-Knopf steht auf der Karte (mit Icon "
+              "und Tooltip)", _kn853 is not None
+              and not _kn853.icon().isNull() and bool(_kn853.toolTip()))
+        _kn853.click(); _app.processEvents()
+        eq("b853 Karte D-Zwei -> Plan mit Fehlmengen (A 1x10, B 5x10)",
+           {(x["tid"], x["qty"])
+            for x in (_plaene853[-1] if _plaene853 else [])},
+           {(_A83, 10), (_B83, 50)})
+        # (b) MEHRERE DOCTRINEN -> EIN PLAN: gleiche Items addieren
+        # sich ueber die Doctrinen; CCC hat kein Rezept und bleibt
+        # GENANNT draussen (nur in D-Eins enthalten).
+        win.ms_docs.selectAll()
+        win.ms_multi_btn.click(); _app.processEvents()
+        # emm859: CCC (kein Rezept) ist jetzt ALS KAUF-POSTEN IM Plan
+        # ("ja aber wenn nur kaufen, muss das in die Einkaufsliste vom
+        # Multiplan selber") - markiert mit kauf=True.
+        eq("b853 beide Doctrinen -> EIN Plan, Mengen addiert, "
+           "CCC (kein Rezept) als Kauf-Posten drin",
+           {(x["tid"], x["qty"], bool(x.get("kauf")))
+            for x in (_plaene853[-1] if _plaene853 else [])},
+           {(_A83, 20, False), (_B83, 150, False), (_CCC853, 30, True)})
+        win.ms_docs.clearSelection()
+        _n_vor853 = len(_plaene853)
+        win.ms_multi_btn.click(); _app.processEvents()
+        eq("b853 ohne Auswahl entsteht kein Plan (Hinweis statt Absturz)",
+           len(_plaene853), _n_vor853)
+        # (c) SCHAETZUNG JE DOCTRINE: dieselbe Rechnung wie My build
+        # plans (b83-Mechanik), Jita-Rueckfall GEZAEHLT. pm hat keinen
+        # B-Preis -> der Jita-Preis aus dem Marktabruf springt ein.
+        _pm853 = {_M83: 100.0, _X83: 1e9, _A83: 50000.0}
+        _namen853 = {_A83: "AAA", _B83: "BBB", _CCC853: "CCC"}
+        _e853 = win._ms_doc_est(_st853["doctrinen"][0], _Rec83(),
+                                dict(_pm853), dict(_pm853),
+                                {_B83: 90000.0}, _namen853)
+        check("b853 Schaetzung D-Eins: Ergebnis mit Jita-Rueckfall "
+              f"(jita_n={_e853.get('jita_n')}, raus={_e853.get('raus')})",
+              _e853.get("est") is not None and _e853["est"]["cost"] > 0
+              and _e853.get("jita_n") == 1 and _e853.get("raus") == 1)
+        _e853b = win._ms_doc_est(_st853["doctrinen"][0], _Rec83(),
+                                 dict(_pm853), dict(_pm853), {}, _namen853)
+        # (B baubar ohne Preis + C Kauf ohne Preis = 2 unbepreist.)
+        check("b853 ohne jeden B-Preis: keine Schaetzung, ehrlich gezaehlt",
+              _e853b.get("est") is None and _e853b.get("unpriced") == 2)
+        # EIN SATZ, NICHT DIE ZIELMENGE: dasselbe Fit-Paket mit Ziel 99
+        # kostet exakt gleich viel - wer heimlich doctrine_bedarf
+        # (ziel-skaliert) rechnet, laege hier um Faktor 9,9 daneben.
+        _e853c = win._ms_doc_est(dict(_st853["doctrinen"][0], ziel=99),
+                                 _Rec83(), dict(_pm853), dict(_pm853),
+                                 {_B83: 90000.0}, _namen853)
+        check("b853 die Schaetzung haengt am SATZ, nicht am Ziel",
+              _e853c.get("est") is not None
+              and _e853.get("est") is not None
+              and abs(_e853c["est"]["cost"] - _e853["est"]["cost"]) < 1e-6)
+        # (d) DIE ZELLEN SAGEN ES: Kosten/Profit als ISK, die note nennt
+        # Jita-Rueckfall und Nur-Kauf-Posten; ohne Schaetzung ein Strich.
+        win._ms_est = {31: _e853, 32: _e853b}
+        win._ms_docs_zellen(); _app.processEvents()
+        _z853 = {int(win.ms_docs.item(r, 0).data(Qt.UserRole)): r
+                 for r in range(win.ms_docs.rowCount())}
+        check("b853 D-Eins zeigt Baukosten und Profit in ISK",
+              win.ms_docs.item(_z853[31], 2).text().endswith("ISK")
+              and win.ms_docs.item(_z853[31], 3).text().endswith("ISK"))
+        # emm860: die Zelle traegt Kuerzel, der volle Satz den Tooltip.
+        _note853 = win.ms_docs.item(_z853[31], 4).text()
+        _ntip853 = win.ms_docs.item(_z853[31], 4).toolTip()
+        check(f"b853 die note nennt Jita-Rueckfall UND Kauf-Posten "
+              f"({_note853})",
+              "Jita" in _note853 and "buy" in _note853
+              and "buy item(s)" in _ntip853 and "Jita" in _ntip853)
+        check("b853 D-Zwei (nicht schaetzbar) zeigt Strich mit Tooltip",
+              win.ms_docs.item(_z853[32], 2).text() == "—"
+              and bool(win.ms_docs.item(_z853[32], 2).toolTip()))
+    finally:
+        win._ms_docs_schaetzen = _sch_alt853
+        win._multi_neu_aus_auswahl = _mn_alt853
+        win._bd_recipes = _rec_alt853
+        if _n2t_alt853 is None:
+            win._ms_name2tid = None
+        else:
+            win._ms_name2tid = _n2t_alt853
+        win.settings.pop("market_stocks", None)
+        win._ms_markt = None
+        win._ms_est = {}
+except Exception as _e853x:                              # pragma: no cover
+    import traceback as _tb853
+    _fail.append(f"b853 Market-Stocks-Umbau: {type(_e853x).__name__}: "
+                 f"{_e853x} | "
+                 + _tb853.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b854)
+# MARKET STOCKS FEINSCHLIFF (emm854, Nutzer 07.11.2026: Fetch-Knopf
+# blinkt beim Oeffnen ohne Abruf; Rechtsklick auf die Doctrine in der
+# Liste; alle Spalten sortierbar; "Multi build plan machte nichts" =
+# fehlende Rezepte werden jetzt selbst nachgeladen; dazu Multibuy,
+# Abruf-Alter, Gap-Summe im Kartenkopf).
+try:
+    import time
+    from PySide6.QtCore import QPoint as _QP854
+    from PySide6.QtGui import QGuiApplication as _QG854
+    from PySide6.QtWidgets import (QLabel as _QL854,
+                                   QTableWidget as _TW854)
+    from eve_trader.ui import mw_market_stocks as _mwm854b
+    from eve_trader import doctrinen as _dc854
+    from eve_trader.ui import theme as _th854
+    _nm854 = {"aaa": _A83, "bbb": _B83, "ccc": _CCC853}
+    _st854 = win._ms_state()
+    _st854["doctrinen"] = [
+        dict(_dc854.doctrine_aus_text(
+            "S-Eins", "[AAA, F]\nBBB x10\nCCC x3", _nm854, ziel=10),
+            id=41),
+        dict(_dc854.doctrine_aus_text(
+            "S-Zwei", "[AAA, G]\nBBB x5", _nm854, ziel=10), id=42)]
+    _st854["abgewaehlt"] = {}
+    _st854["aufgeklappt"] = []
+    win._ms_markt = None
+    win._ms_est = {}
+    win._ms_pos_sort = None
+    win._ms_docs_sort = None
+    _n2t_alt854 = getattr(win, "_ms_name2tid", None)
+    win._ms_name2tid = dict(_nm854)
+    _rec_alt854 = getattr(win, "_bd_recipes", None)
+    win._bd_recipes = None
+    win._ms_rec854 = None
+    _sch_alt854 = win._ms_docs_schaetzen
+    _sch_n854 = []
+    win._ms_docs_schaetzen = lambda: _sch_n854.append(1)
+    _mn_alt854 = win._multi_neu_aus_auswahl
+    _plaene854 = []
+    win._multi_neu_aus_auswahl = \
+        lambda items, **_kw: _plaene854.append(items)
+    _cn_alt854 = _mwm854b.store.cached_names
+    try:
+        # (a) BLINKEN: Tab oeffnen ohne Abruf -> der Fetch-Knopf pulst.
+        win._ms_blink_stopp()
+        _alt_idx854 = win.tabs.currentIndex()
+        win.tabs.setCurrentWidget(win._tab_widget["stocks"])
+        _app.processEvents()
+        check("b854 Tab-Oeffnen ohne Abruf laesst den Fetch-Knopf "
+              "blinken", getattr(win, "_ms_blink_timer", None) is not None
+              and _th854.AMBER.lower()
+              in win.ms_fetch_btn.styleSheet().lower())
+        # Der Fetch-KLICK beendet die Erinnerung - auch wenn der Abruf
+        # mangels Hub sofort scheitert.
+        win._ms_fetch(); _app.processEvents()
+        check("b854 ein Klick auf Fetch beendet das Blinken",
+              win.ms_fetch_btn.styleSheet() == ""
+              and getattr(win, "_ms_blink_timer", None) is None)
+        win._ms_tab_geoeffnet()
+        win._ms_blink_stopp()
+        check("b854 Blink-Stopp raeumt auf (Stil leer, Timer weg)",
+              win.ms_fetch_btn.styleSheet() == ""
+              and getattr(win, "_ms_blink_timer", None) is None)
+        check("b854 die Alters-Uhr tickt (Timer laeuft)",
+              win._ms_alter_timer.isActive())
+        win._ms_markt = {"buch": {}, "jita": {}, "vol": {},
+                         "ts": time.time(), "hub_name": "T"}
+        win._ms_tab_geoeffnet()
+        check("b854 mit geholtem Markt blinkt nichts",
+              getattr(win, "_ms_blink_timer", None) is None)
+        win.tabs.setCurrentIndex(_alt_idx854)
+        # (b) ALTER: frisch = gedeckt grau, >60 min = orange + Klartext.
+        win._ms_markt["ts"] = time.time() - 3700
+        win._ms_alter_zeigen()
+        check("b854 Daten ueber eine Stunde alt stehen orange",
+              _th854.AMBER.lower()
+              in win.ms_alter_lbl.styleSheet().lower()
+              and bool(win.ms_alter_lbl.toolTip()))
+        win._ms_markt["ts"] = time.time()
+        win._ms_alter_zeigen()
+        check("b854 frische Daten stehen wieder gedeckt",
+              _th854.AMBER.lower()
+              not in win.ms_alter_lbl.styleSheet().lower())
+        # (c) REZEPT-NACHLADEN: ohne _bd_recipes lief der Multiplan
+        # frueher ins Leere ("das klicken auf multibuildplan macht
+        # bisher nichts") - mit dem eigenen Rezept-Cache laeuft er.
+        win._ms_markt = None
+        win._ms_rec854 = _Rec83()
+        # emm932: nur die offene Doctrine steht links - S-Zwei oeffnen.
+        win._ms_ordner_oeffnen("S-Zwei"); _app.processEvents()
+        win._ms_multi_knopf_letzter.click(); _app.processEvents()
+        eq("b854 Multiplan laeuft OHNE je geoeffneten Bauplan "
+           "(Rezepte aus eigenem Cache)",
+           {(x["tid"], x["qty"])
+            for x in (_plaene854[-1] if _plaene854 else [])},
+           {(_A83, 10), (_B83, 50)})
+        # (d) UEBERSICHT: Rechtsklick-Menue startet den Multiplan fuer
+        # die markierten Doctrinen (FakeMenu, PySide6-Lehre aus b844:
+        # ein echtes exec haengt offscreen fuer immer).
+        class _FM854:
+            _letzt = None
+
+            def __init__(self, *_a, **_k):
+                self._akt = []
+                _FM854._letzt = self
+
+            def addAction(self, *_a, **_k):
+                _o = object.__new__(object)
+                self._akt.append(_o)
+                return _o
+
+            def exec(self, *_a, **_k):
+                return self._akt[0] if self._akt else None
+
+            def __getattr__(self, _n):
+                return lambda *a, **k: None
+        _qm_alt854 = _mwm854b.QMenu
+        _mwm854b.QMenu = _FM854
+        try:
+            win.ms_docs.selectAll()
+            _n_vor854 = len(_plaene854)
+            win._ms_docs_menue(_QP854(5, 5)); _app.processEvents()
+        finally:
+            _mwm854b.QMenu = _qm_alt854
+        eq("b854 Rechtsklick in der Uebersicht -> EIN Plan aus beiden "
+           "Doctrinen (CCC seit emm859 als Kauf-Posten dabei)",
+           {(x["tid"], x["qty"])
+            for x in (_plaene854[-1] if len(_plaene854) > _n_vor854
+                      else [])},
+           {(_A83, 20), (_B83, 150), (_CCC853, 30)})
+        # (e) MULTIBUY: Fehlmengen beider Doctrinen als Name<TAB>Menge;
+        # unaufgeloeste Namen fliegen GEZAEHLT raus, nie still mit.
+        _mwm854b.store.cached_names = \
+            lambda ids: {int(i): {_A83: "AAA", _B83: "BBB"}.get(int(i))
+                         for i in ids}
+        win._ms_multibuy(_st854["doctrinen"])
+        eq("b854 Multibuy-Clipboard = Name<TAB>Menge, Mengen addiert",
+           _QG854.clipboard().text(), "AAA\t20\nBBB\t150")
+        # (f) KARTEN-SORTIERUNG: ein Zustand fuer alle Karten; Klick
+        # auf die Fehlt-Spalte sortiert die Positionen, zweiter Klick
+        # dreht. Seit emm874 ist das Spalte 2 (vorher 6).
+        # emm932: links nur die offene Doctrine - S-Eins (3 Posten).
+        win._ms_state()["offen_ordner"] = "S-Eins"
+        win._ms_pos_sortieren(2); _app.processEvents()
+        _krt854 = win.ms_doc_box.itemAt(0).widget()
+        _ptb854 = _krt854.findChild(_TW854)
+        _folge854 = [int(_ptb854.item(r, 1).data(Qt.UserRole))
+                     for r in range(_ptb854.rowCount())]
+        eq("b854 Positions-Sortierung nach missing aufsteigend "
+           "(10 / 30 / 100)", _folge854, [_A83, _CCC853, _B83])
+        win._ms_pos_sortieren(2); _app.processEvents()
+        _krt854b = win.ms_doc_box.itemAt(0).widget()
+        _ptb854b = _krt854b.findChild(_TW854)
+        _folge854b = [int(_ptb854b.item(r, 1).data(Qt.UserRole))
+                      for r in range(_ptb854b.rowCount())]
+        check("b854 zweiter Klick dreht die Richtung",
+              _folge854b == list(reversed(_folge854)))
+        # (g) UEBERSICHTS-SORTIERUNG nutzt die GEMERKTEN Schaetzungen,
+        # ohne sie neu zu rechnen oder zu verwerfen.
+        win._ms_est = {
+            41: {"est": {"cost": 100.0, "profit": 5.0}, "raus": 0,
+                 "jita_n": 0, "unpriced": 0},
+            42: {"est": {"cost": 50.0, "profit": -2.0}, "raus": 0,
+                 "jita_n": 0, "unpriced": 0}}
+        _sch_vor854 = len(_sch_n854)
+        win._ms_docs_sortieren(2); _app.processEvents()
+        _ids854 = [int(win.ms_docs.item(r, 0).data(Qt.UserRole))
+                   for r in range(win.ms_docs.rowCount())]
+        eq("b854 Uebersicht nach Baukosten aufsteigend (50 vor 100)",
+           _ids854, [42, 41])
+        check("b854 die Zellen stehen sofort aus dem Cache (ISK statt …)",
+              win.ms_docs.item(0, 2).text().endswith("ISK")
+              and win.ms_docs.item(1, 2).text().endswith("ISK"))
+        check("b854 Sortieren rechnet nichts neu (Cache vollstaendig)",
+              len(_sch_n854) == _sch_vor854)
+        win._ms_docs_sortieren(2); _app.processEvents()
+        _ids854b = [int(win.ms_docs.item(r, 0).data(Qt.UserRole))
+                    for r in range(win.ms_docs.rowCount())]
+        eq("b854 zweiter Klick dreht die Uebersicht (100 vor 50)",
+           _ids854b, [41, 42])
+        # (h) ZUR KARTE SPRINGEN: Doppelklick-Weg klappt die Karte auf.
+        _r42 = _ids854b.index(42)
+        win._ms_doc_zeigen(_r42); _app.processEvents()
+        # emm932: die Zeile ist eine Doctrine - der Klick oeffnet SIE
+        # links; "Show card" (Menue) klappt das Schiff zusaetzlich auf.
+        check("b854 Klick auf die Zeile oeffnet die Doctrine links",
+              win._ms_state().get("offen_ordner") == "S-Zwei")
+        win._ms_doc_zeigen_id(42); _app.processEvents()
+        check("b854 'Show card' klappt das Schiff auf",
+              42 in (win._ms_state().get("aufgeklappt") or []))
+        # (i) GAP-SUMME IM KARTENKOPF: fehlt x Jita, Positionen ohne
+        # Preis GEZAEHLT ausgenommen. S-Eins: A 10x10 + B 100x5 = 600.
+        win._ms_markt = {"buch": {},
+                         "jita": {_A83: 10.0, _B83: 5.0}, "vol": {},
+                         "ts": time.time(), "hub_name": "T"}
+        win._ms_pos_sort = None
+        # emm932: links steht nur die OFFENE Doctrine - (h) hat eben
+        # S-Zwei geoeffnet, die Summe gehoert zu S-Eins.
+        win._ms_ordner_oeffnen("S-Eins"); _app.processEvents()
+        _krt854c = win.ms_doc_box.itemAt(0).widget()
+        _gap854 = None
+        for _lb in _krt854c.findChildren(_QL854):
+            if _lb.text().startswith("gap"):
+                _gap854 = _lb
+                break
+        # A 10x10 + B 100x5 = 600; C (30 fehlend) hat KEINEN Jita-Preis
+        # und steht GEZAEHLT im Tooltip statt still mit 0 in der Summe.
+        check("b854 der Kartenkopf nennt die Loch-Summe (600 ISK)",
+              _gap854 is not None and "600" in _gap854.text()
+              and "no Jita price" in _gap854.toolTip())
+    finally:
+        _mwm854b.store.cached_names = _cn_alt854
+        win._ms_docs_schaetzen = _sch_alt854
+        win._multi_neu_aus_auswahl = _mn_alt854
+        win._bd_recipes = _rec_alt854
+        win._ms_rec854 = None
+        if _n2t_alt854 is None:
+            win._ms_name2tid = None
+        else:
+            win._ms_name2tid = _n2t_alt854
+        win._ms_blink_stopp()
+        win._ms_pos_sort = None
+        win._ms_docs_sort = None
+        win.settings.pop("market_stocks", None)
+        win._ms_markt = None
+        win._ms_est = {}
+except Exception as _e854x:                              # pragma: no cover
+    import traceback as _tb854
+    _fail.append(f"b854 Market-Stocks-Feinschliff: {type(_e854x).__name__}: "
+                 f"{_e854x} | "
+                 + _tb854.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b855)
+# FILTERZEILE + GEMERKTE ANSICHT (emm855, Nutzer: "mache alle deine
+# vorschläge auch"): die vier grossen Trading-Tabellen bekommen ein
+# Suchfeld (jedes Wort muss irgendwo in der ZEILE vorkommen) und
+# merken sich Spaltenbreiten + Sortierung ueber den Neustart.
+try:
+    import base64 as _b64_855
+    from PySide6.QtCore import QByteArray as _QBA855
+    # (a) Die vier Felder stehen, mit Lupe und Loesch-Knopf.
+    for _nm855, _fld855 in (("Daytrade", "dt_search"),
+                            ("Swing", "sw_search"),
+                            ("Regional", "rg_search"),
+                            ("Firesales", "fs_search")):
+        _e855 = getattr(win, _fld855, None)
+        check(f"b855 {_nm855}-Filterfeld steht (Lupe + Loesch-Knopf)",
+              _e855 is not None and _e855.isClearButtonEnabled()
+              and len(_e855.actions()) >= 1
+              and bool(_e855.placeholderText()))
+    # (b) WIRKUNG ueber ALLE Spalten, jedes Wort muss treffen.
+    _dt855 = win.deals_table
+    _dt855.setSortingEnabled(False)
+    _dt855.setRowCount(2)
+    from PySide6.QtWidgets import QTableWidgetItem as _TI855
+    _dt855.setItem(0, 0, _TI855("Rifter"))
+    _dt855.setItem(0, 12, _TI855("rising"))
+    _dt855.setItem(1, 0, _TI855("Rifter Navy"))
+    _dt855.setItem(1, 12, _TI855("falling"))
+    try:
+        win.dt_search.setText("rifter rising"); _app.processEvents()
+        check("b855 Mehrwort-Filter: JEDES Wort muss in der Zeile "
+              "stehen (nicht irgendeins)",
+              not _dt855.isRowHidden(0) and _dt855.isRowHidden(1))
+        win.dt_search.setText("falling"); _app.processEvents()
+        check("b855 der Filter liest ALLE Spalten, nicht nur den Namen",
+              _dt855.isRowHidden(0) and not _dt855.isRowHidden(1))
+        win.dt_search.setText(""); _app.processEvents()
+        check("b855 leeres Feld zeigt wieder alles",
+              not _dt855.isRowHidden(0) and not _dt855.isRowHidden(1))
+        # (c) Die ALTEN Aufrufer (Portfolio & Co.) behalten ihr
+        # Ein-Spalten-Verhalten: "falling" steht NICHT in Spalte 0.
+        win._apply_table_search(_dt855, "falling", 0)
+        check("b855 Alt-Verhalten unveraendert (nur Namensspalte)",
+              _dt855.isRowHidden(0) and _dt855.isRowHidden(1))
+        win._apply_table_search(_dt855, "", 0)
+    finally:
+        win.dt_search.setText("")
+        _dt855.setRowCount(0)
+        _dt855.setSortingEnabled(True)
+    # (d) RENDER WIRFT DEN FILTER NICHT WEG: alle vier Render wenden
+    # ihn nach dem Neuaufbau wieder an (Quelltext-Anker; die Filter-
+    # Wirkung selbst ist oben am lebenden Tisch gemessen).
+    import inspect as _in855
+    # Geprueft wird die BEDINGUNGS-Zeile selbst ("and ...strip():") -
+    # eine if-False-Mutation laesst den Rumpf (und damit einen
+    # schwaecheren Anker) stehen; genau daran war die erste Fassung
+    # dieser Pruefung blind (Rotprobe emm855).
+    for _rn855, _fx855 in (("_render_deals", "dt_search"),
+                           ("_render_hold", "sw_search"),
+                           ("_fs_zeichnen", "fs_search")):
+        _src855 = _in855.getsource(getattr(type(win), _rn855))
+        check(f"b855 {_rn855} wendet den Filter nach dem Neuaufbau an",
+              f"and self.{_fx855}.text().strip():" in _src855
+              and "alle_spalten=True" in _src855)
+    import eve_trader.ui.main_window as _mwq855
+    _src855r = _in855.getsource(_mwq855)
+    check("b855 der Regional-Render wendet den Filter an",
+          "and self.rg_search.text().strip():" in _src855r
+          and "self._apply_table_search(self.rg_table," in _src855r)
+    # (e) ANSICHT MERKEN: Spaltenzug startet den (gebremsten)
+    # Speicher-Timer; der gespeicherte Zustand stellt die Breite
+    # nach einem Neu-Anbinden wieder her.
+    _hh855 = win.deals_table.horizontalHeader()
+    _tm855 = win.deals_table._moma_ansicht_timer
+    _tm855.stop()
+    _hh855.resizeSection(2, 123)
+    check("b855 Spaltenzug startet den Speicher-Timer",
+          _tm855.isActive())
+    _tm855.stop()
+    _st855v = win.settings.setdefault("tabellen_ansicht", {})
+    _st855v["deals"] = _b64_855.b64encode(
+        bytes(_hh855.saveState())).decode("ascii")
+    _hh855.resizeSection(2, 77)
+    win._tbl_ansicht_anbinden(win.deals_table, "deals")
+    eq("b855 die gemerkte Spaltenbreite ueberlebt (123 statt 77)",
+       _hh855.sectionSize(2), 123)
+    win.settings.pop("tabellen_ansicht", None)
+except Exception as _e855x:                              # pragma: no cover
+    import traceback as _tb855
+    _fail.append(f"b855 Filter/Ansicht: {type(_e855x).__name__}: "
+                 f"{_e855x} | "
+                 + _tb855.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b857)
+# MENGEN-DIALOG REPARIERT UND ERWEITERT (emm857, Nutzer 07.11.2026:
+# "stimmen die anzahl Items nicht wie in der Doctrine angegeben" /
+# "ausserdem fehlen Module und ITems" / "direktanzahl vom ganzen
+# bundle nicht erhoehen oder verringern"): qty zaehlt als Vorgabe,
+# der x-Faktor multipliziert alles, die Kauf-Posten stehen IM Dialog.
+try:
+    from PySide6.QtCore import QTimer as _QT857
+    from eve_trader import doctrinen as _dc857
+
+    # (a) qty wird zur Vorgabe (vorher stand ueberall 1).
+    def _dlg857a():
+        _sp = list(getattr(win, "_multi_mengen_spins", None) or [])
+        _g857a.append([int(x.value()) for x in _sp])
+        win._multi_mengen_dlg.accept()
+    _g857a = []
+    _QT857.singleShot(0, _dlg857a)
+    _m857a = win._multi_mengen_dialog(
+        [{"tid": _A83, "name": "A", "qty": 10},
+         {"tid": _B83, "name": "B", "qty": 50}], "b857")
+    check(f"b857 Market-Stocks-Mengen (qty) fuellen den Dialog vor "
+          f"({_g857a})", _g857a == [[10, 50]]
+          and [x["qty"] for x in (_m857a or [])] == [10, 50])
+    # (b) Der x-Faktor multipliziert JEDES Feld beim Bestaetigen.
+    def _dlg857b():
+        win._multi_mengen_faktor.setValue(3)
+        win._multi_mengen_dlg.accept()
+    _QT857.singleShot(0, _dlg857b)
+    _m857b = win._multi_mengen_dialog(
+        [{"tid": _A83, "name": "A", "qty": 10},
+         {"tid": _B83, "name": "B", "qty": 50}], "b857")
+    eq("b857 Faktor x3: ganze Doctrine dreimal",
+       [x["qty"] for x in (_m857b or [])], [30, 150])
+    # (c) Der Kauf-Hinweis steht IM Dialog, nicht nur im Flash.
+    def _dlg857c():
+        _lb = getattr(win, "_multi_mengen_hinweis_lbl", None)
+        _g857c.append(_lb.text() if _lb is not None else None)
+        win._multi_mengen_dlg.reject()
+    _g857c = []
+    _QT857.singleShot(0, _dlg857c)
+    win._multi_mengen_dialog(
+        [{"tid": _A83, "name": "A", "qty": 1},
+         {"tid": _B83, "name": "B", "qty": 1}], "b857",
+        hinweis="KAUFPOSTEN-HINWEIS")
+    eq("b857 der Hinweis-Text steht im Dialog",
+       _g857c, ["KAUFPOSTEN-HINWEIS"])
+    # (d) Market Stocks reicht die GENANNTEN Kauf-Posten als Hinweis
+    # durch (CCC hat kein Rezept).
+    _nm857 = {"aaa": _A83, "bbb": _B83, "ccc": _CCC853}
+    _st857 = win._ms_state()
+    _st857["doctrinen"] = [
+        dict(_dc857.doctrine_aus_text(
+            "H-Eins", "[AAA, F]\nBBB x10\nCCC x3", _nm857, ziel=10),
+            id=51)]
+    _st857["abgewaehlt"] = {}
+    win._ms_markt = None
+    _rec_alt857 = getattr(win, "_bd_recipes", None)
+    win._bd_recipes = _Rec83()
+    _mn_alt857 = win._multi_neu_aus_auswahl
+    _hw857, _pl857 = [], []
+    win._multi_neu_aus_auswahl = (
+        lambda items, **kw: (_pl857.append(items),
+                             _hw857.append(kw.get("hinweis"))))
+    try:
+        win._ms_multiplan(_st857["doctrinen"][0])
+        # emm859b ("zu viel text"): der Hinweis erklaert nur noch das
+        # (buy)-Etikett in EINEM Satz - die Posten stehen ja als
+        # Zeilen im Dialog.
+        check(f"b857 der Dialog-Hinweis erklaert das (buy)-Etikett "
+              f"({_hw857})", len(_hw857) == 1 and _hw857[0]
+              and _hw857[0].startswith("(buy)")
+              and "shopping list" in _hw857[0]
+              and len(_hw857[0]) < 120)
+    finally:
+        win._multi_neu_aus_auswahl = _mn_alt857
+        win._bd_recipes = _rec_alt857
+        win.settings.pop("market_stocks", None)
+        win._ms_markt = None
+except Exception as _e857x:                              # pragma: no cover
+    import traceback as _tb857
+    _fail.append(f"b857 Mengen-Dialog: {type(_e857x).__name__}: "
+                 f"{_e857x} | "
+                 + _tb857.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b858)
+# ORDERBUCH-FENSTER + MULTI-HUB (emm858, Nutzer 07.11.2026: "ich sehe
+# keine zwei hubs obwohl multi hub aktiviert und 2 verschiedene Hubs
+# gewählöt" / "status column wirkt abgedrückt"): die Hub-Weiche ist
+# dynamisch, der stille Rueckfall WARNT jetzt, Status ist die
+# Stretch-Spalte. Gemessen am ECHT geoeffneten Fenster (non-modal).
+try:
+    import inspect as _in858
+    from PySide6.QtWidgets import QHeaderView as _HV858
+    from eve_trader.ui import theme as _th858
+    from eve_trader.sprache import t as _t858
+    _alt858 = {k: getattr(win, k, None) for k in (
+        "_bd_multi_hub_an", "_bd_buy_hub_a", "_bd_buy_hub_b",
+        "_bd_buy_hub_c", "_bd_recipes", "_bd_type", "_bd_name",
+        "_bd_qty", "_bd_frozen")}
+    try:
+        win._bd_frozen = None
+        win._bd_recipes = _Rec83()
+        win._bd_type = _A83
+        win._bd_name = "A-Ware"
+        win._bd_qty = 1
+        # (a) Zwei NPC-Kauf-Hubs, Schalter an -> Hub-Spalten + "Hubs:".
+        win._bd_multi_hub_an = True
+        win._bd_buy_hub_a = "jita"
+        win._bd_buy_hub_b = "amarr"
+        win._bd_buy_hub_c = None
+        _h858, _an858b = win._ladder_hubs_jetzt()
+        check("b858 zwei NPC-Hubs loesen sich auf (Schalter an)",
+              _an858b and [k for k, _n in _h858] == ["jita", "amarr"])
+        # EIN GESPEICHERTER ALT-ZUSTAND LIEGT BEREIT: _persist_window
+        # spielt ihn beim Oeffnen ein (Interactive-Modi, alte
+        # Breiten) - genau so sah das Fenster des Nutzers aus. Die
+        # Modi muessen NACH dem Wiederherstellen neu gesetzt werden,
+        # sonst ist der Stretch-Check unten blind fuer die Mutation.
+        import base64 as _b64_858
+        from PySide6.QtWidgets import QTableWidget as _TW858
+        _alt_tw858 = _TW858(0, 6)
+        win.settings["ui_hdr_ladder_check_table"] = \
+            _b64_858.b64encode(bytes(
+                _alt_tw858.horizontalHeader().saveState())).decode("ascii")
+        win.open_ladder_check(); _app.processEvents()
+        _tb858a = win._ladder_tbl
+        check("b858 das Fenster traegt eine Spalte je Hub (6 gesamt)",
+              _tb858a.columnCount() == 6
+              and win._ladder_hub_lbl.text().startswith(
+                  _t858("Hubs: ").strip()))
+        _mode858 = _tb858a.horizontalHeader().sectionResizeMode(
+            _tb858a.columnCount() - 1)
+        check(f"b858 die LETZTE Spalte (Status) ist die Stretch-Spalte "
+              f"({_mode858})", _mode858 == _HV858.ResizeMode.Stretch)
+        _tb858a.window().close(); _app.processEvents()
+        # (b) Schalter an, aber nur EIN aufloesbarer Hub -> sichtbare
+        # WARNUNG statt stillem Einzel-Hub-Rueckfall.
+        win._bd_buy_hub_b = None
+        win.open_ladder_check(); _app.processEvents()
+        check("b858 'Multi-Hub an, nur ein Hub aufloesbar' WARNT amber",
+              "Multi-Hub" in win._ladder_hub_lbl.text()
+              and _th858.AMBER.lower()
+              in win._ladder_hub_lbl.styleSheet().lower()
+              and win._ladder_tbl.columnCount() == 4)
+        win._ladder_tbl.window().close(); _app.processEvents()
+        # (c) Schalter aus -> der gewohnte Einzel-Hub-Kopf, keine
+        # Warnung.
+        win._bd_multi_hub_an = False
+        _txt858, _warn858 = win._ladder_kopf_text([], False)
+        check("b858 ohne Schalter der gewohnte Hub-Kopf ohne Warnung",
+              _txt858.startswith(_t858("Hub: ").strip()) and not _warn858)
+        # (d) "Calculate" liest die Hubs des Plans NEU (Quelltext-
+        # Anker auf die In-Place-Erneuerung; die Weiche selbst ist
+        # oben am lebenden Fenster gemessen).
+        _src858 = _in858.getsource(type(win).open_ladder_check)
+        check("b858 Calculate liest die Hubs des Plans neu",
+              "_mh_hubs[:] = _hubs858" in _src858
+              and "_spalten_setzen()" in _src858)
+    finally:
+        for _k858, _v858 in _alt858.items():
+            setattr(win, _k858, _v858)
+        win.settings.pop("ui_hdr_ladder_check_table", None)
+        win.settings.pop("ui_geom_ladder_check", None)
+except Exception as _e858x:                              # pragma: no cover
+    import traceback as _tb858x
+    _fail.append(f"b858 Orderbuch-Hubs: {type(_e858x).__name__}: "
+                 f"{_e858x} | "
+                 + _tb858x.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b859)
+# KAUF-POSTEN IM MENGEN-DIALOG ETIKETTIERT (emm859, Nutzer: "ja aber
+# wenn nur kaufen, muss das in die Einkaufsliste vom Multiplan
+# selber"): die Kauf-Enden tragen "(buy)" in ihrer Dialog-Zeile. (Dass
+# sie im Plan landen, misst b853/b854; dass ein ENDE ohne Rezept im
+# Buendel-Baum gekauft wird, ist Kernverhalten von build_tree.)
+try:
+    from PySide6.QtCore import QTimer as _QT859
+    from PySide6.QtWidgets import QLabel as _QL859
+
+    def _dlg859():
+        _lbl = [x.text() for x in
+                win._multi_mengen_dlg.findChildren(_QL859)]
+        _g859.append(_lbl)
+        win._multi_mengen_dlg.reject()
+    _g859 = []
+    _QT859.singleShot(0, _dlg859)
+    win._multi_mengen_dialog(
+        [{"tid": _A83, "name": "A-Bau", "qty": 2},
+         {"tid": _CCC853, "name": "C-Kauf", "qty": 3, "kauf": True}],
+        "b859")
+    _lbl859 = _g859[0] if _g859 else []
+    check(f"b859 Kauf-Enden tragen das (buy)-Etikett im Dialog "
+          f"({[x for x in _lbl859 if 'C-Kauf' in x]})",
+          any(x.startswith("C-Kauf") and "buy" in x for x in _lbl859)
+          and any(x == "A-Bau" for x in _lbl859))
+except Exception as _e859x:                              # pragma: no cover
+    import traceback as _tb859
+    _fail.append(f"b859 Kauf-Etikett: {type(_e859x).__name__}: "
+                 f"{_e859x} | "
+                 + _tb859.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b860)
+# MARKET STOCKS VERSCHOENERT (emm860, Nutzer: "Was ist die
+# prozentangabe ... 0% ?" / "Alle deine punkte 1-5 gefallen mir" /
+# Industry-Sidebar "soll mitkommen"): beschrifteter Balken, kompakte
+# ISK, kurze note, Hinweis unter den Karten, Industry-Sprungknoepfe.
+try:
+    from PySide6.QtWidgets import (QLabel as _QL860,
+                                   QProgressBar as _PB860)
+    from eve_trader.ui.mw_basis import isk_kurz as _ik860
+    from eve_trader import doctrinen as _dc860
+    # (a) isk_kurz-Handrechnungen (EINE Stelle, auch die ISK-Spinner
+    # delegieren dorthin).
+    check("b860 isk_kurz: 44,330,701 -> 44.33m / 7.64B / 600",
+          _ik860(44330701) == "44.33m"
+          and _ik860(7641716080) == "7.64B" and _ik860(600) == "600")
+    _nm860 = {"aaa": _A83, "bbb": _B83}
+    _st860 = win._ms_state()
+    _st860["doctrinen"] = [
+        dict(_dc860.doctrine_aus_text(
+            "V-Eins", "[AAA, F]\nBBB x10", _nm860, ziel=10), id=71)]
+    _st860["abgewaehlt"] = {}
+    win._ms_markt = {"buch": {_A83: {"sell": [(5.0, 4)]}},
+                     "jita": {_A83: 5.0, _B83: 2.0}, "vol": {},
+                     "ts": time.time(), "hub_name": "T"}
+    win._ms_est = {}
+    _n2t_alt860 = getattr(win, "_ms_name2tid", None)
+    win._ms_name2tid = dict(_nm860)
+    _sch_alt860 = win._ms_docs_schaetzen
+    win._ms_docs_schaetzen = lambda: None
+    try:
+        win._ms_render(); _app.processEvents()
+        # (b) Der Balken SAGT, was er misst.
+        _krt860 = win.ms_doc_box.itemAt(0).widget()
+        _bk860 = _krt860.findChild(_PB860)
+        check(f"b860 der Deckungs-Balken ist beschriftet "
+              f"({_bk860.format()!r})",
+              "coverage" in _bk860.format()
+              and "/10" in _bk860.format())
+        # (c) Der Hinweis unter den Karten steht da.
+        # emm936: der Einstieg heisst jetzt "Create new doctrine".
+        check("b860 unter den Karten steht der Einstiegs-Hinweis",
+              any(("Create new doctrine" in _l.text()
+                   or "Neue Doctrine" in _l.text())
+                  for _l in
+                  win.ms_scroll.widget().findChildren(_QL860)))
+        # (d) Kompakte ISK in der Uebersicht, exakte Zahl im Tooltip.
+        win._ms_est = {71: {"est": {"cost": 44330701.0,
+                                    "profit": -2721636.0},
+                            "raus": 11, "jita_n": 0, "unpriced": 0}}
+        win._ms_docs_zellen(); _app.processEvents()
+        check("b860 Baukosten kompakt (44.33m ISK), exakt im Tooltip",
+              win.ms_docs.item(0, 2).text() == "44.33m ISK"
+              and "44,330,701" in win.ms_docs.item(0, 2).toolTip())
+        check("b860 die note ist kurz (11× buy)",
+              "×" in win.ms_docs.item(0, 4).text()
+              and len(win.ms_docs.item(0, 4).text()) < 30)
+        # (e) Industry-Sprungknoepfe: 4 Stueck mit Icon; Klick wechselt
+        # auf den Industry-Reiter und waehlt die Seite (_bau_nav).
+        check("b860 vier Industry-Sprungknoepfe mit Icons",
+              len(getattr(win, "_ms_ind_knoepfe", [])) == 4
+              and all(not k.icon().isNull()
+                      for k, _s in win._ms_ind_knoepfe))
+        _nav_alt860 = win._bau_nav
+        _nav860 = []
+        win._bau_nav = lambda s: _nav860.append(int(s))
+        try:
+            _alt_idx860 = win.tabs.currentIndex()
+            # Vorbedingung: erst WEG vom Industry-Reiter, sonst ist
+            # "der Sprung wechselt den Reiter" nicht messbar (die
+            # Rotprobe _bw=None blieb so BLIND gruen).
+            win.tabs.setCurrentWidget(win._tab_widget["stocks"])
+            _app.processEvents()
+            _weg860 = (win.tabs.currentWidget()
+                       is not win._tab_widget.get("build"))
+            _kn860 = dict((s, k) for k, s in win._ms_ind_knoepfe)
+            _kn860[3].click(); _app.processEvents()
+            check("b860 'Structures' springt zum Industry-Reiter, "
+                  "Seite 3",
+                  _weg860 and _nav860 == [3]
+                  and win.tabs.currentWidget()
+                  is win._tab_widget.get("build"))
+            win.tabs.setCurrentIndex(_alt_idx860)
+        finally:
+            win._bau_nav = _nav_alt860
+    finally:
+        win._ms_docs_schaetzen = _sch_alt860
+        if _n2t_alt860 is None:
+            win._ms_name2tid = None
+        else:
+            win._ms_name2tid = _n2t_alt860
+        win.settings.pop("market_stocks", None)
+        win._ms_markt = None
+        win._ms_est = {}
+except Exception as _e860x:                              # pragma: no cover
+    import traceback as _tb860
+    _fail.append(f"b860 Verschoenerung: {type(_e860x).__name__}: "
+                 f"{_e860x} | "
+                 + _tb860.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b861)
+# Nutzer-Screenshot 07.11.2026 (Sell list): "Open und Price und dahinter
+# +irgendwas ist zusammengedrueckt" - feste Pixelbreiten (Knoepfe 84/72,
+# Aktionsspalte 290) quetschten die Zeilen-Knoepfe uebereinander, sobald
+# die Systemschrift breiter lief als unsere. Jetzt: knopf_passend
+# (Breite aus dem eigenen sizeHint, nach dem Stylesheet) und die
+# Aktionsspalte folgt ihrem breitesten Inhalt. Schwester-Tabellen
+# (Shopping list, Order update) belegt aa861 headless am Quelltext.
+try:
+    from eve_trader.ui.mw_helpers import knopf_passend as _kp861
+    from PySide6.QtWidgets import QPushButton as _QPB861
+    # (a) Einheit: auch mit grossem Padding + langem Text kann der Knopf
+    # nie schmaler werden, als sein Inhalt braucht.
+    _b861 = _QPB861("Ein absichtlich sehr langer Knopftext 861")
+    _b861.setStyleSheet("QPushButton{padding:2px 24px;}")
+    _kp861(_b861)
+    check("b861 knopf_passend: Mindestbreite = eigener sizeHint, "
+          "Hoehe fest 26",
+          _b861.minimumWidth() >= _b861.sizeHint().width() > 0
+          and _b861.minimumHeight() == 26 and _b861.maximumHeight() == 26)
+    # (b) Lebendes Sell-list-Rendering: ein Posten MIT Fracht-Kiste.
+    class _H861:
+        type_id = 34; name = "Tritanium 861"; quantity = 5
+        avg_buy = 100.0; jita_sell_min = 200.0
+    _fh_alt861 = win._filtered_holdings
+    _sr_alt861 = win._sell_ready
+    _fk_alt861 = win._fracht_karte
+    win._filtered_holdings = lambda: [_H861()]
+    win._sell_ready = lambda h, *_: True        # emm873: nimmt quelle_ok
+    win._fracht_karte = lambda: {34: {"je_stueck": 99.0, "menge_fracht": 5,
+                                      "menge": 5, "m3": 1.0}}
+    try:
+        win._render_sell_list(); _app.processEvents()
+        _act861 = win.sell_table.cellWidget(0, 2)
+        _kn861 = _act861.findChildren(_QPB861)
+        check("b861 Sell list: beide Zeilen-Knoepfe mind. so breit wie "
+              "ihr Inhalt (nichts abgeschnitten, kein Ueberlappen)",
+              len(_kn861) == 2 and all(
+                  k.minimumWidth() >= k.sizeHint().width() > 0
+                  for k in _kn861))
+        _soll861 = _act861.sizeHint().width() + 6
+        check("b861 Sell list: Aktionsspalte = breitester Inhalt + 6 "
+              "(nicht mehr fest 290)",
+              win.sell_table.columnWidth(2) == _soll861
+              and _soll861 != 290)
+    finally:
+        win._filtered_holdings = _fh_alt861
+        win._sell_ready = _sr_alt861
+        win._fracht_karte = _fk_alt861
+        win.sell_table.setRowCount(0)
+except Exception as _e861x:                              # pragma: no cover
+    import traceback as _tb861
+    _fail.append(f"b861 Knopfbreiten: {type(_e861x).__name__}: "
+                 f"{_e861x} | "
+                 + _tb861.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b862)
+# Nutzer 07.11.2026 (Market Stocks): "die anhack-boxen ... sind auf der
+# rechten seite etwas abgeschnitten. Ebenso gibts keine button 'tick
+# all'". (1) Die Haken-Spalte der Karten-Tabelle wird von Hand auf die
+# Breite des Haken-Traegers gebracht (resizeColumnsToContents kennt
+# Zell-WIDGETS nicht zuverlaessig); (2) neuer Knopf "Tick all" als
+# Gegenstueck zu "Untick fully covered".
+try:
+    from eve_trader import doctrinen as _dc862
+    _nm862 = {"aaa": _A83, "bbb": _B83}
+    _st862 = win._ms_state()
+    _st862["doctrinen"] = [dict(_dc862.doctrine_aus_text(
+        "D-862", "[AAA, F]\nBBB x10", _nm862, ziel=10), id=62)]
+    _st862["abgewaehlt"] = {"62": [_A83]}     # eine Position abgewaehlt
+    win._ms_markt = None
+    _n2t_alt862 = getattr(win, "_ms_name2tid", None)
+    win._ms_name2tid = dict(_nm862)
+    _sch_alt862 = win._ms_docs_schaetzen
+    win._ms_docs_schaetzen = lambda: None
+    try:
+        win._ms_render(); _app.processEvents()
+        _kn862 = getattr(win, "_ms_tickall_letzter", None)
+        check("b862 'Tick all' steht auf der Karte (Icon + Tooltip)",
+              _kn862 is not None and not _kn862.icon().isNull()
+              and bool(_kn862.toolTip()))
+        _kn862.click(); _app.processEvents()
+        check("b862 'Tick all' leert die Abwahl-Liste der Karte "
+              "(alles wieder angehakt)",
+              not (win._ms_state().get("abgewaehlt") or {}).get("62"))
+        # DIE BESCHNITTENE HAKEN-BOX WAR NICHT DIE SPALTE (Pixel-
+        # Messung am Nutzer-Screenshot: zur Zelltrennung sind ~20px
+        # Luft, der RECHTE RAHMEN der Box selbst fehlt) und auch nicht
+        # die Widget-Breite (gemessen 28px bei 19px Bedarf), sondern
+        # die FRAKTIONALE 1.5px-Border: bei Windows-Skalierung 125/150%
+        # rundet so eine Kante je nach Pixellage auf 0. Die Indicator-
+        # Border ist jetzt ganzzahlig (2px) und rundet nie weg.
+        from eve_trader.ui import theme as _th862
+        _q862 = _th862.QSS
+        check("b862 Indicator-Border ganzzahlig (2px) - keine "
+              "1.5px-Kante mehr, die beim Skalieren wegrundet",
+              "QCheckBox::indicator" in _q862
+              and _q862.count("border: 2px solid") >= 3
+              and ("border: 1.5px solid " + _th862.MUTED) not in _q862
+              and ("border: 1.5px solid " + _th862.GREEN) not in _q862
+              and ("border: 1.5px solid " + _th862.AMBER) not in _q862)
+    finally:
+        win._ms_name2tid = _n2t_alt862
+        win._ms_docs_schaetzen = _sch_alt862
+        win.settings.pop("market_stocks", None)
+        win._ms_markt = None
+except Exception as _e862x:                              # pragma: no cover
+    import traceback as _tb862
+    _fail.append(f"b862 Tick all/Haken: {type(_e862x).__name__}: "
+                 f"{_e862x} | "
+                 + _tb862.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b863)
+# ASSETS-REITER (Nutzer 08.11.2026): neuer MainTab "Assets" -
+# Charakterkarten wie in Industry jobs, je Karte die Orte zum
+# Ausklappen, Live-Suche, Charakter-Schalter rechts wie im Industry-Tab.
+# Die PURE Rechnung (orte_mengen/suche_filter) misst aa863; hier das
+# lebende Fenster mit Fake-Daten.
+try:
+    # SEIT emm887 KEIN HAUPTREITER MEHR, sondern eine Seite im Industry-
+    # Reiter (Nutzer: "Assets kommt in den Industry Tab unterhalb von
+    # Industry Jobs").
+    check("b863 Assets haengt im Stapel des Industry-Reiters",
+          win.b_stack.indexOf(win._as_w) >= 0)
+    check("b863 ... und ist KEIN Hauptreiter mehr",
+          win._tab_widget.get("assets") is None
+          and "assets" not in win._paid_keys
+          and all(win.tabs.widget(_i) is not win._as_w
+                  for _i in range(win.tabs.count())))
+    _ba863 = [b for b in win._bau_page_btns
+              if b.text() in ("Assets", "Besitz")]
+    check(f"b863 die Leiste hat genau einen Assets-Knopf ({len(_ba863)})",
+          len(_ba863) == 1)
+    # IN DER LISTE ZU STEHEN REICHT NICHT: ein Knopf kann dort stehen
+    # und trotzdem nicht in der Leiste haengen - dann ist er unsichtbar,
+    # die Seite unerreichbar, und die Liste behauptet das Gegenteil.
+    # (Eine Rotprobe, die genau das tat, blieb damit zuerst gruen.)
+    check("b863 ... und er haengt wirklich in der Leiste, nicht nur in "
+          "der Knopfliste",
+          bool(_ba863) and _ba863[0].parent() is not None
+          and _ba863[0].parent() is win._bau_page_btns[0].parent())
+    # UNTERHALB VON "INDUSTRY JOBS" - genau das war der Auftrag.
+    _txt863 = [b.text() for b in win._bau_page_btns]
+    check(f"b863 ... und er steht hinter 'Industry jobs' ({_txt863})",
+          win._bau_page_btns.index(_ba863[0])
+          > next(_i for _i, _t in enumerate(_txt863)
+                 if _t in ("Industry jobs", "Industrie-Jobs")))
+    _d863 = {"chars": {
+        1: {"name": "Peanut", "fehler": None,
+            "orte": {60003760: {34: 50, 11393: 3}}},
+        2: {"name": "Lezaar", "fehler": None,
+            "orte": {61000001: {587: 1}}}},
+        "namen": {34: "Tritanium", 11393: "Retribution", 587: "Rifter"},
+        "ortsnamen": {60003760: "Jita IV-4", 61000001: "Home Keep"},
+        "ts": 1.0}
+    _aus_alt863 = win.settings.get("assets_chars_aus")
+    win.settings["assets_chars_aus"] = []
+    win._as_daten = _d863
+    win._as_offen = set()
+    try:
+        win.as_search.setText("")
+        win._assets_zeichnen(); _app.processEvents()
+        check("b863 ohne Suche: beide Karten, beide Schalter",
+              set(win._as_karten) == {1, 2}
+              and set(win._as_schalter) == {1, 2})
+        # Ort ausklappen: Tabelle wird lazy gefuellt, groesste Menge oben.
+        _k863 = win._as_karten[1]
+        _kn863 = _k863._orte_knoepfe[60003760]
+        _tb863 = _k863._orte_tabellen[60003760]
+        check("b863 Ort startet zugeklappt", not _tb863.isVisible()
+              and _tb863.rowCount() == 0)
+        _kn863.click(); _app.processEvents()
+        check("b863 Ausklappen fuellt: 2 Zeilen, groesste Menge zuerst, "
+              "Knopftext kippt auf ▾",
+              _tb863.rowCount() == 2
+              and _tb863.item(0, 0).text() == "Tritanium"
+              and _tb863.item(0, 1).text() == "50"
+              and _tb863.item(1, 0).text() == "Retribution"
+              and _kn863.text().startswith("▾"))
+        # Live-Suche: Tippen startet den Debounce-Timer; gefiltert
+        # bleibt nur die Karte, deren Charakter das Item besitzt.
+        win.as_search.setText("retribu")
+        check("b863 Tippen startet den Such-Timer",
+              win._as_such_timer.isActive())
+        win._assets_zeichnen(); _app.processEvents()
+        check("b863 Suche 'retribu': nur noch Peanuts Karte, Ortszeile "
+              "zaehlt die Treffer",
+              set(win._as_karten) == {1}
+              and win._as_karten[1]._orte_knoepfe[60003760].text()
+              .endswith("· 1"))
+        win.as_search.setText("")
+        win._assets_zeichnen(); _app.processEvents()
+        # Schalter rechts: Off nimmt die Karte raus (echter Knopf-Klick
+        # ueber toggled, wie im Industry-Tab), All on bringt sie zurueck.
+        win._as_schalter[1].setChecked(False); _app.processEvents()
+        check("b863 Schalter Off: Karte weg, Merker gesetzt",
+              set(win._as_karten) == {2}
+              and win.settings.get("assets_chars_aus") == ["1"])
+        win._assets_alle_an(); _app.processEvents()
+        check("b863 'All on': beide Karten wieder da",
+              set(win._as_karten) == {1, 2}
+              and win.settings.get("assets_chars_aus") == [])
+        # ------------------------------------------------ (b865)
+        # Nutzer-Screenshots 08.11.2026: (a) "Beim ausklappen des
+        # Dropdowns sieht man nicht alles" - die Tabelle hat jetzt eine
+        # FESTE Hoehe aus den echten Massen (kleiner Kopf 20 + 22 je
+        # Zeile), (b) Uebertitel/Spaltennamen in AMBER statt Cyan,
+        # (c) Struktur ohne Andockrecht heisst ehrlich so statt "#id".
+        from PySide6.QtWidgets import QLabel as _QLB865
+        from eve_trader.ui import theme as _th865
+        # Frisch greifen: das Zeichnen nach der Suche hat die Karten
+        # NEU gebaut, die b863-Referenzen zeigen auf weggeraeumte.
+        _k865 = win._as_karten[1]
+        _tb865 = _k865._orte_tabellen[60003760]
+        if not _tb865.rowCount():        # Ort war offen geblieben?
+            win._assets_ort_fuellen(
+                _tb865, _d863["chars"][1]["orte"][60003760],
+                _d863["namen"])
+        check("b865 Dropdown-Tabelle: feste Hoehe aus echten Massen, "
+              "kompakte Zeilen, kleiner Kopf",
+              _tb865.maximumHeight()
+              == (2 * _tb865.frameWidth() + 20 + 22 * 2)
+              and _tb865.maximumHeight() == _tb865.minimumHeight()
+              and _tb865.verticalHeader().defaultSectionSize() == 22
+              and _tb865.horizontalHeader().height() == 20)
+        check("b865 Spaltenkopf und Kartentitel in Amber, nicht Cyan",
+              _th865.AMBER in _tb865.horizontalHeader().styleSheet()
+              and any(_th865.AMBER in _l.styleSheet()
+                      and _l.text() == "Peanut"
+                      for _l in _k865.findChildren(_QLB865)))
+        _d865 = {"chars": {1: {"name": "Peanut", "fehler": None,
+                               "orte": {1056386670135: {34: 1}}}},
+                 "namen": {34: "Tritanium"},
+                 "ortsnamen": {}, "ts": 1.0}
+        win._as_daten = _d865
+        win._assets_zeichnen(); _app.processEvents()
+        _kn865 = win._as_karten[1]._orte_knoepfe[1056386670135]
+        check("b865 Struktur ohne Namen heisst 'structure ... (no "
+              "access)' statt nackter Zahl",
+              "structure 1056386670135 (no access)" in _kn865.text())
+        win._as_daten = _d863
+        win._assets_zeichnen(); _app.processEvents()
+        # Tab-Oeffnen stoesst das Laden an (Hook in _on_tab_changed).
+        _ruf863 = []
+        _sg_alt863 = win._assets_seite_gezeigt
+        win._assets_seite_gezeigt = lambda: _ruf863.append(1)
+        try:
+            # DER AUSLOESER SASS BIS emm887 AM TAB-WECHSEL. Seit die
+            # Seite im Stapel haengt, muss `_bau_nav` ihn ausloesen -
+            # sonst laedt Assets beim ersten Oeffnen NIE mehr von
+            # selbst, und zwar still.
+            win._bau_nav(win.b_stack.indexOf(win._as_w))
+            _app.processEvents()
+        finally:
+            win._assets_seite_gezeigt = _sg_alt863
+            win._bau_nav(0)
+        check("b863 der Wechsel auf die Assets-Seite ruft sie auf",
+              _ruf863 == [1])
+    finally:
+        if _aus_alt863 is None:
+            win.settings.pop("assets_chars_aus", None)
+        else:
+            win.settings["assets_chars_aus"] = _aus_alt863
+        win._as_daten = None
+        win.as_search.setText("")
+        win._as_raster.setze([])
+        win.tabs.setCurrentIndex(0); _app.processEvents()
+except Exception as _e863x:                              # pragma: no cover
+    import traceback as _tb863
+    _fail.append(f"b863 Assets-Reiter: {type(_e863x).__name__}: "
+                 f"{_e863x} | "
+                 + _tb863.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b868)
+# DOCTRINE-ORDNER in Market Stocks (Nutzer 08.11.2026: "Doctrinen als
+# Ueberordner erstellen ... darin die einzelnen Schiffe mit ihren
+# Fittings"; Rueckfragen beantwortet: EINE Ordner-Karte, Ziel je
+# Schiff, Bestand automatisch uebernommen). Die pure Gruppierung misst
+# aa868; hier das lebende Fenster.
+try:
+    from eve_trader import doctrinen as _dc868b, store as _st868b
+    _nm868 = {"aaa": _A83, "bbb": _B83}
+    _d1 = dict(_dc868b.doctrine_aus_text(
+        "Retribution DPS", "[AAA, F]\nBBB x10", _nm868, ziel=10),
+        id=71, ordner="Fleet X")
+    _d2 = dict(_dc868b.doctrine_aus_text(
+        "Oneiros Logi", "[BBB, L]\nAAA x2", _nm868, ziel=2),
+        id=72, ordner="Fleet X")
+    _d3 = dict(_dc868b.doctrine_aus_text(
+        "Alte Karte", "[AAA, S]", _nm868, ziel=5), id=73)  # OHNE ordner
+    _st868 = win._ms_state()
+    _st868["doctrinen"] = [_d1, _d2, _d3]
+    win._ms_markt = None
+    _sch_alt868 = win._ms_docs_schaetzen
+    win._ms_docs_schaetzen = lambda: None
+    _nm_alt868 = _st868b.name_to_type_id
+    try:
+        win._ms_render(); _app.processEvents()
+        # emm932: links steht nur die OFFENE Doctrine (Vorgabe: die
+        # erste), rechts eine Zeile je Doctrine.
+        _st868.pop("offen_ordner", None)
+        win._ms_render(); _app.processEvents()
+        _ok868 = win._ms_ordner_karten
+        check("b868 links nur die offene Doctrine (die erste), Migration "
+              "gibt der alten Karte ihren Namen als Ordner",
+              set(_ok868) == {"Fleet X"}
+              and len(_ok868["Fleet X"]._schiffe) == 2
+              and _st868["doctrinen"][2].get("ordner") == "Alte Karte")
+        check("b868 Ordner-Kopf: Schiffszahl ohne Markt, Add-Knopf mit "
+              "Symbol",
+              _ok868["Fleet X"]._summe_lbl.text() != ""
+              and "2" in _ok868["Fleet X"]._summe_lbl.text()
+              and not _ok868["Fleet X"]._add_kn.icon().isNull())
+        _tb868 = win.ms_docs
+        check("b932 Uebersicht: EINE Zeile je Doctrine mit allen Schiffen",
+              _tb868.rowCount() == 2
+              and _tb868.item(0, 0).text() == "Fleet X"
+              and list(_tb868.item(0, 0).data(Qt.UserRole + 2)) == [71, 72]
+              and _tb868.item(1, 0).text() == "Alte Karte"
+              and list(_tb868.item(1, 0).data(Qt.UserRole + 2)) == [73])
+        # Ein Klick rechts oeffnet die Doctrine links.
+        _st868["aufgeklappt"] = []
+        _tb868.cellClicked.emit(1, 0); _app.processEvents()
+        # ...und klappt dabei KEIN Schiff auf (das ist "Show card") -
+        # sonst waere der Klick nur der alte Schiffs-Sprung.
+        check("b932 Klick auf eine Doctrine oeffnet sie links",
+              set(win._ms_ordner_karten) == {"Alte Karte"}
+              and _st868.get("offen_ordner") == "Alte Karte"
+              and 73 not in (_st868.get("aufgeklappt") or []))
+        _sort_alt868 = getattr(win, "_ms_docs_sort", None)
+        try:
+            win._ms_docs_sort = (0, False)
+            win._ms_docs_fuellen(win._ms_state(), None)
+            _a868 = [_tb868.item(_r, 0).text() for _r in range(2)]
+            win._ms_docs_sort = (0, True)
+            win._ms_docs_fuellen(win._ms_state(), None)
+            _d868s = [_tb868.item(_r, 0).text() for _r in range(2)]
+            check("b868 Sortierung sortiert die Doctrinen "
+                  f"({_a868} / {_d868s})",
+                  _a868 == ["Alte Karte", "Fleet X"]
+                  and _d868s == ["Fleet X", "Alte Karte"])
+        finally:
+            win._ms_docs_sort = _sort_alt868
+            win._ms_docs_fuellen(win._ms_state(), None)
+        # Summe einer Doctrine = Summe ihrer Schiffe.
+        win._ms_est = {71: {"est": {"cost": 100.0, "profit": 10.0},
+                            "raus": 1, "jita_n": 0, "unpriced": 0},
+                       72: {"est": {"cost": 50.0, "profit": -4.0},
+                            "raus": 0, "jita_n": 2, "unpriced": 0}}
+        _sum932 = win._ms_est_summe([71, 72])
+        eq("b932 Doctrine-Summe ueber alle Schiffe",
+           (_sum932["est"]["cost"], _sum932["est"]["profit"],
+            _sum932["raus"], _sum932["jita_n"]), (150.0, 6.0, 1, 2))
+        eq("b932 fehlt eine Schiffs-Schaetzung, gibt es keine Summe",
+           win._ms_est_summe([71, 72, 73]), None)
+        win._ms_est = {}
+        win._ms_ordner_oeffnen("Fleet X"); _app.processEvents()
+        # "Add ship" oeffnet den Dialog mit VORBELEGTEM Ordner; dann
+        # ein echtes Schiff speichern - es landet im selben Ordner.
+        _st868b.name_to_type_id = lambda: dict(_nm868)
+        _gesehen868 = []
+
+        def _dlg868():
+            _of = win._ms_dlg_ordner
+            _gesehen868.append(_of.currentText())
+            _dlg = _of.window()
+            _dlg.findChild(_QPT868).setPlainText("[AAA, Neu]\nBBB x1")
+            for _le in _dlg.findChildren(_QLE868):
+                if _le is not _of.lineEdit():
+                    _le.setText("Drittes Schiff")
+                    break
+            _dlg.accept()
+        from PySide6.QtWidgets import (QPlainTextEdit as _QPT868,
+                                       QLineEdit as _QLE868)
+        from PySide6.QtCore import QTimer as _QT868
+        _QT868.singleShot(0, _dlg868)
+        win._ms_ordner_karten["Fleet X"]._add_kn.click()
+        _app.processEvents()
+        check("b868 'Add ship': Dialog kommt mit dem Ordner vorbelegt, "
+              "das neue Schiff landet darin",
+              _gesehen868 == ["Fleet X"]
+              and len(win._ms_ordner_karten["Fleet X"]._schiffe) == 3
+              and any(d.get("name") == "Drittes Schiff"
+                      and d.get("ordner") == "Fleet X"
+                      for d in win._ms_state()["doctrinen"]))
+    finally:
+        _st868b.name_to_type_id = _nm_alt868
+        win._ms_docs_schaetzen = _sch_alt868
+        win.settings.pop("market_stocks", None)
+        win._ms_markt = None
+        win._ms_render(); _app.processEvents()
+except Exception as _e868x:                              # pragma: no cover
+    import traceback as _tb868
+    _fail.append(f"b868 Doctrine-Ordner: {type(_e868x).__name__}: "
+                 f"{_e868x} | "
+                 + _tb868.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b869)
+# UI-WACHE IM FENSTER VERDRAHTET (Nutzer: "(Keine Rueckmeldung) ...
+# bis es dann 'plopp' macht"): der Herzschlag-Timer tickt alle 250 ms
+# im UI-Thread, der Waechter-Thread lebt. Die Meldemechanik selbst
+# misst aa869 an der puren Wache.
+try:
+    check("b869 UI-Wache: Timer tickt (250 ms) und Waechter-Thread lebt",
+          win._ui_wache_timer.isActive()
+          and win._ui_wache_timer.interval() == 250
+          and win._ui_wache._thread is not None
+          and win._ui_wache._thread.is_alive())
+    # Der Timer ist WIRKLICH mit dem Herzschlag verbunden: Herzschlag
+    # kuenstlich veralten, einen Timer-Takt abwarten - er ist wieder
+    # frisch. (Ohne connect bliebe der alte Wert stehen.)
+    import time as _t869b
+    win._ui_wache._letzter = 0.0
+    _ende869 = _t869b.monotonic() + 2.0
+    while (win._ui_wache._letzter == 0.0
+           and _t869b.monotonic() < _ende869):
+        _app.processEvents()
+        _t869b.sleep(0.05)
+    check("b869 der Herzschlag kommt im UI-Thread an",
+          win._ui_wache._letzter != 0.0)
+except Exception as _e869x:                              # pragma: no cover
+    import traceback as _tb869
+    _fail.append(f"b869 UI-Wache: {type(_e869x).__name__}: "
+                 f"{_e869x} | "
+                 + _tb869.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b870)
+# OHNE PREISE KEINE SCHEINZAHLEN (Nutzer 08.11.2026: nach dem Start
+# stand ueberall -100 % Marge und ein absurdes P&L, erst nach dem
+# Markt-Scan "sieht es richtig aus"): leere Preisquelle -> die Kacheln
+# Value/P&L/Total zeigen "—"; eine Zeile ohne Preis zeigt "—"
+# bei Sell/Net/Margin und haelt mit Scan-Hinweis. Mit Preisen bleibt
+# alles beziffert.
+try:
+    from eve_trader import market as _mk870
+    _alt870 = (list(win._holdings), dict(win._holdings_by_char),
+               dict(getattr(win, "_prices", {}) or {}),
+               win.pf_char.currentIndex())
+    try:
+        # Offscreen gibt es keinen Hub-Scan - ohne diesen Patch griffe der
+        # aeltere "fremde Preisquelle"-Zweig VOR dem neuen "kein Preis"-Zweig.
+        win._pf_price_source_ok = lambda *_: True   # emm873: nimmt lbl
+        win.pf_char.blockSignals(True)
+        win.pf_char.setCurrentIndex(max(0, win.pf_char.findData("all")))
+        win.pf_char.blockSignals(False)
+        win._prices = {}
+        win._holdings = [_mk870.Holding(
+            type_id=587, name="b870 Rifter", quantity=3, avg_buy=500000.0,
+            jita_sell_min=0.0, net_unit=0.0, margin_pct=-100.0)]
+        win._fracht_cache = None
+        win._render_portfolio()
+        check("b870 ohne Preisquelle: Value/P&L/Total zeigen —",
+              win.k_value.text() == "—"
+              and win.k_pl.text() == "—"
+              and win.k_wealth.text() == "—")
+        check("b870 Zeile ohne Preis: Sell/Net/Margin — statt -100 %",
+              win.pf_table.item(0, 4).text() == "—"
+              and win.pf_table.item(0, 5).text() == "—"
+              and win.pf_table.item(0, 6).text() == "—")
+        check("b870 Signal haelt mit Scan-Hinweis (kein SELL-Schein)",
+              "Hold" in win.pf_table.item(0, 7).text()
+              and "No price for this item yet"
+                  in win.pf_table.item(0, 7).toolTip())
+        # GEGENPROBE: mit Preis bleibt alles beziffert.
+        win._prices = {587: {"buy_max": 1.0, "sell_min": 700000.0}}
+        win._holdings = [_mk870.Holding(
+            type_id=587, name="b870 Rifter", quantity=3, avg_buy=500000.0,
+            jita_sell_min=700000.0, net_unit=630000.0, margin_pct=26.0)]
+        win._fracht_cache = None
+        win._render_portfolio()
+        check("b870 mit Preis: Marge beziffert und Kacheln voll",
+              win.pf_table.item(0, 6).text().endswith("%")
+              and win.k_value.text() != "—"
+              and win.k_pl.text() != "—")
+    finally:
+        win._holdings, win._holdings_by_char = _alt870[0], _alt870[1]
+        win._prices = _alt870[2]
+        try:
+            del win._pf_price_source_ok     # Instanz-Patch weg, Methode zurueck
+        except AttributeError:
+            pass
+        win.pf_char.blockSignals(True)
+        win.pf_char.setCurrentIndex(_alt870[3])
+        win.pf_char.blockSignals(False)
+        win._fracht_cache = None
+        win._render_portfolio()
+except Exception as _e870x:                              # pragma: no cover
+    import traceback as _tb870
+    _fail.append(f"b870 Portfolio ohne Preise: {type(_e870x).__name__}: "
+                 f"{_e870x} | "
+                 + _tb870.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b872)
+# LUECKE FREI HAUS + "wo ist es billiger" am lebenden Fenster (emm872).
+# Gestellter Fall = der Nutzer-Screenshot vom 08.11.2026: am Platz liegt
+# Ware, aber ueber dem Deckel - die Frage ist, ob Jita + Fracht billiger
+# waere. Handrechnung: Jita 1'000'000 + 5 m3 x 300 = 1'001'500 frei Haus,
+# Platz-Preis 2'000'000, fehlend 20 Stueck.
+try:
+    from eve_trader import doctrinen as _dn872
+    _alt872 = (win.settings.get("fracht_isk_m3"), win._fracht_volumen,
+               win.settings.get("market_stocks"),
+               getattr(win, "_ms_markt", None),
+               getattr(win, "_ms_pos_sort", None))
+    try:
+        win._ms_pos_sort = None
+        win._fracht_volumen = lambda ids: {2969: 5.0}
+        win.settings["fracht_isk_m3"] = 300
+        _st872 = win._ms_state()
+        _st872["doctrinen"] = [dict(_dn872.doctrine_aus_text(
+            "b872", "[Rifter, T]\n200mm AutoCannon II\n"
+            "200mm AutoCannon II",
+            {"rifter": 587, "200mm autocannon ii": 2969}, ziel=10), id=872)]
+        _st872["abgewaehlt"] = {}
+        # Nur das Modul im Buch, zum DOPPELTEN Jita-Preis: ueber dem
+        # 30-%-Deckel, also kaufbar 0 und fehlt 20 (2 je Fit x Ziel 10).
+        # Das Schiff bleibt aussen vor - es traegt kein Volumen im Test.
+        win._ms_markt = {"buch": {2969: {"sell": [(2e6, 99)]}},
+                         "jita": {2969: 1e6},
+                         "vol": {}, "ts": 1.0, "hub_name": "b872"}
+        win._ms_render()
+        _c872 = win.ms_doc_box.itemAt(0).widget()
+        from PySide6.QtWidgets import QTableWidget as _TB872
+        _t872 = _c872.findChild(_TB872)
+        _r872 = next(r for r in range(_t872.rowCount())
+                     if _t872.item(r, 1).data(Qt.UserRole) == 2969)
+        # emm874: sechs Spalten statt zwoelf ("viel zu viel Zahlen").
+        # emm930 (14.11.2026): +3 aus Market Stats (Abschluesse/Tag,
+        # Stueck/Tag, Baugewinn/Stk) auf Nutzerwunsch.
+        eq("b872 die Karte zeigt Kosten und Platz-Vergleich",
+           (_t872.columnCount(),
+            _t872.horizontalHeaderItem(3).text(),
+            _t872.horizontalHeaderItem(4).text()),
+           (10, "cost", "cheaper at"))   # emm931: +1 "pro Schiff"
+        eq("b872 fehlend 20 Stueck (Ware da, aber ueber dem Deckel)",
+           _t872.item(_r872, 2).text().replace(",", "").replace("'", ""),
+           "20")
+        # 20 x 1'001'500 = 20'030'000 - geprueft wird der genaue Wert im
+        # Tooltip, die Zelle selbst ist gekuerzt (isk_kurz).
+        check("b872 Luecke frei Haus = fehlend x (Jita + Fracht)",
+              "20,030,000" in _t872.item(_r872, 3).toolTip()
+              or "20'030'000" in _t872.item(_r872, 3).toolTip())
+        check("b872 und die Spalte steht nicht leer",
+              _t872.item(_r872, 3).text() != "—")
+        check("b872 'guenstiger bei' sagt Jita, mit Prozentzahl",
+              _t872.item(_r872, 4).text().startswith("Jita")
+              and "%" in _t872.item(_r872, 4).text())
+        # GEGENPROBE: Platz-Preis unter Jita frei Haus -> hier billiger.
+        win._ms_markt["buch"][2969] = {"sell": [(9e5, 99)]}
+        win._ms_render()
+        _c872b = win.ms_doc_box.itemAt(0).widget()
+        _t872b = _c872b.findChild(_TB872)
+        _r872b = next(r for r in range(_t872b.rowCount())
+                      if _t872b.item(r, 1).data(Qt.UserRole) == 2969)
+        check("b872 unter dem Deckel sagt die Spalte 'hier'",
+              _t872b.item(_r872b, 4).text().startswith("here"))
+        # OHNE FRACHTSATZ WIRD NICHT GERECHNET (Regel 1): kein 0-ISK-
+        # Transport, sondern ein Strich samt Begruendung.
+        win.settings["fracht_isk_m3"] = 0
+        win._ms_render()
+        _c872c = win.ms_doc_box.itemAt(0).widget()
+        _t872c = _c872c.findChild(_TB872)
+        _r872c = next(r for r in range(_t872c.rowCount())
+                      if _t872c.item(r, 1).data(Qt.UserRole) == 2969)
+        # emm874: die Kosten-Spalte faellt ohne Frachtsatz auf die NACKTE
+        # Luecke zurueck (Jita x fehlend) und sagt im Tooltip, dass die
+        # Fracht fehlt. Ein Strich waere hier falsch: der Jita-Preis ist
+        # gemessen, nur der Transport ist unbekannt.
+        check("b872 ohne Frachtsatz: nackte Luecke plus Hinweis",
+              _t872c.item(_r872c, 3).text() != "—"
+              and "freight rate" in _t872c.item(_r872c, 3).toolTip())
+    finally:
+        win.settings["fracht_isk_m3"] = _alt872[0]
+        win._fracht_volumen = _alt872[1]
+        if _alt872[2] is None:
+            win.settings.pop("market_stocks", None)
+        else:
+            win.settings["market_stocks"] = _alt872[2]
+        win._ms_markt = _alt872[3]
+        win._ms_pos_sort = _alt872[4]
+        win._ms_render(); _app.processEvents()
+except Exception as _e872x:                              # pragma: no cover
+    import traceback as _tb872
+    _fail.append(f"b872 Luecke frei Haus: {type(_e872x).__name__}: "
+                 f"{_e872x} | "
+                 + _tb872.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b873)
+# DIE ZUSAGE WIRD GEMESSEN, NICHT BEHAUPTET (emm873): ein
+# Portfolio-Render darf nicht mehr je ZEILE in die Datenbank greifen.
+# Vorher: 1'401 Verbindungen fuer 200 Zeilen (gemessen 08.11.2026, nach
+# dem UI-Wache-Befund des Nutzers). Dieser Test ist die Bremse gegen
+# einen Rueckfall - er zaehlt die Verbindungen bei zwei verschiedenen
+# Zeilenzahlen: die Zahl darf NICHT mit den Zeilen wachsen.
+try:
+    from eve_trader import market as _mk873
+    import eve_trader.store as _st873
+    _altb873 = (list(win._holdings), dict(getattr(win, "_prices", {}) or {}),
+                win.pf_char.currentIndex(), _st873._conn)
+    try:
+        _zaehler873 = {"n": 0}
+        _orig873 = _st873._conn
+
+        def _conn873():
+            _zaehler873["n"] += 1
+            return _orig873()
+
+        def _messe873(zeilen):
+            win._holdings = [_mk873.Holding(
+                type_id=90000 + i, name=f"b873-{i}", quantity=5,
+                avg_buy=100.0, jita_sell_min=120.0, net_unit=115.0,
+                margin_pct=15.0) for i in range(zeilen)]
+            win._prices = {90000 + i: {"buy_max": 100.0, "sell_min": 120.0}
+                           for i in range(zeilen)}
+            win._fracht_cache = None
+            _st873._conn = _conn873
+            _zaehler873["n"] = 0
+            try:
+                win._render_portfolio()
+            finally:
+                _st873._conn = _orig873
+            return _zaehler873["n"]
+
+        win.pf_char.blockSignals(True)
+        win.pf_char.setCurrentIndex(max(0, win.pf_char.findData("all")))
+        win.pf_char.blockSignals(False)
+        _klein873 = _messe873(10)
+        _gross873 = _messe873(120)
+        check("b873 der Render greift nicht je Zeile in die Datenbank "
+              f"(10 Zeilen: {_klein873}, 120 Zeilen: {_gross873})",
+              _gross873 <= _klein873 + 2)
+        check("b873 und bleibt insgesamt im einstelligen Bereich",
+              _gross873 < 10)
+    finally:
+        _st873._conn = _altb873[3]
+        win._holdings = _altb873[0]
+        win._prices = _altb873[1]
+        win.pf_char.blockSignals(True)
+        win.pf_char.setCurrentIndex(_altb873[2])
+        win.pf_char.blockSignals(False)
+        win._fracht_cache = None
+        win._render_portfolio()
+except Exception as _e873x:                              # pragma: no cover
+    import traceback as _tb873
+    _fail.append(f"b873 Render-DB-Zugriffe: {type(_e873x).__name__}: "
+                 f"{_e873x} | "
+                 + _tb873.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b875)
+# EINE SPALTENBREITE IST KEINE NEUBERECHNUNG (emm875). Die UI-Wache hat
+# am 08.11.2026 16.3 s Blockade gemeldet, Stack: Sortierklick ->
+# _speichern (800-ms-Timer der Tabellen-Ansicht) -> save_settings ->
+# _recompute -> Holdings aus allen Transaktionen neu, Fracht-Cache weg,
+# Portfolio/Transaktionen/Profit neu gerendert. Hier wird GEMESSEN, dass
+# das Speichern der Ansicht keine dieser schweren Ketten mehr anstoesst.
+try:
+    from eve_trader import config as _cfg875
+    _zaehl875 = {"recompute": 0, "render": 0, "geschrieben": 0}
+    _alt875 = (win._recompute, win._render_portfolio,
+               _cfg875.save_settings)
+    try:
+        win._recompute = lambda *a, **k: _zaehl875.__setitem__(
+            "recompute", _zaehl875["recompute"] + 1)
+        win._render_portfolio = lambda *a, **k: _zaehl875.__setitem__(
+            "render", _zaehl875["render"] + 1)
+        _cfg875.save_settings = lambda *a, **k: _zaehl875.__setitem__(
+            "geschrieben", _zaehl875["geschrieben"] + 1)
+        _tbl875 = [t for t in (getattr(win, "deals_table", None),
+                               getattr(win, "hold_table", None),
+                               getattr(win, "fs_table", None),
+                               getattr(win, "rg_table", None))
+                   if t is not None and hasattr(t, "_moma_ansicht_timer")]
+        check(f"b875 die Trading-Tabellen merken sich ihre Ansicht "
+              f"({len(_tbl875)} Tabellen)", len(_tbl875) >= 4)
+        for _t875 in _tbl875:
+            _t875._moma_ansicht_timer.timeout.emit()
+        _app.processEvents()
+        eq("b875 Spaltenbreite/Sortierung speichern rechnet NICHTS neu",
+           (_zaehl875["recompute"], _zaehl875["render"]), (0, 0))
+        check("b875 gespeichert wird trotzdem (einmal je Tabelle)",
+              _zaehl875["geschrieben"] == len(_tbl875))
+        # UND DER ZUSTAND LANDET WIRKLICH IN DEN SETTINGS:
+        check("b875 der Headerzustand steht unter 'tabellen_ansicht'",
+              bool((win.settings.get("tabellen_ansicht") or {}).get("deals")))
+    finally:
+        win._recompute = _alt875[0]
+        win._render_portfolio = _alt875[1]
+        _cfg875.save_settings = _alt875[2]
+except Exception as _e875x:                              # pragma: no cover
+    import traceback as _tb875
+    _fail.append(f"b875 Ansicht speichern: {type(_e875x).__name__}: "
+                 f"{_e875x} | "
+                 + _tb875.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b850)
+# JEDES PRESET-FENSTER EXISTIERT IM DROPDOWN (emm850, Nutzer-Fund: "es
+# scheint keinen untershcied zu machen ob ich 30 Tage oder 5 Tage
+# einstelle"). Alle Empfohlen-Presets trugen window=20 - ein Wert, den
+# das Dropdown nicht kannte: findData(20) == -1, das Preset liess das
+# Fenster STILL auf dem Vorwert. Geprueft wird am lebenden Dropdown
+# fuer JEDES Preset, damit kein kuenftiges Preset denselben stillen
+# Fehler wieder einfuehrt.
+try:
+    _fehl850 = [p850.get("window") for _lbl850, p850 in type(win)._DEAL_PRESETS
+                if p850 and p850.get("window") is not None
+                and win.d_window.findData(p850["window"]) < 0]
+    check(f"b850 jedes Daytrade-Preset-Fenster steht im Dropdown "
+          f"(fehlend: {_fehl850})", not _fehl850)
+    # UND DIE WIRKUNG: das erste 20-Tage-Preset wirklich anwenden -
+    # danach MUSS das Fenster auf 20 stehen (vorher blieb der Vorwert).
+    _alt850 = win.d_window.currentIndex()
+    _pi850 = next(i for i in range(win.d_preset.count())
+                  if (win.d_preset.itemData(i) or {}).get("window") == 20)
+    win.d_window.setCurrentIndex(0)                       # Vorwert: 5 Tage
+    win.d_preset.setCurrentIndex(_pi850); win._apply_preset()
+    _app.processEvents()
+    eq("b850 Preset anwenden stellt das Fenster auf 20 Tage",
+       win.d_window.currentData(), 20)
+    win.d_preset.setCurrentIndex(0)
+    win.d_window.setCurrentIndex(_alt850)
+except Exception as _e850:                               # pragma: no cover
+    _fail.append(f"b850 Preset-Fenster: {type(_e850).__name__}: {_e850}")
+
+
+# ---------------------------------------------------------------- (b845)
+# DIE KATEGORIE-MENUES VON SWING UND REGIONAL SIND BEFUELLT (emm845) -
+# am lebenden Fenster: beide muessen Eintraege tragen, sonst oeffnet
+# der Knopf als Nichts (der Nutzer-Befund). Haengt die Test-SDE keine
+# Kategorien an, wird uebersprungen statt gruen gelogen.
+try:
+    from eve_trader import industry as _I845
+    if _I845.market_category_options():
+        for _kn845, _nm845 in ((getattr(win, "rg_cat_btn", None), "Regional"),
+                               (getattr(win, "h_cat_btn", None), "Swing")):
+            _n845 = (len(_kn845.menu().actions())
+                     if _kn845 is not None and _kn845.menu() else 0)
+            check(f"b845 {_nm845}: das Kategorie-Menue traegt Eintraege "
+                  f"({_n845})", _n845 >= 5)
+    else:
+        check("b845 uebersprungen: Test-SDE ohne Markt-Kategorien", True)
+except Exception as _e845b:                              # pragma: no cover
+    _fail.append(f"b845 Kategorie-Menues: {type(_e845b).__name__}: {_e845b}")
+
+
+# ---------------------------------------------------------------- (b847)
+# +/-% AUF DEN KOPIER-PREIS DER HANGAR-LISTE (emm847, Nutzer: "+15%
+# dann kann ich alle Items in der Liste zu 15% ueber Jita sell kopiert
+# bekommen, gebe ich ein -15% bekomme ich alles 15% unter jita Sell").
+# END-ZU-END am lebenden Fenster: Text einfuegen, Abruf gepatcht (ein
+# fester bester Sell von 100 ISK), Worker SYNCHRON gefahren, und dann
+# steht die WIRKUNG in der Zwischenablage - bei +15 "115.00", bei -15
+# "85.00", bei 0 der klassische Ein-Tick-Preis "99.99".
+try:
+    from PySide6.QtWidgets import QApplication as _QA847
+    from eve_trader import store as _st847, hubs as _hubs847
+    _n2t_alt847 = _st847.name_to_type_id
+    _fh_alt847 = _hubs847.fetch_hub_orders
+    _run_alt847 = win._run
+    _hub_alt847 = getattr(win, "_active_hub", None)
+    try:
+        _st847.name_to_type_id = lambda: {"tritanium": 34}
+        _hubs847.fetch_hub_orders = (
+            lambda region, station=None, *a, **k: {34: {"sell_min": 100.0}})
+        win._active_hub = lambda: (10000002, 60003760, None)
+
+        def _lauf847(worker, done_cb, fail_cb=None, **kw):
+            done_cb(worker._fn(*worker._args, **worker._kwargs))
+        win._run = _lauf847
+        win._sell_paste.setPlainText("Tritanium")
+        for _pct847t, _soll847 in ((15.0, "Tritanium 115.00"),
+                                   (-15.0, "Tritanium 85.00"),
+                                   (0.0, "Tritanium 99.99")):
+            win._sell_paste_pct.setValue(_pct847t)
+            win._sell_paste_prices(); _app.processEvents()
+            _clip847 = _QA847.clipboard().text()
+            check(f"b847 {_pct847t:+.0f} % kopiert {_soll847!r} "
+                  f"(bekommen {_clip847!r})", _clip847 == _soll847)
+        # Die Meldung VERSCHWEIGT die Verschiebung nicht: wer +15 %
+        # vergessen hat, haelt die Preise sonst fuer einen Tippfehler.
+        win._sell_paste_pct.setValue(15.0)
+        win._sell_paste_prices(); _app.processEvents()
+        check("b847 die Meldung nennt die Verschiebung",
+              "+15.0" in win._sell_paste_info.text())
+    finally:
+        _st847.name_to_type_id = _n2t_alt847
+        _hubs847.fetch_hub_orders = _fh_alt847
+        win._run = _run_alt847
+        if _hub_alt847 is not None:
+            win._active_hub = _hub_alt847
+        win._sell_paste.setPlainText("")
+        win._sell_paste_pct.setValue(0.0)
+except Exception as _e847:                               # pragma: no cover
+    import traceback as _tb847
+    _fail.append(f"b847 Kopier-Prozent: {type(_e847).__name__}: {_e847} | "
+                 + _tb847.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b846)
+# NACH VOLUMEN SORTIEREN IN DER EINKAUFSLISTE (emm846, Nutzer: "in der
+# shopping Liste moechte ich auch nach Volumen sortieren koennen").
+# Am lebenden Fenster, mit gestellten Zeilen: ein 0,01-m3-Item in
+# grosser Menge gegen ein 500-m3-Item in kleiner - nach GESAMT-m3
+# gewinnt das zweite. Eine Sortierung nach STUECK-Volumen saehe gleich
+# aus wie keine; der Laderaum zahlt die Gesamtmenge.
+try:
+    from eve_trader import store as _st846, industry as _I846
+    _ls_alt846 = _st846.list_shopping
+    _vm_alt846 = _I846.item_volume_map
+    _sort_alt846 = getattr(win, "_sh_sort", (None, True))
+    try:
+        _st846.list_shopping = lambda: [
+            {"id": 901, "type_id": 34, "name": "b846 Klein-aber-viel",
+             "qty": 1000, "source": "daytrade"},
+            {"id": 902, "type_id": 35, "name": "b846 Gross-aber-wenig",
+             "qty": 10, "source": "daytrade"},
+        ]
+        _I846.item_volume_map = lambda ids=None: {34: 0.01, 35: 500.0}
+        win._sh_sort = (None, True)
+        win._shopping_sort_by(9); _app.processEvents()   # 1. Klick: aufsteigend
+        _z846a = [win.sh_table.item(r, 0).text()
+                  for r in range(win.sh_table.rowCount())]
+        _m846 = [win.sh_table.item(r, 9).text()
+                 for r in range(win.sh_table.rowCount())]
+        check(f"b846 aufsteigend: 10 m3 vor 5'000 m3 ({_z846a}, {_m846})",
+              # "in" statt startswith: der Render stellt das Quell-
+              # Symbol (Blitz = Daytrade) vor den Namen.
+              len(_z846a) == 2 and "b846 Klein" in _z846a[0]
+              and _m846 == ["10.0", "5'000.0"])
+        win._shopping_sort_by(9); _app.processEvents()   # 2. Klick: absteigend
+        _z846b = [win.sh_table.item(r, 0).text()
+                  for r in range(win.sh_table.rowCount())]
+        check(f"b846 absteigend: das Grossvolumen zuerst ({_z846b})",
+              len(_z846b) == 2 and "b846 Gross" in _z846b[0])
+        # OHNE SDE-EINTRAG EIN STRICH, keine erfundene 0 (Regel 1).
+        _I846.item_volume_map = lambda ids=None: {34: 0.01}
+        win._shopping_sort_by(9); _app.processEvents()
+        _ohne846 = [win.sh_table.item(r, 9).text()
+                    for r in range(win.sh_table.rowCount())]
+        check(f"b846 ohne Volumen-Eintrag steht ein Strich ({_ohne846})",
+              "\u2014" in _ohne846)
+    finally:
+        _st846.list_shopping = _ls_alt846
+        _I846.item_volume_map = _vm_alt846
+        win._sh_sort = _sort_alt846
+        win._render_shopping(); _app.processEvents()
+except Exception as _e846:                               # pragma: no cover
+    import traceback as _tb846
+    _fail.append(f"b846 m3-Sortierung: {type(_e846).__name__}: {_e846} | "
+                 + _tb846.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b844)
+# RECHTSKLICK IM PROFITS-TAB (emm844, Nutzer: "im Profits Tab beim
+# trading moechte ich in der ItemListe auch rechtsklick machen koennen
+# und ingame markt oeffnen"). Die Tabelle hatte nur das Copy-Menue.
+# GEKLICKT, NICHT GELESEN - aber NICHT ueber einen Patch von
+# QMenu.exec: PySide6 loest Shiboken-Instanzmethoden am C++-Objekt
+# auf, die Zuweisung an die Klasse greift NICHT, und das ECHTE exec
+# ist modal - der Lauf hing damit offscreen fuer immer (py-spy:
+# MainThread in _pr_menu/m.exec; zweimal abgewuergter Suiten-Lauf,
+# bevor die Ursache klar war). Stattdessen wird kontext_menue() im
+# Modul durch ein Python-Menue ersetzt, dessen exec() den ERSTEN
+# Eintrag ("Open market in game") waehlt.
+try:
+    from PySide6.QtWidgets import QTableWidgetItem as _TWI844
+    from eve_trader.ui import mw_basis as _mwb844
+    _km_basis_alt844 = _mwb844.kontext_menue
+
+    class _FMenu844:
+        def __init__(self, *a, **k):
+            self.akt = []
+
+        def addAction(self, txt):
+            self.akt.append(txt)
+            return txt                       # Strings vergleichen sich selbst
+
+        def exec(self, *a, **k):
+            return self.akt[0] if self.akt else None
+
+        def __getattr__(self, name):
+            # Alles andere (kopier_aktion haengt Separatoren usw. an)
+            # schluckt ein No-op - das Menue ist eine Attrappe.
+            return lambda *a, **k: None
+
+    win.pr_table.setSortingEnabled(False)
+    win.pr_table.setRowCount(1)
+    _it844 = _TWI844("b844 Testitem")
+    _it844.setData(Qt.UserRole, 34)                 # Tritanium
+    win.pr_table.setItem(0, 0, _it844)
+    _auf844 = []
+    _oi_alt844 = win.open_ingame_market
+    _km_alt844 = _mwm114.kontext_menue
+    try:
+        win.open_ingame_market = lambda tid, cid=None: _auf844.append(int(tid))
+        _mwm114.kontext_menue = lambda parent=None: _FMenu844()
+        _mwb844.kontext_menue = _mwm114.kontext_menue
+        # UEBER DEN ECHTEN RECHTSKLICK-WEG (customContextMenuRequested
+        # -> kopier_menue-Verteiler -> _pr_menu), nicht _pr_menu direkt:
+        # der direkte Aufruf blieb gegen die Mutation "nur noch
+        # Copy-Menue verdrahtet" GRUEN - die Funktion gibt es ja noch,
+        # nur der Rechtsklick erreichte sie nicht mehr (so gefunden).
+        win.pr_table.customContextMenuRequested.emit(
+            win.pr_table.visualItemRect(_it844).center())
+        _app.processEvents()
+    finally:
+        win.open_ingame_market = _oi_alt844
+        _mwm114.kontext_menue = _km_alt844
+        _mwb844.kontext_menue = _km_basis_alt844
+    eq("b844 Rechtsklick-Menue oeffnet den Ingame-Markt des Items",
+       _auf844, [34])
+    # Und der RENDER-Weg traegt die type_id an der Namenszelle - ohne
+    # sie waere das Menue fuer echte Zeilen tot (b844 oben setzt sie
+    # von Hand; hier der Quelltext-Anker auf die Fuellstelle).
+    import inspect as _ins844
+    # MIT der if-Zeile verankert: gegen `if False:` davor war der Anker
+    # auf die setData-Zeile allein BLIND (so gefunden - die Zeile steht
+    # mutiert ja weiterhin im Quelltext).
+    check("b844 der Render haengt die type_id an die Namenszelle",
+          'if j == 0:\n                    '
+          'it.setData(Qt.UserRole, int(r["type_id"]))'
+          in _ins844.getsource(type(win)._render_profit))
+    win.pr_table.setRowCount(0)
+except Exception as _e844:                               # pragma: no cover
+    import traceback as _tb844
+    _fail.append(f"b844 Profits-Rechtsklick: {type(_e844).__name__}: {_e844} | "
+                 + _tb844.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b842)
+# MARKET STOCKS VERSCHOENERT (emm841, Nutzer 06.11.2026: "keine Icons
+# der Schiffe/Items keine farben / Das ein/ausklappen der geposteten
+# Doctrine funktioniert nicht richtig, man erkennt die Doctrine kaum. /
+# Loeschen kann man sie auch nicht wieder"). ALLES am lebenden Widget
+# gemessen - Quelltext-Anker fielen in dieser Reihe neunmal durch.
+try:
+    from PySide6.QtWidgets import (QMessageBox as _MB842,
+                                   QPushButton as _PB842,
+                                   QTableWidget as _TW842)
+    import time
+    from eve_trader import doctrinen as _dc842
+    _st842 = win._ms_state()
+    _st842["doctrinen"] = [dict(_dc842.doctrine_aus_text(
+        "Probe842", "[Rifter, T]\n200mm AutoCannon II\n"
+        "200mm AutoCannon II\nRepublic Fleet EMP S x1000",
+        {"rifter": 587, "200mm autocannon ii": 2969,
+         "republic fleet emp s": 21896}, ziel=10), id=7)]
+    _st842["abgewaehlt"] = {}
+    _st842["aufgeklappt"] = []
+    win._ms_markt = {"buch": {587: {"sell": [(5e6, 50)]},
+                              2969: {"sell": [(1e6, 14)]},
+                              21896: {"sell": [(10.0, 100000)]}},
+                     "jita": {587: 5e6, 2969: 1e6, 21896: 10.0},
+                     "vol": {}, "ts": time.time(), "hub_name": "T"}
+    # (1) ICON-VERDRAHTUNG: welcher type bekommt ein Icon angefragt?
+    # Offscreen gibt es keine Bilder - gemessen wird der AUFRUF, nicht
+    # das Bild (das holt der Nachtrag beim Nutzer).
+    # Die Namensaufloesung fuers Schiffs-Icon braucht die Tabelle
+    # Name->type_id; die Test-DB hat keine. Der vorgesehene Cache wird
+    # direkt gesetzt - genau den nutzt der echte Weg auch.
+    win._ms_name2tid = {"rifter": 587}
+    _paare842 = []
+    _ti_alt842 = win._table_icon
+    try:
+        win._table_icon = (lambda tid, size=20, kind="icon":
+                           (_paare842.append((int(tid), int(size))),
+                            _ti_alt842(tid, size=size, kind=kind))[1])
+        win._ms_render()
+    finally:
+        win._table_icon = _ti_alt842
+    _ic842 = [t_ for t_, _s in _paare842]
+    # AN DER GROESSE ERKANNT: der Kopf fragt mit 32, die Listen mit der
+    # Vorgabe 20. "587 kommt vor" allein war BLIND (Rotprobe-Fund): der
+    # Rumpf ist auch ein POSTEN und steht sowieso in beiden Listen.
+    check(f"b842 der Karten-Kopf fragt das SCHIFFS-Icon an "
+          f"({sorted(set(_paare842))})", (587, 32) in _paare842)
+    # SEIT emm853: statt der Gesamt-Itemliste fragt die Doctrine-
+    # UEBERSICHT das Schiffs-Icon in Listengroesse an - der Rumpf ist
+    # auch ein Posten der Karten-Tabelle, also steht (587, 20)
+    # MINDESTENS ZWEIMAL da. Verliert eine der beiden Stellen ihre
+    # Icons, faellt der Zaehler auf 1.
+    check(f"b842 Karte UND Uebersicht fragen die Icons an "
+          f"(587/20: {_paare842.count((587, 20))}x, "
+          f"2969: {_ic842.count(2969)}x)",
+          _paare842.count((587, 20)) >= 2
+          and _ic842.count(2969) >= 1 and _ic842.count(21896) >= 1)
+
+    # (2) KLAPPEN UEBERLEBT DEN NEUBAU. Vorher klappte jeder
+    # _ms_render (Haken, Regel, Abruf) alles wieder zu.
+    _karte842 = win.ms_doc_box.itemAt(0).widget()
+    _pf842 = next(b for b in _karte842.findChildren(_PB842)
+                  if b.isCheckable())
+    check("b842 die Karte startet zugeklappt (kein Zustand gespeichert)",
+          not _pf842.isChecked())
+    _pf842.setChecked(True); _app.processEvents()
+    _tb842 = _karte842.findChildren(_TW842)
+    check("b842 aufklappen zeigt die Positions-Tabelle",
+          any(t_.isVisibleTo(_karte842) for t_ in _tb842))
+    # emm940 (Nutzer 14.11.2026: "hacken boxen noch etwas abgeschnitten"):
+    # das Zell-Widget bekommt die Zelle MINUS das Item-Polster des QSS
+    # (2x5 hoch, 2x6 breit, unter Windows gemessen) - Zeile und Spalte
+    # muessen die 20x20-Box samt Polster fassen.
+    from PySide6.QtWidgets import QCheckBox as _CB940
+    _fit940 = next((t_ for t_ in _tb842 if t_.columnCount() == 10
+                    and t_.rowCount()), None)
+    _cb940 = (_fit940.cellWidget(0, 0).findChild(_CB940)
+              if _fit940 is not None and _fit940.cellWidget(0, 0) else None)
+    check("b940 Haken-Box 20x20 passt in Zeile und Spalte "
+          f"({_fit940.rowHeight(0) if _fit940 else None} / "
+          f"{_fit940.columnWidth(0) if _fit940 else None})",
+          _cb940 is not None
+          and _cb940.minimumWidth() >= 20 and _cb940.minimumHeight() >= 20
+          and _fit940.rowHeight(0) >= _cb940.minimumHeight() + 10
+          and _fit940.columnWidth(0) >= _cb940.minimumWidth() + 12)
+    win._ms_render(); _app.processEvents()      # der Neubau-Moment
+    _karte842b = win.ms_doc_box.itemAt(0).widget()
+    _pf842b = next(b for b in _karte842b.findChildren(_PB842)
+                   if b.isCheckable())
+    check("b842 der Klappzustand ueberlebt den Neubau",
+          _pf842b.isChecked()
+          and any(t_.isVisibleTo(_karte842b)
+                  for t_ in _karte842b.findChildren(_TW842)))
+    _pf842b.setChecked(False); _app.processEvents()
+    check("b842 zuklappen wird ebenso gemerkt",
+          7 not in (win._ms_state().get("aufgeklappt") or []))
+
+    # (3) LOESCHEN SICHTBAR: der Knopf fragt und loescht - dieselbe
+    # Funktion wie das Rechtsklick-Menue, nur endlich auffindbar.
+    _dk842 = getattr(win, "_ms_del_knopf_letzter", None)
+    check("b842 der Loesch-Knopf steht auf der Karte und sagt, was er tut",
+          _dk842 is not None and bool(_dk842.toolTip()))
+    _q_alt842 = _MB842.question
+    try:
+        _MB842.question = staticmethod(lambda *a, **k: _MB842.No)
+        _dk842.click(); _app.processEvents()
+        eq("b842 Nein: die Doctrine bleibt",
+           len(win._ms_state()["doctrinen"]), 1)
+        _MB842.question = staticmethod(lambda *a, **k: _MB842.Yes)
+        getattr(win, "_ms_del_knopf_letzter").click(); _app.processEvents()
+        # 14.11.2026 (emm936): der Knopf loescht das SCHIFF. Die
+        # Doctrine bleibt als leere Karte stehen ("erst Doctrine, dann
+        # Schiffe") - weg geht sie nur ueber "Delete doctrine".
+        _k842 = win.ms_doc_box.itemAt(0).widget() if win.ms_doc_box.count() else None
+        eq("b842 Ja: das Schiff ist weg, die Doctrine bleibt leer stehen",
+           (len(win._ms_state()["doctrinen"]), win.ms_doc_box.count(),
+            getattr(_k842, "_schiffe", None)),
+           (0, 1, []))
+    finally:
+        _MB842.question = _q_alt842
+
+    # (4) OHNE MESSUNG KEINE ZAHLEN (Regel 1): genau der Screenshot des
+    # Nutzers - "buyable 0 / missing 250" OHNE jeden Abruf. 0 ist eine
+    # Messung; nicht gemessen ist ein Strich.
+    _st842 = win._ms_state()
+    _st842["doctrinen"] = [dict(_dc842.doctrine_aus_text(
+        "Probe842b", "[Rifter, T]\nRepublic Fleet EMP S x100",
+        {"rifter": 587, "republic fleet emp s": 21896}, ziel=10), id=8)]
+    win._ms_markt = None
+    # EINZELN ABGESICHERT (14.11.2026, Rotprobe BLIND): die Mutation "ohne
+    # Abruf wieder Zahlen" laesst den Render ABSTUERZEN - der Block flog
+    # unter seinem Sammelnamen raus und diese Pruefung lief nie. Jetzt
+    # wird genau sie rot.
+    _z842, _tip842 = None, False
+    try:
+        win._ms_render(); _app.processEvents()
+        # Seit emm853 wohnen die Marktspalten in der Positions-Tabelle der
+        # KARTE; seit emm874 sind es vier statt sechs (Spalten 2..5).
+        _krt842 = win.ms_doc_box.itemAt(0).widget()
+        _ptb842 = _krt842.findChild(_TW842)
+        _z842 = [_ptb842.item(0, c).text() for c in (2, 3, 4, 5)]
+        _tip842 = bool(_ptb842.item(0, 2).toolTip())
+    except Exception as _e842z:
+        _z842 = f"{type(_e842z).__name__}: {_e842z}"
+    check(f"b842 ohne Abruf stehen Striche, keine erfundenen Nullen "
+          f"({_z842})", _z842 == ["\u2014"] * 4 and _tip842)
+    # (5) MIT MESSUNG SPRICHT DIE FARBE: fehlt>0 rot, gedeckt gruen
+    # (Spalte 2 der Karten-Tabelle, seit emm874).
+    win._ms_markt = {"buch": {587: {"sell": [(5e6, 50)]},
+                              21896: {"sell": [(10.0, 100)]}},
+                     "jita": {587: 5e6, 21896: 10.0},
+                     "vol": {}, "ts": time.time(), "hub_name": "T"}
+    win._ms_render(); _app.processEvents()
+    _krt842b = win.ms_doc_box.itemAt(0).widget()
+    _ptb842b = _krt842b.findChild(_TW842)
+    _rot842 = _gruen842 = None
+    for r in range(_ptb842b.rowCount()):
+        _f = _ptb842b.item(r, 2)
+        if _f is None:
+            continue
+        if int(str(_f.text()).replace(",", "") or 0) > 0:
+            _rot842 = _f.foreground().color().name()
+        else:
+            _gruen842 = _f.foreground().color().name()
+    from eve_trader.ui import theme as _th842
+    eq("b842 fehlende Stueckzahl steht rot",
+       _rot842, _th842.RED.lower())
+    eq("b842 gedeckte steht gruen", _gruen842, _th842.GREEN.lower())
+    # Aufraeumen
+    win.settings.pop("market_stocks", None)
+    win._ms_markt = None
+    win.__dict__.pop("_ms_name2tid", None)
+    win._ms_render()
+except Exception as _e842:                               # pragma: no cover
+    import traceback as _tb842e
+    _fail.append(f"b842 Market Stocks verschoenert: "
+                 f"{type(_e842).__name__}: {_e842} | "
+                 + _tb842e.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b825)
+# TRANSAKTIONEN: "noch im Verkauf" + Open-Knopf (Discord 04.11.2026).
+try:
+    from PySide6.QtWidgets import QPushButton as _KN825
+    _tbl825 = win.tx_table
+    eq("b825 die Tabelle hat acht Spalten", _tbl825.columnCount(), 8)
+    eq("b825 'noch im Verkauf' steht direkt neben Qty",
+       [_tbl825.horizontalHeaderItem(i).text() for i in (3, 4)],
+       ["Qty", "still selling"])
+    check("b825 die Spalte erklaert sich im Tooltip",
+          "still sitting in your own open SELL orders"
+          in (_tbl825.horizontalHeaderItem(4).toolTip() or ""))
+
+    # Echte Daten in einer EIGENEN Datenbank - die Pruefung fasst keine
+    # Nutzerdaten an (Muster aa200).
+    import tempfile as _tf825b, shutil as _sh825b
+    import eve_trader.config as _cfg825b
+    from eve_trader import store as _st825b
+    _alt825b = _cfg825b.db_path
+    _d825 = _tf825b.mkdtemp()
+    try:
+        _cfg825b.db_path = lambda: os.path.join(_d825, "t.db")
+        _st825b.init_db()
+        _st825b.upsert_character(880088, "b825-Char")
+        _st825b.save_transactions(880088, [
+            {"transaction_id": 1, "date": "2026-11-01T00:00:00Z",
+             "type_id": 34, "quantity": 100, "unit_price": 5.0,
+             "is_buy": False, "location_id": 60003760},
+            {"transaction_id": 2, "date": "2026-11-01T00:00:00Z",
+             "type_id": 35, "quantity": 50, "unit_price": 9.0,
+             "is_buy": True, "location_id": 60003760}])
+        # 34: 400 liegen noch im Verkauf. 35: gar keine Order bekannt.
+        _st825b.save_orders(880088, [
+            {"order_id": 11, "type_id": 34, "volume_remain": 400,
+             "volume_total": 500, "price": 5.0, "is_buy_order": False,
+             "issued": "2026-11-01T00:00:00Z", "duration": 90,
+             "location_id": 60003760}], nur_offene=True)
+        win.tx_char.blockSignals(True)
+        win.tx_char.clear()
+        win.tx_char.addItem("b825-Char", 880088)
+        win.tx_char.blockSignals(False)
+        win._render_transactions()
+        _zeile825 = {}
+        for _r in range(_tbl825.rowCount()):
+            _zeile825[_tbl825.item(_r, 2).text()] = _r
+        _namen825 = _st825b.cached_names([34, 35])
+        _r34 = _zeile825.get(_namen825.get(34, "#34"))
+        _r35 = _zeile825.get(_namen825.get(35, "#35"))
+        check(f"b825 beide Transaktionen stehen da ({_tbl825.rowCount()})",
+              _r34 is not None and _r35 is not None)
+        if _r34 is not None:
+            eq("b825 verkauftes Item zeigt die offene Restmenge",
+               _tbl825.item(_r34, 4).text().replace("'", ""), "400")
+        if _r35 is not None:
+            # LEER, NICHT "0": eine 0 behauptete "alles verkauft",
+            # obwohl zu diesem Item gar keine Order bekannt ist.
+            eq("b825 ohne bekannte Order bleibt die Zelle LEER (nicht 0)",
+               _tbl825.item(_r35, 4).text(), "")
+        # SEIT emm914 eine Zelle statt eines Knopfs (107 ms -> 12 ms bei
+        # 500 Zeilen). Geprueft wird, dass JEDE Zeile die Open-Zelle mit
+        # ihrem Item traegt und dass der echte Tabellen-Klick oeffnet.
+        check("b825 jede Zeile hat einen Open-Knopf",
+              _tbl825.rowCount() > 0
+              and all(_tbl825.cellWidget(_r, 7) is None
+                      and _tbl825.item(_r, 7) is not None
+                      and _tbl825.item(_r, 7).data(Qt.UserRole + 1)
+                      for _r in range(_tbl825.rowCount())))
+        _rufe914 = []
+        _echt914 = win.open_ingame_market
+        win.open_ingame_market = lambda _t, _c: _rufe914.append((_t, _c))
+        try:
+            if _r34 is not None:
+                _tbl825.cellClicked.emit(_r34, 6)
+                eq("b914 ein Klick neben Open tut nichts", _rufe914, [])
+                _tbl825.cellClicked.emit(_r34, 7)
+                eq("b914 der Klick auf Open oeffnet Item + Zeilen-Charakter",
+                   _rufe914, [(34, 880088)])
+        finally:
+            win.open_ingame_market = _echt914
+        # NICHT nur auf "still selling" pruefen: dasselbe Wort steht
+        # auch im Satz "noch nie abgerufen" - damit blieb die Mutation
+        # "_la825 = None" BLIND (Rotprobe 04.11.2026). Gefragt ist das
+        # ALTER, denn das macht eine 0 erst lesbar.
+        check("b825 die Fusszeile nennt das ALTER der Order-Zahlen",
+              ("min old." in win.tx_note.text()
+               or "h old" in win.tx_note.text()
+               or "min alt." in win.tx_note.text()
+               or "h alt" in win.tx_note.text()))
+        check("b825 ... und nicht den 'noch nie abgerufen'-Satz",
+              "until your orders have been fetched"
+              not in win.tx_note.text())
+        # Nach dem Verkauf der restlichen 400 ist die Order weg - die
+        # Spalte muss das zeigen, nicht die alte Zahl festhalten.
+        _st825b.save_orders(880088, [], nur_offene=True)
+        win._render_transactions()
+        if _r34 is not None:
+            eq("b825 erfuellte Order -> Spalte zeigt 0, nicht die alte Zahl",
+               _tbl825.item(_r34, 4).text().replace("'", ""), "0")
+    finally:
+        _cfg825b.db_path = _alt825b
+        _sh825b.rmtree(_d825, ignore_errors=True)
+        win.tx_char.clear()
+except Exception as _e825:                               # pragma: no cover
+    _fail.append(f"b825 noch im Verkauf: {type(_e825).__name__}: {_e825}")
+
+
+# ---------------------------------------------------------------- (b826)
+# T3-INVENTION: RELIC-QUALITAET JE ENDE WAEHLBAR (Nutzer 04.11.2026: "ja das
+# sollten wir machen. Und es muss auch mit multiplans funktionieren also
+# T1 T2 T3 alles zusammen muss klappen"). Am echten Fenster, Buendel mit
+# T1-, T2- und T3-Ende gemischt: das T3-Ende bekommt im Invention-Tab eine
+# Combo mit den drei Relic-Qualitaeten (Standard die ergiebigste), das
+# T2-Ende NICHT; die Wahl landet in _bd_relic_map + opts["inv_relic_map"]
+# und ueberlebt den Rebuild; der Multi-Plan-Eintrag nimmt die relic_map der
+# Einzelplaene mit (Rechenkern durch aa826 belegt).
+try:
+    _P1826, _P2826, _P3826, _MAT826 = 972001, 972002, 972003, 972010
+    _B1826, _B2826, _B3826 = 982001, 982002, 982003
+    _RI826, _RM826, _RW826 = 992001, 992002, 992003   # Intact/Malf/Wrecked
+    _T1826, _DC826 = 992010, 992020
+
+    class _Rec826:
+        product_to_bp = {_P1826: (_B1826, I.MANUFACTURING, 1),
+                         _P2826: (_B2826, I.MANUFACTURING, 1),
+                         _P3826: (_B3826, I.MANUFACTURING, 1)}
+        bp_materials = {(_B1826, I.MANUFACTURING): [(_MAT826, 100)],
+                        (_B2826, I.MANUFACTURING): [(_MAT826, 100)],
+                        (_B3826, I.MANUFACTURING): [(_MAT826, 100)]}
+        activity_time = {(_B1826, I.MANUFACTURING): 60,
+                         (_B2826, I.MANUFACTURING): 60,
+                         (_B3826, I.MANUFACTURING): 60}
+        activity_max_runs = {}
+        reaction_products = set()
+        invention_for_bpc = {_B2826: (_T1826, 1, 0.3, [(_DC826, 2)]),
+                             _B3826: (_RI826, 20, 0.26, [(_DC826, 3)])}
+        invention_quellen = {_B2826: [(_T1826, 1, 0.3, [(_DC826, 2)])],
+                             _B3826: [(_RI826, 20, 0.26, [(_DC826, 3)]),
+                                      (_RM826, 10, 0.21, [(_DC826, 3)]),
+                                      (_RW826, 3, 0.14, [(_DC826, 3)])]}
+        relic_quellen = {_RI826, _RM826, _RW826}
+        invention_copy_mats = {}
+        bp_products = {}
+        item_cat = {}
+
+    _pm826 = {_MAT826: 100.0, _DC826: 50.0, _RI826: 5e6, _RM826: 2e6,
+              _RW826: 5e5, _P1826: 9e9, _P2826: 9e9, _P3826: 9e9}
+    _rb826 = I.buendel_rezepte(_Rec826(), [(_P1826, 5), (_P2826, 5),
+                                           (_P3826, 5)])
+    _o826 = {"invention": True, "job_pct": 0, "build_reactions": True,
+             "me": 0, "me_map": {}, "adjusted_prices": dict(_pm826),
+             "tree_depth": 4, "inv_datacore_free": True}
+    win._bd_pricemap = {**_pm826, I.BUENDEL_ID: 9e9 * 15}
+    win._bd_recipes = _rb826; win._bd_recipes_basis = _rb826
+    win._bd_opts = dict(_o826); win._bd_type = I.BUENDEL_ID; win._bd_qty = 1
+    win._bd_buendel_enden = [(_P1826, 5), (_P2826, 5), (_P3826, 5)]
+    win._bd_buendel_quellen = []
+    win._bd_me_je_ende = {}; win._bd_te_je_ende = {}
+    win._bd_own_bpc_je_ende = {}; win._bd_own_bpc_runs_je_ende = {}
+    win._bd_relic_map = {}; win._bd_decryptor_map = {}
+    _plan826 = I.production_plan(I.BUENDEL_ID, 1, _pm826.get, _rb826,
+                                 dict(_o826))
+    _tree826 = I.build_tree(I.BUENDEL_ID, _pm826.get, _rb826, dict(_o826))
+    _res826 = {"tree": _tree826, "sell": 9e9 * 15, "sell_is_contract": False,
+               "plan": _plan826,
+               "names": {_P1826: "T1-826", _P2826: "T2-826", _P3826: "T3-826",
+                         _MAT826: "Mat826", I.BUENDEL_ID: "Multi 826"}}
+    win._show_build_detail(I.BUENDEL_ID, "Multi 826", _res826)
+    _app.processEvents()
+    check("b826 der Buendel-Dialog baut sich mit T1+T2+T3 gemischt",
+          getattr(win, "_bd_dialog", None) is not None)
+    _rc826 = dict(getattr(win, "_bd_inv_relic_combos", None) or {})
+    check("b826 das T3-Ende hat die Relic-Combo mit drei Qualitaeten",
+          _B3826 in _rc826 and _rc826[_B3826].count() == 3)
+    check("b826 das T2-Ende bekommt KEINE Relic-Combo (eine Quelle)",
+          _B2826 not in _rc826)
+    _cb826 = _rc826.get(_B3826)
+    eq("b826 Standard ist die ergiebigste Qualitaet",
+       _cb826.currentData() if _cb826 else None, _RI826)
+    check("b826 die Eintraege nennen Runs und Basis-Chance",
+          _cb826 is not None and "20" in _cb826.itemText(0)
+          and "26" in _cb826.itemText(0) and "3" in _cb826.itemText(2)
+          and "14" in _cb826.itemText(2))
+    # Wahl umschalten: Wrecked. Der Wechsel schreibt beide Karten
+    # (_bd_relic_map fuer den Plan, opts fuer die Rechnung) und loest den
+    # vollen Rebuild aus - die neue Combo muss die Wahl weiter zeigen.
+    if _cb826 is not None:
+        _cb826.setCurrentIndex(_cb826.findData(_RW826))
+        _app.processEvents()
+    eq("b826 die Wahl steht in _bd_relic_map",
+       (getattr(win, "_bd_relic_map", None) or {}).get(_B3826), _RW826)
+    eq("b826 ... und in den Plan-Opts",
+       (win._bd_opts.get("inv_relic_map") or {}).get(_B3826), _RW826)
+    _rc826b = dict(getattr(win, "_bd_inv_relic_combos", None) or {})
+    eq("b826 nach dem Rebuild zeigt die Combo weiter die Wahl",
+       _rc826b[_B3826].currentData() if _B3826 in _rc826b else None, _RW826)
+    # Der Karten-Aufbau holt die Quelle ueber die EINE Stelle (sonst zeigte
+    # der Reiter die ergiebigste, waehrend der Plan mit der Wahl rechnet).
+    _tabs_src826 = open(os.path.join(_ROOT, "eve_trader", "ui",
+                                     "mw_bauplan_tabs.py"),
+                        encoding="utf-8").read()
+    check("b826 die Karten entpacken die GEWAEHLTE Quelle",
+          "inv = industry.invention_quelle_fuer_bp(" in _tabs_src826)
+    # Multi-Plan-Eintrag: die relic_map der Einzelplaene faehrt mit.
+    _q826 = [{"type_id": _P3826, "id": 91, "qty": 5,
+              "relic_map": {str(_B3826): _RW826}},
+             {"type_id": _P2826, "id": 92, "qty": 5}]
+    _me826 = win._multi_plan_aus_quellen(_q826)
+    eq("b826 der Multi-Plan-Eintrag traegt die Relic-Wahl der Einzelplaene",
+       (_me826 or {}).get("relic_map"), {str(_B3826): _RW826})
+except Exception as _e826:                               # pragma: no cover
+    import traceback as _tb826
+    _fail.append(f"b826 T3-Relic-Wahl: {type(_e826).__name__}: {_e826} | "
+                 + _tb826.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b827)
+# AUTO-DECRYPTOR SETZT BEI T3 AUCH DIE BESTE RELIC-SORTE (Nutzer 04.11.2026:
+# "jawohl sauber bauen"). An der b826-Kulisse (Buendel T1+T2+T3): die
+# Rangliste wird auf einen festen Gewinner mit relic=Wrecked gestellt -
+# Auto-Decryptor muss die Wahl in _bd_relic_map UND die Plan-Opts schreiben,
+# den Wechsel als Aenderung zaehlen, und die Combo zeigt sie nach dem
+# Rebuild; das T2-Ende bekommt KEINEN Relic-Eintrag.
+try:
+    # Ausgangslage: Relic zurueck auf Intact, Decryptoren auf den ersten
+    # Listen-Namen festnageln - so ist die RELIC-Aenderung nachher die
+    # einzige, und "zaehlt als Wechsel" prueft wirklich die Relic-Logik.
+    _rc827 = dict(getattr(win, "_bd_inv_relic_combos", None) or {})
+    _cb827 = _rc827.get(_B3826)
+    check("b827 Kulisse steht (T3-Relic-Combo aus b826 vorhanden)",
+          _cb827 is not None)
+    if _cb827 is not None:
+        _cb827.setCurrentIndex(_cb827.findData(_RI826))
+        _app.processEvents()
+    _dl827 = win._decryptor_list()
+    _n0_827 = _dl827[0][0]
+    for _bp827 in (_B2826, _B3826):
+        win._bd_decryptor_map[_bp827] = _n0_827
+    eq("b827 Ausgangslage: Wahl steht auf Intact",
+       (getattr(win, "_bd_relic_map", None) or {}).get(_B3826), _RI826)
+    _rk_alt827 = I.invention_best_decryptor_by_real_cost
+
+    def _fake_rk827(type_id, qty, pf, rec, opts, bp_id, dl):
+        _rel = _RW826 if int(bp_id) == _B3826 else None
+        return [{"name": n, "decryptor": v, "relic": _rel,
+                 "total_cost": float(i)} for i, (n, v) in enumerate(dl)]
+    I.invention_best_decryptor_by_real_cost = _fake_rk827
+    try:
+        _g827 = win._inv_alle_besten()
+        _app.processEvents()
+    finally:
+        I.invention_best_decryptor_by_real_cost = _rk_alt827
+    eq("b827 Auto-Decryptor schreibt die Gewinner-Relic in den Plan",
+       (getattr(win, "_bd_relic_map", None) or {}).get(_B3826), _RW826)
+    eq("b827 ... und in die Plan-Opts",
+       (win._bd_opts.get("inv_relic_map") or {}).get(_B3826), _RW826)
+    check("b827 der Relic-Wechsel zaehlt als Aenderung", _g827 >= 1)
+    check("b827 das T2-Ende bekommt keinen Relic-Eintrag",
+          _B2826 not in (getattr(win, "_bd_relic_map", None) or {}))
+    _rc827b = dict(getattr(win, "_bd_inv_relic_combos", None) or {})
+    eq("b827 die Combo zeigt die Auto-Wahl nach dem Rebuild",
+       _rc827b[_B3826].currentData() if _B3826 in _rc827b else None, _RW826)
+except Exception as _e827:                               # pragma: no cover
+    import traceback as _tb827
+    _fail.append(f"b827 Auto-Relic: {type(_e827).__name__}: {_e827} | "
+                 + _tb827.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b828)
+# T3-PRAXISBEFUND (3): DAS VERBRAUCHTE RELIC GEHOERT IN DEN BEDARF UND IN DIE
+# ZUSAMMENFASSUNG (Nutzer-Screenshot Confessor 05.11.2026: unten stand
+# "5 attempts in total -> 15x Datacore - 15x Datacore - 5x Parity Decryptor",
+# das Relic fehlte ganz - dabei ist es der groesste Posten der T3-Invention).
+# An der b826-Kulisse (Buendel T1+T2+T3).
+try:
+    _needs828 = dict(getattr(win, "_bd_invention_needs", None) or {})
+    check("b828 Kulisse steht (Invention-Bedarf beider Enden vorhanden)",
+          _B3826 in _needs828 and _B2826 in _needs828)
+    _n3_828 = _needs828.get(_B3826) or {}
+    _n2_828 = _needs828.get(_B2826) or {}
+    eq("b828 das T3-Ende traegt seine Relic-Quelle im Bedarf",
+       _n3_828.get("relic_id"), _RW826)
+    eq("b828 ... mit einem Relic je Versuch",
+       _n3_828.get("relic_qty"), _n3_828.get("attempts"))
+    check("b828 das T2-Ende traegt KEIN Relic",
+          not _n2_828.get("relic_id") and not _n2_828.get("relic_qty"))
+    # Die Zusammenfassung unter dem Reiter nennt es - vor den Datacores.
+    _tb828 = getattr(win, "_bd_inv_total_box", None)
+    check("b828 die Zusammenfassungszeile ist da", _tb828 is not None)
+    if _tb828 is not None:
+        _txt828 = _tb828.text()
+        check(f"b828 sie nennt das Relic ({_txt828[-90:]})",
+              str(_RW826) in _txt828 or "Relic" in _txt828 or "#%d" % _RW826 in _txt828)
+        check("b828 und weiterhin die Versuchszahl",
+              "attempts" in _txt828 or "Versuche" in _txt828)
+except Exception as _e828:                               # pragma: no cover
+    import traceback as _tb828e
+    _fail.append(f"b828 Relic im Bedarf: {type(_e828).__name__}: {_e828} | "
+                 + _tb828e.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b829)
+# DAS RELIC STECKT IN DER KOSTENANZEIGE DER KARTE (Nutzer-Praxislauf 2,
+# 05.11.2026: Karte "1'406'942 ISK", Kopfzeile 83 Mio mehr). An der
+# b826-Kulisse mit einem TEUREN Relic: die Invention-Summe des Reiters muss
+# mindestens Versuche x Relic-Preis betragen - vorher lag sie weit darunter,
+# weil nur Datacores und Decryptor gezaehlt wurden.
+try:
+    _needs829 = dict(getattr(win, "_bd_invention_needs", None) or {})
+    _n3_829 = _needs829.get(_B3826) or {}
+    _att829 = int(_n3_829.get("attempts") or 0)
+    _relid829 = _n3_829.get("relic_id")
+    check("b829 Kulisse steht (T3-Karte mit Relic und Versuchen)",
+          _att829 > 0 and _relid829 is not None)
+    _relpreis829 = float((win._bd_pricemap or {}).get(_relid829, 0) or 0)
+    check(f"b829 das Relic hat einen Preis ({_relpreis829:,.0f})",
+          _relpreis829 > 0)
+    _tb829 = getattr(win, "_bd_inv_total_box", None)
+    check("b829 die Invention-Summe ist da", _tb829 is not None)
+    if _tb829 is not None and _att829 and _relpreis829:
+        # Die Zahl aus dem Text holen (Format "... 1'234'567 ISK ...").
+        import re as _re829
+        _zahlen829 = [float(_z.replace("'", "").replace(",", ""))
+                      for _z in _re829.findall(r"[\d',]{4,}", _tb829.text())]
+        _summe829 = max(_zahlen829) if _zahlen829 else 0.0
+        _mindest829 = _att829 * _relpreis829
+        check(f"b829 die Summe deckt die Relics ab "
+              f"({_summe829:,.0f} >= {_att829} x {_relpreis829:,.0f})",
+              _summe829 >= _mindest829 * 0.999)
+except Exception as _e829:                               # pragma: no cover
+    import traceback as _tb829e
+    _fail.append(f"b829 Relic in der Kostenanzeige: {type(_e829).__name__}: "
+                 f"{_e829} | " + _tb829e.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b831)
+# DIE T3-KARTE ZEIGT KEINE KOPIERANLEITUNG (emm831). WIRKUNGSPROBE am
+# echten Fenster - der reine Quelltext-Anker reichte nicht: die erste
+# Rotprobe meldete BLIND, weil der Text auch dann im Code steht, wenn der
+# Zweig nie erreicht wird. An der b826-Kulisse: T3-Ende mit Relic-Quelle,
+# T2-Ende mit T1-Blaupause.
+try:
+    _spw831 = dict(getattr(win, "_bd_inv_split_w", None) or {})
+    check("b831 Kulisse steht (Kopieranleitung beider Enden vorhanden)",
+          _B3826 in _spw831 and _B2826 in _spw831)
+    _k3_831 = (_spw831.get(_B3826) or {}).get("kopf")
+    _k2_831 = (_spw831.get(_B2826) or {}).get("kopf")
+    check("b831 beide Karten haben eine Kopf-Zeile",
+          _k3_831 is not None and _k2_831 is not None)
+    if _k3_831 is not None:
+        _t3_831 = _k3_831.text()
+        check(f"b831 T3 sagt, dass nichts zu kopieren ist ({_t3_831[:60]!r})",
+              "relic" in _t3_831.lower() or "Relic" in _t3_831)
+        check("b831 T3 zeigt KEINE Kopieranleitung",
+              "Job Runs" not in _t3_831 and "Runs per Copy" not in _t3_831)
+        check("b831 T3 nennt die Relic-Menge = Versuche",
+              str(int((win._bd_invention_needs.get(_B3826) or {}).get(
+                  "attempts") or 0)) in _t3_831)
+    if _k2_831 is not None:
+        _t2_831 = _k2_831.text()
+        check(f"b831 T2 behaelt die Kopieranleitung ({_t2_831[:50]!r})",
+              "Job Runs" in _t2_831 and "Runs per Copy" in _t2_831)
+except Exception as _e831:                               # pragma: no cover
+    import traceback as _tb831
+    _fail.append(f"b831 T3-Kopieranleitung: {type(_e831).__name__}: {_e831} | "
+                 + _tb831.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b833)
+# DIE LUECKE, DURCH DIE emm828 GESCHLUEPFT IST (Nutzer-Entscheid 05.11.2026:
+# "Testluecke schliessen"). Alle bisherigen Bauplan-Pruefungen setzen bei
+# `_show_build_detail` an - dem AUFBAU des Fensters aus einem fertigen
+# Ergebnis. Den WEG dorthin, `open_build_detail` mit seinem `job()`-Worker,
+# pruefte nichts. Genau dort lagen zwei Sachen:
+#   * emm828: `_resolve_inv_skill_modifiers` wurde VOR den Rezepten und der
+#     Skill-Tabelle gerufen und lieferte leer - der Plan rechnete ohne
+#     Skillbonus, die Karte mit. Vier gruene Suiten sahen es nicht; ein
+#     Screenshot des Nutzers schon.
+#   * emm830: die Vorwahl der billigsten Relic-Sorte sitzt in demselben
+#     `job()`.
+# HIER laeuft `open_build_detail` WIRKLICH - mit synchronem Worker und
+# vorgegebenen Daten, damit kein Netz und keine echte Datenbank noetig ist.
+try:
+    import types as _t833
+    _P833, _MAT833 = 973001, 973010            # T3-Ende, sein Material
+    _BP833 = 983001                            # dessen Blaupause
+    _RI833, _RW833 = 993001, 993003            # Intact (teuer) / Wrecked
+    _DC833 = 993010                            # Datacore
+    _T1C833 = 2115318203                       # Charakter mit Skills
+
+    class _Rec833:
+        product_to_bp = {_P833: (_BP833, I.MANUFACTURING, 1)}
+        bp_materials = {(_BP833, I.MANUFACTURING): [(_MAT833, 10)]}
+        activity_time = {(_BP833, I.MANUFACTURING): 60}
+        activity_max_runs = {}
+        reaction_products = set()
+        invention_for_bpc = {_BP833: (_RI833, 20, 0.26, [(_DC833, 3)])}
+        invention_quellen = {_BP833: [(_RI833, 20, 0.26, [(_DC833, 3)]),
+                                      (_RW833, 3, 0.14, [(_DC833, 3)])]}
+        relic_quellen = {_RI833, _RW833}
+        invention_copy_mats = {}
+        buendel_enden = {}
+        bp_products = {}
+        item_cat = {}
+    _rec833 = _Rec833()
+    # Preise: Intact SEHR teuer, Wrecked billig -> die Vorwahl MUSS Wrecked
+    # nehmen; tut sie es nicht, rechnet das Fenster 20x zu teuer.
+    _snap833 = [{"type_id": _P833, "sell_min": 900e6, "sell_qty": 5},
+                {"type_id": _MAT833, "sell_min": 1000.0, "sell_qty": 99999},
+                {"type_id": _RI833, "sell_min": 20e6, "sell_qty": 50},
+                {"type_id": _RW833, "sell_min": 1.2e6, "sell_qty": 300},
+                {"type_id": _DC833, "sell_min": 117e3, "sell_qty": 9999}]
+
+    _alt833 = {
+        "snapshot": store.get_snapshot, "recipes": I.recipes_cached,
+        "sde": I.sde_ready,
+        "mprices": esi.market_prices, "sci": esi.system_cost_indices,
+        "names": esi.resolve_names, "run": win._run,
+        "show": win._show_build_detail,
+        "skills": win.settings.get("bau_char_skills"),
+        "invchars": win.settings.get("bau_invention_chars"),
+        "invmap": getattr(win, "_bd_invention_skills_map", None),
+        "relicmap": getattr(win, "_bd_relic_map", None),
+        "bestaetigt": getattr(win, "_bd_relic_bestaetigt", None),
+    }
+    _gezeigt833 = []
+    # DAS OFFENE FENSTER DER VORTESTS SPERRT (emm742, _bauplan_sperre_meldung):
+    # `open_build_detail` kehrt sofort zurueck, solange eines steht. Genau so
+    # ist der erste Anlauf dieses Tests stumm geblieben - die Sperre ist
+    # richtig, der Test muss sie beachten wie ein Nutzer auch.
+    _dlg833 = getattr(win, "_bd_dialog", None)
+    if _dlg833 is not None:
+        try:
+            _dlg833.close()
+        except Exception:
+            pass
+        win._bd_dialog = None
+    _app.processEvents()
+
+    def _run_sync833(worker, done_cb, fail_cb=None, **kw):
+        """Den Worker SYNCHRON fahren - sonst waere die Pruefung ein
+        Wettlauf mit einem Faden.
+
+        NUR den Bauplan-Job: kaeme in diesen Pfad spaeter ein zweiter
+        Worker (ESI-Bestand o. ae.), liefe er hier mit den Test-Dummies
+        und koennte echte Abrufe ausloesen. Alles andere wird verworfen.
+        """
+        if getattr(worker._fn, "__name__", "") != "job":
+            return
+        try:
+            _erg = worker._fn(*worker._args, **worker._kwargs)
+        except Exception as _we:
+            if fail_cb:
+                fail_cb(str(_we))
+            raise
+        if done_cb:
+            done_cb(_erg)
+    try:
+        store.get_snapshot = lambda *a, **k: list(_snap833)
+        I.recipes_cached = lambda *a, **k: _rec833
+        I.sde_ready = lambda *a, **k: True
+        esi.market_prices = lambda *a, **k: {
+            "adjusted": {_MAT833: 1000.0, _DC833: 117e3,
+                         _RI833: 20e6, _RW833: 1.2e6},
+            "average": {}}
+        esi.system_cost_indices = lambda *a, **k: {}
+        esi.resolve_names = lambda ids, *a, **k: {int(i): f"X{i}" for i in ids}
+        win._run = _run_sync833
+        win._show_build_detail = lambda *a, **k: _gezeigt833.append(a)
+        # Skills: EIN Charakter mit Invention-Skills, als "Fuer Invention"
+        # markiert - damit muss ein Skillbonus herauskommen.
+        win.settings["bau_char_skills"] = {str(_T1C833): {"3408": 5}}
+        win.settings["bau_invention_chars"] = [_T1C833]
+        win._bd_invention_skills_map = {
+            _RI833: {"encryption": 3408, "science": []},
+            _RW833: {"encryption": 3408, "science": []}}
+        win._bd_relic_map = {}
+        win._bd_relic_bestaetigt = set()
+        win.open_build_detail(_P833, "T3-833", fresh=True)
+        _app.processEvents()
+        check("b833 open_build_detail laeuft bis zum Fenster-Aufbau durch",
+              bool(_gezeigt833))
+        _o833 = getattr(win, "_bd_opts", None) or {}
+        # (1) emm828: der Skillbonus MUSS in den Plan-Opts stehen. Genau das
+        #     fehlte, und genau das sah keine Suite.
+        _sm833 = _o833.get("inv_skill_modifier") or {}
+        check(f"b833 der Invention-Skillbonus steht in den Plan-Opts ({_sm833})",
+              bool(_sm833) and _sm833.get(_BP833, 1.0) > 1.0)
+        # (2) emm830: die Vorwahl nimmt die billigste Relic-Sorte.
+        eq("b833 die billigste Relic-Sorte ist vorgewaehlt",
+           (getattr(win, "_bd_relic_map", None) or {}).get(_BP833), _RW833)
+        eq("b833 ... und steht auch in den Plan-Opts",
+           (_o833.get("inv_relic_map") or {}).get(_BP833), _RW833)
+        # (3) Und die Rechnung hat die Wahl auch BENUTZT: mit Intact waere
+        #     die Invention ein Vielfaches teurer.
+        _plan833 = (_gezeigt833[0][2] or {}).get("plan") if _gezeigt833 else None
+        if _plan833:
+            _mit = float(_plan833.get("inv_cost", 0) or 0)
+            _teuer = I._inv_cost(_BP833, 1, _rec833,
+                                 {s["type_id"]: s["sell_min"]
+                                  for s in _snap833}.get,
+                                 dict(_o833, inv_relic_map={_BP833: _RI833}))
+            check(f"b833 die Kosten folgen der Wahl ({_mit:,.0f} statt "
+                  f"{_teuer:,.0f})", 0 < _mit < _teuer / 2)
+    finally:
+        try:
+            win._bd_lade_frei()      # emm746-Schloss nie zugelassen lassen
+        except Exception:
+            pass
+        store.get_snapshot = _alt833["snapshot"]
+        I.recipes_cached = _alt833["recipes"]
+        I.sde_ready = _alt833["sde"]
+        esi.market_prices = _alt833["mprices"]
+        esi.system_cost_indices = _alt833["sci"]
+        esi.resolve_names = _alt833["names"]
+        win._run = _alt833["run"]
+        win._show_build_detail = _alt833["show"]
+        for _k833, _s833 in (("bau_char_skills", "skills"),
+                             ("bau_invention_chars", "invchars")):
+            if _alt833[_s833] is None:
+                win.settings.pop(_k833, None)
+            else:
+                win.settings[_k833] = _alt833[_s833]
+        win._bd_invention_skills_map = _alt833["invmap"]
+        win._bd_relic_map = _alt833["relicmap"] or {}
+        win._bd_relic_bestaetigt = _alt833["bestaetigt"] or set()
+except Exception as _e833:                               # pragma: no cover
+    import traceback as _tb833
+    _fail.append(f"b833 open_build_detail: {type(_e833).__name__}: {_e833} | "
+                 + _tb833.format_exc().splitlines()[-3].strip())
+
+
+# ---------------------------------------------------------------- (b839)
+# DIE ZWEITE LUECKE DERSELBEN ART. b833 hat sie fuer `open_build_detail`
+# geschlossen - fuer `_reload_my_blueprints` stand sie noch offen, und
+# emm838 ist prompt hineingelaufen: alle vier Suiten waren gruen, beim
+# Nutzer lud die Seite trotzdem nicht. Nutzer dazu: "machst du eigentlich
+# keine Tests bevor du mir etwas abgiebst?"
+#
+# WAS HIER ANDERS IST ALS IN JEDER ANDEREN BLAUPAUSEN-PRUEFUNG: diese
+# faehrt den WORKER, nicht nur das fertige Ergebnis. Alles, was job()
+# baut (Preise, Jita-Vergleich, Region, Gewinnrechnung) und alles, was
+# done() daraus macht (Zellen, Spalten, Statuszeile), laeuft wirklich.
+try:
+    import eve_trader.store as _st839
+    import eve_trader.esi as _esi839
+    from eve_trader import industry as _I839
+
+    _alt839 = (_st839.get_snapshot, _st839.get_scan_region,
+               _st839.get_scan_source, _st839.get_scan_label,
+               _st839.list_characters, _esi839.fetch_blueprints,
+               _esi839.resolve_names, _I839.sde_ready, win._run)
+    _snap839 = [
+        {"type_id": 34317, "sell_min": 1200000.0, "buy_max": 900000.0,
+         "sell_qty": 40, "buy_qty": 10, "sell_orders": 3, "buy_orders": 2},
+        {"type_id": 12058, "sell_min": 640000.0, "buy_max": 500000.0,
+         "sell_qty": 2, "buy_qty": 1, "sell_orders": 1, "buy_orders": 1}]
+    _erg839 = {}
+
+    def _lauf839(worker, done_cb, fail_cb=None, **kw):
+        """Den Worker SYNCHRON fahren und BEIDE Ausgaenge festhalten.
+
+        Dass auch `fail` mitgeschrieben wird, ist der Kern: beim Nutzer
+        kam WEDER done NOCH fail an - die Seite hing auf "Loading". Eine
+        Pruefung, die nur done abfaengt, haette das nicht bemerkt.
+        """
+        if getattr(worker._fn, "__name__", "") != "job":
+            return
+        try:
+            _r = worker._fn(*worker._args, **worker._kwargs)
+        except Exception as _e:
+            _erg839["job_fehler"] = f"{type(_e).__name__}: {_e}"
+            return
+        _erg839["job_ok"] = True
+        try:
+            done_cb(_r)
+            _erg839["done_ok"] = True
+        except Exception as _e:
+            import traceback as _tb
+            _erg839["done_fehler"] = (f"{type(_e).__name__}: {_e} | "
+                                      + _tb.format_exc().splitlines()[-3].strip())
+
+    try:
+        _st839.get_snapshot = lambda *a, **k: list(_snap839)
+        _st839.get_scan_region = lambda *a, **k: 0          # Region UNBEKANNT
+        _st839.get_scan_source = lambda *a, **k: "struct:999"
+        _st839.get_scan_label = lambda *a, **k: "RD-G2R"
+        _st839.list_characters = lambda *a, **k: [
+            {"character_id": 1, "character_name": "Pruef", "name": "Pruef",
+             "scopes": "esi-characters.read_blueprints.v1"}]
+        _esi839.fetch_blueprints = lambda *a, **k: [
+            {"item_id": 1, "type_id": 34317, "location_id": 60003760,
+             "quantity": -1, "material_efficiency": 10, "time_efficiency": 20,
+             "runs": -1, "is_bpo": True}]
+        _esi839.resolve_names = lambda ids, *a, **k: {
+            int(i): f"Item {i}" for i in ids}
+        _I839.sde_ready = lambda *a, **k: True
+        win._run = _lauf839
+        win._reload_my_blueprints(overlay=False)
+        _app.processEvents()
+    finally:
+        (_st839.get_snapshot, _st839.get_scan_region, _st839.get_scan_source,
+         _st839.get_scan_label, _st839.list_characters,
+         _esi839.fetch_blueprints, _esi839.resolve_names,
+         _I839.sde_ready, win._run) = _alt839
+
+    # (1) DER WORKER LAEUFT UEBERHAUPT DURCH.
+    check(f"b839 der Blaupausen-Worker laeuft durch "
+          f"({_erg839.get('job_fehler', 'ohne Fehler')})",
+          _erg839.get("job_ok") is True)
+    check(f"b839 und die Anzeige baut sich daraus auf "
+          f"({_erg839.get('done_fehler', 'ohne Fehler')})",
+          _erg839.get("done_ok") is True)
+    # (2) DIE SEITE HAENGT NICHT. Genau das war der Befund: "Loading
+    # blueprints ..." blieb stehen, weil weder done noch fail kam.
+    _stat839 = win.bp_status.text() if hasattr(win, "bp_status") else ""
+    check(f"b839 die Statuszeile haengt nicht auf 'Loading' ({_stat839[:60]})",
+          "Loading blueprints" not in _stat839)
+    check("b839 der Knopf ist hinterher wieder bedienbar",
+          win.bp_refresh_btn.isEnabled())
+    # (3) UND DAS, WOFUER emm838 GEBAUT WURDE, steht wirklich da.
+    check("b839 die Jita-Spalte existiert",
+          win.bp_table.columnCount() == 23
+          and win.bp_table.horizontalHeaderItem(22).text() == _t4("Jita sell"))
+except Exception as _e839:                               # pragma: no cover
+    import traceback as _tb839
+    _fail.append(f"b839 Blaupausen-Ladeweg: {type(_e839).__name__}: {_e839} | "
+                 + _tb839.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b840)
+# DAS ORDERBUCH-FENSTER MIT MEHREREN EINKAUFS-HUBS - am echten Dialog,
+# nicht am Quelltext.
+#
+# WARUM DIESE PRUEFUNG SO AUSSIEHT: zu emm839 standen zuerst zwei
+# Quelltext-Anker in aa839 ("nimmt die Buecher des Plans"). Beide fielen
+# BLIND, und zwar aus demselben Grund wie schon dreimal in dieser
+# Sitzungsreihe: die Mutation liess den Code STEHEN und machte ihn nur
+# unerreichbar (`if _mh_spalten:` -> `if False:`). Eine Textsuche kann
+# das nicht sehen. Hier wird deshalb der Dialog wirklich geoeffnet und
+# gezaehlt, was in ihm steht.
+try:
+    _mh_alt840 = (getattr(win, "_bd_multi_hub_an", None),
+                  getattr(win, "_bd_buy_hub_fracht", None),
+                  getattr(win, "_bd_mh_stand", None))
+    _dlg840 = None
+    try:
+        # Zwei Kauf-Hubs vortaeuschen, mitsamt gescanntem Orderbuch -
+        # genau die Lage, in der das Fenster bisher den falschen Hub
+        # geprueft hat.
+        win._bd_multi_hub_an = True
+        win._bd_buy_hub_locs = lambda: [("jita", {"label": "Jita"}),
+                                        ("amarr", {"label": "Amarr"})]
+        win._bd_buy_hub_fracht = {"jita": 0.0, "amarr": 0.0}
+        # EIN BUCH, DAS JEDES MATERIAL KENNT. Erst stand hier eine feste
+        # Item-Nummer - und die kaufte der Plan gar nicht, also blieb die
+        # Aufteilung leer und die Pruefung sagte nichts aus. Dieses Buch
+        # antwortet auf JEDE Anfrage, deshalb trifft es immer die Items,
+        # die der Plan wirklich braucht.
+        # Amarr ist billiger (4,0), hat aber nur 400 Stueck - was darueber
+        # hinausgeht, muss aus Jita kommen. Genau so entsteht eine
+        # Aufteilung ueber zwei Hubs.
+        class _Buch840(dict):
+            def __init__(self, preis, menge):
+                # DER EINTRAG MUSS DA SEIN, auch wenn `get` ihn gar nicht
+                # braucht: `multihub_leiter` schreibt `(_book or {})`, und
+                # ein LEERES dict ist falsy - es wuerde durch ein leeres
+                # ersetzt, und die Aufteilung bliebe stumm leer. Genau
+                # darauf bin ich hier hereingefallen.
+                super().__init__({0: [(float(preis), int(menge))]})
+                self._o = [(float(preis), int(menge))]
+
+            def get(self, _k, _d=None):
+                return list(self._o)
+
+        win._bd_multihub_books = lambda: {"jita": _Buch840(5.0, 100000),
+                                          "amarr": _Buch840(4.0, 400)}
+        _offen840 = set(_app.topLevelWidgets())
+        win.open_ladder_check()
+        _app.processEvents()
+        _neu840 = [w for w in _app.topLevelWidgets()
+                   if w not in _offen840 and w.isVisible()]
+        _dlg840 = _neu840[-1] if _neu840 else None
+        check("b840 das Orderbuch-Fenster oeffnet sich", _dlg840 is not None)
+        if _dlg840 is not None:
+            from PySide6.QtWidgets import QTableWidget as _QTW840, QLabel as _QL840
+            _tbls840 = _dlg840.findChildren(_QTW840)
+            _tbl840 = _tbls840[0] if _tbls840 else None
+            check("b840 es hat eine Tabelle", _tbl840 is not None)
+            if _tbl840 is not None:
+                # VIER GRUNDSPALTEN + EINE JE HUB. Das ist der Punkt, den
+                # die blinden Quelltext-Anker nicht treffen konnten.
+                check(f"b840 zwei Kauf-Hubs ergeben sechs Spalten "
+                      f"(sind {_tbl840.columnCount()})",
+                      _tbl840.columnCount() == 6)
+                _kopf840 = [_tbl840.horizontalHeaderItem(_i).text()
+                            for _i in range(_tbl840.columnCount())
+                            if _tbl840.horizontalHeaderItem(_i)]
+                check(f"b840 die Hub-Namen stehen im Kopf ({_kopf840})",
+                      "Jita" in _kopf840 and "Amarr" in _kopf840)
+                # Und sie stehen ZWISCHEN Menge und Markup - sonst waere
+                # die Zuordnung der Zellen verschoben.
+                check("b840 die Hub-Spalten stehen an Position 2 und 3",
+                      _kopf840.index("Jita") == 2 and _kopf840.index("Amarr") == 3)
+            # DER KOPF SAGT, DASS ES MEHRERE SIND - ohne das haelt man das
+            # Ergebnis fuer eine Pruefung gegen den Hub der Kopfleiste.
+            _lbls840 = " | ".join(_l.text() for _l in _dlg840.findChildren(_QL840)
+                                  if _l.text())
+            check("b840 der Kopf nennt beide Hubs",
+                  "Jita" in _lbls840 and "Amarr" in _lbls840)
+            check("b840 und sagt, dass die Preise aus dem Hub-Scan stammen",
+                  "hub scan" in _lbls840 or "Hub-Scan" in _lbls840)
+
+            # ---- UND JETZT WIRKLICH RECHNEN LASSEN ----
+            # OHNE DIESEN TEIL WAR DIE PRUEFUNG WERTLOS, und das ist
+            # gemessen: die Rotprobe "Das Orderbuch-Fenster ignoriert die
+            # Hubs des Plans wieder" blieb GRUEN, weil sie die BERECHNUNG
+            # im Worker lahmlegt - der Dialogaufbau oben merkt davon
+            # nichts. Erst wer den Worker fahren laesst und in die Zellen
+            # schaut, sieht den Unterschied.
+            from PySide6.QtWidgets import QPushButton as _QPB840
+            _erg840 = {}
+
+            def _lauf840(worker, done_cb, fail_cb=None, **kw):
+                if getattr(worker._fn, "__name__", "") != "job":
+                    return
+                try:
+                    _r = worker._fn(*worker._args, **worker._kwargs)
+                except Exception as _e:
+                    _erg840["job_fehler"] = f"{type(_e).__name__}: {_e}"
+                    return
+                _erg840["r"] = _r
+                try:
+                    done_cb(_r)
+                    _erg840["done_ok"] = True
+                except Exception as _e:
+                    import traceback as _tb
+                    _erg840["done_fehler"] = (
+                        f"{type(_e).__name__}: {_e} | "
+                        + _tb.format_exc().splitlines()[-3].strip())
+
+            _run_alt840 = win._run
+            try:
+                win._run = _lauf840
+                for _b840 in _dlg840.findChildren(_QPB840):
+                    if _b840.text() and "alc" in _b840.text():   # Calculate
+                        _b840.click()
+                        break
+                _app.processEvents()
+            finally:
+                win._run = _run_alt840
+            check(f"b840 die Berechnung laeuft durch "
+                  f"({_erg840.get('job_fehler') or _erg840.get('done_fehler') or 'ok'})",
+                  _erg840.get("done_ok") is True)
+            # DIE AUFTEILUNG MUSS WIRKLICH ENTSTANDEN SEIN. Genau hier
+            # greift die Mutation, gegen die der Dialogaufbau blind war.
+            _split840 = (_erg840.get("r") or {}).get("mh_split") or {}
+            _buy840 = (_erg840.get("r") or {}).get("buy") or {}
+            check(f"b840 die Hub-Aufteilung wird berechnet "
+                  f"({len(_split840)} von {len(_buy840)} Kaufposten)",
+                  bool(_split840))
+            if _split840 and _tbl840 is not None and _tbl840.rowCount():
+                # In mindestens einer Hub-Spalte muss eine Stueckzahl
+                # stehen - ein Strich ueberall hiesse "von nirgends".
+                _zahlen840 = []
+                for _r840 in range(_tbl840.rowCount()):
+                    for _c840 in (2, 3):
+                        _it840 = _tbl840.item(_r840, _c840)
+                        if _it840 and _it840.text() not in ("", "\u2013"):
+                            _zahlen840.append(_it840.text())
+                check(f"b840 in den Hub-Spalten stehen Stueckzahlen "
+                      f"({_zahlen840[:4]})", bool(_zahlen840))
+                # MARKUP UND STATUS MUESSEN HINTER DEN HUB-SPALTEN
+                # LANDEN. Beim ersten Praxislauf waren genau diese beiden
+                # Spalten LEER - die Hub-Zellen standen richtig, der Rest
+                # fehlte. Ohne diese Pruefung faellt so etwas erst dem
+                # Nutzer auf.
+                _mk840 = [_tbl840.item(_r, 4) for _r in range(_tbl840.rowCount())]
+                _st840 = [_tbl840.item(_r, 5) for _r in range(_tbl840.rowCount())]
+                check(f"b840 die Markup-Spalte ist gefuellt "
+                      f"({[i.text() for i in _mk840[:3] if i]})",
+                      any(i is not None and i.text() for i in _mk840))
+                check(f"b840 die Status-Spalte ist gefuellt "
+                      f"({[i.text() for i in _st840[:3] if i]})",
+                      any(i is not None and i.text() for i in _st840))
+                # SIND SIE AUCH ZU SEHEN? (emm840) Der Nutzer meldete
+                # "keine farben werden angezeigt" fuer genau diese zwei
+                # Spalten, obwohl die Zellen - siehe oben - gefuellt sind.
+                # Die einzige Erklaerung, die zum Bild passt: bei
+                # Multi-Hub waechst die Tabelle um zwei Spalten, Spalte 0
+                # steht auf Stretch, und die letzten beiden rutschen aus
+                # dem Sichtfeld. GEMESSEN wird daher, ob das rechte Ende
+                # der Status-Spalte noch in den Viewport passt.
+                _hh840 = _tbl840.horizontalHeader()
+                _breite840 = _tbl840.viewport().width()
+                _rechts840 = (_hh840.sectionPosition(_tbl840.columnCount() - 1)
+                              + _hh840.sectionSize(_tbl840.columnCount() - 1))
+                check(f"b840 die letzten beiden Spalten passen ins Sichtfeld "
+                      f"(Ende {_rechts840} px, Viewport {_breite840} px)",
+                      _rechts840 <= _breite840 + 1)
+                # DER UEBERNAHME-KNOPF (emm840): er ersetzt den
+                # entfernten Menueeintrag und darf erst freigeschaltet
+                # sein, WENN es etwas zu uebernehmen gibt. Gemessen am
+                # Knopf selbst - ein Anker auf `setEnabled(True)` saehe
+                # nicht, ob die Zeile je erreicht wird.
+                _ub840 = next((_b for _b in _dlg840.findChildren(_QPB840)
+                               if (_b.text() or "").strip() in
+                               ("Apply prices to the plan",
+                                "Preise in den Plan \u00fcbernehmen")), None)
+                check("b840 der Uebernahme-Knopf ist da", _ub840 is not None)
+                if _ub840 is not None:
+                    check(f"b840 und nach dem Rechnen freigeschaltet "
+                          f"({_ub840.isEnabled()})", _ub840.isEnabled())
+                # UND ER IST VERDRAHTET - GEKLICKT, NICHT GELESEN. Die
+                # Rotprobe "Knopf nicht verdrahtet" waere gegen alles
+                # Bisherige BLIND gewesen: b144 ruft die Funktion direkt,
+                # die Knopf-Pruefungen oben lesen nur Text und Zustand.
+                # Ein Knopf, dessen connect fehlt, sieht genauso aus und
+                # tut nichts. Der Klick steht ABSICHTLICH ZULETZT im
+                # Orderbuch-Teil: er schliesst das Fenster.
+                if _ub840 is not None and _ub840.isEnabled():
+                    _lr_alt840 = win._bd_ladder_refresh
+                    _gerufen840 = []
+                    win._bd_ladder_refresh = (
+                        lambda *a, **k: _gerufen840.append(1))
+                    try:
+                        _ub840.click(); _app.processEvents()
+                    finally:
+                        win._bd_ladder_refresh = _lr_alt840
+                    check(f"b840 der Klick ruft die EINE Uebernahme-Funktion "
+                          f"und schliesst das Fenster ({len(_gerufen840)}, "
+                          f"offen={_dlg840.isVisible()})",
+                          len(_gerufen840) == 1 and not _dlg840.isVisible())
+
+        # ---- DERSELBE TEST FUER DEN OPTIMIERER ----
+        # Er hatte denselben Fehler und braucht denselben Beweis. Eine
+        # Quelltext-Pruefung reicht auch hier nicht: die Mutation macht
+        # den Multi-Hub-Zweig nur unerreichbar.
+        _offen841 = set(_app.topLevelWidgets())
+        _erg841 = {}
+
+        def _lauf841(worker, done_cb, fail_cb=None, **kw):
+            if getattr(worker._fn, "__name__", "") != "job":
+                return
+            try:
+                _erg841["r"] = worker._fn(*worker._args, **worker._kwargs)
+                _erg841["ok"] = True
+            except Exception as _e:
+                _erg841["fehler"] = f"{type(_e).__name__}: {_e}"
+
+        _dlg841 = None
+        _run_alt841 = win._run
+        try:
+            win.open_optimizer()
+            _app.processEvents()
+            _neu841 = [w for w in _app.topLevelWidgets()
+                       if w not in _offen841 and w.isVisible()]
+            _dlg841 = _neu841[-1] if _neu841 else None
+            check("b840 das Optimierer-Fenster oeffnet sich",
+                  _dlg841 is not None)
+            if _dlg841 is not None:
+                from PySide6.QtWidgets import QPushButton as _QPB841
+                win._run = _lauf841
+                for _b841 in _dlg841.findChildren(_QPB841):
+                    if _b841.text() and "alc" in _b841.text():
+                        _b841.click()
+                        break
+                _app.processEvents()
+        finally:
+            win._run = _run_alt841
+            try:
+                if _dlg841 is not None:
+                    _dlg841.close()
+            except Exception:
+                pass
+            _app.processEvents()
+        check(f"b840 der Optimierer rechnet durch "
+              f"({_erg841.get('fehler', 'ok')})", _erg841.get("ok") is True)
+        # DER BEWEIS: die Kostenkurve muss die Leiter UEBER BEIDE HUBS
+        # benutzt haben. Amarr hat 400 Stueck zu 4,0, danach kommt Jita
+        # zu 5,0 - ein Einzel-Hub-Abruf haette diese Mischung nie.
+        _kurve841 = (_erg841.get("r") or {}).get("curve") or []
+        _preise841 = set()
+        for _p841 in _kurve841:
+            for _obs in (_p841.get("_orderbooks") or {}).values():
+                for _pr, _m in (_obs or []):
+                    _preise841.add(round(float(_pr), 1))
+        check(f"b840 der Optimierer rechnet mit beiden Hub-Preisen "
+              f"({sorted(_preise841)[:6]})",
+              4.0 in _preise841 and 5.0 in _preise841)
+    finally:
+        try:
+            if _dlg840 is not None:
+                _dlg840.close()
+        except Exception:
+            pass
+        for _n840, _v840 in zip(("_bd_multi_hub_an", "_bd_buy_hub_fracht",
+                                 "_bd_mh_stand"), _mh_alt840):
+            if _v840 is None:
+                try:
+                    delattr(win, _n840)
+                except Exception:
+                    pass
+            else:
+                setattr(win, _n840, _v840)
+        for _n840 in ("_bd_buy_hub_locs", "_bd_multihub_books"):
+            try:
+                delattr(win, _n840)      # die Klassenmethode wieder freilegen
+            except Exception:
+                pass
+        _app.processEvents()
+except Exception as _e840:                               # pragma: no cover
+    import traceback as _tb840
+    _fail.append(f"b840 Orderbuch-Fenster Multi-Hub: {type(_e840).__name__}: "
+                 f"{_e840} | " + _tb840.format_exc().splitlines()[-3].strip())
+
+# ---------------------------------------------------------------- (b884)
+# ERLEDIGTE ORDERS STEHEN IMMER UNTEN (emm884). Der Melder wollte sie
+# ausdruecklich "on the bottom of the page". Hier wird das am LEBENDEN
+# Fenster geprueft, mit der echten Sortierfunktion - inklusive des
+# Falls, der am ehesten bricht: ein Kopf-Klick auf eine Spalte. Wuerden
+# die erledigten Zeilen dann dazwischenrutschen, liefe "Next" auf eine
+# Order zu, die es nicht mehr gibt.
+try:
+    def _z884(name, flag=False, loss=False, mine=0.0, erl=None):
+        return {"name": name, "tid": 34, "flag": flag, "loss": loss,
+                "mine": mine, "best": 0.0, "newp": 0.0, "mod_count": 0,
+                "erledigt884": erl}
+
+    _reihen884 = [
+        _z884("Charlie fertig", erl={"art": "erfuellt", "alter_s": 0.0}),
+        _z884("Alpha offen", flag=True, mine=30.0),
+        _z884("Delta fertig", erl={"art": "abgelaufen",
+                                   "alter_s": 3 * 86400.0}),
+        _z884("Bravo top", mine=20.0),
+        _z884("Echo verlust", flag=True, loss=True, mine=10.0),
+    ]
+    win._ord_sort = {}
+    _namen884 = [r["name"] for r in win._ord_zeilen_sortiert(_reihen884, True)]
+    check(f"b884 ohne Kopf-Klick: erledigte ganz unten ({_namen884})",
+          _namen884[-2:] == ["Charlie fertig", "Delta fertig"])
+    # Die bestehende Ordnung (unveraendert seit emm735): zuerst die
+    # nachzubessernden, darin die Verlust-Zeilen hinten, danach alles
+    # ohne Flagge. "Echo verlust" steht damit VOR "Bravo top" - es ist
+    # eine Order, an der etwas zu tun waere, nur lohnt es nicht.
+    check("b884 ... und die lebenden davor in ihrer gewohnten Ordnung",
+          _namen884[:3] == ["Alpha offen", "Echo verlust", "Bravo top"])
+    check("b884 das Neueste der erledigten steht oben",
+          _namen884.index("Charlie fertig") < _namen884.index("Delta fertig"))
+
+    # DER KRITISCHE FALL: Kopf-Klick auf "Your order" (Spalte 1).
+    win._ord_sort = {"buy": (1, True)}
+    _nam2884 = [r["name"] for r in win._ord_zeilen_sortiert(_reihen884, True)]
+    check(f"b884 auch nach einem Kopf-Klick bleiben sie unten ({_nam2884})",
+          set(_nam2884[-2:]) == {"Charlie fertig", "Delta fertig"})
+    check("b884 ... und die lebenden sind nach 'Your order' sortiert, "
+          "aufsteigend 10/20/30",
+          _nam2884[:3] == ["Echo verlust", "Bravo top", "Alpha offen"])
+    win._ord_sort = {}
+
+    # "NEXT" DARF SIE NIE ANSTEUERN - sie haben flag=False, und genau
+    # danach filtert der Work-through-Modus.
+    check("b884 keine erledigte Zeile traegt flag - 'Next' sieht sie nicht",
+          not any(r["flag"] for r in _reihen884 if r.get("erledigt884")))
+
+    # Die Einstellung sitzt im Tab-Kopf und ist bedienbar.
+    check("b884 das Feld fuer die Dauer existiert, mit 0..60 Tagen",
+          hasattr(win, "_ord_erl_spin")
+          and win._ord_erl_spin.minimum() == 0
+          and win._ord_erl_spin.maximum() == 60)
+    check("b884 es hat einen erklaerenden Hinweis (keine nackte Zahl)",
+          len(win._ord_erl_spin.toolTip()) > 80)
+except Exception as _e884b:                              # pragma: no cover
+    _fail.append(f"b884 erledigte Orders unten: "
+                 f"{type(_e884b).__name__}: {_e884b}")
+
+# ---------------------------------------------------------------- (b886)
+# FIRESALES HAT EINE ECHTE LEISTE (emm886). Der Quelltext-Anker in aa886
+# sagt, dass die Funktion aufgerufen wird - hier wird am LEBENDEN Fenster
+# nachgesehen, dass die Leiste wirklich dort haengt und der Scan-Knopf
+# darin sitzt. Genau das war die Luecke, an der ein Aufbau frueher still
+# scheitern konnte.
+try:
+    from PySide6.QtWidgets import QFrame as _QF886
+    _fs886 = win._tab_widget.get("firesales")
+    check("b886 der Firesales-Reiter existiert", _fs886 is not None)
+    _rails886 = [f for f in _fs886.findChildren(_QF886)
+                 if f.property("rolle") == "rail"]
+    check(f"b886 er hat genau EINE Werkzeugleiste ({len(_rails886)})",
+          len(_rails886) == 1)
+    check("b886 der Scan-Knopf steckt in dieser Leiste, nicht in der "
+          "Kopfzeile",
+          bool(_rails886) and win.fs_go in _rails886[0].findChildren(
+              type(win.fs_go)))
+    # DIESELBE GRAMMATIK WIE NEBENAN: auch Regional hat genau eine.
+    _rg886 = win._tab_widget.get("region")
+    _rr886 = [f for f in _rg886.findChildren(_QF886)
+              if f.property("rolle") == "rail"] if _rg886 else []
+    check(f"b886 Regional Trading hat ebenso genau eine ({len(_rr886)})",
+          len(_rr886) == 1)
+    check("b886 beide Leisten sind gleich breit gebaut (gemessen, nicht "
+          f"geraten: {_rails886[0].width()} / {_rr886[0].width()})",
+          bool(_rails886) and bool(_rr886)
+          and _rails886[0].width() > 0 and _rr886[0].width() > 0)
+except Exception as _e886b:                              # pragma: no cover
+    _fail.append(f"b886 Firesales-Leiste: {type(_e886b).__name__}: {_e886b}")
+
+# ---------------------------------------------------------------- (b890)
+# DIE BREITEN WERDEN GEMESSEN, NICHT BEHAUPTET (emm890). Nutzer
+# 10.11.2026: "Achte auf eine gleichmaessige Breite der beiden Karten.
+# Achte darauf das nichts abgeschnitten wirkt." Beides laesst sich im
+# Quelltext nicht ablesen - nur am gebauten Fenster.
+try:
+    from PySide6.QtWidgets import QFrame as _QF890
+    win._go_tab("settings")
+    for _ in range(4):
+        _app.processEvents()
+    _seite890 = win._settings_w
+    _karten890 = [f for f in _seite890.findChildren(_QF890)
+                  if f.property("rolle") == "einst-karte"]
+    check(f"b890 es gibt vier Einstellungs-Karten ({len(_karten890)})",
+          len(_karten890) == 4)
+    _breiten890 = sorted({k.sizeHint().width() for k in _karten890})
+    # GLEICHE BREITE heisst: keine Karte verlangt mehr Platz als die
+    # Spalte hergibt. Vorher brauchte die Industrie-Karte 865 px und die
+    # Handels-Karte 456 - die Folge war ein Querbalken.
+    check(f"b890 keine Karte verlangt mehr als 620 px ({_breiten890})",
+          bool(_breiten890) and max(_breiten890) <= 620)
+    check("b890 die Karten liegen eng beieinander - keine sprengt die "
+          f"Spalte ({max(_breiten890) - min(_breiten890)} px Unterschied)",
+          max(_breiten890) - min(_breiten890) <= 200)
+    # NICHTS ABGESCHNITTEN: die ganze Seite darf nicht breiter sein als
+    # das Fenster, sonst steht unten ein Querbalken.
+    check(f"b890 die Seite passt ins Fenster ohne Querbalken "
+          f"({_seite890.sizeHint().width()} noetig, {win.width()} da)",
+          _seite890.sizeHint().width() <= win.width())
+    # ALLE SIEBEN HANGARS SICHTBAR - der siebte war abgeschnitten.
+    check(f"b890 alle sieben Corp-Hangars sind da ({len(win.s_corp_divs)})",
+          len(win.s_corp_divs) == 7)
+    # SEIT emm917 (14.11.2026) STEHEN DIE HANGARS UEBER DIE GANZE KARTE
+    # (Beschriftung darueber), nicht mehr in der schmalen Feldspalte. Die
+    # Zusage ist darum: die Reihe macht ihre Karte nicht breiter als die
+    # schmalste Nachbarkarte (Kartenraender 2 x 16 px). Die alte feste
+    # Grenze 340 px galt der Feldspalte - unter Windows (410 px) immer rot.
+    check(f"b890 ... und ihre Reihe bleibt schmal "
+          f"({win._corp_div_row.sizeHint().width()} px, schmalste Karte "
+          f"{min(_breiten890)} px)",
+          win._corp_div_row.sizeHint().width() + 32 <= min(_breiten890))
+    # KEIN QUERBALKEN AUF EINEM NOTEBOOK (emm917). GEMESSEN an der echten
+    # Bildlaufleiste, nicht am sizeHint der Seite: die Pruefung oben
+    # ("Seite passt ins Fenster") blieb gruen, waehrend unter Windows ein
+    # Querbalken von 530 px stand - die Scroll-Flaeche meldet als Hint
+    # nicht die Breite ihres Inhalts. 1366 px ist die Notebook-Untergrenze
+    # (b19).
+    from PySide6.QtWidgets import QScrollArea as _QSA917
+    _sa917, _p917 = None, _seite890
+    while _p917 is not None and _sa917 is None:
+        if isinstance(_p917, _QSA917):
+            _sa917 = _p917
+        _p917 = _p917.parentWidget()
+    _alt917 = win.size()
+    try:
+        win.resize(1366, 768)
+        for _ in range(3):
+            _app.processEvents()
+        _hq917 = (_sa917.horizontalScrollBar().maximum()
+                  if _sa917 is not None else None)
+        check(f"b917 Einstellungen bei 1366 px ohne Querbalken "
+              f"(Ueberstand {_hq917} px)",
+              _sa917 is not None and _hq917 == 0)
+    finally:
+        win.resize(_alt917)
+        _app.processEvents()
+    # DIE CLIENT-ID IST GANZ ZU (emm891). Dass sie wirklich verdeckt ist
+    # und sich nicht uebertippen laesst, steht nur am gebauten Feld.
+    from PySide6.QtWidgets import QLineEdit as _QLE891
+    check("b890 die Client-ID laesst sich nicht einfach uebertippen",
+          win.s_client.isReadOnly())
+    check("b891 ... sie steht verdeckt da",
+          win.s_client.echoMode() == _QLE891.Password)
+    check("b891 ... und zwar als Sterne",
+          "lineedit-password-character: 42" in win.s_client.styleSheet())
+    check("b891 es gibt keinen Entsperr-Knopf mehr",
+          not hasattr(win, "s_client_btn"))
+    # DER WERT IST DA, nur nicht sichtbar - sonst wuerde Speichern ihn
+    # mit einer leeren Zeichenkette ueberschreiben.
+    # MIT EINEM ECHTEN WERT GEPRUEFT: beim ersten Anlauf verglich der
+    # Test nur Feld gegen Einstellung, und in der Testumgebung ist
+    # `client_id` leer - "" == "" blieb auch dann gruen, wenn das Feld
+    # gar nichts mehr aus den Einstellungen holt (von der Rotprobe als
+    # BLIND gefangen). Jetzt wird ein Wert eingespielt.
+    _cid891 = win.settings.get("client_id", "")
+    win.settings["client_id"] = "PROBE-ID-891"
+    win.s_client.setText("")
+    win._einstellungen_felder_zuruecksetzen()
+    check(f"b891 der Wert kommt aus den Einstellungen ins Feld "
+          f"({win.s_client.text()!r})",
+          win.s_client.text() == "PROBE-ID-891")
+    check("b891 ... und bleibt dabei verdeckt",
+          win.s_client.echoMode() == _QLE891.Password)
+    win.settings["client_id"] = _cid891
+    win._einstellungen_felder_zuruecksetzen()
+    win._einstellungen_stand_merken()
+    # (emm889) DIE RUECKFRAGE KENNT JETZT AUCH DIE FARBWELT.
+    win._einstellungen_stand_merken()
+    check("b889 frisch gemerkt: nichts offen", not win._einstellungen_offen())
+    _th889 = win.s_theme.currentIndex()
+    win.s_theme.setCurrentIndex(1 if _th889 == 0 else 0)
+    check("b889 Farbwelt geaendert -> die Rueckfrage wuerde kommen",
+          win._einstellungen_offen())
+    win.s_theme.setCurrentIndex(_th889)
+    check("b889 zurueckgestellt -> wieder nichts offen",
+          not win._einstellungen_offen())
+    _sk889 = win.s_scale.currentIndex()
+    win.s_scale.setCurrentIndex(1 if _sk889 == 0 else 0)
+    check("b889 dasselbe fuer die Oberflaechen-Groesse",
+          win._einstellungen_offen())
+    win.s_scale.setCurrentIndex(_sk889)
+    win._einstellungen_stand_merken()
+except Exception as _e890b:                              # pragma: no cover
+    _fail.append(f"b890 Einstellungen gemessen: "
+                 f"{type(_e890b).__name__}: {_e890b}")
+
+# ---------------------------------------------------------------- (b894)
+# DIE MARKTSTATISTIK WIRD MIT ECHTEN ZEILEN GEFUELLT (emm894). Dass die
+# Abfragen laufen und die Tabelle die richtige Zahl Zeilen bekommt, steht
+# in keinem Quelltext - nur am gebauten Fenster mit Daten dahinter.
+try:
+    from eve_trader import store as _st894b
+    # EIGENE PHANTASIE-REGIONEN (99000001/2) statt Jita und Amarr: die
+    # Testdatenbank traegt echte Historie, gegen die sich keine feste
+    # Zahl pruefen laesst. Beim ersten Anlauf erwartete dieser Test 2
+    # Items und bekam 204 - die eigenen Zeilen lagen nur obendrauf.
+    _R894A, _R894B = 99000001, 99000002
+    _h894 = [
+        # (type_id, region, date, average, highest, lowest, volume, orders)
+        (34, _R894A, "2099-01-01", 10.0, 11.0, 9.0, 1000, 5),
+        (34, _R894A, "2099-01-02", 12.0, 13.0, 11.0, 2000, 7),
+        (35, _R894A, "2099-01-02", 20.0, 21.0, 19.0, 500, 3),
+        (34, _R894B, "2099-01-02", 10.0, 11.0, 9.0, 100, 2),
+        # Tag OHNE Handel: darf weder Tage noch Items hochzaehlen.
+        (36, _R894B, "2099-01-03", 5.0, 5.0, 5.0, 0, 0),
+    ]
+    with _st894b._conn() as _c894:
+        _c894.executemany(
+            "INSERT OR REPLACE INTO history (type_id, region, date, average,"
+            " highest, lowest, volume, order_count) VALUES (?,?,?,?,?,?,?,?)",
+            _h894)
+    # Das Testdatum liegt 2099 - mit einem grossen Fenster faellt es rein.
+    _erg894 = {r["region"]: r
+               for r in _st894b.markt_statistik(tage=365 * 100)}
+    _j894 = _erg894.get(_R894A) or {}
+    check(f"b894 ISK = Volumen x Schnitt ({_j894.get('isk')})",
+          abs(float(_j894.get("isk") or 0)
+              - (1000 * 10.0 + 2000 * 12.0 + 500 * 20.0)) < 0.01)
+    check(f"b894 ... Stueck summiert ({_j894.get('volumen')})",
+          _j894.get("volumen") == 3500)
+    check(f"b894 ... zwei verschiedene Items ({_j894.get('items')})",
+          _j894.get("items") == 2)
+    check(f"b894 ... zwei Handelstage ({_j894.get('tage')})",
+          _j894.get("tage") == 2)
+    _a894 = _erg894.get(_R894B) or {}
+    check(f"b894 der Null-Tag zaehlt NICHT mit "
+          f"({_a894.get('items')} Items, {_a894.get('tage')} Tage)",
+          _a894.get("items") == 1 and _a894.get("tage") == 1)
+    # RANKING NACH ISK: Region A (34'000) vor Region B (1'000).
+    _rang894 = [r["region"] for r in _st894b.markt_statistik(tage=365 * 100)]
+    check(f"b894 das Ranking steht nach ISK "
+          f"(A auf {_rang894.index(_R894A)}, B auf "
+          f"{_rang894.index(_R894B)})",
+          _rang894.index(_R894A) < _rang894.index(_R894B))
+    # DIE TABELLE BEKOMMT GENAU DIESE ZEILEN.
+    win._go_tab("mstats")
+    for _ in range(4):
+        _app.processEvents()
+    win.MSTATS_TAGE = 365 * 100
+    # DIREKT ZEICHNEN STATT UEBER `_mstats_fuellen` (emm895): das
+    # startet seit dem Hintergrund-Umbau einen Worker, und der belegt
+    # den Ladeschirm - der naechste Test (b888) fand ihn dann besetzt
+    # vor und fiel um. Hier geht es ums Zeichnen, nicht ums Holen; das
+    # Holen prueft aa895 am Quelltext.
+    win._mstats_zeichnen(_st894b.list_favorites(),
+                         _st894b.markt_statistik(365 * 100),
+                         _st894b.snapshot_statistik())
+    _app.processEvents()
+    # KARTEN STATT TABELLE (emm896): gezaehlt werden jetzt die Karten
+    # im Layout, nicht Tabellenzeilen. Der Stretch am Ende zaehlt nicht
+    # mit - `count()` sieht ihn, `itemAt(i).widget()` gibt dafuer None.
+    _karten896 = [win.ms_karten.itemAt(_i).widget()
+                  for _i in range(win.ms_karten.count())]
+    _karten896 = [_w for _w in _karten896 if _w is not None]
+    check(f"b894 jede Region bekommt eine Karte ({len(_karten896)} "
+          f"Karten, {len(_erg894)} Regionen)",
+          len(_karten896) >= len(_erg894))
+    # DIE KARTE TRAEGT NAME UND ISK - ohne das waere sie nur ein Kasten.
+    from PySide6.QtWidgets import QLabel as _QL896
+    _texte896 = [_l.text() for _k in _karten896
+                 for _l in _k.findChildren(_QL896)]
+    check("b896 die ISK stehen kurz auf der Karte",
+          any(_t.endswith(" ISK") and ("T " in _t or "B " in _t
+                                       or "m " in _t or "k " in _t)
+              for _t in _texte896))
+    # DER BALKEN IST EIN WIDGET MIT ZWEI FLAECHEN, keine Zeichenkette.
+    # GESUCHT WIRD DIE FESTE HOEHE, nicht die gemessene: `height()` ist
+    # vor dem ersten Layout-Durchlauf noch der Qt-Standard, und der
+    # erste Anlauf fand deshalb 0 von 3 Balken.
+    from PySide6.QtWidgets import QFrame as _QF896
+    _bal896 = [_k for _k in _karten896
+               for _b in _k.findChildren(QWidget)
+               if _b.minimumHeight() == 8 and _b.maximumHeight() == 8
+               and len(_b.findChildren(_QF896)) >= 2]
+    check(f"b896 jede Karte hat einen gezeichneten Balken "
+          f"({len(_bal896)} von {len(_karten896)})",
+          len(_bal896) >= 1)
+    # ZWEIMAL ZEICHNEN DARF NICHT VERDOPPELN.
+    win._mstats_zeichnen(_st894b.list_favorites(),
+                         _st894b.markt_statistik(365 * 100),
+                         _st894b.snapshot_statistik())
+    _app.processEvents()
+    _k2_896 = len([_i for _i in range(win.ms_karten.count())
+                   if win.ms_karten.itemAt(_i).widget() is not None])
+    check(f"b896 zweimal zeichnen verdoppelt nichts "
+          f"({len(_karten896)} dann {_k2_896})",
+          _k2_896 == len(_karten896))
+    with _st894b._conn() as _c894:
+        _c894.execute("DELETE FROM history WHERE date LIKE '2099-%'")
+except Exception as _e894b:                              # pragma: no cover
+    _fail.append(f"b894 Marktstatistik gemessen: "
+                 f"{type(_e894b).__name__}: {_e894b}")
+
+# ---------------------------------------------------------------- (b888)
+# DER SCHLEIER WIRD GEZEIGT UND ANGESCHAUT (emm888). Dass er wirklich
+# sichtbar wird, das Fenster abdeckt und danach wieder sauber verschwindet,
+# steht in keinem Quelltext - nur am gebauten Fenster.
+try:
+    # ERST AUFMACHEN, DANN ZU: sonst prueft die Vorbedingung nichts. Beim
+    # ersten Anlauf stand hier nur `_hide_overlay()` - und der Schirm war
+    # an dieser Stelle der Suite sowieso zu, also blieb die Pruefung auch
+    # dann gruen, wenn `_hide_overlay` ihn gar nicht mehr schliesst (von
+    # der Rotprobe als BLIND gefangen).
+    win._overlay_want = 1
+    win._show_overlay_now()
+    _app.processEvents()
+    check("b888 Vorbedingung: der Ladeschirm laesst sich oeffnen",
+          win._overlay.isVisible())
+    win._hide_overlay()
+    _app.processEvents()
+    check("b888 Vorbedingung: ... und wieder schliessen",
+          not win._overlay.isVisible())
+    _vor888 = win._farbwelt_schleier("PROBE-TITEL", "Probe-Hinweis")
+    check("b888 ... und er ist sichtbar", win._overlay.isVisible())
+    # ER DECKT DIE ARBEITSFLAECHE AB. Ein halb grosser Schirm liesse die
+    # alte Oberflaeche daneben stehen - der Nutzer saehe weiter ein halb
+    # eingefrorenes Fenster.
+    _cw888 = win.centralWidget()
+    check(f"b888 er deckt die Arbeitsflaeche ab "
+          f"({win._overlay.width()}x{win._overlay.height()} von "
+          f"{_cw888.width()}x{_cw888.height()})",
+          win._overlay.width() >= _cw888.width()
+          and win._overlay.height() >= _cw888.height())
+    check(f"b888 beide Zeilen stehen drin "
+          f"({win._overlay_text.text()!r}, "
+          f"{win._overlay_progress.text()!r})",
+          win._overlay_text.text() == "PROBE-TITEL"
+          and win._overlay_progress.text() == "Probe-Hinweis")
+    # ER GEHT WIEDER ZU, weil vorher keiner lief.
+    win._farbwelt_schleier_weg(_vor888)
+    _app.processEvents()
+    check("b888 danach ist der Ladeschirm wieder zu",
+          not win._overlay.isVisible())
+    # LIEF VORHER EIN ECHTER ABRUF, BLEIBT DER SCHIRM IHM. Sonst haette
+    # ein Farbwechsel mitten im Laden die Ladeanzeige weggerissen.
+    win._overlay_want = 1
+    win._overlay_text.setText("ECHTER ABRUF")
+    win._overlay_progress.setText("3 von 12")
+    win._show_overlay_now()
+    _app.processEvents()
+    _vor888b = win._farbwelt_schleier("PROBE-TITEL", "Probe-Hinweis")
+    win._farbwelt_schleier_weg(_vor888b)
+    _app.processEvents()
+    check("b888 ein laufender Abruf behaelt seinen Schirm",
+          win._overlay.isVisible() and win._overlay_want == 1)
+    check(f"b888 ... samt Text und Zaehlerstand "
+          f"({win._overlay_text.text()!r}, "
+          f"{win._overlay_progress.text()!r})",
+          win._overlay_text.text() == "ECHTER ABRUF"
+          and win._overlay_progress.text() == "3 von 12")
+    win._hide_overlay()
+    _app.processEvents()
+except Exception as _e888b:                              # pragma: no cover
+    _fail.append(f"b888 Ladeanzeige gemessen: "
+                 f"{type(_e888b).__name__}: {_e888b}")
+
+# ============ b909: der Knopf blinkt, solange der Skill fehlt =========
+# Nutzer 13.11.2026: "das wird jetzt jeder nutzer machen muessen koennen
+# wir den aus eve uebernehmen button blinken lassen bei fehlendem skill?"
+# NICHT an "Skill ist 0" festgemacht - Level 0 und "nie abgefragt" sehen
+# am Wert gleich aus. Der Blinker haengt an `skill_adv_broker_geholt`.
+try:
+    _btn909 = getattr(win, "s_pull_btn", None)
+    check("b909 der Knopf existiert", _btn909 is not None)
+    # UEBER getattr, NICHT ueber win._blink909_takt: faellt der Aufbau des
+    # Blinkers weg, gibt es das Attribut nicht, und der ganze Block waere
+    # mit AttributeError abgebrochen - die Rotprobe sah ihre Pruefung dann
+    # gruen (BLIND). So wird GENAU die gemeinte Pruefung rot.
+    _takt909t = getattr(win, "_blink909_takt", None)
+    check("b909 der Blinker wurde ueberhaupt gebaut", _takt909t is not None)
+    _alt909 = win.settings.get("skill_adv_broker_geholt")
+    try:
+        # ---- 1. NOCH NIE GEHOLT: er blinkt -------------------------
+        win.settings["skill_adv_broker_geholt"] = False
+        win._blink909_pruefen()
+        check("b909 ohne geholten Skill laeuft der Takt",
+              _takt909t is not None and _takt909t.isActive())
+        check(f"b909 der Tooltip sagt warum "
+              f"({_btn909.toolTip()[:40]!r})",
+              "Advanced Broker Relations" in _btn909.toolTip()
+              or "Advanced Broker Relations" in _btn909.toolTip())
+        # WIRKLICH SCHLAGEN LASSEN - und zwar sichtbar, sonst blinkt
+        # nichts (die Pruefung waere sonst blind).
+        # AUF DIE EINSTELLUNGSSEITE SCHALTEN: ein Knopf auf einer nicht
+        # angezeigten Seite ist fuer Qt UNSICHTBAR, und `_blink909_schlag`
+        # faerbt dann bewusst nicht. Ohne diesen Wechsel lief die Pruefung
+        # ins Leere - und meldete trotzdem gruen, weil noch eine alte
+        # Farbe vom echten Zeitgeber am Knopf klebte (von der Suite
+        # gefangen).
+        _vorseite909 = win.tabs.currentIndex()
+        win.tabs.setCurrentWidget(win._settings_w)
+        _btn909.setVisible(True)
+        _app.processEvents()
+        check(f"b909 Vorbedingung: der Knopf ist sichtbar "
+              f"(sonst blinkt nichts, und die Pruefung waere blind) "
+              f"[{_btn909.isVisible()}]", _btn909.isVisible())
+        # VON EINEM BEKANNTEN STAND AUS: sonst haengt das Ergebnis daran,
+        # wie oft der echte Zeitgeber vorher schon geschlagen hat.
+        win._blink909_an = False
+        win._blink909_schlag()
+        _an909 = _btn909.styleSheet()
+        win._blink909_schlag()
+        _aus909 = _btn909.styleSheet()
+        check(f"b909 ein Schlag faerbt den Knopf ({_an909[:30]!r})",
+              "background" in _an909)
+        eq("b909 der naechste Schlag nimmt die Farbe wieder weg",
+           _aus909, "")
+        win._blink909_schlag()
+        check("b909 und der uebernaechste faerbt wieder",
+              "background" in _btn909.styleSheet())
+
+        # ---- 2. GEHOLT: er hoert auf UND wird sauber ----------------
+        win.settings["skill_adv_broker_geholt"] = True
+        win._blink909_pruefen()
+        check("b909 nach dem Holen steht der Takt",
+              _takt909t is not None and not _takt909t.isActive())
+        eq("b909 ... und der Knopf ist wieder normal",
+           _btn909.styleSheet(), "")
+        # EIN SPAETER SCHLAG DARF NICHTS MEHR FAERBEN.
+        win._blink909_schlag()
+        eq("b909 ein nachlaufender Schlag faerbt nicht mehr",
+           _btn909.styleSheet(), "")
+
+        # ---- 3. LEVEL 0 IST EINE GUELTIGE ANTWORT ------------------
+        # Wer den Skill wirklich nicht hat, soll nicht ewig blinken.
+        win.settings["skill_adv_broker_relations"] = 0
+        win.settings["skill_adv_broker_geholt"] = True
+        win._blink909_pruefen()
+        check("b909 Level 0 blinkt nicht, wenn es aus EVE kam",
+              _takt909t is not None and not _takt909t.isActive())
+
+        # ---- 4. UNSICHTBAR BLINKT NICHTS ---------------------------
+        win.settings["skill_adv_broker_geholt"] = False
+        win._blink909_pruefen()
+        _btn909.setVisible(False)
+        _app.processEvents()
+        _btn909.setStyleSheet("")
+        win._blink909_schlag()
+        eq("b909 ein unsichtbarer Knopf wird nicht gefaerbt",
+           _btn909.styleSheet(), "")
+    finally:
+        if _alt909 is None:
+            win.settings.pop("skill_adv_broker_geholt", None)
+        else:
+            win.settings["skill_adv_broker_geholt"] = _alt909
+        win._blink909_pruefen()
+        if _takt909t is not None:
+            _takt909t.stop()
+        if _btn909 is not None:
+            _btn909.setStyleSheet("")
+            _btn909.setVisible(True)
+        try:
+            win.tabs.setCurrentIndex(_vorseite909)
+        except Exception:
+            pass
+        _app.processEvents()
+except Exception as _e909:                               # pragma: no cover
+    _fail.append(f"b909 Blinkender Knopf: "
+                 f"{type(_e909).__name__}: {_e909}")
+
+# ============ b902: die aktive Work-through-Zeile ist amber ============
+# Nutzer 13.11.2026: "kann man die aktuelle row das der work through mode
+# gerade waehlt farblichem hintergrund machen? ein leichtes amber oder so
+# was?" - und auf die erste Fassung: "man sieht gar nichts kein amber".
+#
+# DARUM WIRD HIER DER PIXEL GELESEN, nicht die Zellfarbe. Die erste
+# Fassung setzte `setBackground`; das Objekt trug die Farbe brav, auf dem
+# Schirm war sie NIE zu sehen, weil MoMas QSS (`QTableWidget::item`) den
+# Zellhintergrund selbst zeichnet. Ein Test auf `item.background()` war
+# gruen und trotzdem wertlos. Nur ein gemessener Bildpunkt haette das
+# gefunden.
+try:
+    from PySide6.QtWidgets import QTableWidgetItem as _TWI902
+    from eve_trader.ui import theme as _th902
+    from eve_trader.ui.main_window import (AktiveZeileDelegate as _AZD902,
+                                           AMBER_AKTIV_ALPHA as _AA902)
+
+    def _tab902():
+        _t = QTableWidget(4, 3)
+        for _i in range(4):
+            for _j in range(3):
+                _t.setItem(_i, _j, _TWI902(f"Z{_i}"))
+            _t.item(_i, 0).setData(Qt.UserRole + 1, 500 + _i)
+        _t.resize(600, 220)
+        return _t
+
+    def _pixel902(_t, _zeile, _spalte=1):
+        """Die Farbe, die wirklich auf dem Schirm landet."""
+        _t.show()
+        _app.processEvents()
+        _img = _t.viewport().grab().toImage()
+        _r = _t.visualItemRect(_t.item(_zeile, _spalte))
+        _p = _img.pixelColor(_r.center())
+        return (_p.red(), _p.green(), _p.blue())
+
+    _t902 = _tab902()
+    _leer902 = _pixel902(_t902, 1)
+    win._aktiv_delegates903 = []
+    win._highlight_order_row(_t902, 501)
+    _an902 = _pixel902(_t902, 1)
+    check(f"b902 die aktive Zeile sieht anders aus als vorher "
+          f"({_leer902} -> {_an902})", _an902 != _leer902)
+    # WAERMER, NICHT NUR HELLER: Amber heisst, der Rotanteil muss ueber
+    # den Blauanteil steigen. Ohne diese Pruefung waere jede beliebige
+    # Aufhellung durchgegangen.
+    check(f"b902 ... und zwar waermer (Amber), nicht blaeulich {_an902}",
+          _an902[0] > _an902[2] and _leer902[0] <= _leer902[2])
+    check("b902 die Nachbarzeilen bleiben, wie sie waren",
+          _pixel902(_t902, 0) != _an902 and _pixel902(_t902, 2) != _an902)
+    check("b902 die Faerbung geht ueber die ganze Zeile",
+          _pixel902(_t902, 1, 0) == _an902
+          and _pixel902(_t902, 1, 2) == _an902)
+    # KEINE AUSWAHL: `QTableWidget::item:selected` laege ueber dem Amber.
+    check("b902 die Zeile ist NICHT ausgewaehlt",
+          not _t902.selectedItems())
+
+    # ---- WEITERSPRINGEN -------------------------------------------
+    win._highlight_order_row(_t902, 502)
+    check("b902 die neue Zeile ist amber", _pixel902(_t902, 2) == _an902)
+    check("b902 die alte Zeile ist wieder normal",
+          _pixel902(_t902, 1) == _leer902)
+    # UNBEKANNTE tid: nichts leuchtet mehr.
+    win._highlight_order_row(_t902, 999)
+    check("b902 eine unbekannte tid laesst keine Zeile leuchten",
+          all(_pixel902(_t902, _i) != _an902 for _i in range(4)))
+
+    # ---- ZWEI TABELLEN (Kauf/Verkauf) -----------------------------
+    # Sonst leuchteten zwei "aktive" Zeilen gleichzeitig.
+    _t902b = _tab902()
+    win._highlight_order_row(_t902, 501)
+    check("b902 Vorbedingung: Tabelle A leuchtet",
+          _pixel902(_t902, 1) == _an902)
+    win._highlight_order_row(_t902b, 503)
+    check("b902 die andere Tabelle leuchtet",
+          _pixel902(_t902b, 3) == _an902)
+    check("b902 ... und die erste nicht mehr",
+          _pixel902(_t902, 1) == _leer902)
+
+    # ---- DER DELEGATE SELBST --------------------------------------
+    eq("b902 die Deckkraft steht an einer Stelle und ist leicht",
+       (_AA902 > 0, _AA902 < 128), (True, True))
+    check("b902 die Tabelle hat den Faerbe-Delegate",
+          isinstance(_t902.itemDelegate(), _AZD902))
+    # ZWEIMAL SETZEN DARF NICHT ZWEI DELEGATES ERZEUGEN.
+    _d902 = _t902.itemDelegate()
+    win._highlight_order_row(_t902, 500)
+    check("b902 ein zweiter Aufruf nimmt denselben Delegate",
+          _t902.itemDelegate() is _d902)
+    for _x902 in (_t902, _t902b):
+        _x902.deleteLater()
+    _app.processEvents()
+    win._aktiv_delegates903 = []
+except Exception as _e902:                               # pragma: no cover
+    _fail.append(f"b902 aktive Zeile amber: "
+                 f"{type(_e902).__name__}: {_e902}")
+
+# ============ b904: die Stern-Zeilen leuchten wieder ==================
+# emm903 brachte ans Licht, dass MoMas QSS den Zellhintergrund selbst
+# zeichnet. FOLGE: die Stern-Zeilen in Deals, Swing/Daytrade und
+# Regional Trading und der Erfindbar-Hauch in der Blaupausen-Tabelle
+# haben NIE geleuchtet. Nutzer 13.11.2026: "3 ja bitte".
+#
+# HIER WIRD DER BILDPUNKT GELESEN, nicht die Zellfarbe - und zwar MIT
+# dem echten theme.QSS. Ohne das Thema waere der Versuch wertlos:
+# genau die Regel auf `QTableWidget::item` ist der Grund fuer den Umbau.
+# aa904 prueft die Verdrahtung der vier Tabellen im Quelltext.
+try:
+    from PySide6.QtWidgets import QTableWidgetItem as _TWI904
+    from PySide6.QtGui import QColor as _QC904
+    from eve_trader.ui import theme as _th904
+    from eve_trader.ui.main_window import (ZellenTonDelegate as _ZTD904,
+                                           AktiveZeileDelegate as _AZD904,
+                                           TON_ROLLE as _TR904)
+
+    def _tab904():
+        _t = QTableWidget(4, 3)
+        for _i in range(4):
+            for _j in range(3):
+                _t.setItem(_i, _j, _TWI904(f"Z{_i}"))
+        _t.setStyleSheet(_th904.QSS)       # ohne das Thema kein Befund
+        _t.resize(600, 220)
+        return _t
+
+    def _pixel904(_t, _zeile, _spalte=1):
+        """Die Farbe, die wirklich auf dem Schirm landet."""
+        _t.show()
+        _app.processEvents()
+        _img = _t.viewport().grab().toImage()
+        _r = _t.visualItemRect(_t.item(_zeile, _spalte))
+        _p = _img.pixelColor(_r.center())
+        return (_p.red(), _p.green(), _p.blue())
+
+    def _ton904():
+        _c = _QC904(_th904.AMBER); _c.setAlpha(28)
+        return _c
+
+    # ---- 1. DER BEFUND, DER DEN UMBAU AUSLOEST ---------------------
+    # Selbst mit voller Deckkraft passiert nichts. Das ist der Grund,
+    # warum der Nutzer "gar nichts kein amber" gesehen hat.
+    _t904 = _tab904()
+    _vor904 = _pixel904(_t904, 1)
+    _voll904 = _QC904(_th904.AMBER); _voll904.setAlpha(255)
+    for _j in range(3):
+        _t904.item(1, _j).setBackground(_voll904)
+    check(f"b904 Befund: setBackground bleibt wirkungslos, sogar bei "
+          f"voller Deckkraft ({_vor904} -> {_pixel904(_t904, 1)})",
+          _pixel904(_t904, 1) == _vor904)
+
+    # ---- 2. UEBER DIE TONROLLE WIRD ES SICHTBAR --------------------
+    _t904b = _tab904()
+    _leer904 = _pixel904(_t904b, 1)
+    win._ton_delegate904(_t904b)
+    for _j in range(3):
+        _t904b.item(1, _j).setData(_TR904, _ton904())
+    _an904 = _pixel904(_t904b, 1)
+    check(f"b904 mit dem Zellton-Zeichner leuchtet die Zeile "
+          f"({_leer904} -> {_an904})", _an904 != _leer904)
+    # WAERMER, NICHT NUR HELLER: sonst ginge jede Aufhellung durch.
+    # GEPRUEFT WIRD DIE VERSCHIEBUNG, nicht der Absolutwert: der
+    # Untergrund ist hier theme.PANEL (26,44,66), also selbst kraeftig
+    # blau - ein "rot > blau" waere daran gescheitert, obwohl der
+    # Auftrag stimmt. Gemessen: (26,44,66) -> (47,57,69), Rot +21,
+    # Blau +3.
+    _d904rgb = tuple(_an904[_k] - _leer904[_k] for _k in range(3))
+    check(f"b904 ... und zwar waermer (Amber), nicht blaeulich {_d904rgb}",
+          _d904rgb[0] > _d904rgb[1] > _d904rgb[2] >= 0)
+    check("b904 die Faerbung geht ueber die ganze Zeile",
+          _pixel904(_t904b, 1, 0) == _an904
+          and _pixel904(_t904b, 1, 2) == _an904)
+    check("b904 die Nachbarzeilen bleiben, wie sie waren",
+          _pixel904(_t904b, 0) != _an904 and _pixel904(_t904b, 2) != _an904)
+
+    # ---- 3. OHNE DEN ZEICHNER IST DIE ROLLE WIRKUNGSLOS ------------
+    # Genau das trifft die Rotprobe, die den Aufruf in einer der vier
+    # Tabellen wegnimmt: die Farbe steht dann brav am Item und ist
+    # trotzdem nicht zu sehen.
+    _t904c = _tab904()
+    _leer904c = _pixel904(_t904c, 1)
+    for _j in range(3):
+        _t904c.item(1, _j).setData(_TR904, _ton904())
+    check("b904 ohne den Zeichner bleibt die Tonrolle wirkungslos",
+          _pixel904(_t904c, 1) == _leer904c)
+
+    # ---- 4. ZWEIMAL SETZEN ERZEUGT KEINEN ZWEITEN ZEICHNER ---------
+    _d904 = _t904b.itemDelegate()
+    check("b904 der Zeichner ist der Zellton-Zeichner",
+          isinstance(_d904, _ZTD904))
+    win._ton_delegate904(_t904b)
+    check("b904 ein zweiter Aufruf nimmt denselben Zeichner",
+          _t904b.itemDelegate() is _d904)
+
+    # ---- 5. DER AMBER-DELEGATE WIRD NICHT VERDRAENGT ---------------
+    # Er ERBT vom Zellton-Zeichner und malt den Ton mit. Wuerde er
+    # ersetzt, verloere die Order-Tabelle ihre aktive Zeile.
+    _t904d = _tab904()
+    for _i in range(4):
+        _t904d.item(_i, 0).setData(Qt.UserRole + 1, 700 + _i)
+    win._aktiv_delegates903 = []
+    win._highlight_order_row(_t904d, 701)
+    _d904d = _t904d.itemDelegate()
+    check("b904 Vorbedingung: die Tabelle traegt den Amber-Delegate",
+          isinstance(_d904d, _AZD904))
+    win._ton_delegate904(_t904d)
+    check("b904 der Amber-Delegate bleibt stehen",
+          _t904d.itemDelegate() is _d904d)
+    _vor904d = _pixel904(_t904d, 2)
+    for _j in range(3):
+        _t904d.item(2, _j).setData(_TR904, _ton904())
+    check("b904 ... und malt den Zellton trotzdem",
+          _pixel904(_t904d, 2) != _vor904d)
+    check("b904 die aktive Zeile leuchtet weiter",
+          _pixel904(_t904d, 1) != _pixel904(_t904d, 3))
+
+    win._aktiv_delegates903 = []
+    for _x904 in (_t904, _t904b, _t904c, _t904d):
+        _x904.deleteLater()
+    _app.processEvents()
+except Exception as _e904:                               # pragma: no cover
+    _fail.append(f"b904 Stern-Zeilen sichtbar: "
+                 f"{type(_e904).__name__}: {_e904}")
+
+# ====== b910: MoMa holt Advanced Broker Relations von selbst ===========
+# Nutzer 14.11.2026: "Denkst du Nutzer werden von alleine auf die Idee
+# kommen sich in settings rein zu klicken und dort auf fetch klicken?"
+# aa910 prueft die Verdrahtung im Quelltext; HIER wird am lebenden
+# Fenster entschieden, OB und WEN MoMa fragt.
+# `_pull_skills_for` wird dabei ersetzt - die echte Fassung ginge ins
+# Netz. Geprueft wird genau das, was MoMa selbst entscheidet.
+try:
+    from eve_trader import config as _cfg910
+    _SK910 = _cfg910.SKILL_READ_SCOPE
+
+    _echt910 = win._pull_skills_for
+    _ruf910 = []
+    win._pull_skills_for = lambda cid, silent=False: _ruf910.append((cid, silent))
+    _alt910 = {k: win.settings.get(k) for k in
+               ("fees_from_skills", "skill_adv_broker_geholt")}
+
+    def _lauf910(erteilt, geholt=False, aus_skills=True):
+        _ruf910.clear()
+        win.settings["fees_from_skills"] = aus_skills
+        win.settings["skill_adv_broker_geholt"] = geholt
+        return win._abr910_still_holen(erteilt)
+
+    # ---- 1. DAS RECHT ENTSCHEIDET, NICHT DIE REIHENFOLGE -----------
+    # Charakter 3 kommt zuerst, hat das Recht aber nicht.
+    _wer910 = _lauf910({3: set(), 7: {_SK910, "esi-wallet.read_character_wallet.v1"}})
+    eq("b910 gefragt wird der Charakter MIT dem Recht", _wer910, 7)
+    eq("b910 ... und zwar still und genau einmal", _ruf910, [(7, True)])
+    eq("b910 der Grund ist festgehalten", win._abr910_grund, "fetched")
+
+    # ---- 2. EINMAL, NICHT BEI JEDEM START --------------------------
+    _wer910 = _lauf910({7: {_SK910}}, geholt=True)
+    eq("b910 ist der Wert schon aus EVE geholt, passiert nichts",
+       (_wer910, _ruf910), (None, []))
+
+    # ---- 3. GEBUEHREN NICHT AUS SKILLS -> NICHTS ------------------
+    _wer910 = _lauf910({7: {_SK910}}, aus_skills=False)
+    eq("b910 ohne 'Gebuehren aus Skills' wird nicht gefragt",
+       (_wer910, _ruf910), (None, []))
+
+    # ---- 4. RECHT FEHLT BELEGT -> KEIN AUFRUF, KLARER GRUND -------
+    _wer910 = _lauf910({3: set(), 7: {"esi-wallet.read_character_wallet.v1"}})
+    eq("b910 fehlt das Recht ueberall, wird nicht gefragt",
+       (_wer910, _ruf910), (None, []))
+    eq("b910 ... und der Grund ist belegt 'kein Recht'",
+       win._abr910_grund, "no-scope")
+    # DER TOOLTIP SAGT DANN, WAS STATT DES KNOPFES ZU TUN IST - der
+    # Knopf selbst endete im 403.
+    _tt910 = win.s_pull_btn.toolTip()
+    check(f"b910 der Tooltip raet jetzt zum Neu-Verknuepfen "
+          f"({_tt910[:40]!r})",
+          "Characters" in _tt910 and "press this once" not in _tt910)
+
+    # ---- 5. UNLESBARES TOKEN IST NICHT 'RECHT FEHLT' --------------
+    # Das ist der Regel-1-Fall: MoMa weiss es nicht und behauptet nichts.
+    _wer910 = _lauf910({3: None, 7: None})
+    eq("b910 bei unlesbarem Token wird nicht gefragt",
+       (_wer910, _ruf910), (None, []))
+    eq("b910 ... und KEIN 'kein Recht' behauptet", win._abr910_grund, None)
+    _tt910 = win.s_pull_btn.toolTip()
+    check(f"b910 der Tooltip bleibt dann der alte ({_tt910[:40]!r})",
+          "press this once" in _tt910)
+    # EIN LESBARES NEBEN EINEM UNLESBAREN: das lesbare traegt das Recht,
+    # also wird geholt - Unklarheit beim anderen darf das nicht stoppen.
+    _wer910 = _lauf910({3: None, 7: {_SK910}})
+    eq("b910 ein lesbares Token mit Recht genuegt", (_wer910, _ruf910),
+       (7, [(7, True)]))
+
+    # ---- 6. ZWEI MIT RECHT -> TROTZDEM NUR EINE ABFRAGE -----------
+    # Der Skill haengt am Charakter, aber fuer die Relist-Gebuehr reicht
+    # einer. Zwoelf Abfragen beim Start waeren zwoelf ESI-Aufrufe fuer
+    # dieselbe Zahl - genau der Start-Stau aus emm873.
+    _wer910 = _lauf910({3: {_SK910}, 7: {_SK910}, 9: {_SK910}})
+    eq("b910 mehrere mit Recht ergeben genau EINE Abfrage",
+       (_wer910, _ruf910), (3, [(3, True)]))
+
+    # ---- 7. GAR KEINE CHARAKTERE ----------------------------------
+    _wer910 = _lauf910({})
+    eq("b910 ohne Charaktere wird nicht gefragt und nichts behauptet",
+       (_wer910, _ruf910, win._abr910_grund), (None, [], None))
+
+    win._pull_skills_for = _echt910
+    for _k910, _v910 in _alt910.items():
+        win.settings[_k910] = _v910
+    win._blink909_pruefen()
+except Exception as _e910:                               # pragma: no cover
+    _fail.append(f"b910 Skill von selbst holen: "
+                 f"{type(_e910).__name__}: {_e910}")
+
+# ============ b901: die systemweite Taste fuer "Next" ==================
+# Nutzer 12.11.2026. aa901 rechnet die Tastennummern nach und prueft die
+# Verdrahtung im Quelltext; HIER wird am lebenden Fenster gedrueckt.
+try:
+    from PySide6.QtCore import QEvent as _QEv901
+    from PySide6.QtGui import QKeyEvent as _QKey901
+    from PySide6.support import VoidPtr as _VP901
+    from eve_trader import config as _cfgmod
+    from eve_trader import hotkey as _hk901
+    from eve_trader.ui.main_window import TastenFangDialog as _TFD901
+
+    def _tippe901(dlg, key, mods=Qt.NoModifier):
+        dlg.keyPressEvent(_QKey901(_QEv901.KeyPress, key, mods))
+
+    # ---- 1. DAS ZUWEIS-FENSTER FAENGT WIRKLICH EINE TASTE ------------
+    _d901 = _TFD901(win)
+    # ZEIGEN, SONST IST isVisible() AN JEDEM KIND FALSE - die Warnung
+    # waere dann ungeprueft gewesen (von der Suite gefangen).
+    _d901.show()
+    _app.processEvents()
+    check("b901 Vorbedingung: noch keine Taste, OK ist gesperrt",
+          _d901._gewaehlt == "" and not _d901._ok.isEnabled())
+    # EINE ZUSATZTASTE ALLEIN IST KEINE ZUWEISUNG - sonst waere das
+    # Kuerzel fertig, bevor der Nutzer den Buchstaben erreicht.
+    _tippe901(_d901, Qt.Key_Control, Qt.ControlModifier)
+    check("b901 Strg allein weist nichts zu",
+          _d901._gewaehlt == "" and not _d901._ok.isEnabled())
+    # UND ES MECKERT AUCH NICHT. Das ist der Teil, der die Mutation
+    # faengt: ohne die `_NUR_MOD`-Abfrage faellt Strg in den
+    # "unbekannte Taste"-Zweig und das Fenster wirft dem Nutzer schon
+    # beim Greifen nach der Zusatztaste eine Absage hin. Die Rotprobe
+    # "Eine Zusatztaste allein weist schon zu" blieb blind, solange nur
+    # auf `_gewaehlt == ""` geprueft wurde.
+    check(f"b901 ... und meckert dabei nicht "
+          f"({_d901._warnung.text()[:30]!r})",
+          not _d901._warnung.isVisible() and _d901._warnung.text() == "")
+    _tippe901(_d901, Qt.Key_B, Qt.ControlModifier)
+    eq("b901 Strg+B wird gefangen", _d901._gewaehlt, "Ctrl+B")
+    check("b901 ... und OK freigeschaltet", _d901._ok.isEnabled())
+    check("b901 ... ohne Warnung (Zusatztaste ist sicher)",
+          not _d901._warnung.isVisible())
+    # NACKTE TASTE: erlaubt (Nutzer-Entscheid), aber MIT Warnung.
+    _tippe901(_d901, Qt.Key_B)
+    eq("b901 die nackte Taste ist erlaubt", _d901._gewaehlt, "B")
+    check(f"b901 ... aber sie warnt ({_d901._warnung.text()[:40]!r})",
+          _d901._warnung.isVisible()
+          and ("system-wide" in _d901._warnung.text()
+               or "systemweit" in _d901._warnung.text()))
+    # UNBEKANNTE TASTE: klare Absage, keine stille Falschbelegung.
+    _tippe901(_d901, Qt.Key_Tab)
+    check("b901 Tab wird abgelehnt und OK wieder gesperrt",
+          _d901._gewaehlt == "" and not _d901._ok.isEnabled()
+          and _d901._warnung.isVisible())
+    _tippe901(_d901, Qt.Key_F5)
+    eq("b901 F5 geht", _d901._gewaehlt, "F5")
+    _d901.close()
+    _d901.deleteLater()
+    _app.processEvents()
+
+    # ---- 2. ZUWEISEN UND ENTFERNEN AM FENSTER ------------------------
+    _altsave901 = _cfgmod.save_settings
+    _cfgmod.save_settings = lambda *a, **k: None
+    _altfrage901 = _TFD901.frage
+    # KEIN ECHTES SYSTEM-KUERZEL IM TEST (emm916, 14.11.2026): unter
+    # Windows meldete der Test Strg+B wirklich beim Betriebssystem an -
+    # "already taken by another program", wenn die aa-Suite es gerade
+    # hielt, und waehrend des Laufs war Strg+B auf dem Rechner des
+    # Nutzers belegt. Geprueft wird der Weg OHNE Windows, auf jedem System.
+    from eve_trader import hotkey as _hkb901
+    _altmoeg901 = _hkb901.moeglich
+    _hkb901.moeglich = lambda: False
+    try:
+        _TFD901.frage = lambda self: "ctrl+b"      # als haette er gedrueckt
+        win.settings.pop("ord_next_hotkey", None)
+        win._ord_next_taste_zuweisen()
+        eq("b901 die Taste steht normiert in den Einstellungen",
+           win.settings.get("ord_next_hotkey"), "Ctrl+B")
+        eq("b901 ... und wird unter Linux NICHT als aktiv gemeldet",
+           win._hotkey901_aktiv, "")
+        check(f"b901 die Statuszeile sagt, warum "
+              f"({win.statusBar().currentMessage()[:40]!r})",
+              "Windows" in win.statusBar().currentMessage())
+        # DER KNOPF SAGT SELBST, WAS GILT.
+        win._ord_next_btn_tooltip901()
+        check("b901 der Knopf verweist auf den Rechtsklick",
+              "Rechtsklick" in win._ord_next_btn.toolTip()
+              or "Right-click" in win._ord_next_btn.toolTip())
+        win._ord_next_taste_loeschen()
+        check("b901 entfernen loescht die Einstellung",
+              "ord_next_hotkey" not in win.settings)
+        # DAS MENUE BIETET DAS PASSENDE - geprueft ueber die Eintraege.
+        _TFD901.frage = lambda self: ""            # Abbruch
+        win._ord_next_taste_zuweisen()
+        check("b901 Abbruch im Fenster aendert nichts",
+              "ord_next_hotkey" not in win.settings)
+    finally:
+        _TFD901.frage = _altfrage901
+        _cfgmod.save_settings = _altsave901
+        _hkb901.moeglich = _altmoeg901
+
+    # ---- 3. DIE TASTE LOEST "NEXT" AUS - UND NUR DANN ----------------
+    # Unter Linux kommt nie eine echte WM_HOTKEY-Nachricht; die Erkennung
+    # wird darum untergeschoben. Geprueft wird, was DANACH passiert -
+    # und das ist der Teil, der beim Nutzer schiefgehen koennte.
+    _alt901ih = _hk901.ist_hotkey_nachricht
+    _alt901sn = win._ord_step_next
+    _ruf901 = {"n": 0}
+    try:
+        _hk901.ist_hotkey_nachricht = lambda *a, **k: True
+        win._ord_step_next = lambda: _ruf901.__setitem__("n", _ruf901["n"] + 1)
+        win._hotkey901_aktiv = "Ctrl+B"
+        # AM MODUS-SCHALTER, NICHT AN isVisible(): Qt meldet einen Knopf
+        # auch dann als unsichtbar, wenn das Fenster minimiert ist oder
+        # ein anderer Reiter vorne steht - genau die Lage, fuer die das
+        # Kuerzel gedacht ist. Dieser Test hat den Fehler gefunden.
+        win._step_mode = True
+        win._ord_next_btn.setEnabled(True)
+        # VoidPtr, nicht 0: PySide6 nimmt fuer `message` nur einen
+        # echten Zeiger an (ValueError sonst - von der Suite gefangen).
+        _ptr901 = _VP901(0)
+        _erg901 = win.nativeEvent(b"windows_generic_MSG", _ptr901)
+        eq("b901 die Taste loest Next aus", _ruf901["n"], 1)
+        check("b901 ... und die Nachricht gilt als erledigt",
+              _erg901 == (True, 0))
+        # MODUS AUS: dann darf die Taste NICHTS tun, sonst arbeitete MoMa
+        # unsichtbar Orders ab, waehrend der Nutzer in EVE etwas anderes
+        # macht.
+        win._step_mode = False
+        win.nativeEvent(b"windows_generic_MSG", _ptr901)
+        eq("b901 bei ausgeschaltetem Modus tut die Taste nichts",
+           _ruf901["n"], 1)
+        # OHNE ZUGEWIESENE TASTE wird gar nicht erst geprueft.
+        win._step_mode = True
+        win._hotkey901_aktiv = ""
+        win.nativeEvent(b"windows_generic_MSG", _ptr901)
+        eq("b901 ohne zugewiesene Taste ebenso", _ruf901["n"], 1)
+        # UND DER EIGENTLICHE FALL DES NUTZERS: MoMa ist im Hintergrund,
+        # der Knopf meldet sich als unsichtbar - die Taste MUSS wirken.
+        win._hotkey901_aktiv = "Ctrl+B"
+        win._step_mode = True
+        win._ord_next_btn.setVisible(False)
+        check("b901 Vorbedingung: der Knopf gilt als unsichtbar",
+              not win._ord_next_btn.isVisible())
+        win.nativeEvent(b"windows_generic_MSG", _ptr901)
+        eq("b901 im Hintergrund/minimiert wirkt die Taste trotzdem",
+           _ruf901["n"], 2)
+    finally:
+        _hk901.ist_hotkey_nachricht = _alt901ih
+        win._ord_step_next = _alt901sn
+        win._hotkey901_aktiv = ""
+        win._step_mode = False
+        win._ord_next_btn.setVisible(False)
+except Exception as _e901:                               # pragma: no cover
+    _fail.append(f"b901 systemweite Taste: "
+                 f"{type(_e901).__name__}: {_e901}")
+
+# ============ b900: die Historien laufen WIRKLICH hinterher ============
+# Nutzer 12.11.2026: "kann man denn nicht zuerst das laden was wirklich
+# im Portfolio ist und alles andere im Hintergrund?"
+# aa900 prueft, dass es dasteht. Hier wird der Job am lebenden Fenster
+# AUSGEFUEHRT - mit untergeschobenem scanner, damit kein Netz noetig ist.
+try:
+    import time as _zeit900
+    from eve_trader import scanner as _sc900
+
+    # ---- 1. LEERE LISTE: KEIN JOB -------------------------------------
+    _vor900 = len(win._workers)
+    win._normals_nachladen900([])
+    eq("b900 leere Liste startet keinen Job", len(win._workers), _vor900)
+
+    # ---- 2. DER JOB TRAEGT NACH UND ZEICHNET NEU ----------------------
+    _geholt900 = []
+    _alt900hc = _sc900.history_cached
+    _alt900ts = _sc900.trend_stats
+    _alt900rc = win._recompute
+    _neu900 = {"n": 0}
+
+    def _hc900(_ti, region=None, **k):
+        _geholt900.append(_ti)
+        return [{"date": "2026-11-01", "average": 100.0 + _ti}]
+
+    def _ts900(zeilen, tage):
+        return {"normal": (zeilen[0]["average"] if zeilen else 0)}
+
+    def _rc900():
+        _neu900["n"] += 1
+
+    _sc900.history_cached = _hc900
+    _sc900.trend_stats = _ts900
+    win._recompute = _rc900
+    try:
+        win._normal_levels = {1: 11.0}
+        win._normals_nachladen900([5, 7])
+        check("b900 der Job laeuft im Hintergrund, ohne Ladeschirm",
+              not win._overlay.isVisible())
+        # KLAMMERN: ohne sie waere `A and B or C` wahr, sobald C stimmt -
+        # die Sichtbarkeit waere ungeprueft gewesen (blind).
+        check(f"b900 die Anzeige oben sagt, was laeuft "
+              f"({win.g_lade_lbl.text()!r})",
+              win.g_lade_lbl.isVisible()
+              and ("Price history" in win.g_lade_lbl.text()
+                   or "Preishistorie" in win.g_lade_lbl.text()))
+        eq("b900 ... und NICHT 'Portfolio wird geladen'",
+           getattr(win, "_portfolio_laedt", None), False)
+        # DEN TAKT ANHALTEN: die Sicherung in `_lade_tick` ("laeuft kein
+        # Job mehr -> Anzeige weg") wuerde die Anzeige beim naechsten
+        # Sekundenschlag ohnehin ausblenden. Dann waere nicht geprueft,
+        # ob `done900` sie SELBST abraeumt - genau das meldete die
+        # Rotprobe "Die Anzeige bleibt nach dem Nachlauf stehen" als
+        # BLIND. Ohne Takt kann nur noch der Job selbst ausblenden.
+        win._lade_takt.stop()
+        check("b900 Vorbedingung: die Anzeige steht noch (Takt ist aus)",
+              win.g_lade_lbl.isVisible())
+        for _i900 in range(200):
+            _app.processEvents()
+            if _neu900["n"]:
+                break
+            _zeit900.sleep(0.02)
+        eq("b900 beide Historien wurden geholt", sorted(_geholt900), [5, 7])
+        eq("b900 die Normalpreise sind nachgetragen",
+           win._normal_levels, {1: 11.0, 5: 105.0, 7: 107.0})
+        eq("b900 die Tabelle wurde genau einmal neu gerechnet",
+           _neu900["n"], 1)
+        check("b900 die Anzeige ist danach wieder weg - vom Job selbst, "
+              "nicht erst beim naechsten Sekundenschlag",
+              not win.g_lade_lbl.isVisible())
+
+        # ---- 3. JEDER NACHLAUF DREHT DEN ZAEHLER HOCH -----------------
+        # Ohne das stuende `_gen900` fuer immer auf demselben Wert, und
+        # der Vergleich im `done900` koennte NIE etwas verwerfen. Die
+        # Rotprobe "Der Zaehler wird nicht hochgedreht" blieb blind,
+        # solange der Test den Zaehler selbst hochdrehte.
+        _g900 = getattr(win, "_gen900", 0)
+        win._normals_nachladen900([11])
+        win._normals_nachladen900([12])
+        eq("b900 jeder Nachlauf dreht den Zaehler hoch",
+           win._gen900 - _g900, 2)
+        for _i900 in range(300):
+            _app.processEvents()
+            if not win._workers:
+                break
+            _zeit900.sleep(0.02)
+
+        # ---- 4. EIN NEUER LADEVORGANG GEWINNT -------------------------
+        # Sonst schriebe ein alter Job dem neuen seine Zahlen hinein.
+        win._normal_levels = {}
+        _neu900["n"] = 0
+        del _geholt900[:]
+        win._normals_nachladen900([9])
+        win._gen900 += 1              # als haette der Nutzer neu geladen
+        for _i900 in range(300):
+            _app.processEvents()
+            if not win._workers:
+                break
+            _zeit900.sleep(0.02)
+        eq("b900 das veraltete Ergebnis wird VERWORFEN",
+           win._normal_levels, {})
+        eq("b900 ... und die Tabelle NICHT neu gerechnet", _neu900["n"], 0)
+        check("b900 geholt wurde es trotzdem (der Cache ist jetzt warm)",
+              _geholt900 == [9])
+    finally:
+        _sc900.history_cached = _alt900hc
+        _sc900.trend_stats = _alt900ts
+        win._recompute = _alt900rc
+        win._hintergrund_laden_zeigen(False)
+        _app.processEvents()
+except Exception as _e900:                               # pragma: no cover
+    _fail.append(f"b900 Historien im Hintergrund: "
+                 f"{type(_e900).__name__}: {_e900}")
+
+# ============ b892: die Lade-Phase steht wirklich auf dem Schirm =======
+# Der aa892-Block prueft, dass es DASTEHT. Hier wird es GEZEIGT: am
+# lebenden Fenster, mit beiden Anzeigen. Nutzer 11.11.2026 ("1 j").
+try:
+    from eve_trader.workers import Worker as _W892
+
+    # ---- 1. DAS GROSSE OVERLAY (Portfolio laden mit Schirm) ----------
+    win._overlay_want = 1
+    win._show_overlay_now()
+    _app.processEvents()
+    check("b892 Vorbedingung: der Ladeschirm ist offen",
+          win._overlay.isVisible())
+    _w892 = _W892(lambda: None)
+    win._overlay_job = _w892          # der Schirm gehoert diesem Job (emm537)
+    win._overlay_text.setText("ALT")
+    win._overlay_status(_w892, "PHASE EINS")
+    _app.processEvents()
+    check(f"b892 die Phase steht im Ladeschirm "
+          f"({win._overlay_text.text()!r})",
+          win._overlay_text.text() == "PHASE EINS")
+    # EIN FREMDER JOB DARF SIE NICHT WEGWISCHEN (emm537).
+    _fremd892 = _W892(lambda: None)
+    win._overlay_status(_fremd892, "FREMDE PHASE")
+    _app.processEvents()
+    check("b892 ein fremder Job ueberschreibt die Phase nicht",
+          win._overlay_text.text() == "PHASE EINS")
+    win._overlay_job = None
+    win._overlay_want = 0
+    win._hide_overlay()
+    _app.processEvents()
+
+    # ---- 2. DIE HINTERGRUND-ANZEIGE (Portfolio laden ohne Schirm) -----
+    # DER WICHTIGERE FALL: hier arbeitet der Nutzer weiter und wartet am
+    # laengsten, und hier gehoert das Overlay keinem - der Weg ueber
+    # `_overlay_status` greift also gar nicht.
+    win._workers.append(_w892)        # sonst loescht _lade_tick die Anzeige
+    try:
+        win._hintergrund_laden_zeigen(True)
+        _app.processEvents()
+        _lbl892 = win.g_lade_lbl
+        check("b892 Vorbedingung: die Hintergrund-Anzeige ist sichtbar",
+              _lbl892.isVisible())
+        _ohne892 = _lbl892.text()
+        check(f"b892 Vorbedingung: noch ohne Phase ({_ohne892!r})",
+              "PHASE" not in _ohne892 and " s" in _ohne892)
+        win._phase892_setzen("PHASE ZWEI")
+        _app.processEvents()
+        _mit892 = _lbl892.text()
+        check(f"b892 die Phase steht in der Hintergrund-Anzeige "
+              f"({_mit892!r})", "PHASE ZWEI" in _mit892)
+        # DIE SEKUNDEN BLEIBEN DANEBEN STEHEN - die Phase ERGAENZT die
+        # Zeile, sie ersetzt sie nicht.
+        check("b892 ... zusammen mit dem Sekundenzaehler",
+              _mit892.startswith(_ohne892.split(" s")[0]))
+        # EINE ZWEITE PHASE ERSETZT DIE ERSTE, sie haengt sich nicht an.
+        win._phase892_setzen("PHASE DREI")
+        _app.processEvents()
+        check(f"b892 eine neue Phase ersetzt die alte "
+              f"({win.g_lade_lbl.text()!r})",
+              "PHASE DREI" in win.g_lade_lbl.text()
+              and "PHASE ZWEI" not in win.g_lade_lbl.text())
+        # UND BEIM AUSBLENDEN IST SIE WEG - sonst klebte sie am naechsten
+        # Ladevorgang, bevor dessen erste Phase gemeldet ist.
+        win._hintergrund_laden_zeigen(False)
+        _app.processEvents()
+        eq("b892 nach dem Ausblenden ist die Phase geleert",
+           getattr(win, "_phase892", None), "")
+        win._hintergrund_laden_zeigen(True)
+        _app.processEvents()
+        check(f"b892 der naechste Ladevorgang faengt ohne Phase an "
+              f"({win.g_lade_lbl.text()!r})",
+              "PHASE" not in win.g_lade_lbl.text())
+    finally:
+        if _w892 in win._workers:
+            win._workers.remove(_w892)
+        win._hintergrund_laden_zeigen(False)
+        _app.processEvents()
+
+    # ---- 3. DER WORKER GIBT DEN KANAL WIRKLICH WEITER ----------------
+    # `with_status=True` ist die Bedingung dafuer, dass `job` ueberhaupt
+    # ein `status` bekommt - ohne das meldet `_phase892` ins Leere.
+    _gesehen892 = {}
+
+    def _job892(status=None):
+        _gesehen892["status"] = status
+        return None
+
+    _w892b = _W892(_job892, with_status=True)
+    _w892b.run()                      # im Testthread, kein echter Start
+    check("b892 der Worker gibt job einen echten status-Kanal",
+          callable(_gesehen892.get("status")))
+    _w892c = _W892(_job892)
+    _w892c.run()
+    check("b892 ohne with_status bleibt status None - und job laeuft",
+          _gesehen892.get("status") is None)
+except Exception as _e892:                               # pragma: no cover
+    _fail.append(f"b892 Lade-Phase am Fenster: "
+                 f"{type(_e892).__name__}: {_e892}")
 
 print(f"(b) Bauplan-Aufbau: {_ok}/{_ok + len(_fail)} gruen")
 for f in _fail:

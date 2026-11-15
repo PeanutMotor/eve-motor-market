@@ -768,6 +768,21 @@ def orte_mit_bestand(zeilen, ort_namen=None):
     return out
 
 
+def arten_je_ort(zeilen):
+    """{ort_id: Anzahl VERSCHIEDENER type_ids mit Bestand} (emm912).
+
+    Nutzer 14.11.2026: ob ein Ort ein echtes Lager ist, sagt die Zahl der
+    Sorten, nicht die Menge - 1 Mio Tritanium aus einem Vertrag ist kein
+    Lager. Zeilen ohne Menge zaehlen nicht."""
+    je = {}
+    for z in zeilen or []:
+        tid = z.get("tid")
+        if tid is None or int(z.get("menge") or 0) <= 0:
+            continue
+        je.setdefault(int(z.get("ort") or 0), set()).add(int(tid))
+    return {o: len(v) for o, v in je.items()}
+
+
 def karten(zeilen, namen, ort_namen, besitzer_namen, behaelter_namen,
            bedarf=None, nur_tids=None, begriffe=None, nur_orte=None, lag=None,
            fremd_abzug=None, eigen_schutz=None):

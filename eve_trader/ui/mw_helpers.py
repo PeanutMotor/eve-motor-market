@@ -2208,6 +2208,76 @@ class MainWindowHelpers:
         return kand if 0.01 <= kand < p else None
 
     @staticmethod
+    def naechster_tick_ab(preis):
+        """Kleinster GUELTIGER EVE-Orderpreis >= `preis` (emm926) - das
+        Gegenstueck zu `naechster_tick_darunter`, AUFgerundet (Regel 3:
+        ein Mindestgewinn darf nie durch Rundung unterschritten werden).
+        Vier signifikante Stellen, Untergrenze 0,01 ISK. None bei <= 0."""
+        import math
+        try:
+            p = float(preis)
+        except (TypeError, ValueError):
+            return None
+        if p <= 0:
+            return None
+        d = math.floor(math.log10(p))
+        tick = max(10.0 ** (d - 3), 0.01)
+        kand = math.ceil(round(p / tick, 9)) * tick
+        kand = math.ceil(round(kand * 100.0, 6)) / 100.0
+        return kand
+
+    @staticmethod
+    def min_gewinn_preis(basis, gebuehr_anteil, min_pct):
+        """Niedrigster gueltiger Sell-Preis, bei dem nach Steuer+Broker
+        mindestens `min_pct` % auf `basis` bleiben (emm926, Nutzer
+        14.11.2026: "wenn ich loss status habe ... einen Preis ins
+        clipboard, sodass ich mindestens 5% gewinn mache").
+        Preis = basis x (1 + min_pct/100) / (1 - Gebuehren), AUFgerundet
+        auf einen gueltigen EVE-Preis. `basis` ist der Einstand je Stueck
+        MIT den schon bezahlten Relist-Gebuehren (wie `marge_neu`).
+        None, wenn keine Basis da ist oder die Gebuehren >= 100 %."""
+        try:
+            b = float(basis)
+            g = float(gebuehr_anteil)
+            m = float(min_pct)
+        except (TypeError, ValueError):
+            return None
+        if b <= 0 or g >= 1.0:
+            return None
+        return MainWindowHelpers.naechster_tick_ab(b * (1 + m / 100.0) / (1 - g))
+
+    @staticmethod
+    def preis_mit_aufschlag(preis, pct):
+        """Kopierpreis fuer die Hangar-Liste (emm847, Nutzer: "Ich gebe
+        also ein +15% dann kann ich alle Items in der Liste zu 15% ueber
+        Jita sell kopiert bekommen, gebe ich ein -15% bekomme ich alles
+        15% unter jita Sell (oder halt oben gewaehlter hub)").
+
+        pct == 0  -> das klassische Ein-Tick-Unterbieten (unveraendert).
+        pct != 0  -> bester Sell x (1 + pct/100), dann ABGERUNDET auf den
+        naechsten gueltigen EVE-Preis (vier signifikante Stellen, wie in
+        naechster_tick_darunter begruendet). Abrunden in BEIDE
+        Richtungen: bei +15 % wird es nie teurer als gewollt, bei -15 %
+        bleibt der Preis sicher UNTER der Marke - die Richtung, in der
+        man lieber einen Tick verschenkt als drueber zu liegen.
+        None, wenn kein gueltiger Preis herauskommt (unter 0,01 ISK) -
+        die Zeile wird dann zur sichtbaren "?"-Platzhalterzeile.
+        """
+        import math
+        if not pct:
+            return MainWindowHelpers.naechster_tick_darunter(preis)
+        try:
+            p = float(preis) * (1.0 + float(pct) / 100.0)
+        except (TypeError, ValueError):
+            return None
+        if p < 0.01:
+            return None
+        d = math.floor(math.log10(p))
+        tick = 10.0 ** (d - 3)
+        stufe = math.floor(round(p / tick, 9)) * tick
+        return max(0.01, round(stufe, 2))
+
+    @staticmethod
     def unterbieten_liste(zeilen, sell_min_map, tick_fn):
         """Aus (type_id|None, name) je Zeile die Preisliste bauen.
 
@@ -5657,6 +5727,18 @@ def job_anzeigename(name, activity_id):
     if int(activity_id or 0) not in (1, 9, 11) and n.endswith(" Blueprint"):
         return n[:-len(" Blueprint")]
     return n
+
+
+def knopf_passend(btn, hoehe=26):
+    """Row-action button sizing: fixed HEIGHT, width from the button's own
+    size hint (emm861, user screenshot: "Open und Price und dahinter
+    +irgendwas ist zusammengedrueckt"). A fixed pixel width (84/72) clips
+    the text and lets neighbours overlap as soon as the system font is
+    wider than ours - the hint already knows icon + text + style padding.
+    Call it AFTER setText/setIcon/setStyleSheet, those change the hint."""
+    btn.setFixedHeight(int(hoehe))
+    btn.setMinimumWidth(btn.sizeHint().width())
+    return btn
 
 
 def fracht_als_isk(je_stueck, einkauf):

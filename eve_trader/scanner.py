@@ -12,6 +12,7 @@ import time
 import requests
 
 from . import config, esi, store
+from . import market as _mkt_fnd
 
 _UA = {"User-Agent": "MotorMarket/0.1"}
 _ORDERS = f"{config.ESI_BASE}/markets/{config.FORGE_REGION}/orders/"
@@ -252,7 +253,24 @@ def history_cached(type_id: int, region: int = config.FORGE_REGION,
     # or (more often) a fetch that failed/was rate-limited. Retry those after just
     # 1h instead of 24h, so a bad run doesn't hide items for a whole day. Items
     # WITH real history still stay cached the full 24h (fast).
-    if not stale and not have and age is not None and age > 3600:
+    # ... AUSSER ESI KENNT DIE type_id GAR NICHT (emm899). Gemessen am
+    # 11.11.2026 mit `werkzeuge/pruefe_historie.py`: 7 von 60 Items ohne
+    # Historie antworten mit HTTP 404 (aus dem Spiel entfernte Typen wie
+    # `91999` oder `Expired Capsuleer Day XXIII ... Crate`). Die 1-Stunden-
+    # Regel oben fragte die JEDEN Lauf neu ab - ein Abruf, der nie gelingen
+    # kann. Vermerkte 404 ruhen darum 30 Tage; so lange, dass sie keine Zeit
+    # mehr kosten, aber nicht fuer immer - CCP kann eine type_id wieder
+    # aufnehmen. Die DB-Abfrage trifft nur Items, die sonst ohnehin neu
+    # geholt wuerden (keine Zeilen, Zeitstempel aelter als 1 h).
+    _tot899 = False
+    if not have and age is not None and age > 3600:
+        try:
+            _tot899 = store.history_ist_tot(type_id, region)
+        except Exception:
+            _tot899 = False
+    if _tot899:
+        stale = age > 30 * 24 * 3600
+    elif not stale and not have and age is not None and age > 3600:
         stale = True
     # allow_fetch=False → the run has hit ESI's rate limit; stop fetching new
     # history and just use whatever is cached, so the scan finishes fast instead
@@ -264,6 +282,13 @@ def history_cached(type_id: int, region: int = config.FORGE_REGION,
         data = esi.fetch_market_history(type_id, region)
     except esi.RateLimited:
         raise                             # let find_deals back off globally
+    except esi.UnknownType:
+        # DAUERHAFT (emm899): einmal vermerken, dann 30 Tage Ruhe (oben).
+        try:
+            store.mark_history_tot(type_id, region)
+        except Exception:
+            pass
+        data = None
     except Exception:
         data = None
     if data is not None:
@@ -452,7 +477,10 @@ def price_spike_pct(history: list, days: int, recent_n: int = 3) -> float:
 
 
 def window_stats(history: list, days: int) -> dict:
-    rows = history[-days:] if days else history
+    # KALENDERTAGE, NICHT EINTRAEGE (emm848): Begruendung und Nutzer-Fund
+    # bei market.fenster_nach_datum.
+    from .market import fenster_nach_datum as _fnd
+    rows = _fnd(history, days)
     if not rows:
         return {"avg": 0.0, "low": 0.0, "high": 0.0, "spread": 0.0,
                 "spread_med_isk": 0.0, "vol_med": 0.0,
@@ -474,7 +502,11 @@ def window_stats(history: list, days: int) -> dict:
     #     (price bounces between buy side and sell side → both get hit)
     n = len(rows)
     active_days = sum(1 for v in vols if v > 0)
-    active_ratio = active_days / n if n else 0.0
+    # ANTEIL AN KALENDERTAGEN: vorher active_days/len(rows) - und rows
+    # enthielt nur Handelstage, der Anteil war also systematisch
+    # geschoent (ein Item mit 3 Handelstagen in 30 stand bei 100 %).
+    _kal = days if days else n
+    active_ratio = active_days / _kal if _kal else 0.0
     txns = sorted(r.get("order_count") or 0 for r in rows if (r.get("volume") or 0) > 0)
     txn_day = txns[len(txns) // 2] if txns else 0.0        # median transactions/day
     day_ranges = [((r["highest"] - r["lowest"]) / r["average"] * 100.0)
@@ -516,7 +548,11 @@ def window_stats(history: list, days: int) -> dict:
         "spread": ((high - low) / avg * 100.0) if avg else 0.0,
         "spread_med_isk": spread_med_isk,
         "vol_med": vol_med,
-        "daily_vol": sum(vols) / len(vols),
+        # DURCH KALENDERTAGE geteilt (emm848): sum/len(vols) teilte nur
+        # durch die Handelstage - leere Tage druecken den Schnitt zu
+        # Recht, sie sind der Markt.
+        "daily_vol": (sum(vols) / float(days)) if days
+                     else (sum(vols) / len(vols) if vols else 0.0),
         "n": n,
         "active_ratio": active_ratio,
         "txn_day": txn_day,
@@ -921,7 +957,11 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
             if sell > 0:
                 _span = (sell - buy) if buy > 0 and sell > buy else 0.0
                 _brs, _srs, _tws = [], [], []
-                for _r in (hist[-days:] if days else hist):
+                # Datumsfenster statt Position (emm848, Begruendung bei
+                # market.fenster_nach_datum): Monate alte Tages-Hochs
+                # sind kein Beleg, dass der Ask HEUTE erreicht wird.
+                from .market import fenster_nach_datum as _fnd848
+                for _r in _fnd848(hist, days):
                     if (_r.get("volume") or 0) <= 0:
                         continue
                     _lo = _r.get("lowest") or 0
@@ -1423,6 +1463,9 @@ def find_deals(snapshot, settings, days, mode, filters, progress=None,
                 "profit_unit": profit_unit,
                 "roi": roi,
                 "daily_vol": daily_vol,
+                # Frische-Signal fuer ALLE Handels-Tabs (emm849):
+                # Tage seit dem letzten Umsatztag, None = unbekannt.
+                "zuletzt_handel_tage": _mkt_fnd.tage_seit_handel(hist),
                 "vol_unknown": vol_unknown,
                 "dos": dos,
                 "profit_day": profit_day,
@@ -1745,7 +1788,8 @@ def scan_capital_contract_prices(region_id, capital_type_ids, should_cancel=None
     return aggregate_contract_prices(prices_by_type, bundles_by_type)
 
 
-def firesale_bewertung(ct, items, preis_fn):
+def firesale_bewertung(ct, items, preis_fn, schiff_fn=None, rig_fn=None,
+                       rigs_abziehen=False):
     """Bewertet EINEN oeffentlichen Item-Exchange-Contract gegen den Markt
     (emm413, Discord Str1k3r2k4: "verfuegbare Contracts ... mit den
     aktuellen Marktpreisen vergleichen"). Rein und testbar.
@@ -1761,15 +1805,39 @@ def firesale_bewertung(ct, items, preis_fn):
         (is_included False) - typisches Tausch-/Scam-Muster; gewinn ist
         dann None (nicht bewertbar), der Aufrufer sortiert ihn aus.
 
+    GEFITTETE RIGS (emm851, Nutzer: "Schiffe die gefittete Rigs haben,
+    kann man theoretisch nicht verkaufen, da muss man erst die Rigs
+    rausreissen ... und dann hat man den gewinn nicht mehr"): Rigs sind
+    beim Ausbau ZERSTOERT - ihr Marktwert ist beim Weiterverkauf des
+    Schiffs verloren. Das oeffentliche ESI-Endpoint sagt NICHT, ob ein
+    Item gefittet oder lose beiliegt (kein Flag) - deshalb die
+    KONSERVATIVE Annahme (Regel 3): enthaelt der Contract ein SCHIFF
+    (schiff_fn) UND Rigs (rig_fn), gelten die Rigs als gefittet. Ihr
+    Wert steht in rig_wert/rig_n und wird mit rigs_abziehen=True vom
+    Contract-Wert abgezogen. OHNE Schiff im Contract zaehlen Rigs
+    normal (lose Rigs sind gewoehnliche Marktware), rig_n bleibt 0.
+
+    ZWEI HARTE GEGENBEWEISE engen die Vermutung ein (emm851b, Nutzer:
+    "wenn mehrere Rigs gestapelt sind ... koennen sie nicht gefittet
+    sein, weil sie gestapelt sind heisst sie liegen im cargo"):
+      * GESTAPELT (quantity > 1 in EINER Position) ist ein FAKT, kein
+        Verdacht: Gefittetes ist immer ein Singleton. Solche Positionen
+        zaehlen nie als gefittet.
+      * SLOT-DECKEL: ein Schiff hat hoechstens 3 Rig-Slots. Als
+        gefittet gelten darum hoechstens 3 x (Schiffs-Stueckzahl)
+        einzelne Rig-Positionen - und zwar die TEUERSTEN zuerst
+        (konservativ: der groesste Wertverlust wird angenommen).
+
     Rueckgabe: {preis, wert, gewinn, rabatt_pct, enthalten:[(tid, qty)],
     bpc_n, unbekannt:[tid], verlangt, volumen, contract_id, date_issued,
-    title}."""
+    title, rig_wert, rig_n, rigs_abgezogen}."""
     preis = float(ct.get("price") or 0)
     enthalten = []
     wert = 0.0
     bpc_n = 0
     unbekannt = []
     verlangt = False
+    _rig_werte = []
     for it in (items or []):
         tid = int(it.get("type_id") or 0)
         qty = int(it.get("quantity") or 0)
@@ -1788,8 +1856,28 @@ def firesale_bewertung(ct, items, preis_fn):
             p = 0.0
         if p > 0:
             wert += p * qty
+            # Nur EINZELNE Rig-Positionen sind Kandidaten: quantity > 1
+            # ist gestapelt, und Gestapeltes liegt im Cargo, nie im
+            # Slot (emm851b).
+            if rig_fn is not None and qty == 1 and rig_fn(tid):
+                _rig_werte.append((tid, p))
         elif tid not in unbekannt:
             unbekannt.append(tid)
+    # Rigs nur dann als "gefittet" werten, wenn auch ein SCHIFF drin
+    # ist - sonst ist es ein gewoehnlicher Rig-Handelscontract.
+    rig_wert = 0.0
+    rig_n = 0
+    _schiffe_n = sum(q for t0, q in enthalten
+                     if schiff_fn is not None and schiff_fn(t0))
+    if _rig_werte and _schiffe_n > 0:
+        # SLOT-DECKEL (emm851b): hoechstens 3 Rigs je Schiff koennen
+        # stecken; abgezogen werden die teuersten Kandidaten.
+        _rig_werte.sort(key=lambda tw: -tw[1])
+        _kand = _rig_werte[:3 * _schiffe_n]
+        rig_wert = sum(w for _t0, w in _kand)
+        rig_n = len(_kand)
+        if rigs_abziehen:
+            wert -= rig_wert
     gewinn = None if verlangt else (wert - preis)
     rabatt = ((gewinn / wert * 100.0)
               if (gewinn is not None and wert > 0) else None)
@@ -1800,6 +1888,8 @@ def firesale_bewertung(ct, items, preis_fn):
             "contract_id": int(ct.get("contract_id") or 0),
             "date_issued": str(ct.get("date_issued") or ""),
             "title": str(ct.get("title") or ""),
+            "rig_wert": rig_wert, "rig_n": rig_n,
+            "rigs_abgezogen": bool(rigs_abziehen and rig_n),
             # Ort des Contracts (emm421): Station oder Struktur-ID.
             "ort_id": int(ct.get("start_location_id") or 0)}
 
