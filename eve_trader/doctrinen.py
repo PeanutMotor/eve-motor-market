@@ -122,20 +122,34 @@ def fits_lesen(text):
     for roh in (text or "").splitlines():
         z = (roh or "").strip()
         if not z:
+            # DER WORTLAUT BLEIBT (emm946): Leerzeilen trennen im
+            # EFT-Format die Slot-Gruppen - sie gehoeren zum Fit.
+            if akt is not None:
+                akt["eft"].append("")
             continue
         k = _KOPF.match(z)
         if k:
             akt = {"schiff": k.group(1).strip(),
                    "name": (k.group(2) or "").strip(),
-                   "posten": {}}
+                   "posten": {},
+                   # emm946 (Nutzer 15.11.2026: "so ins clipboard
+                   # kopieren, damit ich es ingame einfuegen kann und
+                   # simulieren"): `posten` addiert ueber den Namen und
+                   # verliert Slot-Reihenfolge und Modul/Ladung-Paare -
+                   # daraus laesst sich kein Fit zurueckbauen. Darum
+                   # wird der eingefuegte Text je Fit AUFGEHOBEN.
+                   "eft": [z]}
             # DER RUMPF IST EIN POSTEN (s. Kopf des Moduls).
             akt["posten"][akt["schiff"]] = 1
             fits.append(akt)
             continue
         if akt is None:
             continue
+        akt["eft"].append(z)
         for name, anzahl in _zeile_posten(z):
             akt["posten"][name] = akt["posten"].get(name, 0) + anzahl
+    for f in fits:
+        f["eft"] = "\n".join(f["eft"]).strip()
     return fits
 
 
@@ -169,12 +183,24 @@ def doctrine_aus_text(name, text, name_map, ziel=ZIEL_STANDARD):
         fits.append({"schiff": f.get("schiff") or "",
                      "name": f.get("name") or "",
                      "posten": [[t, q] for t, q in sorted(posten.items())],
-                     "unaufgeloest": unbekannt})
+                     "unaufgeloest": unbekannt,
+                     "eft": f.get("eft") or ""})
     try:
         ziel = max(1, int(ziel))
     except (TypeError, ValueError):
         ziel = ZIEL_STANDARD
     return {"name": str(name or "").strip(), "ziel": ziel, "fits": fits}
+
+
+def fit_text(doctrine):
+    """Der eingefuegte EFT-Text eines Schiffs, so wie er kam (emm946) -
+    zum Zurueckkopieren ins Spiel (Fitting-Fenster: aus der
+    Zwischenablage importieren). Mehrere Fits durch eine Leerzeile
+    getrennt. "" heisst: der Text wurde nie aufgehoben (Schiff stammt
+    aus einer Fassung vor emm946) - dann wird NICHTS erfunden."""
+    teile = [str(f.get("eft") or "").strip()
+             for f in ((doctrine or {}).get("fits") or [])]
+    return "\n\n".join(x for x in teile if x)
 
 
 def fit_bedarf(fit):

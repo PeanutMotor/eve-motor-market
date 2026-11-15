@@ -26361,7 +26361,8 @@ try:
     # Sichtbar ist der Knopf in der Reiter-Leiste oben.
     _txt919 = win._nav_buttons["stocks"].text().strip()
     check(f"b919 der Reiter heisst Doctrines ({_txt919!r})",
-          _txt919 in ("Doctrines", "Doctrinen"))
+          # 15.11.2026 (emm946): der Reiter traegt "(Beta)".
+          _txt919 in ("Doctrines (Beta)", "Doctrinen (Beta)"))
     # ---- LEERE KARTE VOR DEM ABRUF: kein Balken, Hinweis oben ----------
     from eve_trader import doctrinen as _dc919
     _st919 = win._ms_state()
@@ -29030,6 +29031,60 @@ try:
           and _cb940.minimumWidth() >= 20 and _cb940.minimumHeight() >= 20
           and _fit940.rowHeight(0) >= _cb940.minimumHeight() + 10
           and _fit940.columnWidth(0) >= _cb940.minimumWidth() + 12)
+    # emm946: "Copy fit" kopiert den aufgehobenen EFT-Text; ohne Text
+    # ist der Knopf gesperrt (nichts wird erfunden).
+    from PySide6.QtGui import QGuiApplication as _GA946
+    _docs946 = win._ms_state()["doctrinen"]
+    _alt946 = [[_f.get("eft") for _f in (_d.get("fits") or [])]
+               for _d in _docs946]
+    try:
+        for _d in _docs946:
+            for _f in (_d.get("fits") or []):
+                _f["eft"] = "[Rifter, b946]\n200mm AutoCannon II"
+        win._ms_render(); _app.processEvents()
+        _kn946 = getattr(win, "_ms_fit_knopf_letzter", None)
+        _GA946.clipboard().setText("leer946")
+        if _kn946 is not None:
+            _kn946.click()
+        eq("b946 Copy fit legt den EFT-Text in die Zwischenablage",
+           (_kn946 is not None and _kn946.isEnabled(),
+            _GA946.clipboard().text()),
+           (True, "[Rifter, b946]\n200mm AutoCannon II"))
+        for _d in _docs946:
+            for _f in (_d.get("fits") or []):
+                _f.pop("eft", None)
+        win._ms_render(); _app.processEvents()
+        _kn946b = getattr(win, "_ms_fit_knopf_letzter", None)
+        check("b946 ohne aufgehobenen Text ist der Knopf gesperrt",
+              _kn946b is not None and not _kn946b.isEnabled())
+    finally:
+        for _d, _e in zip(_docs946, _alt946):
+            for _f, _x in zip((_d.get("fits") or []), _e):
+                if _x is None:
+                    _f.pop("eft", None)
+                else:
+                    _f["eft"] = _x
+    # emm947: der Faction-Haken sitzt auf der Schiffskarte und schaltet
+    # das Schiff um (vorher nur im Einfuege-Dialog).
+    _dz947 = win._ms_state()["doctrinen"]
+    _vor947 = [bool(_d.get("faction_bauen")) for _d in _dz947]
+    _fh947 = getattr(win, "_ms_fac_haken_letzter", None)
+    try:
+        if _fh947 is not None:
+            _fh947.click()
+        _app.processEvents(); _app.processEvents()
+        _nach947 = [bool(_d.get("faction_bauen")) for _d in _dz947]
+        check("b947 der Faction-Haken auf der Karte schaltet genau ein "
+              f"Schiff um ({_vor947} -> {_nach947})",
+              _fh947 is not None
+              and sum(a != b for a, b in zip(_vor947, _nach947)) == 1)
+        _fh947b = getattr(win, "_ms_fac_haken_letzter", None)
+        check("b947 nach dem Neuzeichnen zeigt der Haken den neuen Stand",
+              _fh947b is not None and _fh947b is not _fh947
+              and any(_nach947) == _fh947b.isChecked())
+    finally:
+        for _d, _v in zip(_dz947, _vor947):
+            _d["faction_bauen"] = _v
     win._ms_render(); _app.processEvents()      # der Neubau-Moment
     _karte842b = win.ms_doc_box.itemAt(0).widget()
     _pf842b = next(b for b in _karte842b.findChildren(_PB842)

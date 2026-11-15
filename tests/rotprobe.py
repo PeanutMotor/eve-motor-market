@@ -17031,6 +17031,18 @@ Source: "settings.json"; DestDir: "{app}"''',
      'class AktiveZeileDelegate(QStyledItemDelegate):   # MUTATION',
      'b904 der Amber-Delegate bleibt stehen'),
     # ---- emm922: Top-Handelsware je Ort -------------------------------
+    # emm947: Faction-Haken auf der Schiffskarte
+    ('Faction-Haken: schaltet das Schiff nicht um',
+     'eve_trader/ui/mw_market_stocks.py',
+     '        doc["faction_bauen"] = bool(an)\n',
+     '',
+     'b947 der Faction-Haken auf der Karte'),
+    # emm946: EFT-Text je Fit aufheben
+    ('EFT-Text: Modulzeilen werden nicht aufgehoben',
+     'eve_trader/doctrinen.py',
+     '        akt["eft"].append(z)\n',
+     '',
+     'aa946 fits_lesen hebt je Fit den Wortlaut auf'),
     # emm937: Portfolio-Karte "Orders laufen aus"
     ('Auslauf-Karte: fuellt sich beim Start nicht',
      'eve_trader/ui/main_window.py',

@@ -55,6 +55,9 @@ OutputBaseFilename=EVE-Motor-Market-{#MyAppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; Sprache nicht aus Windows ableiten - Englisch vorwaehlen (emm945,
+; siehe [Languages]).
+LanguageDetectionMethod=none
 ; OHNE ADMINRECHTE: installiert nach %LOCALAPPDATA%\Programs. Ein
 ; Handelswerkzeug braucht keine Systemrechte, und die UAC-Abfrage ist fuer
 ; viele Nutzer genau die Huerde, an der sie abbrechen.
@@ -62,8 +65,13 @@ PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
-Name: "de"; MessagesFile: "compiler:Languages\German.isl"
+; ENGLISCH IST DIE VORGABE (emm945, Nutzer 15.11.2026: "das hier am
+; anfang soll standard auf english sein"). Die ERSTE Sprache der Liste
+; ist die Vorgabe, sobald die Erkennung der Windows-Sprache aus ist
+; (LanguageDetectionMethod=none in [Setup]) - sonst waehlt Inno Setup auf
+; einem deutschen Windows Deutsch vor. Deutsch bleibt waehlbar.
 Name: "en"; MessagesFile: "compiler:Default.isl"
+Name: "de"; MessagesFile: "compiler:Languages\German.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; \

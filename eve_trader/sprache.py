@@ -7834,8 +7834,16 @@ KATALOG = {
         'note':
             'Hinweis',
         # emm919: der Reiter heisst "Doctrines" statt "Market Stocks".
-        'Doctrines':
-            'Doctrinen',
+        'Doctrines (Beta)':
+            'Doctrinen (Beta)',
+        'Copy fit':
+            'Fit kopieren',
+        "Copies this ship's fit in EFT format. In EVE: fitting window, Import & Export, Import from clipboard - then simulate it.":
+            'Kopiert das Fit dieses Schiffs im EFT-Format. In EVE: Fitting-Fenster, Import & Export, aus der Zwischenablage importieren - dann simulieren.',
+        'This ship was added before fits were kept. Open its edit dialog and paste the fit once more.':
+            'Dieses Schiff kam dazu, bevor Fits aufgehoben wurden. Öffne seinen Bearbeiten-Dialog und füge das Fit noch einmal ein.',
+        'Fit copied - in EVE: fitting window, import from clipboard.':
+            'Fit kopiert - in EVE: Fitting-Fenster, aus der Zwischenablage importieren.',
         'Paste ship fit from clipboard':
             'Schiffs-Fit aus der Zwischenablage',
         'Build faction items myself (LP blueprints)':
@@ -7880,12 +7888,6 @@ KATALOG = {
             'Voll gedeckte abwählen',
         'Unticks every position that is already at 100% - what is left ticked is exactly your remaining work. You can still tick/untick every row by hand.':
             'Wählt jede Position ab, die schon bei 100 % steht - angehakt bleibt genau deine Restarbeit. Jede Zeile lässt sich weiter von Hand an- und abwählen.',
-        'Faction items: {art}':
-            'Faction-Items: {art}',
-        'build myself':
-            'selbst bauen',
-        'buy only':
-            'nur kaufen',
         'stock %':
             'Bestand %',
         'Missing quantity times the Jita price - what filling the gap costs if you simply bought it.':

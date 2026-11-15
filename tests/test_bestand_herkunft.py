@@ -41094,6 +41094,31 @@ try:
 except Exception as _e868:                               # pragma: no cover
     _fail.append(f"aa868 Ordner-Gruppen: {type(_e868).__name__}: {_e868}")
 
+# (aa946) DER EFT-TEXT WIRD JE FIT AUFGEHOBEN (Nutzer 15.11.2026: "so ins
+# clipboard kopieren, damit ich es ingame einfuegen kann und simulieren").
+try:
+    from eve_trader import doctrinen as _dc946
+    _t946 = ("Ueberschrift davor\n[Rifter, A]\n200mm AutoCannon II, EMP S\n"
+             "\nSmall Shield Extender II\n\nEMP S x400\n"
+             "[Caracal, B]\nRapid Light Missile Launcher II\n")
+    _f946 = _dc946.fits_lesen(_t946)
+    check("aa946 fits_lesen hebt je Fit den Wortlaut auf (Leerzeilen "
+          "bleiben, Text vor dem Kopf nicht)",
+          [x.get("eft") for x in _f946] == [
+              "[Rifter, A]\n200mm AutoCannon II, EMP S\n\n"
+              "Small Shield Extender II\n\nEMP S x400",
+              "[Caracal, B]\nRapid Light Missile Launcher II"])
+    check("aa946 die Zaehlung bleibt unveraendert (EMP S 1 + 400)",
+          _f946[0]["posten"].get("EMP S") == 401
+          and _f946[0]["posten"].get("Rifter") == 1)
+    _d946 = _dc946.doctrine_aus_text("T", _t946, {"rifter": 587})
+    check("aa946 fit_text gibt alle Fits des Schiffs zurueck, ohne Text ''",
+          _dc946.fit_text(_d946) == _f946[0]["eft"] + "\n\n" + _f946[1]["eft"]
+          and _dc946.fit_text({"fits": [{"posten": [[587, 1]]}]}) == ""
+          and _dc946.fit_text(None) == "")
+except Exception as _e946:                               # pragma: no cover
+    _fail.append(f"aa946 EFT-Text: {type(_e946).__name__}: {_e946}")
+
 
 # ---------------------------------------------------------------- (aa869)
 # Nutzer 08.11.2026: "Beim start von MoMa bleibt es fast stehen ...

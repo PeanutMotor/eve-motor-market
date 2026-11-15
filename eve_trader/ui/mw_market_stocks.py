@@ -398,7 +398,7 @@ class MarketStocks:
 
         # NAME (emm919, Nutzer 14.11.2026: "eigentlich auch ein nicht
         # passender Name"): der Reiter fuellt Doktrinen am Markt auf.
-        tab_icon(self.tabs, w, t("Doctrines"), "clipboard")
+        tab_icon(self.tabs, w, t("Doctrines (Beta)"), "clipboard")
         self._ms_markt = None
         self._ms_worker = None
         # Doctrine-Schaetzungen (emm853): {doc_id: dict|None}, dazu eine
@@ -528,13 +528,9 @@ class MarketStocks:
         z.addWidget(ziel_feld, 0)
         z.addWidget(QLabel(t("complete ships")), 0)
         z.addStretch(1)
-        fac = QCheckBox(t("Build faction items myself (LP blueprints)"))
-        fac.setToolTip(t(
-            "Some players bought faction blueprints with loyalty points. "
-            "ON: faction items go into the build plan too (only those "
-            "that actually have a recipe). OFF: faction items stay on "
-            "the buy side."))
-        z.addWidget(fac, 0)
+        # DER FACTION-HAKEN SITZT AUF DER SCHIFFSKARTE (emm947, Nutzer
+        # 15.11.2026: "gehoert irgendwie nicht in den ships paste schritt,
+        # das gehoert in die naechste karte") - hier wird nur eingefuegt.
         v.addLayout(z)
         text_feld = QPlainTextEdit()
         # de_scan3: aus - das ist EVE-FITTING-SYNTAX, kein Anzeigetext:
@@ -559,7 +555,6 @@ class MarketStocks:
             name_feld.setText(vorhanden.get("name") or "")
             ziel_feld.setValue(int(vorhanden.get("ziel")
                                    or st.get("ziel_standard") or 250))
-            fac.setChecked(bool(vorhanden.get("faction_bauen")))
 
         def _vorpruefen():
             txt = text_feld.toPlainText()
@@ -596,7 +591,9 @@ class MarketStocks:
         doc = doctrinen.doctrine_aus_text(
             name_feld.text() or t("Unnamed doctrine"), txt, nm,
             ziel=ziel_feld.value())
-        doc["faction_bauen"] = bool(fac.isChecked())
+        # Beim Bearbeiten bleibt die Wahl des Schiffs stehen; ein neues
+        # Schiff startet mit "kaufen" (emm947, Schalter auf der Karte).
+        doc["faction_bauen"] = bool((vorhanden or {}).get("faction_bauen"))
         # emm868: leerer Ordner -> eigener Name (gleiches Verhalten wie
         # die Migration alter Staende).
         doc["ordner"] = (ordner_feld.currentText().strip()
@@ -1364,11 +1361,42 @@ class MarketStocks:
             lambda _c=False, d=doc: self._ms_multibuy([d]))
         kn_zeile.addWidget(buy_kn, 0)
         self._ms_buy_knopf_letzter = buy_kn       # b-Suite
-        fac_info = QLabel(t("Faction items: {art}").format(
-            art=t("build myself") if doc.get("faction_bauen")
-            else t("buy only")))
-        fac_info.setStyleSheet(f"color:{theme.MUTED};")
-        kn_zeile.addWidget(fac_info, 0)
+        # DAS GANZE SCHIFF INS SPIEL (emm946, Nutzer 15.11.2026: "keinen
+        # button um das ganze schiff ingame zu oeffnen im fitting Fenster,
+        # oder zumindest so ins clipboard kopieren"). Oeffnen geht ueber
+        # ESI nur mit einer NEUEN Berechtigung (Fittings schreiben) - die
+        # holen wir nicht. Der Knopf kopiert den eingefuegten EFT-Text.
+        fit_kn = QPushButton(" " + t("Copy fit"))
+        fit_kn.setIcon(icons.icon("copy"))        # b55: Symbolpflicht
+        fit_kn.setCursor(Qt.PointingHandCursor)
+        if doctrinen.fit_text(doc):
+            fit_kn.setToolTip(t(
+                "Copies this ship's fit in EFT format. In EVE: fitting "
+                "window, Import & Export, Import from clipboard - then "
+                "simulate it."))
+        else:
+            fit_kn.setEnabled(False)
+            fit_kn.setToolTip(t(
+                "This ship was added before fits were kept. Open its "
+                "edit dialog and paste the fit once more."))
+        fit_kn.clicked.connect(
+            lambda _c=False, d=doc: self._ms_fit_kopieren(d))
+        kn_zeile.addWidget(fit_kn, 0)
+        self._ms_fit_knopf_letzter = fit_kn       # b-Suite
+        # FACTION: KAUFEN ODER BAUEN - HIER, NICHT IM EINFUEGE-DIALOG
+        # (emm947). Vorher stand hier nur ein grauer Satz, der Schalter
+        # war im Dialog und im Rechtsklick versteckt.
+        fac_cb = QCheckBox(t("Build faction items myself (LP blueprints)"))
+        fac_cb.setChecked(bool(doc.get("faction_bauen")))
+        fac_cb.setToolTip(t(
+            "Some players bought faction blueprints with loyalty points. "
+            "ON: faction items go into the build plan too (only those "
+            "that actually have a recipe). OFF: faction items stay on "
+            "the buy side."))
+        fac_cb.toggled.connect(
+            lambda an, d=doc: self._ms_faction_setzen(d, an))
+        kn_zeile.addWidget(fac_cb, 0)
+        self._ms_fac_haken_letzter = fac_cb       # b-Suite
         kn_zeile.addStretch(1)
         kv.addLayout(kn_zeile)
 
@@ -1791,9 +1819,7 @@ class MarketStocks:
         elif akt is a_edit:
             self._ms_doctrine_dialog(vorhanden=doc)
         elif akt is a_fac:
-            doc["faction_bauen"] = not bool(doc.get("faction_bauen"))
-            self._ms_speichern()
-            self._ms_render()
+            self._ms_faction_setzen(doc, not bool(doc.get("faction_bauen")))
         elif akt is a_del:
             self._ms_doctrine_loeschen(doc.get("id"))
 
@@ -2184,6 +2210,28 @@ class MarketStocks:
                 .format(n=ohne_name)
         self._flash_tip(t("{n} item(s) copied for EVE multibuy.")
                         .format(n=len(posten)) + _zusatz)
+
+    def _ms_faction_setzen(self, doc, an):
+        """Faction-Items dieses Schiffs bauen (an) oder kaufen - EINE
+        Stelle fuer den Haken auf der Karte und den Rechtsklick (emm947).
+        Neu gezeichnet wird NACH dem Signal: `_ms_render` baut die Karte
+        neu und wuerde sonst den Haken loeschen, der gerade meldet."""
+        doc["faction_bauen"] = bool(an)
+        self._ms_est.pop(int(doc.get("id") or 0), None)
+        self._ms_speichern()
+        QTimer.singleShot(0, lambda: self._ms_render())
+
+    def _ms_fit_kopieren(self, doc):
+        """Den EFT-Text eines Schiffs in die Zwischenablage (emm946)."""
+        txt = doctrinen.fit_text(doc)
+        if not txt:
+            self._flash_tip(t("This ship was added before fits were kept. "
+                              "Open its edit dialog and paste the fit "
+                              "once more."))
+            return
+        QGuiApplication.clipboard().setText(txt)
+        self._flash_tip(t("Fit copied - in EVE: fitting window, import "
+                          "from clipboard."))
 
     def _ms_baubar(self, tid, rec=None):
         """Hat dieses Item ein Rezept? Je ITEM gegen product_to_bp, nie

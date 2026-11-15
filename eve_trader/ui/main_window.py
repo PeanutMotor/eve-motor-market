@@ -1916,7 +1916,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                   "swing": t("Swing Trade"), "build": t("Industry"),
                   "region": t("Regional Trading"),
                   "firesales": t("Firesales"), "pi": t("PI"),
-                  "stocks": t("Doctrines"),   # emm919
+                  "stocks": t("Doctrines (Beta)"),   # emm919, Beta: emm946
                   "assets": t("Assets"),
                   "mstats": t("Market stats")}
         self._tab_labels = labels
