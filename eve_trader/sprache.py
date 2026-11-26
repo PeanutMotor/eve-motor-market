@@ -49,6 +49,25 @@ KATALOG = {
         "Tools": "Werkzeuge",
         # ---- PI (Planetare Industrie, emm801) ----
         "PI": "PI",
+        # ---- Mengen-Vorschlag aus dem Handelsvolumen (emm987) ----
+        "Suggested quantity \u2026":
+            "Mengen-Vorschlag \u2026",
+        "Asks for your share of the daily trade volume (e.g. 25 % \u2013 or 300 % to fill the market for three days) and sets the quantity of every end product accordingly, for the region of the sell hub. Buy and sell orders together: EVE does not report them separately.":
+            "Fragt nach deinem Anteil am t\u00e4glichen Handelsvolumen (z. B. 25 % \u2013 oder 300 %, um den Markt f\u00fcr drei Tage zu f\u00fcllen) und setzt die Menge jedes Endprodukts entsprechend, f\u00fcr die Region des Verkaufs-Hubs. Kauf- und Verkaufsorder zusammen: EVE liefert sie nicht getrennt.",
+        "Sell hub of this plan: {hub}\nBuild how much of the daily trade volume of its region? (%)\n25 = a quarter of one day \u00b7 100 = one day \u00b7 300 = three days":
+            "Verkaufs-Hub dieses Plans: {hub}\nWie viel vom t\u00e4glichen Handelsvolumen seiner Region bauen? (%)\n25 =ein Viertel eines Tages \u00b7 100 = ein Tag \u00b7 300 = drei Tage",
+        "The plan is frozen \u2013 its quantities are fixed.":
+            "Der Plan ist eingefroren \u2013 seine Mengen stehen fest.",
+        "The region of the sell hub \u201e{hub}\u201c is unknown \u2013 no trade volume.":
+            "Die Region des Verkaufs-Hubs \u201e{hub}\u201c ist unbekannt \u2013 kein Handelsvolumen.",
+        "{n} quantity(ies) set to {pct} % of the daily volume in the region of {hub} ({tage}-day average).":
+            "{n} Menge(n) auf {pct} % des Tagesvolumens in der Region von {hub} gesetzt ({tage}-Tage-Schnitt).",
+        "No trade history, unchanged: {liste}":
+            "Keine Handelshistorie, unver\u00e4ndert: {liste}",
+        "(the last scan is from {scan}, the hub above is {hub})":
+            "(der letzte Scan stammt von {scan}, oben steht {hub})",
+        "profit: prices were from another hub \u2013 recalculating \u2026":
+            "Gewinn: Preise stammten von einem anderen Hub \u2013 wird neu gerechnet \u2026",
         "profit: loading My Blueprints \u2026":
             "Gewinn: My Blueprints laden \u2026",
         "profit: load recipes + run a market scan first":
@@ -326,12 +345,6 @@ KATALOG = {
         "Coverage history: {first} % \u2192 {last} % over {n} market fetches.":
             "Deckungs-Verlauf: {first} % \u2192 {last} % \u00fcber {n} Marktabrufe.",
         "Build ranking": "Bau-Rangliste",
-        "All items of all doctrines, ranked by build profit per unit times "
-        "the missing quantity - what earns most when you fill the hub. "
-        "Needs \u201eFetch market\u201c.":
-            "Alle Items aller Doctrines, sortiert nach Baugewinn je St\u00fcck "
-            "mal fehlender Menge - was am meisten bringt, wenn du den Hub "
-            "auff\u00fcllst. Braucht \u201eFetch market\u201c.",
         "Nothing missing with a build profit number.":
             "Nichts fehlt, das eine Baugewinn-Zahl hat.",
         "Total profit": "Gewinn gesamt",
@@ -1290,7 +1303,6 @@ KATALOG = {
         '\u26a0 No market scan yet \u2013 run it once.':
             '\u26a0 Noch kein Markt-Scan \u2013 einmal ausf\u00fchren.',
         # ---- Zielzeit je Stufe im Runplaner (24.09.2026) ----
-        'Target per stage:': 'Ziel je Stufe:',
         'as fast as possible': 'so schnell wie m\u00f6glich',
         '{n} h': '{n} h',
         '{n} d': '{n} T',
@@ -1314,16 +1326,6 @@ KATALOG = {
             'und kann {slots} Slot(s) gleichzeitig nutzen. Mehr Charaktere '
             'oder mehr Blaupausen-Kopien dieses Items w\u00fcrden es verk\u00fcrzen.',
         '(building {n}/{m} runs)': '(im Bau {n}/{m} Runs)',
-        'How long may a stage run? The planner then uses as few '
-        'blueprints and slots as fit into that time \u2013 a stage is '
-        'finished only when its longest job is, so the shorter ones may '
-        'be stretched for free. Each stage can be set separately in its '
-        'own row below.':
-            'Wie lange darf eine Stufe laufen? Der Planer nimmt dann so wenige '
-            'Blaupausen und Slots, wie in die Zeit passen \u2013 eine Stufe ist '
-            'ohnehin erst fertig, wenn ihr l\u00e4ngster Job fertig ist, die '
-            'k\u00fcrzeren d\u00fcrfen also gratis gestreckt werden. Jede Stufe '
-            'l\u00e4sst sich unten in ihrer eigenen Zeile einzeln einstellen.',
         # ---- Plan-Farben (23.09.2026) ----
         'Colour of this build plan \u2013 click to choose.':
             'Farbe dieses Bauplans \u2013 zum Ausw\u00e4hlen klicken.',
@@ -1334,8 +1336,8 @@ KATALOG = {
         'Show the end products of this bundle':
             'Endprodukte dieses B\u00fcndels ausklappen',
         # ---- Kopfzeile (23.09.2026) ----
-        'Structure: add an Upwell structure as a trading place (needs a linked character with market/docking access and the structure scope). Selectable in the dropdown afterwards.':
-            'Struktur: eine Upwell-Struktur als Handelsplatz hinzuf\u00fcgen (braucht einen verkn\u00fcpften Charakter mit Markt-/Andockrecht und den Struktur-Scope). Danach im Dropdown w\u00e4hlbar.',
+        'Structure: add an Upwell structure as a trading place (needs a linked character with market/docking access and the structure scope) - or any NPC station. How to copy it: dock there in game, right-click the structure/station name and choose \u201eCopy Info\u201c, then paste it here. Selectable in the dropdown afterwards.':
+            'Struktur: eine Upwell-Struktur als Handelsplatz hinzuf\u00fcgen (braucht einen verkn\u00fcpften Charakter mit Markt-/Andockrecht und den Struktur-Scope) - oder jede NPC-Station. So kopierst du sie: ingame dort andocken, Rechtsklick auf den Struktur-/Stationsnamen, \u201eCopy Info\u201c w\u00e4hlen und hier einf\u00fcgen. Danach im Dropdown w\u00e4hlbar.',
         # ---- Handels-Reiter: rechte Leiste (23.09.2026) ----
         # Zwei Gruppen wie in der Bau-Rail: erst suchen, dann in den Wagen.
         'DEALS':
@@ -1801,8 +1803,6 @@ KATALOG = {
         "Start with „Create new doctrine“ on the right, then add the ships inside the doctrine.":
             "Beginne rechts mit „Neue Doctrine erstellen“ und füge dann die Schiffe in der Doctrine ein.",
         "INDUSTRY": "INDUSTRIE",
-        "Jumps to this page in the Industry tab.":
-            "Springt zu dieser Seite im Industry-Reiter.",
         "(buy) = bought, not built (no recipe, or faction set to buy) – lands in the plan's shopping list.":
             "(kaufen) = wird gekauft, nicht gebaut (kein Rezept, oder Faction auf Kaufen) – landet in der Einkaufsliste des Plans.",
         "{n} buy item(s) included at market price":
@@ -1844,10 +1844,6 @@ KATALOG = {
         "profit (1 set)": "Profit (1 Satz)",
         "Sell value of one set at the GLOBAL trading place minus fees and the build cost. Items without a price there use the Jita sell price instead - the note column says so.":
             "Verkaufswert eines Satzes am GLOBALEN Handelsplatz minus Gebühren und Baukosten. Items ohne Preis dort nehmen stattdessen den Jita-Verkaufspreis - die Notiz-Spalte sagt es.",
-        "Selected doctrines → one multi build plan":
-            "Markierte Doctrinen → ein Multi-Bauplan",
-        "Select one or more doctrines in the list (Ctrl/Shift) and turn everything they are missing into ONE multi build plan. Same rules as per doctrine: unticked, faction-buy and no-recipe items are named and left out.":
-            "Eine oder mehrere Doctrinen in der Liste markieren (Strg/Umschalt) und alles, was ihnen fehlt, zu EINEM Multi-Bauplan machen. Gleiche Regeln wie je Doctrine: abgewählte, Faction-Kauf- und rezeptlose Posten werden genannt und bleiben draußen.",
         "Multi build plan": "Multi-Bauplan",
         "Select one or more doctrines in the list first.":
             "Erst eine oder mehrere Doctrinen in der Liste markieren.",
@@ -2331,15 +2327,100 @@ KATALOG = {
         "Buy Missing Blueprints": "Fehlende Blueprints kaufen",
         "Copies every blueprint of this plan that you own neither as an original nor as a copy \u2013 one original each, in EVE multibuy format. Make copies from it yourself for parallel jobs. Invented T2 copies are left out (they cannot be bought).":
             "Kopiert jede Blaupause dieses Plans, die du weder als Original noch als Kopie besitzt \u2013 je ein Original, im EVE-Multibuy-Format. Kopien f\u00fcr parallele Jobs ziehst du selbst daraus. Erfundene T2-Kopien bleiben drau\u00dfen (die kann man nicht kaufen).",
-        "Load ESI ownership first \u2013 without it nobody knows which blueprints are missing.":
-            "Zuerst den ESI-Besitz laden \u2013 ohne ihn wei\u00df niemand, welche Blaupausen fehlen.",
+        "Blueprint ownership is not loaded yet \u2013 open the "
+        "Blueprints tab or use Tools \u2192 \u201eLoad everything "
+        "from ESI\u201c. Without it nobody knows which blueprints "
+        "are missing.":
+            "Der Blaupausen-Besitz ist noch nicht geladen \u2013 \u00f6ffne den "
+            "Reiter Blueprints oder nimm Tools \u2192 \u201eAlles aus ESI "
+            "laden\u201c. Ohne ihn wei\u00df niemand, welche Blaupausen fehlen.",
+        "loading ownership \u2026":
+            "Besitz wird geladen \u2026",
+        "ownership not loaded \u2013 Tools \u2192 \u201eLoad everything from ESI\u201c":
+            "Besitz nicht geladen \u2013 Tools \u2192 \u201eAlles aus ESI laden\u201c",
+        "Blueprint ownership could not be loaded \u2013 use "
+        "Tools \u2192 \u201eLoad everything from ESI\u201c.":
+            "Der Blaupausen-Besitz konnte nicht geladen werden \u2013 nimm "
+            "Tools \u2192 \u201eAlles aus ESI laden\u201c.",
         "No blueprint is missing \u2713 (invented T2 copies are not bought).":
             "Es fehlt keine Blaupause \u2713 (erfundene T2-Kopien werden nicht gekauft).",
         "{n} blueprint(s) copied \u2713 \u2013 paste into the in-game multibuy window.":
             "{n} Blaupause(n) kopiert \u2713 \u2013 im Spiel ins Multibuy-Fenster einf\u00fcgen.",
         "Whether the datacores and decryptors worked out in the Invention tab go into the shopping list.":
             "Ob die im Invention-Reiter ermittelten Datacores und Decryptoren auf die Einkaufsliste kommen.",
-        "Auto-Decryptor": "Auto-Decryptor",
+        # ---- Gewinn-Uebersicht: Archiv + festgeschriebener Gewinn (emm989) ----
+        "Count archived plans in the profit total":
+            "Archivierte Pl\u00e4ne im Gewinn-Total mitz\u00e4hlen",
+        "Profit as it stood when each plan was completed. {mit} of {n} archived plans have a recorded profit; the others were completed without one and are NOT included.":
+            "Gewinn, wie er beim Abschluss jedes Plans stand. {mit} von {n} archivierten Pl\u00e4nen haben einen gemerkten Gewinn; die anderen wurden ohne abgeschlossen und sind NICHT enthalten.",
+        "Profit frozen when the plan was completed.":
+            "Gewinn beim Abschluss des Plans festgeschrieben.",
+        # ---- Auto-Decryptor mit drei Zielen (emm988) ----
+        "Auto-Decryptor: most profit":
+            "Auto-Decryptor: meister Gewinn",
+        "Auto-Decryptor: fewest build slots":
+            "Auto-Decryptor: wenigste Bauslots",
+        # ---- Checkliste im Bauplan (emm1044) ----
+        "Default":
+            "Standard",
+        "Set by hand.":
+            "Von Hand gesetzt.",
+        "Right-click: switch the answer by hand.":
+            "Rechtsklick: Antwort von Hand umschalten.",
+        "CHECKLIST":
+            "CHECKLISTE",
+        "Checklist":
+            "Checkliste",
+        "Production depth set?":
+            "Fertigungstiefe eingestellt?",
+        "Not clicked in this plan yet - the pre-selected stage under Production depth applies.":
+            "In diesem Plan noch nicht angeklickt - es gilt die vorgew\u00e4hlte Stufe unter Fertigungstiefe.",
+        "Reprocessing set?":
+            "Reprocessing eingestellt?",
+        "Default: minerals are bought - no compressed ore, no unrefined reactions.":
+            "Standard: Minerale werden gekauft - kein Compressed Ore, keine Unrefined-Reaktionen.",
+        "Freight cost set?":
+            "Frachtkosten eingestellt?",
+        "Default: no freight cost is calculated.":
+            "Standard: es werden keine Frachtkosten gerechnet.",
+        "Decryptor chosen?":
+            "Decryptor gew\u00e4hlt?",
+        "Default: no decryptor.":
+            "Standard: kein Decryptor.",
+        "Invention time set?":
+            "Invention-Zeit eingestellt?",
+        "Default: 1 invention job at a time (long invention time).":
+            "Standard: 1 Invention-Job gleichzeitig (lange Erfindungszeit).",
+        "Materials bought?":
+            "Material gekauft?",
+        "Detected when you click Create shopping list or freeze the plan.":
+            "Erkannt, sobald du auf Einkaufsliste erstellen klickst oder den Plan einfrierst.",
+        "Plan frozen?":
+            "Plan eingefroren?",
+        "Freeze the plan once the purchase is done - then its numbers stay fixed.":
+            "Friere den Plan ein, sobald der Einkauf erledigt ist - dann bleiben seine Zahlen fest.",
+        "Plan saved?":
+            "Plan gespeichert?",
+        "Not saved yet - without saving the plan is gone when you close it.":
+            "Noch nicht gespeichert - ohne Speichern ist der Plan nach dem Schlie\u00dfen weg.",
+        "Click: shows you where this is set.":
+            "Klick: zeigt dir, wo das eingestellt wird.",
+        "Hide the checklist - it stays hidden for every build plan. Bring it back under Tools - Checklist.":
+            "Checkliste ausblenden - sie bleibt f\u00fcr jeden Bauplan ausgeblendet. Zur\u00fcck holst du sie unter Tools - Checkliste.",
+        "Shows or hides the checklist at the top of the build plan. The choice applies to every build plan.":
+            "Zeigt oder versteckt die Checkliste oben im Bauplan. Die Wahl gilt f\u00fcr jeden Bauplan.",
+        "Auto-Decryptor: highest success chance":
+            "Auto-Decryptor: h\u00f6chste Erfolgschance",
+        "Picks for every blueprint the decryptor with the HIGHEST SUCCESS CHANCE per invention attempt \u2013 the fewest attempts and datacores. Not necessarily the cheapest. Cards with \u201eOwn BPC\u201c are left out.":
+            "W\u00e4hlt f\u00fcr jede Blaupause den Decryptor mit der H\u00d6CHSTEN ERFOLGSCHANCE je Invention-Versuch \u2013 die wenigsten Versuche und Datacores. Nicht unbedingt der g\u00fcnstigste. Karten mit \u201eEigene BPC\u201c bleiben aus.",
+        "Auto-Decryptor: fastest build":
+            "Auto-Decryptor: schnellster Bau",
+        "Picks for every blueprint the decryptor with the MOST RUNS per invented copy \u2013 fewer copies, fewer jobs to restart. Usually costs more: such decryptors lower the success chance, so more invention attempts are needed. Cards with \u201eOwn BPC\u201c are left out.":
+            "W\u00e4hlt f\u00fcr jede Blaupause den Decryptor mit den MEISTEN RUNS je erfundener Kopie \u2013 weniger Kopien, seltener Jobs nachlegen. Kostet meist mehr: solche Decryptoren senken die Erfolgschance, es braucht also mehr Invention-Versuche. Karten mit \u201eEigene BPC\u201c bleiben aus.",
+        "Picks for every blueprint the decryptor with the best time efficiency (TE) \u2013 the shortest build time per run. Not necessarily the cheapest. Cards with \u201eOwn BPC\u201c are left out.":
+            "W\u00e4hlt f\u00fcr jede Blaupause den Decryptor mit der besten Zeiteffizienz (TE) \u2013 die k\u00fcrzeste Bauzeit je Run. Nicht unbedingt der g\u00fcnstigste. Karten mit \u201eEigene BPC\u201c bleiben aus.",
+        "Checked {n} blueprint(s): {chg} changed, {same} unchanged, {skip} skipped (Own BPC).":
+            "{n} Blaupause(n) gepr\u00fcft: {chg} gewechselt, {same} unver\u00e4ndert, {skip} \u00fcbersprungen (Eigene BPC).",
         "Picks the best decryptor for every blueprint in this tab, one after the other: the lowest expected total cost for the current quantity. Cards with \u201eOwn BPC\u201c are left out.":
             "W\u00e4hlt f\u00fcr jede Blaupause in diesem Reiter nacheinander den besten Decryptor: die niedrigsten erwarteten Gesamtkosten f\u00fcr die aktuelle Menge. Karten mit \u201eEigene BPC\u201c bleiben aussen vor.",
         "Own BPC (your own ME/TE)": "Eigene BPC (deine ME/TE)",
@@ -2539,6 +2620,19 @@ KATALOG = {
             "Wer verkauft das Endprodukt? Bestimmt Sales Tax und Broker Fee \u2013 bei d\u00fcnnen Margen der gr\u00f6\u00dfte Hebel \u00fcberhaupt.\n\u2b50 = niedrigste Gesamtgeb\u00fchr, wird bei NEUEN Baupl\u00e4nen vorbelegt.\n\u201e\u2014 global \u2014\u201c nimmt die Werte aus den Einstellungen (Verhalten wie bisher).\nDie Auswahl wird mit dem Bauplan gespeichert und friert beim Einfrieren mit \u2013 sonst stimmt der Zielpreis sp\u00e4ter nicht mehr.\nListe f\u00fcllen: Einstellungen \u2192 \u201e Besten Charakter automatisch finden\u201c.",
         "\n\n\u26a0 NO character data loaded yet \u2013 the global fee rate from the settings applies. Click \u201e Find best character automatically\u201c once, then all characters with their total fee appear here.":
             "\n\n\u26a0 NOCH KEINE Charakterdaten geladen \u2013 es gilt der globale Geb\u00fchrensatz aus den Einstellungen. Einmal \u201e Besten Charakter automatisch finden\u201c klicken, dann stehen hier alle Charaktere mit ihrer Gesamtgeb\u00fchr.",
+        "1. Tick = you started the job in game (only for your overview).\n"
+        "2. Blue dot = ESI has detected the job.\n"
+        "3. Green dot = ESI confirms the job is finished.":
+            "1. Haken = du hast den Job im Spiel gestartet (nur f\u00fcr deine "
+            "\u00dcbersicht).\n"
+            "2. Blauer Punkt = ESI hat den Bauauftrag erkannt.\n"
+            "3. Gr\u00fcner Punkt = ESI best\u00e4tigt den Bauabschluss.",
+        "Open {name} with the arrow and tick the lines below \u2013 {offen} "
+        "of {n} are still open. This line can only be ticked once all of "
+        "them have a tick or an ESI dot.":
+            "Klapp {name} mit dem Pfeil auf und hake die Zeilen darunter ab "
+            "\u2013 {offen} von {n} sind noch offen. Diese Zeile l\u00e4sst sich "
+            "erst abhaken, wenn alle einen Haken oder einen ESI-Punkt haben.",
         "Tick it once you are really done: that releases the material this "
         "line still reserves for other build plans.":
             "Hak es ab, wenn du wirklich fertig bist: das gibt das Material "
@@ -2553,8 +2647,6 @@ KATALOG = {
             "\u229f Alles zu",
         "\u229e Expand all":
             "\u229e Alles auf",
-        "On = just list all runs per item, without character assignment.":
-            "An = nur alle Runs je Item auflisten, ohne Charakter-Zuteilung.",
         "Reactions often automatically produce more than exactly needed (fixed batch size) - shows how much is left over that you can keep for the next build plan instead of wasting it.":
             "Bei Reaktionen entsteht oft automatisch mehr als exakt gebraucht (feste Chargen-Gr\u00f6\u00dfe) - zeigt, wie viel \u00fcbrig bleibt, das du f\u00fcr den n\u00e4chsten Bauplan aufheben kannst statt es zu verschwenden.",
         "Reaction stage (stage 1 \u2192 goes into a further reaction, stage 2 \u2192 goes into the build) + material type (Composite/Intermediate/...). The material type matches the checkbox under \u201eMy blueprints\u201c in the recipe structure tab. No tick there = bought instead of built.":
@@ -2991,6 +3083,10 @@ KATALOG = {
             "{n} Blueprints geladen. F\u00fcr Gewinn/ISK-Std: Baurezepte laden (Scanner: \u201eBaurezepte laden\u201c) + einmal Markt-Scan.",
         "{n} blueprints":
             "{n} Blueprints",
+        "{n} jobs":
+            "{n} Jobs",
+        "runs each":
+            "Runs je Job",
         " \xb7 {n} inventable T2 from your T1":
             " \u00b7 {n} erfindbare T2 aus deinen T1",
         " \u00b7 {prof} of {calc} profitable":
@@ -3099,8 +3195,8 @@ KATALOG = {
             "Suche deine Strukturen (Assets + Orders) \u2026 dauert 10\u201320 s",
         "Not recognised":
             "Nicht erkannt",
-        "Could not find a structure ID. Paste the structure link copied in game or enter the plain ID (digits only).":
-            "Konnte keine Struktur-ID finden. F\u00fcge den ingame kopierten Struktur-Link ein oder gib die reine ID (nur Ziffern) ein.",
+        "Could not find a structure ID. In game, dock at the structure or station, right-click its name and choose \u201eCopy Info\u201c, then paste that here - or enter the plain ID (digits only).":
+            "Konnte keine Struktur-ID finden. Docke ingame an der Struktur oder Station an, Rechtsklick auf ihren Namen, \u201eCopy Info\u201c w\u00e4hlen und das hier einf\u00fcgen - oder gib die reine ID (nur Ziffern) ein.",
         "  \u2013 no results (old table discarded).":
             "  \u2013 keine Ergebnisse (alte Tabelle verworfen).",
         "{n} items added to the shopping list.":
@@ -4366,8 +4462,6 @@ KATALOG = {
         'Other (Abyssal/Premium/Limited …)':
             'Sonstige (Abyssal/Premium/Limited …)',
         # emm698 - Sperre gegen verfruehten Charakter-Haken (Nutzer 25.10.2026).
-        "Cannot tick {name} yet – {offen} of {n} position(s) in this stage still need an ESI dot (green or blue) or your own tick first.":
-            "{name} kann noch nicht abgehakt werden – {offen} von {n} Position(en) in dieser Stufe brauchen zuerst einen ESI-Punkt (grün oder blau) oder deinen eigenen Haken.",
         # emm697 - Tooltip auf dem Charakter-Punkt (Nutzer 25.10.2026).
         "Nothing to do for {name} in this stage – all {n} position(s) are covered: {done} delivered or ticked, {run} still in the build queue. The checkbox above moves them all together.":
             "Nichts zu tun für {name} in dieser Stufe – alle {n} Position(en) sind gedeckt: {done} geliefert oder abgehakt, {run} noch in der Bauschleife. Der Haken oben zieht alle zusammen mit.",
@@ -4557,8 +4651,10 @@ KATALOG = {
         # emm893: das Feld ist jetzt beschreibbar, der Text sagt das auch
         # (Nutzer 10.11.2026: "ich kann nichmal mit der Maus ins
         # Eingabefeld klicken, da gibts nur ein dropdown mehr nicht").
-        "Choose a structure (found from your orders) \u2013 or paste an in-game link straight into this field (e.g. your Azbel):":
-            "Struktur w\u00e4hlen (aus deinen Orders gefunden) \u2013 oder einen Ingame-Link direkt in dieses Feld einf\u00fcgen (z. B. deine Azbel):",
+        "Choose a structure (found from your orders) \u2013 or paste an in-game link straight into this field (e.g. your Azbel). The link or ID of an NPC station works too - it is added as a market hub.\n\nHow to copy it: dock there in game, right-click the structure/station name and choose \u201eCopy Info\u201c:":
+            "Struktur w\u00e4hlen (aus deinen Orders gefunden) \u2013 oder einen Ingame-Link direkt in dieses Feld einf\u00fcgen (z. B. deine Azbel). Der Link oder die ID einer NPC-Station geht auch - sie kommt als Markt-Hub dazu.\n\nSo kopierst du sie: ingame dort andocken, Rechtsklick auf den Struktur-/Stationsnamen und \u201eCopy Info\u201c w\u00e4hlen:",
+        "Station removed from the hub list.":
+            "Station aus der Hub-Liste entfernt.",
         "\n\u26a0 Current book spread is WIDER than what the item historically yields daily (throwaway-order suspicion) - the rating uses the realistic profit.":
             "\n\u26a0 Aktueller Buch-Spread ist BREITER als das, was das Item historisch t\u00e4glich hergibt (Wegwerf-Order-Verdacht) - Wertung nutzt den realistischen Gewinn.",
         "Searching your structures (assets + orders) \u2026 may take 10\u201320 s":
@@ -4933,8 +5029,6 @@ KATALOG = {
             "{name} Blueprint",
         "Success chance":
             "Erfolgschance",
-        "Runs/success":
-            "Runs/Erfolg",
         "ME":
             "ME",
         "TE":
@@ -4984,10 +5078,8 @@ KATALOG = {
             "\u2014 global \u2014",
         "\u2014 global \u2014 (skills not loaded)":
             "\u2014 global \u2014 (Skills nicht geladen)",
-        "Details \u25be":
-            "Details \u25be",
-        "Details \u25b4":
-            "Details \u25b4",
+        "Details":
+            "Details",
         "Action":
             "Aktion",
         "unit":
@@ -5185,8 +5277,6 @@ KATALOG = {
             "\u26a0 Fehler beim Laden: ",
         "\u2713 in the cart":
             "\u2713 im Wagen",
-        "Item (exact, e.g. PLEX)":
-            "Item (exakt, z. B. PLEX)",
         "\u00d8 buy now":
             "\u00d8-Kauf sofort",
         "Buy order":
@@ -5195,8 +5285,6 @@ KATALOG = {
             "\u00d8-Verkauf",
         "Share of daily volume:":
             "Anteil vom Tagesvolumen:",
-        "Source: {src}. (\u26a1 Daytrade \u00b7 \u2197 Swing)":
-            "Quelle: {src}. (\u26a1 Daytrade \u00b7 \u2197 Swing)",
         "Copy quantity to the clipboard.":
             "Menge ins Clipboard kopieren.",
         "Loading open orders + market prices ({hub}) \u2026":
@@ -5959,8 +6047,6 @@ KATALOG = {
             "Sell / Stk",
         "Min. sell price / unit":
             "Min. Verkaufspreis / Stk",
-        "Split myself (no char)":
-            "Selber aufteilen (kein Char)",
         "{n} blueprint names copied \u2013 one line per blueprint.":
             "{n} Blueprint-Namen kopiert \u2013 eine Zeile je Blueprint.",
         "{ok} recognised, {bad} unknown":
@@ -6023,8 +6109,22 @@ KATALOG = {
             "\u26a0 Markt muss gescannt werden!",
         "\u26a0 Market scan is too old \u2013 please run it again.":
             "\u26a0 Markt-Scan ist zu lange her \u2013 bitte neu laden.",
-        "Do I have the blueprints?":
-            "Habe ich die Blaupausen?",
+        "on blacklist \u2013 provided, no blueprint needed":
+            "auf der Blacklist \u2013 gestellt, keine Blaupause n\u00f6tig",
+        "\u26a0 {n} blacklist line(s) are end products of this plan \u2013 the "
+        "blacklist only applies to ingredients, end products are always built: ":
+            "\u26a0 {n} Blacklist-Zeile(n) sind Endprodukte dieses Plans \u2013 die "
+            "Blacklist gilt nur f\u00fcr Zutaten, Endprodukte werden immer gebaut: ",
+        "Invented copy: {runs} runs \u00b7 ME {me} % \u00b7 TE {te} % \u00b7 "
+        "needed: {n} copies":
+            "Erfundene Kopie: {runs} Runs \u00b7 ME {me} % \u00b7 TE {te} % \u00b7 "
+            "ben\u00f6tigt: {n} Kopien",
+        "Loading blueprint ownership \u2026 the list is copied right after.":
+            "Blaupausen-Besitz wird geladen \u2026 die Liste wird gleich danach kopiert.",
+        "Build yourself, per category":
+            "Selbst bauen je Kategorie",
+        "Plan frozen \u2013 unfreeze it first to change this.":
+            "Plan eingefroren \u2013 erst auftauen, um das zu \u00e4ndern.",
         "Click copies the blueprint name:":
             "Klick kopiert den Blaupausen-Namen:",
         "Only {b} original(s) planned - {k} started copy(ies) are left out: "
@@ -6169,10 +6269,290 @@ KATALOG = {
             "Corp-Jobs laufen auf den Job-Slots des startenden Charakters \u2013 sie z\u00e4hlen auf dessen Karte.",
         "{n} corp job(s) \u2013 they run on this character's job slots.":
             "{n} Corp-Job(s) \u2013 sie laufen auf den Job-Slots dieses Charakters.",
-        "{n} archived":
-            "{n} archiviert",
-        "Completed plans older than 30 days are moved to bauplan_archiv.json in the app data folder - nothing is deleted.":
-            "Abgeschlossene Pl\u00e4ne, die \u00e4lter als 30 Tage sind, wandern in die Datei bauplan_archiv.json im Datenordner - gel\u00f6scht wird nichts.",
+        # ---- Einkaufsliste: Gekauftes abziehen (emm980) ----
+        "Deduct what I bought":
+            "Gekauftes abziehen",
+        "When your wallet shows a purchase of an item on this list, the quantity here goes down by what you bought; a fully bought row disappears. Counts only purchases made after the row was added. The wallet does not say what a purchase was for \u2013 buying the same item for something else counts too.":
+            "Zeigt dein Wallet einen Kauf eines Items dieser Liste, sinkt die Menge hier um das Gekaufte; eine vollst\u00e4ndig gekaufte Zeile verschwindet. Es z\u00e4hlen nur K\u00e4ufe nach dem Anlegen der Zeile. Das Wallet sagt nicht, wof\u00fcr gekauft wurde \u2013 ein Kauf desselben Items f\u00fcr etwas anderes z\u00e4hlt mit.",
+        "{name} done":
+            "{name} erledigt",
+        "{name} \u2212{n}":
+            "{name} \u2212{n}",
+        "Bought and deducted: {liste}":
+            "Gekauft und abgezogen: {liste}",
+        "Shopping list \u2013 bought and deducted: {liste}":
+            "Einkaufsliste \u2013 gekauft und abgezogen: {liste}",
+        # ---- Ausblenden, Handmenge-Ruecksetzen, Kaufart-Knopf (emm979) ----
+        "Hide not worth it":
+            "Nicht Lohnende ausblenden",
+        "Hides the orders marked red after \u201eCheck prices\u201c (loss, or the fees already eat the profit) \u2013 let those run out. Orders not checked yet stay visible.":
+            "Blendet die nach \u201eCheck prices\u201c rot markierten Orders aus (Verlust, oder die Geb\u00fchren zehren den Gewinn schon auf) \u2013 die l\u00e4sst du auslaufen. Noch nicht gepr\u00fcfte Orders bleiben sichtbar.",
+        "{n} order(s) hidden \u2013 not worth adjusting.":
+            "{n} Order(s) ausgeblendet \u2013 Anpassen lohnt nicht.",
+        "Only this one order is worth adjusting.":
+            "Nur diese eine Order lohnt das Anpassen.",
+        "Source: {src}.":
+            "Quelle: {src}.",
+        "Instant":
+            "Sofortkauf",
+        "Buy order: you place your own, cheaper buy order and wait. NOT part of \u201eCopy multibuy\u201c.":
+            "Buy-Order: du stellst deine eigene, g\u00fcnstigere Kauf-Order und wartest. NICHT Teil von \u201eCopy multibuy\u201c.",
+        "Instant: bought right away from the sell orders. Part of \u201eCopy multibuy\u201c.":
+            "Sofortkauf: wird sofort aus den Sell-Orders gekauft. Teil von \u201eCopy multibuy\u201c.",
+        "Click to switch.":
+            "Klick schaltet um.",
+        # ---- Favoriten-Mehrfachauswahl, Next + Min profit in der Auslauf-Karte (emm976) ----
+        "{n} added to favourites \u2605":
+            "{n} zu den Favoriten hinzugef\u00fcgt \u2605",
+        "{n} were already in your favourites.":
+            "{n} waren schon in deinen Favoriten.",
+        "Add {n} items to favourites":
+            "{n} Items zu den Favoriten hinzuf\u00fcgen",
+        "Goes through the orders that are still worth adjusting, one after another: opens the market in game and copies the new price. Orders marked red are skipped.":
+            "Geht nacheinander die Orders durch, bei denen sich das Anpassen noch lohnt: \u00f6ffnet den Markt im Spiel und kopiert den neuen Preis. Rot markierte Orders werden \u00fcbersprungen.",
+        "No order here is worth adjusting.":
+            "Keine Order hier lohnt das Anpassen.",
+        # ---- Portfolio: auslaufende Orders direkt anpassen (emm974) ----
+        "Check prices":
+            "Preise pr\u00fcfen",
+        "Checks every order of this list at ITS place (same check as \u201eOrder update\u201c) \u2013 the hub at the top does not matter. After that every order shows the new price and whether adjusting it is still worth it.":
+            "Pr\u00fcft jede Order dieser Liste an IHREM Ort (dieselbe Pr\u00fcfung wie \u201eOrder update\u201c) \u2013 der Hub oben spielt keine Rolle. Danach zeigt jede Order den neuen Preis und ob sich das Anpassen noch lohnt.",
+        "Checking the prices first \u2026":
+            "Pr\u00fcfe zuerst die Preise \u2026",
+        "{n} order(s) are at places that are not in your hub list \u2013 add the place with \u201e+\u201c next to the hub box.":
+            "{n} Order(s) liegen an Orten, die nicht in deiner Hub-Liste stehen \u2013 f\u00fcge den Ort mit \u201e+\u201c neben der Hub-Box hinzu.",
+        "No order to check.":
+            "Keine Order zu pr\u00fcfen.",
+        "Orders checked at {n} place(s).":
+            "Orders an {n} Ort(en) gepr\u00fcft.",
+        "Not checked yet: press \u201eCheck prices\u201c.":
+            "Noch nicht gepr\u00fcft: \u201eCheck prices\u201c dr\u00fccken.",
+        "New price":
+            "Neuer Preis",
+        "You are under-/outbid \u2013 this price puts the order back on top.":
+            "Du bist unter- bzw. \u00fcberboten \u2013 mit diesem Preis steht die Order wieder vorn.",
+        "Your order is already on top \u2013 one tick better is enough to modify it in game, which restarts its time on the market.":
+            "Deine Order steht schon vorn \u2013 ein Tick besser gen\u00fcgt, um sie im Spiel zu \u00e4ndern; damit beginnt ihre Laufzeit neu.",
+        "NOT worth it: at this price you make a loss.":
+            "Lohnt sich NICHT: zu diesem Preis machst du Verlust.",
+        "NOT worth it: the broker fees of earlier changes already eat the profit.":
+            "Lohnt sich NICHT: die Broker-Geb\u00fchren fr\u00fcherer \u00c4nderungen zehren den Gewinn schon auf.",
+        "Worth it, but below your target margin.":
+            "Lohnt sich, liegt aber unter deiner Ziel-Marge.",
+        "Worth it.":
+            "Lohnt sich.",
+        "Modify":
+            "\u00c4ndern",
+        "Opens the market in game and copies the new price \u2013 right-click your order there, \u201emodify\u201c and paste. Warns first when it is not worth it, like \u201eOrder update\u201c.":
+            "\u00d6ffnet den Markt im Spiel und kopiert den neuen Preis \u2013 dort Rechtsklick auf deine Order, \u201emodify\u201c und einf\u00fcgen. Warnt vorher, wenn es sich nicht lohnt, wie \u201eOrder update\u201c.",
+        # ---- Einkaufsliste: Kaufart, ehrliche Meldung (emm973) ----
+        "Buy instantly (include in multibuy)":
+            "Sofort kaufen (in Multibuy aufnehmen)",
+        "Buy with a buy order (daytrade, not in multibuy)":
+            "Per Buy-Order kaufen (Daytrade, nicht im Multibuy)",
+        "{n} row(s) changed \u2713":
+            "{n} Zeile(n) ge\u00e4ndert \u2713",
+        "Quantities unchanged":
+            "Mengen unver\u00e4ndert",
+        "{n2} suggestion(s) capped by the order book of {hub} \u2013 buying more there would cost over 8 % above the best price. Switch the hub at the top to where you buy.":
+            "{n2} Vorschl\u00e4ge vom Orderbuch von {hub} gedeckelt \u2013 mehr dort zu kaufen w\u00fcrde \u00fcber 8 % \u00fcber dem besten Preis kosten. Stelle den Hub oben auf den Ort, an dem du einkaufst.",
+        "The quantities already match the suggestion.":
+            "Die Mengen entsprechen schon dem Vorschlag.",
+        # ---- Menge von Hand in Verkaufs- und Einkaufsliste (emm972) ----
+        "Set by you \u2013 you own {n}.":
+            "Von dir gesetzt \u2013 du besitzt {n}.",
+        "Change quantity":
+            "Menge \u00e4ndern",
+        "Change quantity \u2026":
+            "Menge \u00e4ndern \u2026",
+        "Quantity for {name}:":
+            "Menge f\u00fcr {name}:",
+        # ---- Rangliste ueber alle Orte, Mengenvorschlag, duenner Markt (emm969) ----
+        "Thin market: less than one unit a day is traded here. A high profit per unit helps little if the item sits for weeks.":
+            "D\u00fcnner Markt: hier wird weniger als ein St\u00fcck pro Tag gehandelt. Ein hoher Gewinn je St\u00fcck n\u00fctzt wenig, wenn das Item wochenlang liegt.",
+        "No profitable trade found. Scan your global hub and the other places with \u201eMarket scan\u201c first.":
+            "Kein gewinnbringender Handel gefunden. Scanne zuerst den globalen Hub und die anderen Orte mit \u201eMarket scan\u201c.",
+        "Sell at":
+            "Verkaufen in",
+        "Puts every item of this list on the shopping list: buy at your global hub (top bar). Quantity = what trades there in one day; change it in the shopping list.":
+            "Legt jedes Item dieser Liste auf die Einkaufsliste: Kauf am globalen Hub (oben). Menge = was dort an einem Tag gehandelt wird; in der Einkaufsliste \u00e4nderbar.",
+        "Items traded less than once a day are left out of this ranking.":
+            "Items, die seltener als einmal pro Tag gehandelt werden, fehlen in dieser Rangliste.",
+        "Best trades across all your places":
+            "Beste Handelsware \u00fcber alle deine Orte",
+        "top items by trade profit per day (buy at your global hub)":
+            "Top-Items nach Handelsgewinn pro Tag (Kauf am globalen Hub)",
+        "Units traded per day in the region of the \u201eSell in\u201c hub (last {n} days, from stored history).":
+            "St\u00fcck, die in der Region des \u201eSell in\u201c-Hubs pro Tag gehandelt werden (letzte {n} Tage, aus der gespeicherten Historie).",
+        # ---- Gewinn/Tag, nur Gewinnbringendes, Favoriten-Preise, Doctrine-Auswahl (emm968) ----
+        "Only profitable to trade":
+            "Nur was Handelsgewinn bringt",
+        "Shows only items with a positive trade profit: buy at your global hub (top bar), sell at that place. The list of the global hub itself stays complete.":
+            "Zeigt nur Items mit positivem Handelsgewinn: am globalen Hub (oben) kaufen, an diesem Ort verkaufen. Die Liste des globalen Hubs selbst bleibt vollst\u00e4ndig.",
+        "Trade profit/day":
+            "Handelsgewinn/Tag",
+        "Trade profit per unit \u00d7 units traded per day here. The upper limit if ALL of that trade were yours.":
+            "Handelsgewinn je St\u00fcck \u00d7 St\u00fcck, die hier pro Tag gehandelt werden. Die Obergrenze, wenn der GANZE Handel dort deiner w\u00e4re.",
+        "No price: scan the hub with \u201eMarket scan\u201c first.":
+            "Kein Preis: den Hub erst mit \u201eMarket scan\u201c scannen.",
+        "Buy at {kauf}, sell at {verkauf} (\u201eSell in\u201c of Regional Trading). Prices from the last market scan of each hub; profit after tax, broker and freight.":
+            "Kauf bei {kauf}, Verkauf bei {verkauf} (\u201eSell in\u201c von Regional Trading). Preise aus dem letzten Markt-Scan des jeweiligen Hubs; Gewinn nach Steuer, Broker und Fracht.",
+        "Tick only what is cheaper at Jita (all ships)":
+            "Nur anhaken, was in Jita g\u00fcnstiger ist (alle Schiffe)",
+        "Tick only what is worth building (all ships)":
+            "Nur anhaken, was sich zu bauen lohnt (alle Schiffe)",
+        # ---- Market stats: Handelsgewinn gegen den globalen Hub (emm967) ----
+        "Trade profit/unit":
+            "Handelsgewinn/Stk",
+        "Profitable items \u2192 shopping list":
+            "Gewinnbringende Items \u2192 Einkaufsliste",
+        "Trade profit per unit: buy at {hub} for {buy}{fracht}, sell here for {sell} ({net} after tax and broker).":
+            "Handelsgewinn je St\u00fcck: bei {hub} f\u00fcr {buy}{fracht} kaufen, hier f\u00fcr {sell} verkaufen ({net} nach Steuer und Broker).",
+        "freight":
+            "Fracht",
+        "(no freight counted)":
+            "(ohne Fracht gerechnet)",
+        "Puts every item of this list with a POSITIVE trade profit on the shopping list: buy at your global hub (top bar), sell here. Quantity = what trades here in one day; change it in the shopping list.":
+            "Legt jedes Item dieser Liste mit POSITIVEM Handelsgewinn auf die Einkaufsliste: am globalen Hub (oben) kaufen, hier verkaufen. Menge = was hier an einem Tag gehandelt wird; in der Einkaufsliste \u00e4nderbar.",
+        "Nothing here makes a trade profit against your global hub right now.":
+            "Hier bringt gerade nichts einen Handelsgewinn gegen\u00fcber deinem globalen Hub.",
+        # ---- Doctrines: Auswahl-Helfer + Einkaufswagen (emm966) ----
+        "Tick only what is cheaper at Jita":
+            "Nur anhaken, was in Jita g\u00fcnstiger ist",
+        "Tick only what is worth building":
+            "Nur anhaken, was sich zu bauen lohnt",
+        "Missing \u2192 shopping list":
+            "Fehlendes \u2192 Einkaufsliste",
+        "Missing \u2192 shopping list (all ships)":
+            "Fehlendes \u2192 Einkaufsliste (alle Schiffe)",
+        "Ticks only the positions that are cheaper to buy at Jita than at this trade hub (the column \u201echeaper at\u201c, freight included when you set a rate) and unticks the rest. What stays ticked is what you haul in for a profit.":
+            "Hakt nur die Positionen an, die in Jita g\u00fcnstiger zu kaufen sind als an diesem Handels-Hub (Spalte \u201echeaper at\u201c, mit Fracht, wenn du einen Satz gesetzt hast), und nimmt beim Rest den Haken weg. Was angehakt bleibt, holst du mit Gewinn hierher.",
+        "Ticks only the positions whose build cost is below the Jita price (delivered, when you set a freight rate) and unticks the rest. Items without a recipe or without a price stay unticked.":
+            "Hakt nur die Positionen an, deren Baukosten unter dem Jita-Preis liegen (frei Haus, wenn du einen Frachtsatz gesetzt hast), und nimmt beim Rest den Haken weg. Items ohne Rezept oder ohne Preis bleiben ohne Haken.",
+        "Puts every ticked position that is missing on the shopping list, with the missing quantity. Items already on the list stay as they are.":
+            "Legt jede angehakte Position, die fehlt, mit der fehlenden Menge auf die Einkaufsliste. Was schon auf der Liste steht, bleibt unver\u00e4ndert.",
+        "Puts everything ticked and missing across ALL ships of this doctrine on the shopping list - the same item on several ships is added up.":
+            "Legt alles, was angehakt ist und fehlt, \u00fcber ALLE Schiffe dieser Doctrine auf die Einkaufsliste \u2013 dasselbe Item auf mehreren Schiffen wird addiert.",
+        "Press \u201eFetch market\u201c first \u2013 without prices there is nothing to compare.":
+            "Erst \u201eFetch market\u201c dr\u00fccken \u2013 ohne Preise gibt es nichts zu vergleichen.",
+        "Set a freight rate first (sell list or Regional Trading) – without it Jita and this hub cannot be compared.":
+            "Erst einen Frachtsatz setzen (Verkaufsliste oder Regional Trading) – ohne ihn lassen sich Jita und dieser Hub nicht vergleichen.",
+        "{n} of {m} position(s) ticked.":
+            "{n} von {m} Position(en) angehakt.",
+        "{n} were already on the list.":
+            "{n} standen schon auf der Liste.",
+        "{n} item(s) put on the shopping list.":
+            "{n} Item(s) auf die Einkaufsliste gelegt.",
+        # ---- Doctrines: Knoepfe fuer alle Schiffe (emm965) ----
+        "All ships of this doctrine:":
+            "Alle Schiffe dieser Doctrine:",
+        "Multi build plan (all ships)":
+            "Multi-Bauplan (alle Schiffe)",
+        "Copy missing (all ships, multibuy)":
+            "Fehlendes kopieren (alle Schiffe, Multibuy)",
+        "One multi build plan for everything ticked and missing across ALL ships of this doctrine.":
+            "Ein Multi-Bauplan für alles, was angehakt ist und fehlt – über ALLE Schiffe dieser Doctrine.",
+        "Copies everything ticked and missing across ALL ships of this doctrine as Name<TAB>quantity - the same item on several ships is added up. Paste straight into EVE's multibuy.":
+            "Kopiert alles, was angehakt ist und fehlt, über ALLE Schiffe dieser Doctrine als Name<TAB>Menge – dasselbe Item auf mehreren Schiffen wird addiert. Direkt in EVEs Multibuy einfügen.",
+        # ---- Favoriten-Items im Einkaufswagen (emm962) ----
+        "FAVOURITES ({n})":
+            "FAVORITEN ({n})",
+        "Add to favourites":
+            "Zu Favoriten hinzuf\u00fcgen",
+        "Remove from favourites":
+            "Aus Favoriten entfernen",
+        "Selected \u2192 shopping list":
+            "Auswahl \u2192 Einkaufsliste",
+        "All favourites \u2192 shopping list":
+            "Alle Favoriten \u2192 Einkaufsliste",
+        "No favourites yet. Right-click an item and choose \u201eAdd to favourites\u201c.":
+            "Noch keine Favoriten. Rechtsklick auf ein Item und \u201eZu Favoriten hinzuf\u00fcgen\u201c w\u00e4hlen.",
+        "Your favourite items. Right-click any item anywhere in Eve MoMa and choose \u201eAdd to favourites\u201c.\nSelect one or more rows (Ctrl / Shift) and send them to the shopping list; a double-click sends one item.\nQuantity = what trades in one day at the \u201eSell in\u201c hub of Regional Trading (at least 1); change it in the shopping list.":
+            "Deine Lieblings-Items. Rechtsklick auf ein Item irgendwo in Eve MoMa und \u201eZu Favoriten hinzuf\u00fcgen\u201c w\u00e4hlen.\nEine oder mehrere Zeilen markieren (Strg / Umschalt) und auf die Einkaufsliste schicken; ein Doppelklick schickt ein Item.\nMenge = was am \u201eSell in\u201c-Hub von Regional Trading an einem Tag gehandelt wird (mindestens 1); in der Einkaufsliste \u00e4nderbar.",
+        "Select one or more favourites first.":
+            "Erst einen oder mehrere Favoriten markieren.",
+        "{n} added to the shopping list \u2713":
+            "{n} auf die Einkaufsliste gelegt \u2713",
+        "{n} favourite(s) added to the shopping list, {k} were already on it.":
+            "{n} Favorit(en) auf die Einkaufsliste gelegt, {k} standen schon drauf.",
+        "added to favourites \u2605":
+            "zu den Favoriten hinzugef\u00fcgt \u2605",
+        "already in your favourites":
+            "steht schon in deinen Favoriten",
+        # ---- Mindestvolumen-Pauschale des Frachtdienstes (emm961) ----
+        "Freight minimum:":
+            "Mindestfracht:",
+        "\u2212 Freight minimum":
+            "\u2212 Mindestfracht",
+        "Surcharge up to the flat fee of your freight service: a route whose volume stays under the minimum volume costs the flat fee instead of ISK/m\u00b3. With Multi-Hub it is calculated per hub.":
+            "Zuschlag bis zur Pauschale deines Frachtdienstes: eine Strecke, deren Volumen unter dem Mindestvolumen bleibt, kostet die Pauschale statt ISK/m\u00b3. Mit Multi-Hub wird je Hub gerechnet.",
+        "Minimum volume of your freight service. A route that carries less than this costs the flat fee next to it instead of ISK/m\u00b3. 0 = no minimum.\nWith Multi-Hub the plan checks every hub on its own and leaves out a hub whose small share would cost more in flat fee than buying there saves.":
+            "Mindestvolumen deines Frachtdienstes. Eine Strecke mit weniger Volumen kostet die Pauschale daneben statt ISK/m\u00b3. 0 = kein Mindestvolumen.\nMit Multi-Hub pr\u00fcft der Plan jeden Hub einzeln und l\u00e4sst einen Hub weg, dessen kleiner Anteil mehr Pauschale kosten w\u00fcrde, als der Kauf dort spart.",
+        "Flat fee of your freight service for a route under the minimum volume, e.g. 20M. 0 = no minimum.\nOnly routes with a freight rate (ISK/m\u00b3) are charged \u2013 a hub at the build site has no freight and no flat fee.":
+            "Pauschale deines Frachtdienstes f\u00fcr eine Strecke unter dem Mindestvolumen, z. B. 20M. 0 = kein Mindestvolumen.\nBerechnet wird nur bei Strecken mit Frachtsatz (ISK/m\u00b3) \u2013 ein Hub am Bau-Ort hat keine Fracht und keine Pauschale.",
+        "{hub}: skipped \u2013 below the freight minimum (the flat fee would cost more than buying there saves)":
+            "{hub}: ausgelassen \u2013 unter dem Mindestvolumen (die Pauschale w\u00fcrde mehr kosten, als der Kauf dort spart)",
+        # ---- Meine Bauplaene: Zeile "ARCHIVE (n)" (emm959) ----
+        "ARCHIVE ({n})":
+            "ARCHIV ({n})",
+        "Archived build plans - click to see them and bring them back.":
+            "Archivierte Baupl\u00e4ne - Klick zeigt sie und holt sie zur\u00fcck.",
+        # ---- Einkaufsliste: von Hand hinzufuegen (emm957) ----
+        "Add any item: type its name \u2026":
+            "Beliebiges Item hinzuf\u00fcgen: Namen tippen \u2026",
+        "already on the shopping list":
+            "steht schon auf der Einkaufsliste",
+        "{name} is already on the shopping list \u2013 change the quantity there.":
+            "{name} steht schon auf der Einkaufsliste \u2013 \u00e4ndere die Menge dort.",
+        # ---- Bauzeit in der Rezeptstruktur (emm955) ----
+        "Build time: {tot} (as set in the Run planner)":
+            "Bauzeit: {tot} (wie im Runplaner eingestellt)",
+        "The same total time the Run planner shows - for the characters and slots ticked there. Change them in the Run planner and this line follows.":
+            "Dieselbe Gesamtzeit, die der Runplaner zeigt - f\u00fcr die dort angehakten Charaktere und Slots. \u00c4nderst du sie im Runplaner, zieht diese Zeile nach.",
+        # ---- Kauf-Enden im Buendel + ganze Schiffe (emm951) ----
+        "Buy end products that are cheaper to buy":
+            "Endprodukte kaufen, wenn Kaufen billiger ist",
+        "On: an end product of this bundle is bought instead of built when buying it at the plan's hub costs less than building it. It then stands in the shopping list and gets no job. Without a sell order at the hub there is no comparison - it is built. Off (default): every end product is built.":
+            "An: ein Endprodukt dieses Bündels wird gekauft statt gebaut, wenn der Kauf am Hub des Plans weniger kostet als der Bau. Es steht dann in der Einkaufsliste und bekommt keinen Job. Ohne Sell-Order am Hub gibt es keinen Vergleich - es wird gebaut. Aus (Vorgabe): jedes Endprodukt wird gebaut.",
+        "Buy faction end products":
+            "Faction-Endprodukte kaufen",
+        "On: faction end products are bought, not built from LP blueprints. Off (default): they are built like every other end product.":
+            "An: Faction-Endprodukte werden gekauft, nicht aus LP-Blaupausen gebaut. Aus (Vorgabe): sie werden gebaut wie jedes andere Endprodukt.",
+        "Plan frozen – unfreeze it first to change this.":
+            "Plan eingefroren – erst auftauen, um das zu ändern.",
+        "bought":
+            "gekauft",
+        "This end product is bought, not built - it stands in the shopping list and needs no blueprint and no job.":
+            "Dieses Endprodukt wird gekauft, nicht gebaut - es steht in der Einkaufsliste und braucht weder Blaupause noch Job.",
+        "Build complete ships (ignore market)":
+            "Ganze Schiffe bauen (Markt ignorieren)",
+        "Off: only what is missing on the market of your trade hub. On: every ticked item with the full quantity for all ships - what is already on the market there is ignored.":
+            "Aus: nur was am Markt deines Trade-Hubs fehlt. An: jedes angehakte Item mit der vollen Menge für alle Schiffe - was dort schon am Markt liegt, wird ignoriert.",
+        "cost (missing)":
+            "Kosten (fehlend)",
+        # ---- Archiv von Hand (emm949) ----
+        "Archive ({n})":
+            "Archiv ({n})",
+        "Archive":
+            "Archivieren",
+        "Archived":
+            "Archiviert",
+        "Archived build plans":
+            "Archivierte Baupl\u00e4ne",
+        "Restore selected":
+            "Auswahl zur\u00fcckholen",
+        "Shows the archived build plans. Archived plans are hidden here and can be restored at any time - nothing is deleted. To archive a completed plan, use \u201eArchive\u201c on its card.":
+            "Zeigt die archivierten Baupl\u00e4ne. Archivierte Pl\u00e4ne sind hier ausgeblendet und lassen sich jederzeit zur\u00fcckholen - gel\u00f6scht wird nichts. Einen abgeschlossenen Plan archivierst du mit \u201eArchivieren\u201c auf seiner Karte.",
+        "Moves this completed plan to the archive: it disappears from this list and from the profit overview, nothing is deleted. Bring it back with the \u201eArchive\u201c button at the top.":
+            "Verschiebt diesen abgeschlossenen Plan ins Archiv: er verschwindet aus dieser Liste und aus der Gewinn-\u00dcbersicht, gel\u00f6scht wird nichts. Zur\u00fcck holst du ihn \u00fcber den Knopf \u201eArchiv\u201c oben.",
+        "Could not archive this plan - only completed plans that are not part of an open multi build plan can be archived.":
+            "Dieser Plan lie\u00df sich nicht archivieren - das geht nur bei abgeschlossenen Pl\u00e4nen, die nicht zu einem offenen Multi-Bauplan geh\u00f6ren.",
+        "{n} plan(s) archived - bring them back with \u201eArchive\u201c at the top.":
+            "{n} Plan/Pl\u00e4ne archiviert - zur\u00fcck holst du sie \u00fcber \u201eArchiv\u201c oben.",
+        "The archive is empty. Use \u201eArchive\u201c on a completed plan to move it here.":
+            "Das Archiv ist leer. Mit \u201eArchivieren\u201c auf einem abgeschlossenen Plan verschiebst du ihn hierher.",
+        "Select one or more plans in the list first.":
+            "W\u00e4hle zuerst einen oder mehrere Pl\u00e4ne in der Liste.",
         "Market scanned \u2013 now load the deals":
             "Markt gescannt \u2013 jetzt die Deals laden",
         # ---- Runs statt Stueck (Discord, 16.09.2026) ----
@@ -6557,8 +6937,10 @@ KATALOG = {
             "Trades",
         "Blacklist":
             "Blacklist",
-        "Invention settings":
-            "Invention-Einstellungen",
+        "Rough, all jobs one after another \u2013 with several science slots it is faster.":
+            "Grob, alle Jobs nacheinander \u2013 mit mehreren Science-Slots geht es schneller.",
+        "{name} {q} per attempt \u00b7 {n} total":
+            "{name} {q} je Versuch \u00b7 {n} gesamt",
         "FINE FILTERS":
             "FEINFILTER",
         "CAPITAL SHIPS (BUILD COST, NO MARKET PRICE)":
@@ -6590,12 +6972,15 @@ KATALOG = {
             "Eintr\u00e4ge anlegen",
         "Only save as locations":
             "Nur als Orte speichern",
-        "\n\nCreate build-structure entries for them? Name, type, system, security, cost index and the link are filled in \u2013 you only add the rigs. (Only engineering complexes and refineries; citadels are skipped.)":
-            "\n\nBau-Struktur-Eintr\u00e4ge daf\u00fcr anlegen? Name, Typ, System, Sicherheit, Kostenindex und die Verkn\u00fcpfung werden ausgef\u00fcllt \u2013 du tr\u00e4gst nur noch die Rigs ein. (Nur Engineering Complexes und Refineries; Citadels werden \u00fcbersprungen.)",
+        # ---- Auswahl je Struktur (emm984) ----
+        "Tick the structures you build in. Name, type, system, security, cost index and the link are filled in \u2013 you only add the rigs.":
+            "Hake die Strukturen an, in denen du baust. Name, Typ, System, Sicherheit, Kostenindex und die Verkn\u00fcpfung werden ausgef\u00fcllt \u2013 du tr\u00e4gst nur noch die Rigs ein.",
+        "Create entries ({n})":
+            "Eintr\u00e4ge anlegen ({n})",
         "already linked":
             "schon verkn\u00fcpft",
-        "not an engineering complex or refinery":
-            "kein Engineering Complex und keine Refinery",
+        "not a structure you can build in":
+            "keine Struktur, in der man baut",
         "Build structures created":
             "Bau-Strukturen angelegt",
         "Created:":
@@ -7190,6 +7575,117 @@ KATALOG = {
         # Endprodukt aus dem offenen Buendel nehmen (26.09.2026).
         "Remove from bundle":
             "Aus dem B\u00fcndel nehmen",
+        # emm1015: Blueprints-Reiter rechnet mit den offenen Runs.
+        "{rest} of {plan}":
+            "{rest} von {plan}",
+        "Planned: {plan} runs. Already built or running: {done}. "
+        "Still open: {rest} \u2013 blueprints are only needed for "
+        "the open runs.":
+            "Geplant: {plan} Runs. Schon gebaut oder im Bau: {done}. "
+            "Noch offen: {rest} \u2013 Blaupausen braucht es nur f\u00fcr die "
+            "offenen Runs.",
+        "all runs built \u2713 \u2013 no blueprint needed":
+            "alle Runs gebaut \u2713 \u2013 keine Blaupause n\u00f6tig",
+        # emm1008: Aufklapp-Knopf im Doctrines-Reiter.
+        "Buildplan/Shopping":
+            "Bauplan/Einkauf",
+        "Select":
+            "Auswahl",
+        # emm1006: Gebuehr einer Spielerstruktur im Bauplan.
+        "Broker":
+            "Broker",
+        "Only for player structures: the owner sets the broker fee and "
+        "the game does not report it. Read it in the game\u2019s sell "
+        "window of that structure (duration NOT \u201eImmediate\u201c), type "
+        "it in and press Enter \u2013 it is remembered for this structure. "
+        "The fixed SCC surcharge is added by itself. Empty = not set: "
+        "the fee of your sell character applies. NPC hubs are "
+        "calculated from skills and standings.":
+            "Nur f\u00fcr Spielerstrukturen: die Broker-Geb\u00fchr legt der Besitzer "
+            "fest, das Spiel meldet sie nicht. Im Verkaufsfenster dieser "
+            "Struktur ablesen (Dauer NICHT \u201eImmediate\u201c), eintippen und "
+            "Enter dr\u00fccken \u2013 sie wird f\u00fcr diese Struktur gemerkt. Der feste "
+            "SCC-Zuschlag kommt von selbst dazu. Leer = nicht gesetzt: es "
+            "gilt die Geb\u00fchr deines Verkaufscharakters. NPC-Hubs werden aus "
+            "Skills und Standings gerechnet.",
+        "+ SCC {pct} %":
+            "+ SCC {pct} %",
+        # emm1004: kein Angebot am Verkaufsort (My Blueprints).
+        "no offer":
+            "kein Angebot",
+        "No sell order for this item at {hub} \u2013 without a "
+        "price there is no profit to calculate. You would be "
+        "the only seller; the Jita column gives a guide "
+        "price.":
+            "F\u00fcr dieses Item gibt es in {hub} keine Sell-Order \u2013 ohne Preis "
+            "l\u00e4sst sich kein Gewinn rechnen. Du w\u00e4rst dort der einzige "
+            "Anbieter; die Jita-Spalte gibt einen Richtpreis.",
+        " \u00b7 {n} without an offer at {hub}":
+            " \u00b7 {n} ohne Angebot in {hub}",
+        # emm1001: Endprodukte ohne Blaupause aus dem Buendel nehmen.
+        "Remove end products without blueprint":
+            "Endprodukte ohne Blaupause entfernen",
+        "Takes every end product out of this bundle whose blueprint you "
+        "do not own \u2013 for T2 the T1 original for the invention. Bought "
+        "end products stay. Uses the status of the Blueprints tab; you are "
+        "asked before anything is removed.":
+            "Nimmt jedes Endprodukt aus dem B\u00fcndel, dessen Blaupause du nicht "
+            "besitzt \u2013 bei T2 das T1-Original f\u00fcr die Invention. Gekaufte "
+            "Endprodukte bleiben. Nutzt den Status aus dem Reiter Blueprints; "
+            "vor dem Entfernen wird gefragt.",
+        "{n} end product(s) without blueprint:\n{liste}":
+            "{n} Endprodukt(e) ohne Blaupause:\n{liste}",
+        "{n} unclear \u2013 the blueprint ownership could not be read "
+        "for every owner (see the Blueprints tab):\n{liste}":
+            "{n} unklar \u2013 der Blaupausen-Besitz lie\u00df sich nicht f\u00fcr jeden "
+            "Besitzer lesen (siehe Reiter Blueprints):\n{liste}",
+        "Remove {n}":
+            "{n} entfernen",
+        "Remove the unclear ones too ({n})":
+            "Auch die unklaren entfernen ({n})",
+        "The plan is frozen \u2013 remove end products one "
+        "by one with the red X.":
+            "Der Plan ist eingefroren \u2013 Endprodukte einzeln mit dem roten X "
+            "entfernen.",
+        "Blueprint ownership is not loaded yet \u2013 press "
+        "\u201eLoad everything from ESI\u201c under Tools first.":
+            "Der Blaupausen-Besitz ist noch nicht geladen \u2013 zuerst unter Tools "
+            "\u201eAlles aus ESI laden\u201c dr\u00fccken.",
+        "Every end product has its blueprint \u2013 nothing "
+        "to remove.":
+            "Jedes Endprodukt hat seine Blaupause \u2013 nichts zu entfernen.",
+        "At least two end products must remain \u2013 "
+        "nothing removed.":
+            "Mindestens zwei Endprodukte m\u00fcssen bleiben \u2013 nichts entfernt.",
+        "{n} end product(s) without blueprint removed from the "
+        "bundle.":
+            "{n} Endprodukt(e) ohne Blaupause aus dem B\u00fcndel entfernt.",
+        # emm998: Verkaufs-Hub fuer My Blueprints / Scanner.
+        "Same as the hub above":
+            "Wie der Hub oben",
+        "Materials are always bought at the hub at the top (its last "
+        "market scan). The product is sold at THIS hub \u2013 priced from "
+        "that hub\u2019s last stored market scan. No stored scan: select "
+        "it as the hub at the top once and run \u201eMarket scan\u201c.":
+            "Materialien werden immer am Hub oben eingekauft (dessen letzter "
+            "Market scan). Verkauft wird das Produkt an DIESEM Hub \u2013 bepreist "
+            "aus dessen letztem gespeicherten Market scan. Kein Scan gespeichert: "
+            "den Hub einmal oben w\u00e4hlen und \u201eMarket scan\u201c dr\u00fccken.",
+        "Sell hub changed \u2013 press \u201eFind blueprints\u201c again.":
+            "Verkaufs-Hub ge\u00e4ndert \u2013 \u201eBlaupausen suchen\u201c erneut dr\u00fccken.",
+        "\u26a0 No market scan stored for the sell hub {hub}. Select "
+        "it as the hub at the top once and run \u201eMarket scan\u201c "
+        "\u2013 or set \u201eSell in\u201c back.":
+            "\u26a0 F\u00fcr den Verkaufs-Hub {hub} ist kein Market scan gespeichert. "
+            "Den Hub einmal oben w\u00e4hlen und \u201eMarket scan\u201c dr\u00fccken "
+            "\u2013 oder \u201eVerkauf in\u201c zur\u00fcckstellen.",
+        " \u00b7 sells in {hub}":
+            " \u00b7 Verkauf in {hub}",
+        # emm991: Zieh-Griff unter der Endprodukte-Tabelle.
+        "Drag down to show more end products without scrolling, drag up "
+        "for fewer. Double-click: back to the default height.":
+            "Nach unten ziehen zeigt mehr Endprodukte ohne Scrollen, nach oben "
+            "weniger. Doppelklick: zur\u00fcck zur Standardh\u00f6he.",
         "Remove this end product from the bundle. The window reopens with "
         "the remaining ones; save the plan to keep it.":
             "Dieses Endprodukt aus dem B\u00fcndel nehmen. Das Fenster \u00f6ffnet "
@@ -7577,8 +8073,8 @@ KATALOG = {
             "Offener Bauplan \u201e{plan}\u201c (noch nicht gespeichert)",
         "{n} end products added \u2013 save the plan to keep it.":
             "{n} Endprodukte hinzugef\u00fcgt \u2013 speichere den Plan, um sie zu behalten.",
-        'Build from stock (Beta)':
-            'Aus Bestand bauen (Beta)',
+        'Build from stock':
+            'Aus Bestand bauen',
         'BUILD FROM STOCK (BETA)':
             'AUS BESTAND BAUEN (BETA)',
         'How many runs of each of your own blueprints the material in your hangar allows - the same stock rules as the build plan (structures, characters, corp hangar). Material reserved by locked build plans does not count. Missing components may be built from stock too, if you own their blueprint. Rounded up per run, only your blueprint ME - never more runs than really work.':
@@ -7834,8 +8330,8 @@ KATALOG = {
         'note':
             'Hinweis',
         # emm919: der Reiter heisst "Doctrines" statt "Market Stocks".
-        'Doctrines (Beta)':
-            'Doctrinen (Beta)',
+        'Doctrines':
+            'Doctrinen',
         'Copy fit':
             'Fit kopieren',
         "Copies this ship's fit in EFT format. In EVE: fitting window, Import & Export, Import from clipboard - then simulate it.":

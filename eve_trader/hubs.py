@@ -51,6 +51,108 @@ HUB_OWNERS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# ZUSAETZLICHE NPC-STATIONEN ALS HUB (emm952, Discord Robust 18.11.2026: "will
+# we be allowed to add another NPC station to Hubs?"; Nutzer: "von Region auf
+# Station wuerde generell Sinn machen" / "nicht dass wir da was kaputt machen").
+#
+# DIE HUB-NUMMER: fuer die fuenf festen Hubs bleibt sie die REGION (so stehen
+# ihre Preise seit jeher in der Datenbank - "hub:10000002"; nichts wird
+# umgeschluesselt, also kann nichts verloren gehen). Eine ZUSAETZLICHE Station
+# traegt ihre STATIONS-Nummer (>= 60 Mio, Regionen liegen bei 10 Mio - die zwei
+# Bereiche ueberschneiden sich nie). Damit koennen mehrere Stationen derselben
+# Region nebeneinander stehen, ohne einander die Preise zu ueberschreiben.
+# ---------------------------------------------------------------------------
+STATION_AB = 60_000_000
+EXTRA = []          # [(key, label, region_id, station_id)] - s. extra_setzen
+
+
+def extra_setzen(liste) -> list:
+    """Die zusaetzlichen NPC-Stationen aus den Einstellungen uebernehmen
+    (`settings["npc_hubs_extra"]` = [{"station_id", "name", "region_id"}]).
+    Kaputte Eintraege, die fuenf festen Hubs und Doppelte fallen weg."""
+    del EXTRA[:]
+    fest = {sid for _k, _l, _r, sid in NPC_HUBS}
+    gesehen = set()
+    for e in (liste or []):
+        try:
+            sid = int(e.get("station_id") or 0)
+            rid = int(e.get("region_id") or 0)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if sid < STATION_AB or rid <= 0 or sid in fest or sid in gesehen:
+            continue
+        gesehen.add(sid)
+        EXTRA.append((f"st{sid}", str(e.get("name") or sid), rid, sid))
+    return list(EXTRA)
+
+
+def npc_hubs() -> list:
+    """Feste Hubs + zusaetzliche Stationen, als (key, label, region, station)."""
+    return list(NPC_HUBS) + list(EXTRA)
+
+
+def aufloesen(hub_id):
+    """Hub-Nummer -> (key, label, region, station) oder None. Stations-Nummer
+    (fest ODER zusaetzlich) wird ueber die Station gefunden, eine Region ueber
+    den festen Hub dieser Region."""
+    try:
+        n = int(hub_id)
+    except (TypeError, ValueError):
+        return None
+    if n >= STATION_AB:
+        for h in npc_hubs():
+            if h[3] == n:
+                return h
+        return None
+    for h in NPC_HUBS:
+        if h[2] == n:
+            return h
+    return None
+
+
+def ist_extra(hub_id) -> bool:
+    try:
+        n = int(hub_id)
+    except (TypeError, ValueError):
+        return False
+    return any(h[3] == n for h in EXTRA)
+
+
+def region_von(hub_id):
+    """Die ECHTE Region einer Hub-Nummer (fuer Historie und Orderabruf).
+    Unbekanntes bleibt, wie es ist - eine Region ist ihre eigene Antwort."""
+    h = aufloesen(hub_id)
+    if h is not None:
+        return h[2]
+    return hub_id
+
+
+def hub_id_fuer(region_id, station_id):
+    """Hub-Nummer eines NPC-Orts: zusaetzliche Station -> ihre Stations-Nummer,
+    sonst (fester Hub, unbekannt) die Region wie bisher."""
+    if station_id and ist_extra(station_id):
+        return int(station_id)
+    return region_id
+
+
+def standings_key(hub_id):
+    """`hub_standings`-Schluessel einer Hub-Nummer. Feste Hubs: ihr Schluessel
+    (Region wie bisher ueber hub_key_for_region, samt "jita"-Rueckfall).
+    ZUSAETZLICHE Station: None - fuer sie sind keine Standings hinterlegt,
+    die Broker-Gebuehr rechnet dann OHNE Rabatt (lieber zu hoch als zu tief)."""
+    try:
+        n = int(hub_id)
+    except (TypeError, ValueError):
+        return "jita"
+    if n >= STATION_AB:
+        for key, _l, _r, sid in NPC_HUBS:
+            if sid == n:
+                return key
+        return None
+    return hub_key_for_region(n)
+
+
 def hub_key_for_region(region_id: int) -> str:
     """Map a scan region back to its hub key (defaults to jita)."""
     for key, _label, rid, _sid in NPC_HUBS:
@@ -62,6 +164,12 @@ def hub_key_for_region(region_id: int) -> str:
 def station_for_region(region_id: int) -> int:
     """The hub STATION for a scan region (so a scan can be limited to the actual
     trade hub, not the whole region). Defaults to Jita 4-4."""
+    # Eine Hub-Nummer im Stationsbereich IST die Station (emm952).
+    try:
+        if int(region_id) >= STATION_AB:
+            return int(region_id)
+    except (TypeError, ValueError):
+        pass
     for _key, _label, rid, sid in NPC_HUBS:
         if rid == region_id:
             return sid

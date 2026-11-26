@@ -1316,10 +1316,14 @@ check("aa31 und amber markiert", "NO character data loaded yet" in _src_txt)
 # Details-Bereich gewandert (Nutzer: "damit es wenns standard zugeklappt ist
 # nicht so ueberladen wirkt"). Die Reihenfolge Hub -> Charakter bleibt, nur
 # der Ort hat sich geaendert.
+# 23.11.2026 (emm1006): das Hub-Dropdown sitzt jetzt mit den zwei
+# Gebuehren-Feldern in EINER Zeile (`_zeile1006`); diese Zeile steht im
+# Details-Bereich. Zusage unveraendert, Anker datiert nachgezogen.
 check("aa31 Hub-Dropdown steht im Details-Bereich",
-      "_moved_ctrl.append(sellhub_cb)" in _src_txt)
+      "_zl1006.addWidget(sellhub_cb, 1)" in _src_txt
+      and "_moved_ctrl.append(_zeile1006)" in _src_txt)
 check("aa31 Charakter-Dropdown kommt danach",
-      _pos_von(_src_txt, "_moved_ctrl.append(sellhub_cb)")
+      _pos_von(_src_txt, "_moved_ctrl.append(_zeile1006)")
       < _pos_von(_src_txt, "_moved_ctrl.append(sellchar_cb)"))
 check("aa31 beide landen wirklich in der Details-Zeile",
       "for _w in _moved_ctrl:" in _src_txt
@@ -2276,7 +2280,7 @@ _i_ft = _pos_von(_src_txt, "Production depth", _i_bk)
 # SITZUNG 20 (Nutzer): Blacklist direkt unter die Fertigungstiefe, die
 # Blaupausen-Frage danach - von grob nach fein.
 _i_bl = _pos_von(_src_txt, "Blacklist", _i_ft)
-_i_kt = _pos_von(_src_txt, "Do I have the blueprints?", _i_bl)
+_i_kt = _pos_von(_src_txt, "Build yourself, per category", _i_bl)
 check("aa59 Reihenfolge Bauen/kaufen -> Fertigungstiefe",  _i_bk < _i_ft)
 check("aa59 Fertigungstiefe -> Blacklist", _i_ft < _i_bl)
 check("aa59 Blacklist -> Blaupausen-Frage", _i_bl < _i_kt)
@@ -2301,7 +2305,8 @@ check("aa59 Blacklist und Blaupausen-Frage starten eingeklappt",
 # Invention-Reiters, nicht mehr je Karte.
 _bpf59 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
 _i59b = _bpf59.find('_txt("Buy or not?"), self._build_invention_purchase_panel(),')
-_i59s = _bpf59.find('_txt("Invention settings"), _inv_side_box')
+# datiert 26.11.2026 (emm1041): die Karte heisst "Success chance".
+_i59s = _bpf59.find('_txt("Success chance"), _inv_side_box')
 check("aa59 die Invention-Haken stehen in der Seitenleiste, Karte 'Buy or not?', offen",
       _i59b >= 0 and "expanded=True" in _bpf59[_i59b:_i59b + 120])
 check("aa59 ... als erste Karte, VOR 'Invention settings'",
@@ -2311,11 +2316,11 @@ check("aa59 ... und nicht mehr in den Invention-Karten",
 # DER TITEL SAGT, WAS DIE HAEKCHEN TUN (Nutzer: "Categories sagt zu wenig
 # ueber die Funktionalitaet aus").
 check("aa59 die Kategorien-Karte heisst nach ihrer Frage",
-      '_txt("Do I have the blueprints?")' in _bpf59
+      '_txt("Build yourself, per category")' in _bpf59
       and '_txt("Categories")' not in _bpf59)
 check("aa59 der deutsche Titel steht dabei",
       __import__("eve_trader.sprache", fromlist=["KATALOG"]).KATALOG["de"]
-      .get("Do I have the blueprints?") == "Habe ich die Blaupausen?")
+      .get("Build yourself, per category") == "Selbst bauen je Kategorie")   # datiert 24.11.2026 (emm1027)
 
 # ---------------------------------------------------------------- (aa60)
 # NUTZER: "Materialien-Liste auch standardmaessig zugeklappt wegen
@@ -3362,7 +3367,7 @@ check("aa79 Invention-Tab hat dieselbe rechte Spalte",
       "_inv_side = QWidget(); _inv_side.setFixedWidth(380)" in _sbd79)
 check("aa79 und die Spalte ist gefuellt, kein Platzhalter",
       "_bd_inv_side_v" in _sbd79
-      and 'Invention settings' in _sbd79)   # Sitzung 17: englischer Schluessel
+      and '("Success chance"), _inv_side_box' in _sbd79)   # emm1041
 check("aa79 Inhalt links, Rand rechts",
       "_inv_row.addWidget(inv_scroll, 1)" in _sbd79)
 check("aa79 Erklaertext bricht in der Spalte um",
@@ -3511,8 +3516,15 @@ check("aa82 Fingerabdruck deckt Menge und Optionen",
 # selbst (an/aus aendert jede Kaufpreis-Quelle).
 # 15 seit emm733 (26.10.2026): die Sell/Buy-Seitenwahl je Hub - sie
 # macht das Hub-Buch unguetig und aendert damit die Kaufpreis-Quelle.
+# 16 seit emm951 (17.11.2026): die zwei Kauf-Schalter des Buendels
+# ("kaufen wenn billiger" / "Faction kaufen") - sie aendern, welches Ende
+# gebaut und welches gekauft wird.
+# 18 seit emm961 (21.11.2026): die Mindestvolumen-Pauschale des
+# Frachtdienstes - eine geaenderte Eingabe (Feld-Fabrik) und eine geaenderte
+# Hub-Auswahl (welcher Hub wegen der Pauschale nichts liefert) aendern die
+# Kaufpreis-Quelle.
 eq("aa82 Cache faellt bei jedem Preis-/Options-Wechsel",
-   _src_txt.count("self._bd_plan_cache = None"), 15)
+   _src_txt.count("self._bd_plan_cache = None"), 18)
 check("aa82 ... auch wenn Weg A die Rezept-Kopie wechselt",
       "if set(_uw.keys()) != _uw_vorher:\n"
       "                self._bd_reaction_stages = None" in _rb82
@@ -3628,7 +3640,8 @@ check("aa85 alte Gesamtbesitz-Zeile ist weg",
 _sbd86 = _fn_src("_show_build_detail")
 _fi86 = _fn_src("_fill_invention_tab")
 check("aa86 Seitenleiste ist eine amber Klapp-Karte",
-      ('_txt("Invention settings")' in _sbd86 or 't("Invention settings")' in _sbd86))
+      ('_txt("Success chance"), _inv_side_box' in _sbd86
+       or 't("Success chance"), _inv_side_box' in _sbd86))   # emm1041
 check("aa86 gleiche Breite wie ueberall", "setFixedWidth(380)" in _sbd86)
 check("aa86 Struktur-Zeile wandert hinein", "_side_v.addWidget(struct_lbl)" in _fi86)
 check("aa86 Skill-Auswahl ebenfalls", "_side_v.addWidget(char_row)" in _fi86)
@@ -4278,7 +4291,11 @@ check("aa102 Item-Wechsel setzt alle drei auf 0",
 # genau die Wege setzen, die einen NEUEN Plan oeffnen.
 _ob103 = _fn_src("open_build_detail")
 _i103 = _pos_von(_ob103, "EIN NEUER BAUPLAN HAT KEINE KOSTEN")
-_blk103 = _ob103[_i103:_i103 + 1900]
+# Fenster 1900 -> 2150 (21.11.2026, emm961): im Reset-Block stehen zwei
+# Zeilen mehr (Mindestvolumen + Pauschale des Frachtdienstes werden fuer
+# einen neuen Plan ebenfalls genullt) - die geprueften Zeilen ruckten nach
+# hinten aus dem Fenster.
+_blk103 = _ob103[_i103:_i103 + 2150]
 check("aa103 Reset haengt an fresh, nicht am Item-Wechsel",
       "if fresh:" in _blk103)
 # ME/TE des Endprodukts gehoeren zur selben Regel: neuer Plan = nichts
@@ -4288,11 +4305,15 @@ check("aa103 ME/TE des Endprodukts starten bei 0",
 # Die KATEGORIE-Werte bleiben - das sind Erfahrungswerte, keine Planwerte.
 check("aa103 Kategorie-ME/TE bleiben unangetastet",
       "_cat_me_te_defaults" not in _blk103)
+# 3 -> 5 Nullungen (21.11.2026, emm961): Mindestvolumen und Pauschale des
+# Frachtdienstes gehoeren wie der ISK/m3-Satz zum Plan und starten bei 0.
 check("aa103 alle drei Kosten werden genullt",
-      _blk103.count(" = 0.0") == 3
+      _blk103.count(" = 0.0") == 5
       and "bau_extra_cost" in _blk103
       and "bau_transport_rate" in _blk103
-      and "bau_transport_trip_cost" in _blk103)
+      and "bau_transport_trip_cost" in _blk103
+      and "bau_transport_min_vol" in _blk103
+      and "bau_transport_min_flat" in _blk103)
 # Der Reset muss VOR dem Item-Wechsel-Block stehen, sonst greift er bei
 # gleichem Item wieder nicht.
 check("aa103 steht vor dem Item-Wechsel-Block",
@@ -4760,7 +4781,11 @@ eq("aa116 ... und daneben 1 % Material und 15 % Zeit, ebenfalls gemessen",
     (MW._STRUCT_ROLE_TIME.get("raitaru") or {}).get("mfg")), (1.0, 15.0))
 eq("aa116 Refineries geben keinen", _MWc.get("tatara"), 0.0)
 check("aa116 alle bekannten Typen erfasst",
-      set(_MWc) == {"raitaru", "azbel", "sotiyo", "athanor", "tatara"})
+      # 22.11.2026 (emm983): drei Citadels dazu, alle ausdruecklich 0 %.
+      set(_MWc) == {"raitaru", "azbel", "sotiyo", "athanor", "tatara",
+                    "astrahus", "fortizar", "keepstar"}
+      and (_MWc.get("astrahus"), _MWc.get("fortizar"), _MWc.get("keepstar"))
+      == (0.0, 0.0, 0.0))
 
 # ---------------------------------------------------------------- (aa117)
 # Invention-Einstellungen standardmaessig ZUGEKLAPPT (Nutzer).
@@ -8058,6 +8083,88 @@ for _f177 in ("spin_up.svg", "spin_down.svg"):
     check(f"aa177 {_f177} liegt im Assets-Ordner",
           _os153.path.isfile(_os153.path.join(
               "eve_trader", "ui", "assets", _f177)))
+# (aa1037) ERFUNDENE ENDEN: der Rest alter Kopien deckelt nicht (emm1037).
+# Nachgestellt mit den Zahlen aus der planer_diagnose.txt des Nutzers
+# (26.11.2026): Retribution 150 Runs, 5 alte Kopien, kleinste 3 Runs.
+from eve_trader.ui import mw_helpers as _mh1037
+class _Rec1037:
+    product_to_bp = {901: (9010, 1, 1), 902: (9020, 1, 1)}
+    activity_max_runs = {}
+class _F1037(_mh1037.MainWindowHelpers):
+    def __init__(self, lage, ende=None):
+        self._bd_recipes = _Rec1037()
+        self._bd_plan_ref = {"plan": {"build_runs": {901: 150, 902: 100}}}
+        self._bd_owned_bp_cache = [
+            {"type_id": 9010, "is_bpo": False, "runs": 3, "quantity": 1},
+            {"type_id": 9010, "is_bpo": False, "runs": 10, "quantity": 1},
+            {"type_id": 9020, "is_bpo": False, "runs": 1, "quantity": 1}]
+        self._lage = lage
+        self._bd_bp = {"end": ende} if ende else {}
+    def _multi_bp_je_ende(self, plan=None):
+        return self._lage
+    def _multi_runs_cap_je_ende(self, out=None):
+        out = dict(out or {})
+        for _t, _d in self._lage.items():
+            out[_t] = min(out.get(_t, _d["runs"]), _d["runs"])
+        return out
+_erf1037 = {901: {"copies": 15, "runs": 10, "erfunden": True},
+            902: {"copies": 10, "runs": 10, "erfunden": True}}
+eq("aa1037 erfundene Enden: es gilt die Groesse der erfundenen Kopie (10), nicht der Rest (3 / 1)",
+   _F1037(_erf1037)._resolve_per_item_runs_cap(), {901: 10, 902: 10})
+_own1037 = {901: {"copies": 2, "runs": 3}, 902: {"copies": 1, "runs": 1}}
+eq("aa1037 Gegenprobe 'Own BPC' (nicht erfunden): die kleinste eigene Kopie gilt weiter",
+   _F1037(_own1037)._resolve_per_item_runs_cap(), {901: 3, 902: 1})
+eq("aa1037 Einzelplan, erfundenes Ende: 10 statt 3",
+   _F1037({}, {"copies": 15, "runs": 10, "bpo": False, "runs_known": True,
+               "erfunden": True})._resolve_per_item_runs_cap(901).get(901), 10)
+eq("aa1037 Einzelplan, eigene Kopie (ohne 'erfunden'): die kleinste gilt (3)",
+   _F1037({}, {"copies": 2, "runs": 10, "bpo": False,
+               "runs_known": True})._resolve_per_item_runs_cap(901).get(901), 3)
+check("aa1037 beide Stellen, die erfundene Kopien rechnen, sagen es dazu",
+      '"erfunden": True' in open("eve_trader/ui/mw_multi_bauplan.py", encoding="utf-8").read()
+      and '"erfunden": True' in open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read())
+# (aa1034) FENSTER-MUELL WIRD SOFORT ABGERAEUMT (emm1034): vor dem Bau eines
+# neuen Bauplan-Fensters und nach dem Schliessen - sonst sammelt er sich und
+# der spaete Sammellauf stuerzt manchmal ab (b-Suite, 24./25.11.2026).
+_sbd1034 = _fn_src("_show_build_detail")
+_i1034 = _sbd1034.find("self._muell_abraeumen()")
+check("aa1034 der Bauplan raeumt den Muell des vorigen Fensters ab, BEVOR er das neue baut",
+      0 <= _i1034 < _sbd1034.find("dlg = MinimizableDialog(None)"))
+check("aa1034 ... und noch einmal nach dem Schliessen (ueber die Ereignisschleife)",
+      "singleShot(0, lambda: self._muell_abraeumen())" in _sbd1034)
+from eve_trader.ui import mw_helpers as _mh1034
+class _M1034(_mh1034.MainWindowHelpers):
+    pass
+_r1034 = _M1034()._muell_abraeumen()
+check("aa1034 das Abraeumen laeuft und meldet eine Zahl (%r)" % (_r1034,),
+      isinstance(_r1034, int) and _r1034 >= 0)
+# (aa1021) KEIN KLAPP-ZEICHEN MEHR IM KNOPFTEXT (Regel 9b: gegen das MUSTER).
+# Jeder Auf-/Zuklapp-Knopf geht ueber icons.klapp_setzen; ein Textzeichen
+# (kleines Dreieck) oder das alte Linien-Symbol waere die vierte Sorte.
+import glob as _gl1021
+_alt1021 = []
+for _p1021 in sorted(_gl1021.glob(_os153.path.join("eve_trader", "ui", "*.py"))):
+    with open(_p1021, encoding="utf-8") as _fh1021:
+        for _nr1021, _z1021 in enumerate(_fh1021, 1):
+            _c1021 = _z1021.split("#")[0]
+            if (("setText(" in _c1021 or "QPushButton(" in _c1021)
+                    and any(_g in _c1021 for _g in (
+                        chr(0x25b8), chr(0x25be), chr(0x25b4),
+                        chr(92) + "u25b8", chr(92) + "u25be", chr(92) + "u25b4"))):
+                _alt1021.append("%s:%d" % (_os153.path.basename(_p1021), _nr1021))
+            if '"chevron" if' in _c1021:
+                _alt1021.append("%s:%d" % (_os153.path.basename(_p1021), _nr1021))
+eq("aa1021 kein Klapp-Zeichen im Knopftext, kein altes Linien-Symbol",
+   _alt1021, [])
+# (aa1020) Aufklapp-Pfeile der Baeume: eigene Grafiken, je Theme-Helligkeit.
+for _f1020 in ("branch_zu.svg", "branch_auf.svg", "branch_zu_hell.svg",
+               "branch_auf_hell.svg", "branch_zu_hover.svg",
+               "branch_auf_hover.svg"):
+    check(f"aa1020 {_f1020} liegt im Assets-Ordner und ist ein schlankes SVG",
+          _os153.path.isfile(_os153.path.join(
+              "eve_trader", "ui", "assets", _f1020))
+          and _os153.path.getsize(_os153.path.join(
+              "eve_trader", "ui", "assets", _f1020)) < 400)
 check("aa177 die Pfeil-Knoepfe geben beim Hovern Rueckmeldung",
       "QSpinBox::up-button:hover" in _thq174)
 
@@ -9315,7 +9422,9 @@ eq("aa204 kein Gebuehren-Zusatz mehr in der Fusszeile",
 _ps205 = _fn_src("_pf_price_source_ok")
 check("aa205 der Waechter vergleicht das Scan-Label mit den NPC-Hubs",
       "store.get_scan_label()" in _ps205
-      and "for _k, _l, _r, _s in hubs.NPC_HUBS" in _ps205)
+      # emm952 (18.11.2026): die Liste umfasst jetzt auch zusaetzliche
+      # NPC-Stationen (hubs.npc_hubs) - auch sie sind ein Hub.
+      and "for _k, _l, _r, _s in hubs.npc_hubs()" in _ps205)
 check("aa205 bei unbekannter Quelle wird NICHT bevormundet",
       "return True      # unbekannt" in _ps205)
 # emm873 reicht die gepruefte Quelle durch (sonst ein DB-Zugriff je
@@ -9633,8 +9742,11 @@ for _b211 in _erw211:
 # emm357: +1 "Re-link" neben "Remove" im Charaktere-Tab (Nutzer-Wunsch).
 # emm894: +1 "Refresh" auf der Marktstatistik-Seite.
 # emm926 (14.11.2026): +1 "Min profit" in Order update bei Verlust.
-eq("aa211 GENAU 15 Knoepfe tragen gezeichnete Symbole",
-   _src_txt.count("_btn_icon(QPushButton("), 15)
+# emm974 (22.11.2026): +2 "Check prices" und "Modify" in der Portfolio-Karte
+# "Orders running out".
+# emm976 (22.11.2026): +2 "Next" und "Min profit" in derselben Karte.
+eq("aa211 GENAU 19 Knoepfe tragen gezeichnete Symbole",
+   _src_txt.count("_btn_icon(QPushButton("), 19)
 check("aa211 auch Menue-Aktionen tragen Symbole",
       'addAction(icons.icon("hammer"), t("Open build plan")' in _src_txt
       and 'addAction(icons.icon("trend_up"), t("Open price history")'
@@ -13626,8 +13738,34 @@ check("aa301 beim Start laeuft es auch bei frischen Transaktionen",
 _rk302 = _fn_src("_einkauf_jetzt") or ""   # emm547: EINE Stelle
 check("aa302 der Restbedarf rechnet weiter NUR mit Fertigungsmaterial",
       'build_mats = plan.get("build_mats")' in _fn_src("_fehlbedarf_jetzt"))
+# datiert 26.11.2026 (emm1035): die Erkennung wohnt jetzt in EINER Funktion,
+# `mw_helpers.inv_material_ids` - Einkaufsliste UND Statusspalte fragen sie.
+from eve_trader.ui import mw_helpers as _mh1035
 check("aa302 Erfindungsmaterial wird als solches erkannt",
-      '_p_inv.get("inv_buy")' in _rk302 and '_p_inv.get("inv_stock_used")' in _rk302)
+      "inv_material_ids" in _rk302
+      and _mh1035.inv_material_ids({"inv_buy": {11: 5}, "inv_stock_used": {"12": 1},
+                                    "buy": {13: 9}}) == {11, 12})
+eq("aa1035 Datacores gesamt = je Versuch x Versuche (2 x 52, 8 x 0, nie negativ)",
+   (_mh1035.datacore_gesamt(2, 52), _mh1035.datacore_gesamt(8, 0),
+    _mh1035.datacore_gesamt(2, -5), _mh1035.datacore_gesamt(None, None)),
+   (104, 0, 0, 0))
+check("aa1035 ... und die Invention-Karte ruft genau diese Rechnung",
+      "_dcg1035(_dq1035, _inv_attempts_n)" in open(
+          "eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read())
+eq("aa1035 ohne Plan gibt es kein Erfindungsmaterial",
+   (_mh1035.inv_material_ids(None), _mh1035.inv_material_ids({})), (set(), set()))
+# Die Statusspalte des Materialien-Reiters (Nutzer-Screenshot 26.11.2026:
+# "fehlt 51" neben "covered for the remaining runs"): der Zweig fuer
+# Erfindungsmaterial steht VOR dem "gedeckt"-Zweig und nimmt die Zahl der
+# Einkaufsliste.
+_fm1035 = _fn_src("_fill_material_tab") or ""
+_i1035 = _fm1035.find('elif int(r["tid"]) in _inv_tids1035:')
+_j1035 = _fm1035.find('status_txt = t("covered for the remaining runs')
+check("aa1035 Erfindungsmaterial wird VOR 'covered for the remaining runs' beurteilt",
+      0 <= _i1035 < _j1035)
+check("aa1035 ... mit derselben Rechnung wie die Einkaufsliste (inv_kaufmenge)",
+      "_ikm1035(r.get(\"missing\", 0), r.get(\"total\", 0)" in _fm1035[_i1035:_j1035]
+      and "_inv_tids1035 = _imi1035(plan)" in _fm1035)
 check("aa302 fuer diese Zeilen zaehlt die EIGENE Fehlmenge statt 0",
       'if _t in _inv_tids:' in _rk302
       and 'return inv_kaufmenge(r.get("missing", 0)' in _rk302)
@@ -15555,8 +15693,11 @@ for _n in _ast320.walk(_320):
 eq("aa320 kein unaufgeloester Platzhalter in der Invention-Karte",
    _roh320, [])
 _tabs320 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
-check("aa320 die ME-Haelfte ist eine f-Zeichenkette",
-      '+ f\'</span> <b>{outcome["me_pct"]}%</b>\'' in _tabs320)
+# datiert 24.11.2026 (emm1029): ME/TE stehen jetzt in der grossen Zeile
+# (per .format eingesetzt); die f-Zeichenkette mit Platzhalter ist die
+# Erfolgschance.
+check("aa320 die Erfolgschance ist eine f-Zeichenkette",
+      '+ f\'</span> <b>{outcome["prob"]*100:.1f}%</b>\'' in _tabs320)
 
 
 # ---------------------------------------------------------------- (aa321)
@@ -20672,8 +20813,11 @@ check("aa403 der Regler geht bis zu einer Woche",
       "_RUNPLAN_ZIEL_MAX = 168" in _bt403)
 # LINKS IST DIE GEMESSENE MINDESTDAUER, keine feste Zahl (Nutzer 24.09.2026:
 # "ich brauche hier keine 4-Stunden-Vorschlaege, das ist gar nicht moeglich").
-check("aa403 die Stufe bekommt ihre gemessene Mindestdauer gereicht",
-      '(res.get("stage_min_times") or {}).get(stage, 0.0),' in _bt403)
+# UMGEDREHT 26.11.2026 (emm1040, Nutzer: "dieses as fast as possible
+# dropdown ... lass uns das entfernen, es scheint die Nutzer des Tools nur zu
+# verwirren"): die Stufenzeile bekommt KEIN Zielzeit-Feld mehr.
+check("aa403 (emm1040) die Stufe bekommt keine Mindestdauer mehr fuer ein Feld gereicht",
+      '(res.get("stage_min_times") or {}).get(stage, 0.0),' not in _bt403)
 # GANZE KOPIEN BLEIBEN IN RUHE (Nutzer-Befund 24.09.2026: "bei Endprodukt hat
 # Peanut Motor 2 Wellen bekommen, da koennte man sich die 2. Welle sparen").
 # 52 Runs, Kopie kann 4 Runs = 13 Jobs - diese Zahl steht fest. Weniger Slots
@@ -20704,9 +20848,112 @@ check("aa403 der Planer liefert diese Mindestdauer ueberhaupt",
       and '"stage_min_times": stage_min_times,' in _fs403)
 check("aa403 null heisst 'so schnell wie moeglich' (keine Zahl)",
       'return t("as fast as possible")' in _bt403)
-check("aa403 die Felder haengen in der Stufenzeile, in der Blaupausen-Spalte",
-      "self._runplan_ziel_feld(\n                tbl, stage_item, stage," in _bt403
-      and "tbl.setItemWidget(item, 2, _box)" in _bt403)
+# UMGEDREHT 26.11.2026 (emm1040): niemand haengt die Felder mehr ein.
+check("aa403 (emm1040) keine Stufenzeile bekommt mehr Zielzeit-Felder",
+      "self._runplan_ziel_feld(" not in _bt403)
+_zs1040 = _fn_src("_runplan_ziel_sekunden") or ""
+check("aa1040 der Planer bekommt NIE eine Zielzeit - eine gespeicherte Dauer rechnet nicht (Regel 7a)",
+      "return {}" in _zs1040 and "_runplan_ziel_jetzt" not in _zs1040
+      and "3600" not in _zs1040)
+_fe1040 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+check("aa1040 die Auswahl oben im Runplaner ist ausgebaut",
+      "self._bd_ziel_box = None" in _fe1040 and "_zl_cb" not in _fe1040)
+# (aa1044) CHECKLISTE IM BAUPLAN (emm1044, Nutzer 26.11.2026: "eine Checklist
+# einfuehren die sich selbst aktualisiert"). Reine Regeln + Verdrahtung.
+from eve_trader.ui import mw_helpers as _mh1044
+from eve_trader import config as _cfg1044
+_cs1044 = _mh1044.checkliste_stand
+eq("aa1044 leerer Plan ohne Invention: sechs Punkte, alle Nein",
+   _cs1044({}), [("tiefe", False), ("repro", False), ("fracht", False),
+                 ("einkauf", False), ("frost", False), ("gespeichert", False)])
+eq("aa1044 mit Invention: alle acht Punkte in der festen Reihenfolge",
+   tuple(k for k, _v in _cs1044({"invention": True})), _mh1044.CHECKLISTE)
+eq("aa1044 angefasst zaehlt: Tiefe, Reprocessing, Einkauf",
+   dict(_cs1044({"beruehrt": {"tiefe", "repro", "einkauf"}})),
+   {"tiefe": True, "repro": True, "fracht": False, "einkauf": True,
+    "frost": False, "gespeichert": False})
+eq("aa1044 Reprocessing: ein eingeschalteter Haken genuegt auch ohne Klick",
+   dict(_cs1044({"repro_an": True}))["repro"], True)
+eq("aa1044 Fracht: nur ein Satz ueber 0 zaehlt (445 / 0 / leer / Unsinn)",
+   [dict(_cs1044({"fracht": _x}))["fracht"] for _x in (445, 0, None, "x")],
+   [True, False, False, False])
+eq("aa1044 eingefroren heisst auch 'Material gekauft'",
+   [dict(_cs1044({"frost": {"x": 1}}))[_k] for _k in ("einkauf", "frost")],
+   [True, True])
+eq("aa1044 Gegenprobe: gespeichert allein macht weder Einkauf noch Frost",
+   dict(_cs1044({"gespeichert": True})),
+   {"tiefe": False, "repro": False, "fracht": False, "einkauf": False,
+    "frost": False, "gespeichert": True})
+eq("aa1044 Invention: Decryptor und Regler je fuer sich",
+   [(dict(_cs1044(_f))["decryptor"], dict(_cs1044(_f))["invzeit"]) for _f in (
+       {"invention": True, "decryptor_alle": True},
+       {"invention": True, "inv_split": True})],
+   [(True, False), (False, True)])
+# (aa1046) RECHTSKLICK: Antwort von Hand umschalten (emm1046).
+_hu1046 = _mh1044.checkliste_hand_umschalten
+eq("aa1046 Nein -> Ja von Hand: der Eintrag steht und gewinnt",
+   (_hu1046({}, "frost"), dict(_cs1044({"hand": {"frost": True}}))["frost"]),
+   ({"frost": True}, True))
+eq("aa1046 ... und zurueck: entspricht wieder der Erkennung, der Eintrag faellt weg",
+   _hu1046({"hand": {"frost": True}}, "frost"), {})
+eq("aa1046 Ja (erkannt) -> Nein von Hand, der Eintrag haelt gegen die Erkennung",
+   (_hu1046({"gespeichert": True}, "gespeichert"),
+    dict(_cs1044({"gespeichert": True, "hand": {"gespeichert": False}}))["gespeichert"]),
+   ({"gespeichert": False}, False))
+eq("aa1046 andere Punkte bleiben unberuehrt; ein nicht gezeigter Punkt aendert nichts",
+   (_hu1046({"hand": {"tiefe": True}}, "frost"), _hu1046({}, "decryptor")),
+   ({"tiefe": True, "frost": True}, {}))
+_mw1046 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+check("aa1046 die Hand-Antworten gehoeren zum Plan (speichern, laden, neuer Plan leer)",
+      '"checkliste_hand": dict(' in _fe1040
+      and '(p.get("checkliste_hand") or {}).items()}' in _mw1046
+      and "self._bd_cl_hand = {}           # ... auch die Hand-Antworten" in _mw1046)
+check("aa1044 die Checkliste ist als Vorgabe AN",
+      _cfg1044.DEFAULT_SETTINGS.get("bau_checkliste_an") is True)
+_mw1044 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
+_bt1044 = open("eve_trader/ui/mw_bauplan_tabs.py", encoding="utf-8").read()
+check("aa1044 Verdrahtung: Tiefe, Reprocessing (2x) und Einkaufsliste melden den Klick",
+      'rb.clicked.connect(lambda *_a: self._cl_merken("tiefe"))' in _mw1044
+      and _fe1040.count('self._cl_merken("repro")') == 2
+      and 'mat_copy_btn.clicked.connect(lambda *_a: self._cl_merken("einkauf"))' in _fe1040)
+check("aa1044 der Stand gehoert zum Plan: gespeichert, geladen, bei neuem Plan leer",
+      '"checkliste": sorted(getattr(self, "_bd_cl", None) or ()),' in _fe1040
+      and 'self._bd_cl = set(p.get("checkliste") or ())' in _mw1044
+      and "self._bd_cl = set()             # neuer Plan" in _mw1044)
+check("aa1044 jede Frage hat Text und Erklaerung, je Punkt genau eine",
+      all(('"' + _k + '": ("') in _bt1044 for _k in _mh1044.CHECKLISTE))
+# (aa1043) Blueprints-Reiter: "Split myself" weg, "Blueprints per stage"
+# versteckt (emm1043).
+check("aa1043 der Haken 'Split myself' ist ausgebaut und ein gespeicherter rechnet nicht (Regel 7a)",
+      "Split myself" not in _fe1040 and 'self._bd_bp["manual"] = False' in _fe1040
+      and "manual_cb" not in _fe1040)
+check("aa1043 'Blueprints per stage' wird versteckt",
+      "_bp_stage_collapsible.hide()" in _fe1040)
+# (aa1042) Reihenfolge der Karten in der Rezeptstruktur (emm1042).
+_k1042 = [_fe1040.find(_x) for _x in (
+    '_txt("Reprocessing"), _rp_panel,',
+    "_rcv.addWidget(self._bd_karte_strukturen)",
+    '_txt("Blacklist"),')]
+check("aa1042 'Build structures (this plan)' steht zwischen Reprocessing und Blacklist",
+      0 <= _k1042[0] < _k1042[1] < _k1042[2]
+      and _fe1040.count("_rcv.addWidget(self._bd_karte_strukturen)") == 1)
+# (aa1041) vierter Auto-Decryptor: hoechste Erfolgschance (emm1041).
+from eve_trader.ui import mw_helpers as _mh1041
+_dv1041 = {"Kein": None, "A": (1.2, 1, 2, 4, 1), "B": (1.8, 4, -1, 4, 2),
+           "C": (1.8, 0, 0, 0, 3), "D": (0.6, 9, -2, 2, 4)}
+_rk1041 = [{"name": _x} for _x in ("A", "Kein", "C", "B", "D")]
+eq("aa1041 hoechste Erfolgschance: groesster Chancen-Faktor, bei Gleichstand die guenstigere Zeile",
+   (_mh1041.decryptor_nach_ziel(_rk1041, _dv1041, "chance") or {}).get("name"), "C")
+eq("aa1041 Gegenprobe: ohne die 1.8er gewinnt 1.2",
+   (_mh1041.decryptor_nach_ziel([{"name": "D"}, {"name": "Kein"}, {"name": "A"}],
+                                _dv1041, "chance") or {}).get("name"), "A")
+eq("aa1041 'kein Decryptor' (1.0) schlaegt einen, der die Chance senkt (0.6)",
+   (_mh1041.decryptor_nach_ziel([{"name": "D"}, {"name": "Kein"}],
+                                _dv1041, "chance") or {}).get("name"), "Kein")
+check("aa1041 der vierte Knopf ist mit seinem Ziel verdrahtet",
+      '(_alle_chance, "chance")' in _fe1040
+      and '"chance": _alle_chance' in _fe1040
+      and "chance" in _mh1041.DECRYPTOR_ZIELE)
 # ZWEI AUSWAHLFELDER STATT REGLER (Nutzer 24.09.2026, dritte Runde: "es
 # springt von 23 h auf 1 T 1 h [...] vielleicht sollten wir den Regler
 # weglassen und stattdessen 2 Dropdowns einfuegen, Tage Stunden"). Ein
@@ -20728,7 +20975,9 @@ check("aa403 eine fertige Stufe traegt keinen Regler mehr",
       "tbl.removeItemWidget(stage_item, 2)" in _bt403)
 check("aa403 die Vorgabe oben nimmt die Ausnahmen der Stufen zurueck",
       '        _z["stufen"] = {}\n        self._runplan_ziel_setzen(None, _h)' in _bt403)
-for _t403 in ("Target per stage:", "as fast as possible", "{n} h", "{n} d",
+# datiert 24.11.2026 (emm1022): die Beschriftung heisst "Max. duration per stage:".
+# datiert 26.11.2026 (emm1040): die Auswahl oben ist entfernt, ihr Text auch.
+for _t403 in ("as fast as possible", "{n} h", "{n} d",
               "as long as it takes"):
     check(f"aa403 DE vorhanden: {_t403}", bool(_de392.get(_t403)))
 
@@ -20779,8 +21028,9 @@ check("aa404 die Tage reichen bis eine Woche",
 check("aa404 'so lange wie noetig' steht als eigener Eintrag zur Wahl",
       '_cd.addItem(t("as long as it takes"), -1)' in _bt404
       and 'return t("as long as it takes")' in _bt404)
-check("aa404 ... und kommt ohne Grenze beim Planer an",
-      '_out[_st] = float("inf")' in _bt404)
+# UMGEDREHT 26.11.2026 (emm1040): es kommt gar keine Zielzeit mehr an.
+check("aa404 (emm1040) ... und kommt NICHT mehr beim Planer an",
+      '_out[_st] = float("inf")' not in _bt404)
 check("aa404 'so lange wie noetig' sperrt das Stunden-Feld",
       "_ch.setEnabled(False)" in _bt404)
 
@@ -20841,8 +21091,9 @@ check("aa406 mit mehr Charakteren wird die Untergrenze kleiner",
 check("aa406 der Regler sagt den Grund im Tooltip",
       "Shorter than {d} is not possible" in _bt404
       and 'if min_info and min_info.get("name"):' in _bt404)
-check("aa406 ... und bekommt ihn vom Planer gereicht",
-      '(res.get("stage_min_by") or {}).get(stage))' in _bt404)
+# UMGEDREHT 26.11.2026 (emm1040): das Feld gibt es nicht mehr.
+check("aa406 (emm1040) ... der Grund wird keinem Feld mehr gereicht",
+      '(res.get("stage_min_by") or {}).get(stage))' not in _bt404)
 check("aa406 DE vorhanden: Grund der Untergrenze",
       bool(_de392.get(
           "Shorter than {d} is not possible: {name} needs {runs} run(s) "
@@ -22289,7 +22540,9 @@ check("aa440 Ziel-Preis der Verkaufsliste auf Einkauf + Fracht",
       "_basis = self._kostenbasis(h)" in _fn_src("_sell_zeilen_preis"))
 check("aa440 Gewinn (Anzeige + Sortierung) mit Fracht",
       "cost = self._kostenbasis(h) * qty" in _fn_src("_render_sell_list")
-      and "cost = self._kostenbasis(h) * h.quantity" in _fn_src("_sell_sort_value"))
+      # Anker datiert 22.11.2026 (emm972): die Menge kommt aus `_sell_menge`
+      # (von Hand aenderbar), die Kostenbasis MIT Fracht bleibt.
+      and "cost = self._kostenbasis(h) * _q972" in _fn_src("_sell_sort_value"))
 check("aa440 'bereit zum Verkauf' zaehlt die Marge MIT Fracht",
       "_basis = h.avg_buy + _fr" in _fn_src("_sell_ready"))
 check("aa440 Kiste neben dem Item (Symbol + Prozent + Tooltip)",
@@ -22786,6 +23039,374 @@ finally:
     _cfg477.app_data_dir = _add_alt477
     _cfg477.save_settings = _sv_alt477
     _sh477.rmtree(_w477, ignore_errors=True)
+
+# ---------------------------------------------------------------- (aa949)
+# ARCHIV NUR NOCH VON HAND, MIT ZURUECKHOLEN (emm949, Nutzer 15.11.2026:
+# "geht das automatisch? das mag ich nicht. gerne wuerde ich Plaene
+# archivieren und ausblenden koennen und bei Bedarf zurueckholen").
+_w949 = _tf477.mkdtemp(prefix="aa949-")
+try:
+    _cfg477.app_data_dir = lambda: _w949
+    _cfg477.save_settings = lambda *a, **k: None
+    _pl949 = [
+        {"id": 1, "label": "fertig", "done_manual": True, "done_ts": _alt477},
+        {"id": 2, "label": "offen"},
+        {"id": 3, "label": "fertiges Buendel", "type_id": -1, "quellen": [4],
+         "done_manual": True, "done_ts": _alt477},
+        {"id": 4, "label": "Mitglied von 3", "done_manual": True, "done_ts": _alt477},
+        {"id": 5, "label": "Mitglied offen", "done_manual": True, "done_ts": _alt477},
+        {"id": 6, "label": "offenes Buendel", "type_id": -1, "quellen": [5]},
+    ]
+    # Laden archiviert NICHTS mehr von selbst (alle hier sind 31 Tage alt).
+    _d949 = {"bau_saved_plans": [dict(p) for p in _pl949]}
+    for _mk in ("bau_buy_inv_default_applied", "bau_cat_me_te_reset_applied",
+                "bau_transport_both_applied", "buendel_done_nachgezogen",
+                "bau_profile_bereinigt", "bau_invention_an_applied"):
+        _d949[_mk] = True
+    _cfg477._nach_migrationen(_d949)
+    check("aa949 beim Laden wandert kein Plan mehr von selbst ins Archiv",
+          len(_d949["bau_saved_plans"]) == 6
+          and not os.path.exists(_cfg477.bauplan_archiv_path()))
+    _d949 = {"bau_saved_plans": [dict(p) for p in _pl949],
+             "bau_plan_reihenfolge": ["1", "2", "3"]}
+    _n949 = [_cfg477.plaene_ins_archiv(_d949, [i], _jetzt477) for i in (2, 5, 1, 3)]
+    eq("aa949 von Hand: offener Plan und Mitglied eines OFFENEN Buendels nie; "
+       "fertiger ja; Buendel nimmt sein Mitglied mit", _n949, [0, 0, 1, 2])
+    _a949 = _cfg477.bauplan_archiv_lesen()
+    check("aa949 im Archiv 1, 3, 4 mit Zeitstempel; 2, 5, 6 bleiben; Reihenfolge bereinigt",
+          sorted(str(p["id"]) for p in _a949) == ["1", "3", "4"]
+          and all(p.get("archiviert_ts") for p in _a949)
+          and sorted(str(p["id"]) for p in _d949["bau_saved_plans"]) == ["2", "5", "6"]
+          and _d949["bau_plan_reihenfolge"] == ["2"])
+    # Zurueckholen: Buendel bringt Mitglied mit; gespeichert wird, BEVOR die
+    # Plaene die Archivdatei verlassen (nie verloren, hoechstens doppelt).
+    _sp949 = []
+    _z949 = _cfg477.plaene_aus_archiv(
+        _d949, [3], speichern=lambda d: _sp949.append(
+            (len(d["bau_saved_plans"]), len(_cfg477.bauplan_archiv_lesen()))))
+    check(f"aa949 zurueckholen: 3 und 4 wieder da, ohne Archiv-Stempel, 1 bleibt im Archiv ({_z949})",
+          _z949 == 2
+          and sorted(str(p["id"]) for p in _d949["bau_saved_plans"]) == ["2", "3", "4", "5", "6"]
+          and not any(p.get("archiviert_ts") for p in _d949["bau_saved_plans"])
+          and [str(p["id"]) for p in _cfg477.bauplan_archiv_lesen()] == ["1"])
+    eq("aa949 gespeichert wird, solange die Plaene noch im Archiv stehen", _sp949, [(5, 3)])
+    # Unlesbares Archiv -> nichts passiert.
+    with open(_cfg477.bauplan_archiv_path(), "w", encoding="utf-8") as _f949:
+        _f949.write("{kaputt")
+    _d949b = {"bau_saved_plans": [dict(_pl949[0])]}
+    check("aa949 unlesbares Archiv: von Hand archivieren laesst den Plan stehen",
+          _cfg477.bauplan_archiv_lesen() is None
+          and _cfg477.plaene_ins_archiv(_d949b, [1], _jetzt477) == 0
+          and len(_d949b["bau_saved_plans"]) == 1)
+finally:
+    _cfg477.app_data_dir = _add_alt477
+    _cfg477.save_settings = _sv_alt477
+    _sh477.rmtree(_w949, ignore_errors=True)
+
+# ---------------------------------------------------------------- (aa950)
+# KAUF-ENDEN IM BUENDEL, SCHRITT 1 = NUR DIE RECHNUNG (emm950, Nutzer
+# 17.11.2026: "Das was sich lohnt bauen wir, das was sich nicht lohnt, kaufen
+# wir ein" / "ich fasse den aktuell funktionierenden Bauplan wirklich nur sehr
+# sehr ungerne an"). Ausgefuehrt am Mini-Rezept von aa374 (A x20, B x10,
+# geteiltes X in 100er-Batches). ERSTE Zusage: ohne die Option - oder mit
+# einer leeren - ist der Plan Feld fuer Feld derselbe.
+_pr950 = {_M374: 100.0, _X374: 1e9, _A374: 500.0, _B374: 1e12}.get
+_p0_950 = _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374, dict(_o374))
+_pl_950 = _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374, dict(_o374, kauf_enden=[]))
+_px_950 = _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374, dict(_o374, kauf_enden=[_X374]))
+check("aa950 ohne Kauf-Enden (fehlend ODER leer) ist der Plan Feld fuer Feld derselbe",
+      _p0_950 == _pl_950 and "kauf_enden" not in _p0_950 and "kauf_enden" not in _pl_950)
+check("aa950 eine ZWISCHENSTUFE in der Liste wird ignoriert (nur Enden zaehlen) - Plan unveraendert",
+      _px_950 == _p0_950 and _px_950["build_runs"].get(_X374) == 1)
+_pk_950 = _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374, dict(_o374, kauf_enden=[_A374]))
+eq("aa950 Kauf-Ende A: gekauft mit voller Menge, kein Job; B wird weiter gebaut",
+   (_pk_950["build_runs"].get(_A374), _pk_950["buy"].get(_A374), _pk_950["decision"].get(_A374),
+    _pk_950["build_runs"].get(_B374), _pk_950.get("kauf_enden")),
+   (None, 20, "buy", 10, [_A374]))
+check("aa950 Kauf-Ende steht in keiner Bau-Liste (Folge, Zutaten, hergestellt)",
+      all(t != _A374 for t, _r in _pk_950["build_seq"])
+      and _A374 not in _pk_950["build_mats"] and _A374 not in _pk_950["build_made"])
+eq("aa950 der Preis ist Menge x Kaufpreis (20 x 500) und steht in den Kaufkosten",
+   _pk_950["buy_cost_items"].get(_A374), 10000.0)
+# Das Material von A faellt weg: A brauchte 10 M je Stueck (ME 10 -> 9) x 20.
+check(f"aa950 das Material des gekauften Endes wird nicht mehr eingekauft "
+      f"(M {_p0_950['buy'].get(_M374)} -> {_pk_950['buy'].get(_M374)})",
+      _pk_950["buy"].get(_M374, 0) < _p0_950["buy"].get(_M374, 0))
+_je950 = _I.buendel_kosten_je_ende(_pk_950)
+check(f"aa950 Kosten je Ende: A = Kaufpreis je Stueck, Summe aller Enden = Gesamtkosten "
+      f"({_je950.get(_A374, {}).get('je_stueck')})",
+      abs(_je950.get(_A374, {}).get("je_stueck", 0) - 500.0) < 1e-6
+      and abs(sum(v["gesamt"] for v in _je950.values()) - _pk_950["total_cost"]) < 1e-3)
+# Das EINE Endprodukt eines normalen Plans bleibt ein Bau - sonst waere der
+# Root-Kauf-Bug (Gewinn exakt 0) ueber die neue Option wieder da.
+_pn_950 = _I.production_plan(_A374, 20, _pr950, _Rec374(), dict(_o374, kauf_enden=[_A374]))
+eq("aa950 ein NORMALER Plan baut sein Endprodukt trotz der Option",
+   (_pn_950["build_runs"].get(_A374), _pn_950["buy"].get(_A374), "kauf_enden" in _pn_950),
+   (20, None, False))
+
+# ---------------------------------------------------------------- (aa961)
+# MINDESTVOLUMEN-PAUSCHALE DES FRACHTDIENSTES (emm961, Nutzer 21.11.2026:
+# "445isk per Kubik ... bis zu min. Volume von 50000 Kubik kostet es einfach
+# eine feste pauschale von 20millionen"). Reine Rechnung, AUSGEFUEHRT.
+_fm961 = _I.fracht_mindest
+eq("aa961 1'000 m3 bei 445 ISK/m3: Zuschlag = 20 Mio - 445'000",
+   _fm961(1000, 445.0 * 1000, 50000, 20_000_000), 20_000_000 - 445_000.0)
+# Mit 100 ISK/m3 (6 Mio < Pauschale): bei 445 laege der Satz schon UEBER der
+# Pauschale und das Ergebnis waere auch ohne die Volumen-Grenze 0 - die
+# Rotprobe meldete BLIND (21.11.2026).
+eq("aa961 ueber dem Mindestvolumen: kein Zuschlag",
+   _fm961(60000, 100.0 * 60000, 50000, 20_000_000), 0.0)
+eq("aa961 genau am Mindestvolumen gilt noch die Pauschale - aber nie billiger als der Satz",
+   _fm961(50000, 445.0 * 50000, 50000, 20_000_000), 0.0)
+eq("aa961 nichts zu transportieren: kein Zuschlag",
+   _fm961(0, 0.0, 50000, 20_000_000), 0.0)
+eq("aa961 ohne Angaben (Vorgabe 0/0): kein Zuschlag - der Plan rechnet wie bisher",
+   (_fm961(1000, 445000.0, 0, 0), _fm961(1000, 445000.0, 50000, 0),
+    _fm961(1000, 445000.0, 0, 20_000_000)), (0.0, 0.0, 0.0))
+eq("aa961 die Vorgaben stehen auf 0 (aus)",
+   (__import__("eve_trader.config", fromlist=["x"]).DEFAULT_SETTINGS.get("bau_transport_min_vol"),
+    __import__("eve_trader.config", fromlist=["x"]).DEFAULT_SETTINGS.get("bau_transport_min_flat")), (0.0, 0.0))
+# HUB-WAHL: Hub A am Bau-Ort (keine Fracht), Hub B mit 445 ISK/m3.
+_pw961 = _I.multihub_pauschal_wahl
+_T961, _V961 = 961001, {961001: 0.001}
+_R961 = {"A": 0.0, "B": 445.0}
+# (1) SEIN FALL: 10 Stueck in B etwas billiger - die Pauschale frisst das.
+_b1_961 = {"A": {_T961: [(10.0, 1000)]}, "B": {_T961: [(9.0, 10)]}}
+eq("aa961 zehn Stueck am Fracht-Hub: der Hub faellt weg (Pauschale > Ersparnis)",
+   _pw961(_b1_961, {_T961: 500}, _V961, _R961, 50000, 20_000_000), {"B"})
+# (2) GEGENPROBE anderer Art: die Ersparnis ist groesser als die Pauschale.
+_b2_961 = {"A": {_T961: [(10.0, 20_000_000)]}, "B": {_T961: [(1.0, 10_000_000)]}}
+eq("aa961 grosse Ersparnis am Fracht-Hub (90 Mio > 20 Mio Pauschale): der Hub bleibt",
+   _pw961(_b2_961, {_T961: 10_000_000}, _V961, _R961, 50000, 20_000_000), set())
+# (3) Volumen ueber dem Mindestvolumen: gar keine Pauschale -> bleibt.
+eq("aa961 Volumen ueber dem Mindestvolumen: der Hub bleibt",
+   _pw961({"A": {_T961: [(10.0, 10**9)]}, "B": {_T961: [(9.0, 10**9)]}},
+          {_T961: 100_000_000}, _V961, _R961, 50000, 20_000_000), set())
+# (4) REGEL 3: ohne Hub B fehlte Material -> nie weglassen.
+_b4_961 = {"A": {_T961: [(10.0, 5)]}, "B": {_T961: [(9.0, 10)]}}
+eq("aa961 ohne den Fracht-Hub fehlte Material: er bleibt trotz Pauschale",
+   _pw961(_b4_961, {_T961: 15}, _V961, _R961, 50000, 20_000_000), set())
+# (5) Aus = nichts ausschliessen; ein einzelner Hub ebenso.
+eq("aa961 ohne Mindestvolumen/Pauschale oder mit nur einem Hub: leere Menge",
+   (_pw961(_b1_961, {_T961: 500}, _V961, _R961, 0, 0),
+    _pw961({"B": {_T961: [(9.0, 10)]}}, {_T961: 5}, _V961, _R961, 50000, 20_000_000)),
+   (set(), set()))
+# (6) Der Hub OHNE Fracht faellt nie weg (er hat keine Pauschale).
+eq("aa961 ein Hub ohne Frachtsatz ist nie Kandidat",
+   "A" in _pw961(_b1_961, {_T961: 500}, _V961, _R961, 50000, 20_000_000), False)
+# VERDRAHTUNG: die EINE Buecher-Stelle filtert, die Wahl fragt die ungefilterten.
+_mb961 = _fn_src("_bd_multihub_books")
+check("aa961 _bd_multihub_books filtert die ausgelassenen Hubs - und liefert mit alle=True alles",
+      "def _bd_multihub_books(self, alle=False)" in _mb961
+      and "if alle:" in _mb961 and "_bd_mh_pauschal_aus" in _mb961)
+
+# ---------------------------------------------------------------- (aa954)
+# CHARAKTER-LISTEN ALPHABETISCH (emm954, Discord Robust: "can all lists where
+# you need to select a character be alphabetical"). AUSGEFUEHRT gegen die echte
+# SQLite: drei Probe-Charaktere, verknuepft in der Reihenfolge Zed, anna, Bob.
+from eve_trader import store as _st954
+_ids954 = (990954003, 990954001, 990954002)
+try:
+    with _st954._conn() as _c954:
+        _c954.execute("DELETE FROM characters WHERE character_id IN (?,?,?)", _ids954)
+        _alt954 = [tuple(r) for r in _c954.execute(
+            "SELECT character_id, added_at FROM characters ORDER BY added_at")]
+        for _i954, (_cid954, _nm954) in enumerate(zip(_ids954, ("aa954 Zed", "aa954 anna", "aa954 Bob"))):
+            _c954.execute("INSERT INTO characters(character_id, character_name, added_at) "
+                          "VALUES (?,?,?)", (_cid954, _nm954, 1.0 + _i954))
+    _n954 = [c["character_name"] for c in _st954.list_characters()]
+    eq("aa954 list_characters ist alphabetisch, Gross/Klein egal",
+       _n954, sorted(_n954, key=lambda x: x.lower()))
+    eq("aa954 die drei Proben stehen als anna, Bob, Zed (nicht in Verknuepfungs-Reihenfolge)",
+       [n for n in _n954 if n.startswith("aa954")], ["aa954 anna", "aa954 Bob", "aa954 Zed"])
+    eq("aa954 der ZUERST verknuepfte Charakter bleibt der Vorgabe-Charakter (Zed, nicht anna)",
+       _st954.erst_verknuepfter_id(), 990954003)
+finally:
+    with _st954._conn() as _c954:
+        _c954.execute("DELETE FROM characters WHERE character_id IN (?,?,?)", _ids954)
+_alt_lc954 = _st954.list_characters
+try:
+    _st954.list_characters = lambda: []
+    eq("aa954 ohne Charaktere: kein Vorgabe-Charakter", _st954.erst_verknuepfter_id(), None)
+    _st954.list_characters = lambda: [{"character_id": 7, "character_name": "B"},
+                                      {"character_id": 8, "character_name": "A"}]
+    eq("aa954 ohne Zeitangabe gewinnt der erste der Liste", _st954.erst_verknuepfter_id(), 7)
+finally:
+    _st954.list_characters = _alt_lc954
+
+# ---------------------------------------------------------------- (aa952)
+# ZUSAETZLICHE NPC-STATIONEN ALS HUB (emm952, Discord Robust: "add another NPC
+# station to Hubs"; Nutzer: "nicht dass wir da was kaputt machen" / "mit
+# vorher nachher vergleich um zu erkennen ob etwas verloren ging").
+# ZUSAGE 1: fuer die fuenf festen Hubs aendert sich NICHTS - Region bleibt ihre
+# Hub-Nummer, der Preis-Schluessel bleibt "hub:<region>".
+import eve_trader.hubs as _h952
+from eve_trader import store as _st952
+_SID952, _RG952 = 69999952, 19999952          # erfundene Station/Region
+_vor952 = {r: (_h952.hub_key_for_region(r), _h952.station_for_region(r), _st952.hub_source(r))
+           for _k, _l, r, _s in _h952.NPC_HUBS}
+try:
+    _ex952 = _h952.extra_setzen([
+        {"station_id": _SID952, "name": "aa952 Station", "region_id": 10000002},
+        {"station_id": 60003760, "name": "Jita doppelt", "region_id": 10000002},   # fester Hub
+        {"station_id": _SID952, "name": "nochmal", "region_id": 10000002},         # doppelt
+        {"station_id": 69999953, "name": "ohne Region"},                           # keine Region
+        "kaputt"])
+    eq("aa952 extra_setzen nimmt nur die eine gueltige Station (feste Hubs, Doppelte, "
+       "ohne Region fallen weg)", [(e[2], e[3]) for e in _ex952], [(10000002, _SID952)])
+    eq("aa952 die fuenf festen Hubs loesen sich auf wie vorher (Schluessel, Station, Preis-Quelle)",
+       {r: (_h952.hub_key_for_region(r), _h952.station_for_region(r), _st952.hub_source(r))
+        for _k, _l, r, _s in _h952.NPC_HUBS}, _vor952)
+    eq("aa952 aufloesen: Region -> fester Hub, feste Station -> fester Hub, "
+       "Zusatz-Station -> sie selbst, Unbekanntes -> None",
+       ((_h952.aufloesen(10000002) or (None,))[0], (_h952.aufloesen(60003760) or (None,))[0],
+        (_h952.aufloesen(_SID952) or (0, 0, 0, 0))[2:], _h952.aufloesen(69999954),
+        _h952.aufloesen(None)),
+       ("jita", "jita", (10000002, _SID952), None, None))
+    eq("aa952 Hub-Nummer: fester Hub = Region, Zusatz-Station = Station; echte Region und "
+       "Station kommen daraus zurueck",
+       (_h952.hub_id_fuer(10000002, 60003760), _h952.hub_id_fuer(10000002, _SID952),
+        _h952.region_von(_SID952), _h952.region_von(10000002),
+        _h952.station_for_region(_SID952), _h952.ist_extra(_SID952), _h952.ist_extra(60003760)),
+       (10000002, _SID952, 10000002, 10000002, _SID952, True, False))
+    eq("aa952 Standings: fester Hub behaelt seinen Schluessel, die Zusatz-Station bekommt "
+       "KEINEN (Broker-Gebuehr ohne Rabatt, nie die von Jita)",
+       (_h952.standings_key(10000002), _h952.standings_key(60008494),
+        _h952.standings_key(_SID952), _h952.standings_key(19999999)),
+       ("jita", "amarr", None, "jita"))
+    # ZUSAGE 2, AUSGEFUEHRT gegen die echte SQLite: der Scan einer zweiten
+    # Station derselben Region ueberschreibt die Preise der ersten NICHT.
+    with _st952._conn() as _c952:
+        _meta952 = [tuple(r) for r in _c952.execute("SELECT k, v FROM scan_meta")]
+    try:
+        _z952 = lambda t, p: {"type_id": t, "sell_min": p, "buy_max": 1.0, "sell_qty": 1,
+                              "buy_qty": 1, "sell_orders": 1, "buy_orders": 1}
+        _st952.save_snapshot([_z952(34, 5.0), _z952(35, 6.0)], _RG952)
+        _st952.save_snapshot([_z952(34, 9.0)], _RG952, hub_id=_SID952)
+        eq("aa952 zwei Stationen EINER Region stehen nebeneinander (2 + 1 Preise), "
+           "jede unter ihrem Schluessel",
+           (len(_st952.get_snapshot(_st952.hub_source(_RG952))),
+            len(_st952.get_snapshot(_st952.hub_source(_SID952))),
+            # ohne [0]: fehlt die Zeile, soll die Pruefung ROT werden, nicht abstuerzen
+            (_st952.get_snapshot(_st952.hub_source(_SID952)) or [{}])[0].get("sell_min")),
+           (2, 1, 9.0))
+        eq("aa952 nach dem Scan der Zusatz-Station: Hub-Nummer = Station, Region bleibt die echte",
+           (_st952.get_scan_hub(), _st952.get_scan_region(), _st952.get_scan_source()),
+           (_SID952, _RG952, f"hub:{_SID952}"))
+        _st952.save_snapshot([_z952(34, 5.5)], _RG952)
+        eq("aa952 ein Scan OHNE hub_id (fester Hub) setzt die Hub-Nummer zurueck auf die Region "
+           "und laesst die Preise der Zusatz-Station stehen",
+           (_st952.get_scan_hub(), len(_st952.get_snapshot(_st952.hub_source(_SID952)))),
+           (_RG952, 1))
+        with _st952._conn() as _c952:
+            _c952.execute("DELETE FROM scan_meta WHERE k='hub_id'")
+        eq("aa952 alte Datenbank ohne Hub-Nummer: es gilt die Region wie bisher",
+           _st952.get_scan_hub(), _RG952)
+    finally:
+        with _st952._conn() as _c952:
+            _c952.execute("DELETE FROM market_snapshot WHERE source IN (?, ?)",
+                          (f"hub:{_RG952}", f"hub:{_SID952}"))
+            _c952.execute("DELETE FROM scan_meta")
+            _c952.executemany("INSERT INTO scan_meta(k, v) VALUES (?, ?)", _meta952)
+finally:
+    _h952.extra_setzen([])
+
+# ---------------------------------------------------------------- (aa951)
+# SCHALTER "KAUFEN, WENN BILLIGER" + DIE STELLEN, DIE GEKAUFTE ENDEN KENNEN
+# MUESSEN (emm951). A kostet am Markt 500, der Bau mehr -> A wird gekauft;
+# B (1e12) wird gebaut.
+_pb_951 = _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374,
+                             dict(_o374, enden_kauf_billig=True))
+eq("aa951 Schalter AN: das billiger kaufbare Ende A wird gekauft, B gebaut",
+   (_pb_951["decision"].get(_A374), _pb_951["buy"].get(_A374),
+    _pb_951["build_runs"].get(_A374), _pb_951["build_runs"].get(_B374)),
+   ("buy", 20, None, 10))
+check("aa951 Schalter AUS (False) ist derselbe Plan wie ohne Schalter",
+      _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374,
+                         dict(_o374, enden_kauf_billig=False)) == _p0_950)
+# Ohne ECHTE Sell-Order gibt es keinen Vergleich -> gebaut (kein Preis fuer A).
+_pr951n = {_M374: 100.0, _X374: 1e9, _B374: 1e12}.get
+_pn_951 = _I.production_plan(_I.BUENDEL_ID, 1, _pr951n, _rb374,
+                             dict(_o374, enden_kauf_billig=True,
+                                  adjusted_prices={_M374: 100.0, _X374: 5000.0, _B374: 1e6}))
+eq("aa951 Schalter AN, aber kein Preis am Hub: A wird gebaut (kein Vergleich)",
+   (_pn_951["build_runs"].get(_A374), _pn_951["buy"].get(_A374)), (20, None))
+# KEINE VOLLSTAENDIGEN BAUKOSTEN (M hat nirgends einen Preis) -> kein Vergleich
+# -> gebaut, auch wenn A fuer 500 zu haben waere. Vor der Korrektur kaufte der
+# Plan dann BEIDE Enden (auch B fuer 1e12) - gefunden in der Fenster-Simulation.
+_pr951u = {_X374: 1e9, _A374: 500.0, _B374: 1e12}.get
+_pu_951 = _I.production_plan(_I.BUENDEL_ID, 1, _pr951u, _rb374,
+                             dict(_o374, enden_kauf_billig=True,
+                                  adjusted_prices={_X374: 5000.0, _A374: 1e6, _B374: 1e6}))
+eq("aa951 Schalter AN, Baukosten unvollstaendig (Material ohne Preis): beide Enden gebaut",
+   (_pu_951["build_runs"].get(_A374), _pu_951["build_runs"].get(_B374),
+    _pu_951["buy"].get(_A374), _pu_951["buy"].get(_B374)), (20, 10, None, None))
+_pe_951 = _I.production_plan(_A374, 20, _pr950, _Rec374(),
+                             dict(_o374, enden_kauf_billig=True))
+eq("aa951 ein NORMALER Plan baut sein Endprodukt trotz Schalter (Root-Kauf-Bug)",
+   (_pe_951["build_runs"].get(_A374), _pe_951["buy"].get(_A374)), (20, None))
+eq("aa951 buendel_gekaufte_enden liest die Entscheidung des Plans",
+   (_I.buendel_gekaufte_enden(_pb_951), _I.buendel_gekaufte_enden(_p0_950),
+    _I.buendel_gekaufte_enden(_pn_950), _I.buendel_gekaufte_enden({})),
+   ([_A374], [], [], []))
+# (aa1017) Buendel-ID und Enden in `excluded` (Gruppen-Haekchen "Komponenten",
+# Blacklist-Rundlauf 24.11.2026): der Plan bleibt derselbe.
+_p0_1017 = _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374, dict(_o374))
+_p1_1017 = _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374,
+                              dict(_o374, excluded={_I.BUENDEL_ID, _A374, _B374}))
+check("aa1017 Vorbedingung: das Buendel baut etwas",
+      bool(_p0_1017["build_runs"]))
+eq("aa1017 Buendel-ID + Enden auf der Blacklist: gebaut wird dasselbe",
+   _p1_1017["build_runs"], _p0_1017["build_runs"])
+eq("aa1017 ... gekauft wird dasselbe, nie das Buendel selbst",
+   (_p1_1017["buy"], _I.BUENDEL_ID in _p1_1017["buy"]),
+   (_p0_1017["buy"], False))
+eq("aa1017 ... und die Kosten sind dieselben",
+   round(_p1_1017["total_cost"], 2), round(_p0_1017["total_cost"], 2))
+_p2_1017 = _I.production_plan(_I.BUENDEL_ID, 1, _pr950, _rb374,
+                              dict(_o374, excluded={_X374}))
+# (aa1030) DER REZEPT-BAUM zeigt ein blacklistetes ENDE wie der Plan: gebaut,
+# mit Unterbaum. Gegenprobe: eine Zwischenstufe bleibt "owned".
+def _bk1030(_ex):
+    _b = _I.build_tree(_I.BUENDEL_ID, _pr950, _rb374, dict(_o374, excluded=_ex))
+    return sorted((_c["type_id"], _c["decision"], _c["subtree"] is not None)
+                  for _c in ((_b or {}).get("components") or []))
+check("aa1030 Vorbedingung: der Buendel-Baum hat beide Enden, eines mit Unterbaum, keines 'owned'",
+      len(_bk1030(set())) == 2 and any(_x[2] for _x in _bk1030(set()))
+      and all(_x[1] != "owned" for _x in _bk1030(set())))
+eq("aa1030 Enden auf der Blacklist: der Baum bleibt derselbe",
+   _bk1030({_A374, _B374}), _bk1030(set()))
+def _zw1030(_ex):
+    _b = _I.build_tree(_I.BUENDEL_ID, _pr950, _rb374, dict(_o374, excluded=_ex))
+    _aus = []
+    for _c in ((_b or {}).get("components") or []):
+        for _d in ((_c.get("subtree") or {}).get("components") or []):
+            if _d["type_id"] == _X374:
+                _aus.append(_d["decision"])
+    return sorted(set(_aus))
+eq("aa1030 Gegenprobe: die Zwischenstufe X auf der Blacklist ist weiter 'owned'",
+   _zw1030({_X374}), ["owned"])
+check("aa1017 Gegenprobe: eine ZWISCHENSTUFE auf der Blacklist faellt weiter heraus",
+      _X374 in _p0_1017["build_runs"] and _X374 not in _p2_1017["build_runs"]
+      and _X374 not in _p2_1017["buy"])
+_e0_1017 = _I.production_plan(_A374, 20, _pr950, _Rec374(), dict(_o374))
+_e1_1017 = _I.production_plan(_A374, 20, _pr950, _Rec374(),
+                              dict(_o374, excluded={_A374}))
+eq("aa1017 EINZELPLAN: das Endprodukt auf der Blacklist wird trotzdem gebaut, nicht gekauft",
+   (_e1_1017["build_runs"], _e1_1017["buy"]),
+   (_e0_1017["build_runs"], _e0_1017["buy"]))
+# Blueprints-Reiter: ein gekauftes Ende (und was nur es brauchte) hat keine Zeile.
+_ch0_951 = _I.full_build_chain(_I.BUENDEL_ID, 1, _rb374, dict(_o374))
+_ch1_951 = _I.full_build_chain(_I.BUENDEL_ID, 1, _rb374, dict(_o374, chain_ohne=[_A374]))
+check("aa951 full_build_chain: mit chain_ohne fehlt das gekaufte Ende, B und X bleiben",
+      _A374 in _ch0_951 and _A374 not in _ch1_951
+      and _B374 in _ch1_951 and _X374 in _ch1_951)
+# Funfact: gekaufte Enden sind nicht "gebaut"; alte Plaene ohne Feld wie bisher.
+import eve_trader.funfact as _ff951
+_plan951 = {"multi": True, "enden": [[_A374, 20], [_B374, 10]]}
+eq("aa951 Funfact zaehlt ein gekauftes Ende nicht als gebaut (ohne Feld: beide)",
+   (_ff951.plan_enden(dict(_plan951, enden_gekauft=[_A374])), _ff951.plan_enden(_plan951)),
+   ([(_B374, 10)], [(_A374, 20), (_B374, 10)]))
 
 # ---------------------------------------------------------------- (aa476)
 # INVENTION IMMER AN (emm385, 03.10.2026): die Einstellung "bau_invention" ist
@@ -25369,7 +25990,10 @@ check("aa499 My Blueprints nimmt die Jobkosten-Parameter des Bauplans",
 # wenn der letzte Market scan vom Hub oben stammt - sonst verlangt es den Scan.
 _mw498 = open("eve_trader/ui/main_window.py", encoding="utf-8").read()
 check("aa498 My Blueprints rechnet nur mit Scan vom Hub oben",
-      "if industry.sde_ready() and snapshot and _hub_ok:" in _mw498
+      # 22.11.2026 (emm998): die Zeile verlangt zusaetzlich einen Scan am
+      # gewaehlten Verkaufs-Hub - die Zusage "nur mit Scan vom Hub oben"
+      # (`_hub_ok`) steht unveraendert darin.
+      "if industry.sde_ready() and snapshot and _hub_ok and _sell_ok998:" in _mw498
       and "_hub_ok = (not _scan_l0) or (self._short_hub_label(_scan_l0)\n"
           "                                         == self._short_hub_label(_hub_l0))"
       in _mw498)
@@ -26197,11 +26821,11 @@ check("aa427 ... der Optimierer holt die Enden-Namen aus _bd_names_ref",
 # Veroeffentlichung lassen wir immer einen Test laufen, um eine fehlerfreie
 # Veroeffentlichung zu gewaehrleisten"). Die Veroeffentlichung bricht bei
 # Rot ab, BEVOR committet wird; eigener Starter per Doppelklick. CRLF.
-_rel426b = open("release/veroeffentliche_1.1.6.bat", "rb").read()
+_rel426b = open("release/veroeffentliche_1.1.7.bat", "rb").read()
 _rel426 = _rel426b.replace(b"\r\n", b"\n")      # Logik unabhaengig vom Zeilenende
 _p426 = _rel426.find(b"python pruefe.py < nul\n")
 _f426 = _rel426.find(b"if errorlevel 1 (\n  echo ROT: pruefe.py", _p426)
-check("aa426 veroeffentliche_1.1.6.bat prueft ZUERST und bricht bei Rot ab",
+check("aa426 veroeffentliche_1.1.7.bat prueft ZUERST und bricht bei Rot ab",
       0 < _p426 < _f426 < _rel426.find(b"git commit")
       and 0 < _rel426.find(b"  goto ende\n)\necho gruen", _f426))
 check("aa426 ... und hat Windows-Zeilenenden (CRLF)",
@@ -40893,13 +41517,16 @@ try:
               for _s in (_rs861, _fo861, _sl861)))
     check("aa861 Shopping: alle vier Zeilen-Knoepfe (Buy/Open/Qty/x) "
           "laufen ueber knopf_passend",
-          _rs861.count("knopf_passend(") == 4
+          # 4 -> 5 (22.11.2026, emm979): der Kaufart-Knopf kam dazu.
+          _rs861.count("knopf_passend(") == 5
+          and "knopf_passend(artb)" in _rs861
           and "knopf_passend(copyb)" in _rs861
           and "knopf_passend(openb)" in _rs861
           and "knopf_passend(qtyb)" in _rs861
           and "knopf_passend(rmb)" in _rs861)
     check("aa861 Shopping: Aktionsspalte folgt dem breitesten Inhalt",
-          "self.sh_table.setColumnWidth(1, _w861 + 6)" in _rs861)
+          # +6 -> +14 (22.11.2026, emm979): gemessener Zellenrand 12 px.
+          "self.sh_table.setColumnWidth(1, _w861 + 14)" in _rs861)
     # emm926: dritter Knopf "Min profit" (nur bei Verlust).
     check("aa861 Order update: alle drei Zeilen-Knoepfe laufen ueber "
           "knopf_passend",
@@ -41213,11 +41840,14 @@ try:
           '_dauer877("prices", self._hub_preise)' in _ra870
           and '"snap_missing": not prices' in _ra870)
     _ds870 = _fn_src("_do_scan")
+    # emm952 (18.11.2026): der Scan vergleicht die HUB-NUMMER (hub_id), nicht
+    # mehr die Region - eine zusaetzliche NPC-Station hat ihren eigenen
+    # Preis-Schluessel.
     check("aa870 der Hub-Scan reicht frische Preise sofort ans "
           "Portfolio weiter (nur fuer die Portfolio-Quelle)",
-          "store.hub_source(region) == store.get_hub_source()" in _ds870
+          "store.hub_source(hub_id) == store.get_hub_source()" in _ds870
           and "self._prices = self._hub_preise()" in _ds870
-          and _ds870.split("store.hub_source(region)")[1]
+          and _ds870.split("store.hub_source(hub_id)")[1]
               .count("self._recompute()") >= 1)
 except Exception as _e870:                               # pragma: no cover
     _fail.append(f"aa870 Portfolio ohne Preise: {type(_e870).__name__}: {_e870}")
@@ -42444,8 +43074,8 @@ try:
           and '"settings", "assets"' not in _mw887
           and '"assets", "settings"' not in _mw887)
     check("aa887 ... und nicht mehr unter den Haupt-Reitern",
-          '"deals", "swing", "region", "firesales", "build",\n'
-          '                           "stocks"]' in _mw887)
+          # datiert 26.11.2026 (emm1048): auch "stocks" ist keiner mehr
+          '"deals", "swing", "region", "firesales", "build"]' in _mw887)
 
     # (3) DER AUSLOESER ist mit umgezogen.
     check("aa887 der Ausloeser 'beim ersten Oeffnen laden' sitzt jetzt in "
@@ -42478,7 +43108,8 @@ try:
               'header(t("SETUP")'))
     check("aa887 der Knopf haengt in der Knopfliste (sonst bleibt er beim "
           "Oeffnen seiner Seite unbeleuchtet)",
-          "b_lager, b_assets]" in _mw887)
+          # datiert 26.11.2026 (emm1048): dahinter folgt jetzt b_docs
+          "b_lager, b_assets," in _mw887 and "b_docs]" in _mw887)
 except Exception as _e887:                               # pragma: no cover
     _fail.append(f"aa887 Assets im Industry-Reiter: "
                  f"{type(_e887).__name__}: {_e887}")
@@ -44259,6 +44890,216 @@ try:
           and "store.history_tot_ids(config.FORGE_REGION)" in _src_txt)
 except Exception as _e899:                               # pragma: no cover
     _fail.append(f"aa899 404-Historie: {type(_e899).__name__}: {_e899}")
+
+# ---------------------------------------------------------------- (aa992)
+# INVENTION-VERSUCHE BEI SEHR GROSSEN MENGEN (emm992, gemessen 22.11.2026 in
+# der Decryptor-Simulation): `(1-p)**n` lief auf 0.0 unter, die Funktion
+# meldete P = 1.0 und 1'000 noetige Erfolge bei 34 % bekamen 1'794 Versuche
+# (reicht im Schnitt fuer 610). Gegengerechnet wird UNABHAENGIG ueber lgamma,
+# nicht mit der Produktformel.
+try:
+    import math as _m992
+    from eve_trader import industry as _I992
+
+    def _exakt992(n, k, p):
+        return 1.0 - sum(_m992.exp(
+            _m992.lgamma(n + 1) - _m992.lgamma(j + 1) - _m992.lgamma(n - j + 1)
+            + j * _m992.log(p) + (n - j) * _m992.log1p(-p)) for j in range(k))
+
+    _falsch992 = []
+    for _k992, _p992 in ((600, 0.34), (700, 0.34), (1000, 0.34),
+                         (1000, 0.442), (3000, 0.612)):
+        _n992 = _I992.invention_attempts_for_confidence(_k992, _p992, 0.75)
+        if not (_exakt992(_n992, _k992, _p992) >= 0.75
+                > _exakt992(_n992 - 1, _k992, _p992)):
+            _falsch992.append((_k992, _p992, _n992))
+    eq("aa992 grosse Mengen: die Versuchszahl ist die KLEINSTE mit 75 % "
+       "(unabhaengig nachgerechnet)", _falsch992, [])
+    eq("aa992 1'000 Erfolge bei 34 %: 2'992 Versuche, nicht mehr 1'794",
+       _I992.invention_attempts_for_confidence(1000, 0.34, 0.75), 2992)
+    check("aa992 die Wahrscheinlichkeit selbst laeuft nicht mehr unter "
+          "(1'794 Versuche fuer 1'000 Erfolge sind NICHT sicher)",
+          _I992._binomial_p_at_least(1794, 1000, 0.34) < 0.01)
+    # NORMALFALL UNVERAENDERT (Regel 5, Gegenprobe): Werte von VOR dem Umbau.
+    eq("aa992 normale Mengen rechnen wie vorher",
+       [_I992.invention_attempts_for_confidence(_a, _b, 0.75)
+        for _a, _b in ((1, 0.26), (10, 0.34), (100, 0.34), (500, 0.34),
+                       (300, 0.204))],
+       [5, 34, 310, 1506, 1521])
+    # HALBIEREN == HOCHZAEHLEN im kleinen Bereich.
+    def _lin992(k, p):
+        n = k
+        while _I992._binomial_p_at_least(n, k, p) < 0.75:
+            n += 1
+        return n
+    eq("aa992 Halbieren findet dasselbe kleinste n wie Hochzaehlen",
+       [(k, p) for k in range(1, 40) for p in (0.14, 0.204, 0.34, 0.612, 0.9)
+        if _lin992(k, p) != _I992.invention_attempts_for_confidence(k, p, 0.75)],
+       [])
+    eq("aa992 Deckel: nie mehr als max_attempts",
+       _I992.invention_attempts_for_confidence(50, 0.01, 0.75, max_attempts=300),
+       300)
+except Exception as _e992:                               # pragma: no cover
+    _fail.append(f"aa992 Versuche bei grossen Mengen: {type(_e992).__name__}: {_e992}")
+
+# ---------------------------------------------------------------- (aa1012)
+# GETIPPTE PROZENTZAHL (emm1012): Komma wie Punkt, leer/Unsinn = nicht gesetzt.
+try:
+    from eve_trader.ui.mw_helpers import prozent_lesen as _pl1012
+    eq("aa1012 Punkt, Komma, Prozentzeichen, Leerzeichen werden gelesen",
+       [_pl1012(x) for x in ("1.5", "1,5", " 1,50 % ", "0", "100")],
+       [1.5, 1.5, 1.5, 0.0, 100.0])
+    eq("aa1012 leer, Unsinn und ausserhalb 0..100 sind 'nicht gesetzt'",
+       [_pl1012(x) for x in ("", None, "abc", "-1", "100.5", "1.2.3")],
+       [None] * 6)
+except Exception as _e1012:                              # pragma: no cover
+    _fail.append(f"aa1012 Prozent lesen: {type(_e1012).__name__}: {_e1012}")
+
+# ---------------------------------------------------------------- (aa1006)
+# GEBUEHR EINER SPIELERSTRUKTUR (emm1006, Nutzer 23.11.2026): eingetragene
+# Broker Fee + SCC-Zuschlag gelten fuer GENAU diese Struktur; die Sales Tax
+# bleibt die des Charakters. Ausgefuehrt an `_fees_for_hub` (Klassenmethode).
+try:
+    from eve_trader.ui.main_window import MainWindow as _MW1006
+    _s1006 = {"sales_tax_pct": 3.375, "broker_fee_pct": 1.026,
+              "char_fees": {"77": {"name": "Pruef", "tax": 3.37, "broker": 1.47,
+                                   "acc": 5, "br": 5}},
+              # 24.11.2026 (emm1013): SCC ist ein FESTER Zuschlag (config),
+              # kein gespeicherter Wert mehr - ein alter "scc"-Eintrag
+              # (hier absichtlich 9.0) darf NICHTS mehr rechnen.
+              "struct_fees": {"1001": {"broker": 0.5, "scc": 9.0},
+                              "1002": {"scc": 0.5}}}
+    _ohne1006 = _MW1006._fees_for_hub(_s1006, 77, ("struct", 999))
+    _mit1006 = _MW1006._fees_for_hub(_s1006, 77, ("struct", 1001))
+    eq("aa1006 Struktur OHNE Eintrag: wie bisher die Werte des Charakters",
+       (round(_ohne1006[0], 6), round(_ohne1006[1], 6)), (0.0337, 0.0147))
+    eq("aa1006 Struktur MIT Eintrag: Broker = eingetragen + SCC, Sales Tax "
+       "bleibt die des Charakters",
+       (round(_mit1006[0], 6), round(_mit1006[1], 6)), (0.0337, 0.01))
+    from eve_trader import config as _cfg1013
+    eq("aa1013 der SCC-Zuschlag in Spielerstrukturen ist fest 0.5 %",
+       _cfg1013.SCC_ZUSCHLAG_STRUKTUR_PCT, 0.5)
+    eq("aa1006 auch als JSON-Liste (gespeicherter Plan) gilt der Eintrag",
+       round(_MW1006._fees_for_hub(_s1006, 77, ["struct", 1001])[1], 6), 0.01)
+    eq("aa1006 nur SCC ohne Broker eingetragen: kein halber Wert, wie ohne Eintrag",
+       round(_MW1006._fees_for_hub(_s1006, 77, ("struct", 1002))[1], 6), 0.0147)
+    eq("aa1006 ohne Charakter: Sales Tax global, Broker aus dem Eintrag",
+       tuple(round(x, 6) for x in _MW1006._fees_for_hub(_s1006, None, ("struct", 1001))[:2]),
+       (0.03375, 0.01))
+    _j1006 = _MW1006._fees_for_hub(dict(_s1006, hub_standings={"jita": {"faction": 0.0, "corp": 0.0}}),
+                                   77, "jita")
+    check("aa1006 Gegenprobe NPC-Hub: der Struktur-Eintrag greift dort nicht",
+          abs(_j1006[1] - 0.01) > 1e-9)
+    _fe1006 = open("eve_trader/ui/mw_bauplan_fenster.py", encoding="utf-8").read()
+    check("aa1006 der Bauplan reicht die Struktur an die Gebuehren-Rechnung durch",
+          "_hubk if isinstance(_hubk, (str, tuple, list)) else None)" in _fe1006)
+except Exception as _e1006:                              # pragma: no cover
+    _fail.append(f"aa1006 Struktur-Gebuehr: {type(_e1006).__name__}: {_e1006}")
+
+# ---------------------------------------------------------------- (aa1001)
+# ENDPRODUKTE OHNE BLAUPAUSE (emm1001, Nutzer 22.11.2026: "entferne
+# endprodukte von denen ich keine Blueprints habe (also T1 Blueprints die
+# fehlen wenn ich davon die T2 machen will ...)"). Reine Auswahl.
+try:
+    from eve_trader.ui.mw_helpers import enden_ohne_blaupause as _eob1001
+    _u1001 = [
+        {"tid": 1, "bp_id": 101, "erfunden": False, "quelle": 0, "urteil": "ok"},
+        {"tid": 2, "bp_id": 102, "erfunden": False, "quelle": 0, "urteil": "missing"},
+        # T2, wird erfunden; das T1-Original (501) FEHLT
+        {"tid": 3, "bp_id": 103, "erfunden": True, "quelle": 501, "urteil": "ok"},
+        {"tid": 30, "bp_id": 501, "erfunden": False, "quelle": 0, "urteil": "missing"},
+        # T2, wird erfunden; das T1-Original (502) ist da
+        {"tid": 4, "bp_id": 104, "erfunden": True, "quelle": 502, "urteil": "ok"},
+        {"tid": 40, "bp_id": 502, "erfunden": False, "quelle": 0, "urteil": "ok"},
+        # Besitz nicht lesbar
+        {"tid": 5, "bp_id": 105, "erfunden": False, "quelle": 0, "urteil": "unklar"},
+        # T2, Original unklar
+        {"tid": 6, "bp_id": 106, "erfunden": True, "quelle": 503, "urteil": "ok"},
+        {"tid": 60, "bp_id": 503, "erfunden": False, "quelle": 0, "urteil": "unklar"},
+    ]
+    from eve_trader.ui.mw_helpers import bp_kette_ohne as _bko1016
+    eq("aa1016 Blacklist-Items fallen aus der Blaupausen-Kette, gekaufte Enden wie bisher",
+       _bko1016([7], {30, 31}, {1, 2}), [7, 30, 31])
+    eq("aa1016 ein ENDE auf der Blacklist bleibt (die Rechnung baut es ja)",
+       _bko1016([], {1, 30}, {1, 2}), [30])
+    eq("aa1016 ohne Blacklist bleibt es bei den gekauften Enden",
+       (_bko1016([7], None, {1}), _bko1016(None, None, None)), ([7], []))
+    _tabs1016 = open(os.path.join("eve_trader", "ui", "mw_bauplan_tabs.py"),
+                     encoding="utf-8").read()
+    _i1016 = _tabs1016.find('_force_opts["chain_ohne"] = ')
+    check("aa1016 der Blueprints-Reiter reicht die Blacklist (excluded) an die Kette",
+          _i1016 > 0 and '_force_opts.get("excluded")' in _tabs1016[_i1016:_i1016 + 300])
+    from eve_trader.ui.mw_helpers import bp_rest_runs as _brr1015
+    eq("aa1015 12 geplant, 8 offen -> Blaupausen fuer 8",
+       _brr1015(12, 12, 8), 8)
+    eq("aa1015 alles gebaut -> 0; nichts gebaut -> volle Menge",
+       (_brr1015(12, 12, 0), _brr1015(12, 12, 12)), (0, 12))
+    eq("aa1015 unbekannt (kein Plan / Item nicht im Plan) zieht NICHTS ab",
+       (_brr1015(12, None, None), _brr1015(12, 12, None), _brr1015(12, None, 3)),
+       (12, 12, 12))
+    eq("aa1015 Kette groesser als Plan: nur das Erledigte geht ab, nie unter 0",
+       (_brr1015(20, 12, 8), _brr1015(3, 12, 0), _brr1015(12, 12, 99)),
+       (16, 0, 12))
+    eq("aa1001 sicher ohne Blaupause: das T1-Ende UND das T2 ohne T1-Original",
+       _eob1001(_u1001, [1, 2, 3, 4, 5, 6, 7])[0], [2, 3])
+    eq("aa1001 unklar bleibt eine eigene Liste (wird nie still entfernt)",
+       _eob1001(_u1001, [1, 2, 3, 4, 5, 6, 7])[1], [5, 6])
+    eq("aa1001 Gegenprobe: T2 mit vorhandenem T1-Original bleibt, gekauftes "
+       "Ende ohne Zeile (7) bleibt",
+       [x for x in (4, 7) if x in _eob1001(_u1001, [1, 2, 3, 4, 5, 6, 7])[0]
+        + _eob1001(_u1001, [1, 2, 3, 4, 5, 6, 7])[1]], [])
+    eq("aa1001 Vorstufen zaehlen nicht als Ende (30 ist kein Ende)",
+       _eob1001(_u1001, [1, 4])[:2], ([], []))
+    eq("aa1001 Besitz nicht geladen: nichts wird vorgeschlagen, Merker gesetzt",
+       _eob1001([{"tid": 9, "bp_id": 109, "erfunden": False, "quelle": 0,
+                  "urteil": "ungeladen"}], [9]), ([], [], True))
+    eq("aa1001 leere Eingaben", _eob1001(None, None), ([], [], False))
+    # (emm1002) T2-RIG: das T1-Original hat KEINE eigene Zeile (das T1-Item
+    # ist keine Zutat) - es zaehlt der direkt gemerkte Besitz des Originals.
+    _rig1002 = [
+        {"tid": 71, "bp_id": 171, "erfunden": True, "quelle": 571,
+         "quelle_urteil": "missing", "urteil": "ok"},
+        {"tid": 72, "bp_id": 172, "erfunden": True, "quelle": 572,
+         "quelle_urteil": "ok", "urteil": "ok"},
+        {"tid": 73, "bp_id": 173, "erfunden": True, "quelle": 573,
+         "quelle_urteil": "unklar", "urteil": "ok"}]
+    eq("aa1002 T2 ohne Zeile fuers T1-Original: fehlt das Original, geht das "
+       "Ende; ist es da, bleibt es; unklar bleibt unklar",
+       _eob1001(_rig1002, [71, 72, 73]), ([71], [73], False))
+except Exception as _e1001:                              # pragma: no cover
+    _fail.append(f"aa1001 Enden ohne Blaupause: {type(_e1001).__name__}: {_e1001}")
+
+# ---------------------------------------------------------------- (aa996)
+# DIAGNOSE-HELFER NUR BEIM ENTWICKLER (emm996, Nutzer 22.11.2026: "ja"). Wer
+# Eve MoMa von GitHub oder als EXE nutzt, bekommt keine Wache, die auf
+# Zuruf Werkzeuge startet. Ausgefuehrt gegen zwei leere Ordner.
+try:
+    import tempfile as _tf996, shutil as _sh996
+    from eve_trader import auftrag as _A996
+    _fremd996 = _tf996.mkdtemp(prefix="aa996_")
+    _eigen996 = _tf996.mkdtemp(prefix="aa996_")
+    try:
+        open(os.path.join(_eigen996, _A996.MERKDATEI), "w").close()
+        eq("aa996 ohne Sitzungsunterlage (GitHub-Klon, Quelltext-Zip): aus",
+           _A996.erlaubt({}, wurzel=_fremd996, eingefroren=False), False)
+        eq("aa996 Gegenprobe: mit Sitzungsunterlage an",
+           _A996.erlaubt({}, wurzel=_eigen996, eingefroren=False), True)
+        eq("aa996 als EXE gebaut: immer aus",
+           _A996.erlaubt({}, wurzel=_eigen996, eingefroren=True), False)
+        eq("aa996 der Aus-Schalter in den Einstellungen gilt weiter",
+           _A996.erlaubt({"diagnose_auftraege": False}, wurzel=_eigen996,
+                         eingefroren=False), False)
+    finally:
+        _sh996.rmtree(_fremd996, ignore_errors=True)
+        _sh996.rmtree(_eigen996, ignore_errors=True)
+    _gi996 = open(".gitignore", encoding="utf-8").read().splitlines()
+    check("aa996 die Sitzungsunterlage steht in der .gitignore (kommt nie ins Repo)",
+          _A996.MERKDATEI in [z.strip().lstrip("/") for z in _gi996])
+    _src996 = open("eve_trader/auftrag.py", encoding="utf-8").read()
+    check("aa996 die Wache fragt die EINE Stelle",
+          "    if not erlaubt(settings):\n        return None" in _src996)
+except Exception as _e996:                               # pragma: no cover
+    _fail.append(f"aa996 Diagnose-Helfer: {type(_e996).__name__}: {_e996}")
 
 print(f"(aa) Bestand-Herkunft: {_ok}/{_ok + len(_fail)} gruen")
 for f in _fail:

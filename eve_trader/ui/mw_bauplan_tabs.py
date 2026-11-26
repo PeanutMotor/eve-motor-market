@@ -361,8 +361,22 @@ class BauplanTabs:
     LAGER_ARTEN_AN = 50
     LAGER_ARTEN_MINI = 2
 
-    def _inv_alle_besten(self):
+    # DER ABLAUF IM RUNPLANER - EIN Text fuer Positions- und Charakterzeile
+    # (emm1026). Englischer Schluessel, t() erst beim Anzeigen.
+    # de_scan3: aus - ENGLISCHER SCHLUESSEL, uebersetzt beim ANZEIGEN
+    RUNPLAN_ABLAUF_TIP = (
+        "1. Tick = you started the job in game (only for your overview).\n"
+        "2. Blue dot = ESI has detected the job.\n"
+        "3. Green dot = ESI confirms the job is finished.")
+    # de_scan3: an
+
+    def _inv_alle_besten(self, ziel="profit"):
         """"Best Decryptor for all Blueprints" (Nutzer 26.09.2026).
+
+        `ziel` (emm988): "profit" (niedrigste Gesamtkosten, wie bisher),
+        "runs" (meiste Runs je erfundener Kopie = wenigste Bauslots) oder
+        "zeit" (kuerzeste Bauzeit) - die Auswahl trifft
+        `mw_helpers.decryptor_nach_ziel` aus DERSELBEN Rangliste.
 
         NACHEINANDER, nicht gleichzeitig: die Rangliste jeder Karte rechnet den
         GANZEN Plan (Materialkosten haengen an der ME aller erfundenen Teile).
@@ -385,13 +399,15 @@ class BauplanTabs:
                     continue
                 if not _ranked:
                     continue
-                _name = _ranked[0]["name"]
+                from .mw_helpers import decryptor_nach_ziel as _dnz988
+                _sieger = _dnz988(_ranked, dict(_dl), ziel)
+                _name = _sieger["name"]
                 _dv = next((v for n, v in _dl if n == _name), None)
                 if _dv is None:
                     continue
                 # T3 (emm827): der Gewinner traegt ggf. auch die beste
                 # Relic-Qualitaet (die Rangliste rechnet Quelle x Decryptor).
-                _rel = _ranked[0].get("relic")
+                _rel = _sieger.get("relic")
                 if (self._bd_decryptor_map.get(_bp) != _name
                         or (_rel is not None
                             and (getattr(self, "_bd_relic_map", None) or {})
@@ -421,9 +437,12 @@ class BauplanTabs:
         # uebersprungen. Jede Blaupause bekommt IHREN besten Decryptor.
         if _lbl is not None:
             try:
-                _lbl.setText(t(
+                _lbl.setText((t(
                     "Checked {n} blueprint(s): {chg} changed, {same} already on "
-                    "their best decryptor, {skip} skipped (Own BPC).").format(
+                    "their best decryptor, {skip} skipped (Own BPC).")
+                    if ziel not in ("runs", "zeit", "chance") else t(
+                    "Checked {n} blueprint(s): {chg} changed, {same} "
+                    "unchanged, {skip} skipped (Own BPC).")).format(
                         n=len(_rang), chg=_geaendert,
                         same=len(_rang) - _geaendert,
                         skip=max(0, _alle - len(_rang))))
@@ -507,6 +526,408 @@ class BauplanTabs:
         d = getattr(self, "_bd_inv_split", None)
         return {str(int(k)): int(v) for k, v in
                 (d if isinstance(d, dict) else {}).items()}
+
+    # ------------------------------------------------------------------
+    # CHECKLISTE IM BAUPLAN (emm1044, Nutzer 26.11.2026: "Ich moechte gerne
+    # eine Checklist einfuehren die sich selbst aktualisiert ... man soll auf
+    # die Fragen klicken koennen und wenn man das tut fuehrt der Bauplan
+    # einem dahin wo der jeweilige Punkt ist und laesst die region oder den
+    # knopf blinken ... standardmaessig ist sie an - schaltet man sie jedoch
+    # einmal aus, bleibt sie ausgeschaltet ... Es soll sehr offensichtlich
+    # sein CHECKLIST"). NUR ANZEIGE: die Fragen lesen den Zustand, sie
+    # stellen nichts ein. Die Regeln stehen in `mw_helpers.checkliste_stand`.
+    # de_scan3: aus  (englische Schluessel, t() erst beim Anzeigen)
+    _CL_FRAGEN = {
+        "tiefe": ("Production depth set?",
+                  "Not clicked in this plan yet - the pre-selected stage "
+                  "under Production depth applies."),
+        "repro": ("Reprocessing set?",
+                  "Default: minerals are bought - no compressed ore, no "
+                  "unrefined reactions."),
+        "fracht": ("Freight cost set?",
+                   "Default: no freight cost is calculated."),
+        "decryptor": ("Decryptor chosen?",
+                      "Default: no decryptor."),
+        "invzeit": ("Invention time set?",
+                    "Default: 1 invention job at a time (long invention "
+                    "time)."),
+        "einkauf": ("Materials bought?",
+                    "Detected when you click Create shopping list or "
+                    "freeze the plan."),
+        "frost": ("Plan frozen?",
+                  "Freeze the plan once the purchase is done - then its "
+                  "numbers stay fixed."),
+        "gespeichert": ("Plan saved?",
+                        "Not saved yet - without saving the plan is gone "
+                        "when you close it."),
+    }
+    # de_scan3: an
+    CL_TAKT_MS = 1000
+    # PUNKTE MIT VOREINSTELLUNG (emm1045, Nutzer 26.11.2026: "zeige bei
+    # dingen die Voreingestellt sind, also nicht mit strikt NEIN beantwortet
+    # werden koennen, -standard-"). Dort ist "nicht angefasst" kein Nein -
+    # es gilt eine Vorgabe. Einkauf, Einfrieren und Speichern haben keine.
+    CL_MIT_STANDARD = ("tiefe", "repro", "fracht", "decryptor", "invzeit")
+
+    def _cl_fakten(self):
+        """Der Zustand des offenen Plans fuer `checkliste_stand`."""
+        from .. import config as _cfg
+        s = self.settings
+        inv = False
+        tabs = getattr(self, "_bd_tabs_w", None)
+        try:
+            inv = tabs is not None and any(
+                "Invention" in tabs.tabText(_i) for _i in range(tabs.count()))
+        except RuntimeError:
+            inv = False
+        combos = dict(getattr(self, "_bd_inv_combos", None) or {})
+        best = set(getattr(self, "_bd_dec_bestaetigt", None) or ())
+        dmap = dict(getattr(self, "_bd_decryptor_map", None) or {})
+        dec = bool(combos) and all(
+            (b in best) or (dmap.get(b) not in (None, "", _cfg.KEIN_DECRYPTOR))
+            for b in combos)
+        try:
+            fracht = (float(s.get("bau_transport_rate", 0) or 0)
+                      + float(s.get("bau_transport_trip_cost", 0) or 0))
+        except (TypeError, ValueError):
+            fracht = 0.0
+        return {"hand": dict(getattr(self, "_bd_cl_hand", None) or {}),
+                "beruehrt": set(getattr(self, "_bd_cl", None) or ()),
+                "repro_an": bool(s.get("bau_reprocess_on"))
+                or bool(s.get("bau_unrefined_on")),
+                "fracht": fracht,
+                "invention": inv,
+                "decryptor_alle": dec,
+                "inv_split": bool(getattr(self, "_bd_inv_split", None)),
+                "frost": bool(getattr(self, "_bd_frozen", None)),
+                "gespeichert": getattr(self, "_bd_open_plan_id", None) is not None}
+
+    def _cl_bauen(self):
+        """Die Karte CHECKLIST. Bauen ja, anzeigen entscheidet der Aufrufer
+        (erst NACH dem Einhaengen verstecken - b8-Falle)."""
+        from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout,
+                                       QLabel, QPushButton, QVBoxLayout)
+        from PySide6.QtCore import Qt
+        from .mw_helpers import CHECKLISTE
+        karte = QFrame()
+        karte.setObjectName("ChecklistCard")
+        karte.setStyleSheet(
+            f"QFrame#ChecklistCard{{background:{theme.PANEL2}; "
+            f"border:2px solid {theme.AMBER}; border-radius:{theme.RAD};}}")
+        v = QVBoxLayout(karte)
+        v.setContentsMargins(10, 5, 8, 6); v.setSpacing(2)
+        kopf = QHBoxLayout(); kopf.setContentsMargins(0, 0, 0, 0); kopf.setSpacing(8)
+        titel = QLabel(t("CHECKLIST"))
+        titel.setStyleSheet(
+            f"color:{theme.AMBER}; font-size:15px; font-weight:800; "
+            f"letter-spacing:2px; border:none; background:transparent;")
+        kopf.addWidget(titel)
+        zaehl = QLabel("")
+        zaehl.setStyleSheet(
+            f"color:{theme.TEXT}; font-size:13px; font-weight:700; "
+            f"border:none; background:transparent;")
+        kopf.addWidget(zaehl)
+        kopf.addStretch()
+        zu = QPushButton()
+        zu.setIcon(icons.icon("close"))
+        zu.setFixedSize(22, 22)
+        zu.setCursor(Qt.PointingHandCursor)
+        zu.setStyleSheet("QPushButton{border:none; background:transparent; padding:0;}")
+        zu.setToolTip(t(
+            "Hide the checklist - it stays hidden for every build plan. "
+            "Bring it back under Tools - Checklist."))
+        zu.clicked.connect(lambda *_a: self._cl_schalten(False))
+        kopf.addWidget(zu)
+        v.addLayout(kopf)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(16); grid.setVerticalSpacing(0)
+        btns = {}
+
+        class _ClKnopf(QPushButton):
+            """Frage der Checkliste: Linksklick fuehrt hin, RECHTSKLICK
+            schaltet die Antwort von Hand um (emm1046). Kein Kontextmenue -
+            der Rechtsklick IST die Handlung."""
+            rechts = None
+
+            def mouseReleaseEvent(self, e):
+                if e.button() == Qt.RightButton and self.rechts is not None:
+                    self.rechts()
+                    e.accept()
+                    return
+                super().mouseReleaseEvent(e)
+        for _i, _key in enumerate(CHECKLISTE):
+            b = _ClKnopf()
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFlat(True)
+            b.clicked.connect(lambda _c=False, _k=_key: self._cl_gehe(_k))
+            # RECHTSKLICK = von Hand umschalten (emm1046)
+            b.rechts = (lambda _k=_key: self._cl_hand(_k))
+            grid.addWidget(b, _i % 4, _i // 4)
+            btns[_key] = b
+        v.addLayout(grid)
+        self._bd_cl_btns = btns
+        self._bd_cl_zaehl = zaehl
+        self._bd_cl_zu = zu
+        # SIE AKTUALISIERT SICH SELBST: ein Sekundentakt, der an der Karte
+        # haengt und mit ihr stirbt. Acht Texte setzen kostet nichts, und so
+        # braucht nicht jede der ~15 Stellen, die einen Zustand aendern,
+        # einen eigenen Aufruf (eine vergessene waere eine stehengebliebene
+        # Antwort).
+        tm = QTimer(karte)
+        tm.setInterval(self.CL_TAKT_MS)
+        tm.timeout.connect(lambda: self._cl_refresh())
+        tm.start()
+        self._bd_cl_takt = tm
+        self._cl_refresh()
+        return karte
+
+    def _cl_refresh(self):
+        """Antworten neu lesen und anzeigen. Liefert {punkt: ja}."""
+        from .mw_helpers import checkliste_stand
+        btns = getattr(self, "_bd_cl_btns", None) or {}
+        try:
+            stand = dict(checkliste_stand(self._cl_fakten()))
+        except Exception:
+            return {}
+        _hand = dict(getattr(self, "_bd_cl_hand", None) or {})
+        try:
+            for _key, b in btns.items():
+                if _key not in stand:
+                    b.hide()
+                    continue
+                ja = bool(stand[_key])
+                frage, nein_tip = self._CL_FRAGEN[_key]
+                if b.isHidden():
+                    b.show()
+                _vonhand = _key in _hand
+                _zust = f"{int(ja)}{int(_vonhand)}"
+                if b.property("cl_zustand") == _zust and b.text():
+                    continue                     # nichts geaendert
+                b.setProperty("cl_zustand", _zust)
+                # eine Hand-Antwort ist ein klares Ja/Nein, nie "Standard"
+                _std = ((not ja) and _key in self.CL_MIT_STANDARD
+                        and not _vonhand)
+                b.setText(t(frage) + "  " + (
+                    t("Yes") if ja else t("Default") if _std else t("No")))
+                _farbe = (theme.GREEN if ja else theme.TEXT if _std
+                          else theme.AMBER)
+                b.setIcon(icons.icon(
+                    "check" if ja else "minus" if _std else "close",
+                    farbe=_farbe))
+                b.setStyleSheet(
+                    f"QPushButton{{text-align:left; border:none; "
+                    f"background:transparent; padding:1px 4px; font-size:13px; "
+                    f"font-weight:{'500' if ja else '700'}; color:{_farbe};}}"
+                    f"QPushButton:hover{{color:{theme.CYAN};}}")
+                b.setToolTip(
+                    (t("Set by hand.") + "\n" if _vonhand
+                     else "" if ja else t(nein_tip) + "\n")
+                    + t("Click: shows you where this is set.") + "\n"
+                    + t("Right-click: switch the answer by hand."))
+            _z = getattr(self, "_bd_cl_zaehl", None)
+            if _z is not None:
+                _z.setText(f"{sum(1 for x in stand.values() if x)} / {len(stand)}")
+        except RuntimeError:
+            pass
+        return stand
+
+    def _cl_merken(self, punkt):
+        """Der Nutzer hat einen Punkt selbst angefasst. Steht am Plan
+        (`checkliste`), bei einem gespeicherten Plan sofort."""
+        cl = set(getattr(self, "_bd_cl", None) or ())
+        if punkt in cl:
+            return
+        cl.add(punkt)
+        self._bd_cl = cl
+        pid = getattr(self, "_bd_open_plan_id", None)
+        if pid is not None:
+            for p in (self.settings.get("bau_saved_plans", []) or []):
+                if p.get("id") == pid:
+                    p["checkliste"] = sorted(cl)
+                    from .. import config as _cfg
+                    _cfg.save_settings_async(self.settings)
+                    break
+        self._cl_refresh()
+
+    def _cl_hand(self, punkt):
+        """Rechtsklick: die Antwort von Hand umdrehen (Regel in
+        `mw_helpers.checkliste_hand_umschalten`). Gehoert zum Plan
+        (`checkliste_hand`), bei einem gespeicherten Plan sofort."""
+        from .mw_helpers import checkliste_hand_umschalten
+        hand = checkliste_hand_umschalten(self._cl_fakten(), punkt)
+        self._bd_cl_hand = hand
+        pid = getattr(self, "_bd_open_plan_id", None)
+        if pid is not None:
+            for p in (self.settings.get("bau_saved_plans", []) or []):
+                if p.get("id") == pid:
+                    p["checkliste_hand"] = dict(hand)
+                    from .. import config as _cfg
+                    _cfg.save_settings_async(self.settings)
+                    break
+        return self._cl_refresh()
+
+    def _cl_schalten(self, an):
+        """Checkliste zeigen/verstecken - gemerkt fuer ALLE Plaene."""
+        an = bool(an)
+        self.settings["bau_checkliste_an"] = an
+        from .. import config as _cfg
+        _cfg.save_settings_async(self.settings)
+        try:
+            k = getattr(self, "_bd_cl_karte", None)
+            if k is not None:
+                k.setVisible(an)
+            a = getattr(self, "_bd_cl_act", None)
+            if a is not None and a.isChecked() != an:
+                a.setChecked(an)
+        except RuntimeError:
+            pass
+
+    def _cl_karte_mit_titel(self, titel):
+        """Die Klapp-Karte mit diesem (uebersetzten) Titel im offenen
+        Bauplan; klappt sie auf. None, wenn es sie nicht gibt."""
+        from PySide6.QtWidgets import QFrame, QPushButton
+        dlg = getattr(self, "_bd_dialog", None)
+        if dlg is None:
+            return None
+        for b in dlg.findChildren(QPushButton):
+            if b.isCheckable() and (b.text() or "").strip().endswith(titel):
+                if not b.isChecked():
+                    b.click()
+                # Die Karte ist der QFrame um den Kopf. Bei einem schmalen
+                # Kopf (compact_header, z. B. "Freight cost") sitzt der Knopf
+                # in einem Halter ueber die ganze Breite - dann blinkt der
+                # Knopf selbst, nicht der leere Streifen daneben.
+                _p = b.parentWidget()
+                return _p if isinstance(_p, QFrame) else b
+        return None
+
+    def _cl_gehe(self, punkt):
+        """Klick auf eine Frage: zum Ort fuehren und ihn blinken lassen."""
+        tabs = getattr(self, "_bd_tabs_w", None)
+
+        def _reiter(name):
+            try:
+                for _i in range(tabs.count()):
+                    if name in tabs.tabText(_i):
+                        tabs.setCurrentIndex(_i)
+                        return True
+            except (RuntimeError, AttributeError):
+                pass
+            return False
+        w = None
+        try:
+            if punkt == "tiefe":
+                _reiter(t("Recipe structure"))
+                w = self._cl_karte_mit_titel(t("Production depth")) \
+                    or getattr(self, "_bd_karte_tiefe", None)
+            elif punkt == "repro":
+                _reiter(t("Recipe structure"))
+                w = self._cl_karte_mit_titel(t("Reprocessing"))
+            elif punkt == "fracht":
+                _tg = getattr(self, "_bd_details_toggle", None)
+                if _tg is not None and not _tg.isChecked():
+                    _tg.setChecked(True)
+                w = self._cl_karte_mit_titel(t("Freight cost"))
+            elif punkt == "decryptor":
+                _reiter("Invention")
+                # DIE GANZE GRUPPE (emm1047, Nutzer 26.11.2026: "lass bei
+                # Decryptor nicht nur auto decryptor most profit blinken
+                # sondern die ganze karte Buy or not mit allen Auto
+                # Decryptoren drin"): Karte + alle Auto-Decryptor-Knoepfe,
+                # `_cl_blinken` legt EINEN Rahmen um alle.
+                w = [x for x in (
+                    [self._cl_karte_mit_titel(t("Buy or not?"))]
+                    + list((getattr(self, "_bd_inv_ziel_btns", None)
+                            or {}).values())) if x is not None] or None
+            elif punkt == "invzeit":
+                _reiter("Invention")
+                for _bp, _d in (getattr(self, "_bd_inv_split_w", None) or {}).items():
+                    w = (_d or {}).get("slider")
+                    if w is not None:
+                        break
+            elif punkt == "einkauf":
+                _reiter(t("Materials"))
+                w = getattr(self, "_bd_mat_copy_btn", None)
+            elif punkt == "frost":
+                w = getattr(self, "_bd_frozen_btn", None)
+            elif punkt == "gespeichert":
+                w = getattr(self, "_bd_save_btn", None)
+        except RuntimeError:
+            w = None
+        self._bd_cl_ziel = (punkt, w)                    # b-Suite
+        if w is not None:
+            # erst blinken, wenn Reiter/Karte umgeschaltet und gelegt sind
+            QTimer.singleShot(150, lambda: self._cl_blinken(w))
+        return w
+
+    CL_BLINK_MS = 280
+    CL_BLINK_SCHLAEGE = 10
+
+    def _cl_blinken(self, w):
+        """Einen amberfarbenen Rahmen UEBER das Ziel legen und blinken
+        lassen (wie das Tutorial: ein eigener Rahmen, das Ziel selbst wird
+        nicht umgestylt - nichts verschiebt sich)."""
+        from PySide6.QtWidgets import QFrame, QScrollArea
+        from PySide6.QtCore import Qt, QPoint, QRect
+        dlg = getattr(self, "_bd_dialog", None)
+        try:
+            if dlg is None or w is None:
+                return None
+            # mehrere Ziele -> EIN Rahmen um alle (emm1047)
+            ziele = [x for x in (w if isinstance(w, (list, tuple)) else [w])
+                     if x is not None]
+            if not ziele:
+                return None
+            w = ziele[0]
+            p = w.parentWidget()
+            while p is not None:
+                if isinstance(p, QScrollArea):
+                    p.ensureWidgetVisible(w)
+                    break
+                p = p.parentWidget()
+            alt = getattr(self, "_bd_cl_rahmen", None)
+            if alt is not None:
+                try:
+                    alt.deleteLater()
+                except RuntimeError:
+                    pass
+            r = QFrame(dlg)
+            r.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            _rect = QRect()
+            for _z in ziele:
+                _rect = _rect.united(
+                    QRect(_z.mapTo(dlg, QPoint(0, 0)), _z.size()))
+            r.setGeometry(_rect.adjusted(-3, -3, 3, 3))
+            zaehler = {"n": 0}
+            tm = QTimer(r)
+            tm.setInterval(self.CL_BLINK_MS)
+
+            def _schlag():
+                zaehler["n"] += 1
+                try:
+                    if zaehler["n"] > self.CL_BLINK_SCHLAEGE:
+                        tm.stop()
+                        r.deleteLater()
+                        if getattr(self, "_bd_cl_rahmen", None) is r:
+                            self._bd_cl_rahmen = None
+                        return
+                    _f = theme.AMBER if zaehler["n"] % 2 else "transparent"
+                    r.setStyleSheet(
+                        f"background:transparent; border:3px solid {_f}; "
+                        f"border-radius:{theme.RAD};")
+                    r.raise_()
+                except RuntimeError:
+                    tm.stop()
+            tm.timeout.connect(_schlag)
+            _schlag()
+            r.show()
+            r.raise_()
+            tm.start()
+            self._bd_cl_rahmen = r
+            return r
+        except RuntimeError:
+            return None
 
     # ENTPRELLT (emm330, Nutzer 02.10.2026: "der Regler laeuft nicht mehr
     # fluessig, fuehlt sich laggy an"). emm328 schrieb bei JEDEM Reglerschritt
@@ -1032,6 +1453,11 @@ class BauplanTabs:
         namen = res.get("namen") or {}
         nur = self._bfs_nur_cb.isChecked()
         econ = (getattr(self, "_bp_econ_stand", None) or {}).get("profit_by_bp")
+        # GEWINNE VOM ALTEN HUB WERDEN NICHT GEZEIGT (emm985): Striche und
+        # ein Hinweis statt Zahlen unter dem falschen Hub-Namen.
+        _alt985 = bool(econ is not None and self._econ_veraltet())
+        if _alt985:
+            econ = None
         zeilen = list(res.get("zeilen") or [])
         baubar = [z for z in zeilen if z["runs"] > 0]
         zeigen = baubar if nur else zeilen
@@ -1154,7 +1580,10 @@ class BauplanTabs:
         if res.get("n_res"):
             txt += " · " + t("{n} item types partly reserved by locked plans "
                              "(not counted)").format(n=res["n_res"])
-        if econ is None:
+        if _alt985:
+            txt += " · " + t("profit: prices were from another hub \u2013 "
+                             "recalculating \u2026")
+        elif econ is None:
             txt += " · " + (t("profit: loading My Blueprints \u2026")
                             if getattr(self, "_bfs_mb_laeuft", False)
                             else t("profit: load My Blueprints first"))
@@ -1162,6 +1591,16 @@ class BauplanTabs:
             # Blaupausen sind da, aber ohne Markt-Scan gibt es keine Preise
             # (econ_ready=False) - sagen, was fehlt, statt stummer Striche.
             txt += " · " + t("profit: load recipes + run a market scan first")
+            try:
+                # HUB OBEN != SCAN (emm986): beim Namen nennen.
+                _sl986 = self._short_hub_label(store.get_scan_label() or "")
+                _hl986 = self._short_hub_label(self._active_hub_label())
+                if _sl986 and _sl986 != _hl986:
+                    txt += " " + t("(the last scan is from {scan}, the hub "
+                                   "above is {hub})").format(scan=_sl986,
+                                                             hub=_hl986)
+            except Exception:
+                pass
         self._bfs_stand_lbl.setText(txt)
         warn = []
         if res.get("kein_ort"):
@@ -3158,7 +3597,34 @@ class BauplanTabs:
             return
         m = kontext_menue(tbl)
         self._wo_liegt_aktion(m, int(tid), it.text(0))
+        # "-> Shopping list" (emm957, Discord Spaceballs 2: "would be cool
+        # if I could just rightclick the item and add to shopping list - the
+        # same way like in Portfolio"). Menge = was laut Zeile FEHLT, sonst 1.
+        from ..sprache import t as _txt
+        _menge957 = self._mat_tab_fehlmenge(it)
+        _a957 = m.addAction(_txt("\u2192 Shopping list"))
+        _a957.triggered.connect(
+            lambda _c=False, _t=int(tid), _n=it.text(0), _q=_menge957:
+                self._mat_tab_in_den_wagen(_t, _n, _q))
+        self._fav_aktion(m, int(tid), it.text(0))        # emm962
         m.exec(tbl.viewport().mapToGlobal(pos))
+
+    def _mat_tab_in_den_wagen(self, tid, name, menge):
+        """Rechtsklick "-> Shopping list" im Materialien-Reiter: auf die
+        Liste (`_shopping_dazu`) UND die Liste links im Industry-Reiter
+        einblenden (emm958) - auch wenn das Item schon darauf stand, denn
+        der Nutzer will jetzt dorthin."""
+        self._shopping_dazu(tid, name, menge)
+        self._nav_shopping_bau_merken()
+
+    @staticmethod
+    def _mat_tab_fehlmenge(it):
+        """Die Zahl aus der Spalte "Missing" einer Materialien-Zeile; steht
+        dort keine (nichts fehlt), dann 1."""
+        import re as _re
+        _m = _re.match(r"\s*(\d[\d'\u2019\u00a0 .,]*)", it.text(5) or "")
+        _z = _re.sub(r"\D", "", _m.group(1)) if _m else ""
+        return max(1, int(_z)) if _z else 1
 
     def _industrie_kachel(self, titel, farbe, balken=None):
         """Kachel der Industrie-Seiten: Titel, grosse Zahl, optionaler
@@ -3666,8 +4132,8 @@ class BauplanTabs:
             _n_lauf = len(gr["laufend"])
 
             def _pfeil_text(on, _n=_n_lauf, _b=pf):
-                _b.setText(("\u25be " if on else "\u25b8 ")
-                           + t("{n} running job(s)").format(n=_n))
+                icons.klapp_setzen(
+                    _b, on, t("{n} running job(s)").format(n=_n))
             _pfeil_text(_offen)
             v.addWidget(pf)
             body = QWidget()
@@ -3988,8 +4454,7 @@ class BauplanTabs:
         self._jobs_vertrag_rumpf = rumpf               # b-Suite
 
         def _pfeil766(on, _b=_pf766, _n=len(_zeilen)):
-            _b.setText(("\u25be " if on else "\u25b8 ")
-                       + t("CONTRACTS TO ACCEPT"))
+            icons.klapp_setzen(_b, on, t("CONTRACTS TO ACCEPT"))
         _pf766.toggled.connect(
             lambda on, _r=rumpf, _f=_pfeil766:
             self._jobs_vertrag_klappen(on, _r, _f))
@@ -4464,12 +4929,15 @@ class BauplanTabs:
                                  "modules/ammo usually have no race assigned in the SDE "
                                  "and stay visible whatever you choose)."))
 
+        self.b_sell = self._ind_sell_combo()
         bcontrols = [
             (t("Category"), self.b_cat), ("Tech", self.b_tech),
             (t("Race/faction"), self.b_race),
             (t("Time window"), self.b_window), (t("Min build margin %"), self.b_margin),
             (t("Min \u00d8 daily volume"), self.b_vol),
             (t("Price from"), self.b_pmin), (t("Price to (0=∞)"), self.b_pmax),
+            # emm998: Verkaufs-Hub (Einkauf = Hub oben).
+            (t("Sell in"), self.b_sell),
         ]
         for i, (label, wdg) in enumerate(bcontrols):
             # MINDESTBREITEN NICHT PLATTMACHEN (emm703): die pauschale 90
@@ -4743,6 +5211,12 @@ class BauplanTabs:
         # haette beim ersten Oeffnen doppelt gebaut (Rotprobe fand das).
         self._plan_karten_gebaut = False
         outer.addWidget(self._build_bau_rail())
+        # STRUCTURES ZUERST (emm1051, s. `BAU_STARTSEITE`). Ueber `_bau_nav`,
+        # damit auch die Leiste die richtige Seite hervorhebt.
+        try:
+            self._bau_nav(self.BAU_STARTSEITE)
+        except Exception:
+            pass          # die Startseite darf den Reiter nie kosten
 
         self.tabs.addTab(w, t("Build"))
         from PySide6.QtCore import QTimer
@@ -5226,6 +5700,7 @@ class BauplanTabs:
         # alles hinter dem Stretch.
         insert_at = 0
         self._bd_inv_rang = {}            # je Blaupause: Rang-Funktion fuer "Best Decryptor for all"
+        self._bd_inv_dc = {}              # je Blaupause: Datacore-Zeilen (emm1035)
         # EINMAL OBEN STATT JE KARTE (Nutzer 26.09.2026: "Buy-Haken nur
         # einmal oben"). "Buy datacores/decryptors" sind globale Einstellungen
         # (ein Haken gilt fuer alle Karten), und die freien Science-Slots sind
@@ -5319,7 +5794,7 @@ class BauplanTabs:
 
             def _klapp(_on, _b=_body, _btn=_pf, _bp=int(bp_id)):
                 _b.setVisible(bool(_on))
-                _btn.setIcon(icons.icon("chevron" if _on else "arrow_right"))
+                icons.klapp_setzen(_btn, _on)
                 try:
                     _zu = [int(x) for x in (self.settings.get("bau_inv_zu") or [])]
                 except (TypeError, ValueError):
@@ -5381,6 +5856,7 @@ class BauplanTabs:
             row = QHBoxLayout(); row.setSpacing(14)
             left = QVBoxLayout(); left.setSpacing(4)
             dc_row = QHBoxLayout(); dc_row.setSpacing(6)
+            dc_lbls1035 = []          # (Label, Kurzname, Menge je Versuch)
             for d, q in datacores:
                 dc_row.addWidget(self._icon_label(d, size=20))
                 _dc_name = extra_names.get(d, f'#{d}')
@@ -5399,6 +5875,9 @@ class BauplanTabs:
                                          recipes, "invention_copy_mats", {}) or {}).get(bp_id, [])}
                                      else ""))
                 dc_row.addWidget(dc_lbl)
+                dc_lbls1035.append((dc_lbl, _dc_kurz, int(q)))
+                self._bd_inv_dc = getattr(self, "_bd_inv_dc", None) or {}
+                self._bd_inv_dc[int(bp_id)] = dc_lbls1035      # b-Suite
                 _dc_sep = QLabel("\u00b7"); _dc_sep.setObjectName("Muted")
                 dc_row.addWidget(_dc_sep)
             dc_row.addWidget(_skill_lbl)
@@ -5570,6 +6049,8 @@ class BauplanTabs:
             out_col.addWidget(out_name)
             outcome_lbl = QLabel(); outcome_lbl.setWordWrap(True)
             out_col.addWidget(outcome_lbl)
+            self._bd_inv_ergebnis = getattr(self, "_bd_inv_ergebnis", None) or {}
+            self._bd_inv_ergebnis[int(bp_id)] = outcome_lbl       # b-Suite
             if own_bpc_widgets is not None and tid == top_type_id:
                 # Diese Karte ist die des tatsächlichen Endprodukts (nicht
                 # irgendeines Zwischen-T2-Items) - hier gehören ME/TE/Eigene-BPC
@@ -5845,7 +6326,8 @@ class BauplanTabs:
                 recipes.activity_time.get((t1_bp, industry.COPYING), 0) or 0,
                 "copy", _rolle_i, _copy_rig_pct, _adv_i, _sci_i)
 
-            def _recompute(combo=combo, bp_id=bp_id, base_runs=base_runs,
+            def _recompute(dc_lbls1035=dc_lbls1035,
+                          combo=combo, bp_id=bp_id, base_runs=base_runs,
                           base_prob=base_prob, datacores=datacores,
                           runs_needed=runs_needed, outcome_lbl=outcome_lbl,
                           need_lbl=need_lbl, dec_icon_lbl=dec_icon_lbl,
@@ -5866,22 +6348,31 @@ class BauplanTabs:
                         dec_icon_lbl.setPixmap(
                             pm.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 outcome = industry.invention_outcome(base_runs, base_prob, dv)
+                # GROSS, WAS DIE KOPIE BEKOMMT (emm1029, Nutzer 24.11.2026:
+                # "zeige offensichtlicher wie viele Runs die T2 blueprint
+                # bekommt (je nach decryptor wahl) und zeige ME/TE auch
+                # besser ebenso die anzahl der T2 blueprints. bisher zu
+                # unerkenntlich"). Benoetigte Kopien = offene Runs (ohne
+                # eigene BPC-Runs) / Runs je Kopie, aufgerundet (Regel 3).
+                import math as _m1029
+                _rk1029 = max(1, int(outcome["runs"] or 1))
+                _offen1029 = max(0, int(runs_needed) - int(
+                    self._resolve_inv_owned_runs().get(bp_id, 0) or 0))
+                _kop1029 = int(_m1029.ceil(_offen1029 / float(_rk1029)))
+                _z1029 = (lambda _v: f'<b style="color:{theme.AMBER}; '
+                          f'font-size:{theme.FS_KPI};">{_v}</b>')
+                outcome_lbl.setProperty("kopien1029", _kop1029)
                 outcome_lbl.setText(
-                    f'<span style="color:{theme.MUTED};">' + t("Success chance") + '</span> '
-                    f'<b>{outcome["prob"]*100:.1f}%</b>  \u00b7  '
-                    f'<span style="color:{theme.MUTED};">' + t("Runs/success") + '</span> '
-                    f'<b>{outcome["runs"]}</b>  \u00b7  '
-                    # de_scan3: aus  (HTML-Geruest, die Woerter laufen durch t())
-                    f'<span style="color:{theme.MUTED};">' + t("ME")
-                    # FEHLENDES f (Nutzer, Sitzung 19): ohne das Praefix stand
-                    # der Platzhalter woertlich in der Zeile - "ME
-                    # {outcome["me_pct"]}%". Die TE-Haelfte darunter war eine
-                    # f-Zeichenkette und zeigte richtig 4 %, deshalb fiel es
-                    # lange nicht auf.
-                    + f'</span> <b>{outcome["me_pct"]}%</b>'
-                    # de_scan3: an
-                    f'  \u00b7  <span style="color:{theme.MUTED};">' + t("TE") + '</span> '
-                    f'<b>{outcome["te_pct"]}%</b>')
+                    f'<span style="font-size:{theme.FS_H2}; color:{theme.TEXT};">'
+                    + t("Invented copy: {runs} runs \u00b7 ME {me} % \u00b7 "
+                        "TE {te} % \u00b7 needed: {n} copies").format(
+                        runs=_z1029(outcome["runs"]),
+                        me=_z1029(outcome["me_pct"]),
+                        te=_z1029(outcome["te_pct"]),
+                        n=_z1029(_kop1029))
+                    + '</span><br>'
+                    f'<span style="color:{theme.MUTED};">' + t("Success chance")
+                    + f'</span> <b>{outcome["prob"]*100:.1f}%</b>')
                 # PREIS WIE IN industry._inv_cost: Marktpreis, sonst der
                 # Adjusted Price (emm829). Die Karte nahm NUR den Adjusted
                 # Price - fuer Relics gibt es keinen, sie waren damit gratis.
@@ -5925,6 +6416,24 @@ class BauplanTabs:
                 need_lbl.setVisible(bool(_owned_runs))
                 total_cost = ap["confident_cost"]
                 _inv_attempts_n = int(ap["confident_attempts"] or 0)
+                # DIE GESAMTMENGE STEHT DABEI (emm1035, Nutzer 26.11.2026:
+                # "links stehen nur x2 Datacores ... ich haette gerne das da
+                # die gesammte menge steht die benoetigt wird fuer die Jobs").
+                # Je Versuch x geplante Versuche - folgt Decryptor und
+                # Planungssicherheit. Ohne Versuche (eigene BPC) nur "xN".
+                from .mw_helpers import datacore_gesamt as _dcg1035
+                for _dl1035, _dk1035, _dq1035 in dc_lbls1035:
+                    try:
+                        if _inv_attempts_n > 0:
+                            _dl1035.setText(t(
+                                "{name} {q} per attempt \u00b7 {n} total").format(
+                                name=_dk1035, q=f"<b>\u00d7{_dq1035}</b>",
+                                n="<b>" + f"{_dcg1035(_dq1035, _inv_attempts_n):,}"
+                                .replace(",", "'") + "</b>"))
+                        else:
+                            _dl1035.setText(f"{_dk1035} <b>\u00d7{_dq1035}</b>")
+                    except RuntimeError:
+                        pass              # Label gehoert zu einem alten Fenster
                 # WARNUNG OHNE DECRYPTOR: "No decryptor" steht, der Nutzer hat
                 # ihn nie selbst gewaehlt (Combo, "Best Decryptor", "for all"
                 # oder gespeicherter Plan -> `_bd_dec_bestaetigt`) und die Karte
@@ -6586,6 +7095,10 @@ class BauplanTabs:
             _rest_bekannt = True
         except Exception:
             _rest_fehlt, _rest_bekannt = {}, False
+        # Erfindungsmaterial steht NIE im Fehlbedarf der offenen Runs (emm1035).
+        from .mw_helpers import inv_material_ids as _imi1035
+        from .mw_helpers import inv_kaufmenge as _ikm1035
+        _inv_tids1035 = _imi1035(plan)
         # WAS DER RUNPLANER NOCH BAUT (Nutzer 26.09.2026: "ich will, dass
         # diese Runs nicht mehr einfach angezeigt werden, obwohl ich sie gar
         # nicht brauche"). Silicon Diborite stand mit "can be built - 13'019
@@ -7181,6 +7694,25 @@ class BauplanTabs:
                     r["reason"] = t("Built entirely per plan (see run planner) \u2013 "
                                     "nothing to buy, no stock needed.")
                 n_built += 1
+            elif int(r["tid"]) in _inv_tids1035:
+                # ERFINDUNGSMATERIAL (emm1035): der Fehlbedarf der offenen
+                # Runs kennt es nicht - "steht dort nicht" heisst hier NICHT
+                # "gedeckt". Es zaehlt die eigene Fehlmenge, dieselbe Zahl,
+                # die die Einkaufsliste nimmt (`inv_kaufmenge`).
+                _ik1035 = int(_ikm1035(r.get("missing", 0), r.get("total", 0),
+                                       r.get("owned", 0)) or 0)
+                if _ik1035 <= 0:
+                    status_txt, status_col = t("enough \u2713"), theme.GREEN
+                elif owned > 0:
+                    status_txt = t("partly \u2013 {n} still to buy").format(
+                        n=f"{_ik1035:,}".replace(",", "'"))
+                    status_col = theme.AMBER
+                    n_missing += 1
+                else:
+                    status_txt = t("missing completely \u2013 buy {n}").format(
+                        n=f"{_ik1035:,}".replace(",", "'"))
+                    status_col = theme.RED
+                    n_missing += 1
             elif _nachlauf.get(int(r["tid"])) or _nachkauf.get(int(r["tid"])):
                 # emm646: gedeckt waere hier falsch - es fehlt etwas, das
                 # bisher niemand verlangt hat.
@@ -7996,23 +8528,19 @@ class BauplanTabs:
         return _v if _v >= 0 else -1
 
     def _runplan_ziel_sekunden(self):
-        """{stage: Sekunden} fuer `schedule_build` - leere Eintraege weg.
+        """{stage: Sekunden} fuer `schedule_build` - seit emm1040 IMMER leer,
+        also "so schnell wie moeglich" (der Planer strafft dann nur noch auf
+        die laengste Zeile der Stufe).
 
-        EINE Stelle fuer die Umrechnung: die Einstellung steht in STUNDEN
-        (so steht sie auch im Auswahlfeld), der Planer rechnet in Sekunden.
+        Nutzer 26.11.2026: die Dauer-Auswahl "scheint die Nutzer des Tools
+        nur zu verwirren", sie ist entfernt. REGEL 7a: ein ausgeblendetes
+        Bedienelement darf nichts mehr rechnen - eine frueher gespeicherte
+        Dauer (`runplan_ziel` am Plan, z. B. 23 h) wird deshalb HIER
+        verworfen, an der einen Stelle, durch die jede Zielzeit zum Planer
+        geht. Die gespeicherten Werte bleiben unangetastet liegen; sie
+        werden nur nicht mehr gelesen.
         """
-        _out = {}
-        for _st in self._RUNPLAN_STUFEN:
-            _h = self._runplan_ziel_stunden(_st)
-            if _h < 0:
-                # "SO LANGE WIE MOEGLICH" (Nutzer 24.09.2026): keine Grenze -
-                # der Planer nimmt dann so wenige Jobs wie ueberhaupt
-                # moeglich. Unendlich statt einer grossen Zahl, damit
-                # niemand spaeter raetselt, was "999999" bedeuten sollte.
-                _out[_st] = float("inf")
-            elif _h > 0:
-                _out[_st] = float(_h) * 3600.0
-        return _out
+        return {}
 
     def _runplan_ziel_setzen(self, stage, stunden):
         """Zielzeit einer Stufe merken (stage=None -> Vorgabe fuer alle) -
@@ -8865,6 +9393,18 @@ class BauplanTabs:
                    _txt("Copy your T1 originals for invention. Same numbers "
                         "as the Invention tab – the slider there sets the "
                         "parallel copies.") + _sc_tip) if _copy_auftr else None
+        # DIE ZEIT STEHT AUCH HIER (emm1036, Nutzer 26.11.2026: "bei Copying
+        # und inventions uebertitel steht die Zeit nicht im Times Column ...
+        # bei Fuel und Reactions stehts da"). Dieselben Zahlen wie die
+        # Kopfzeile des Runplaners (`copy_secs` / `inv_secs`, nacheinander
+        # gerechnet) - keine zweite Rechnung.
+        _zeit_tip1036 = _txt("Rough, all jobs one after another – with "
+                             "several science slots it is faster.")
+        _cp1036 = sum(int((needs.get(_b1036) or {}).get("copy_secs") or 0)
+                      for _b1036, _n1036 in _copy_auftr)
+        if _k is not None and _cp1036 > 0:
+            _k.setText(3, "≈" + self._fmt_dur(_cp1036))
+            _k.setToolTip(3, _zeit_tip1036)
         _k_zust, _k_zeilen = [], []
         _copy_chars = _chars("bau_copy_chars") or [(0, max(1, slots))]
         # AUS EINER KOPIE KANN MAN NICHT KOPIEREN (emm510, Nutzer: "der
@@ -8994,6 +9534,11 @@ class BauplanTabs:
                     else _txt("Invention attempts. Relics, datacores and "
                               "decryptors are on the shopping list \u2013 one "
                               "relic per attempt.")) + _sc_tip)
+        _in1036 = sum(int((_v1036 or {}).get("inv_secs") or 0)
+                      for _v1036 in needs.values())
+        if _in1036 > 0:
+            _i.setText(3, "≈" + self._fmt_dur(_in1036))
+            _i.setToolTip(3, _zeit_tip1036)
         _inv_auftr = [(bp, int(_auf[bp].get("kopien") or 0))
                       for bp, _i2 in _sortiert if _auf[bp].get("kopien")]
         _inv_chars = _chars("bau_invention_chars") or [(0, max(1, slots))]
@@ -9673,10 +10218,30 @@ class BauplanTabs:
             pass
         return True
 
+    def _bd_bauzeit_zeigen(self):
+        """Die Gesamtzeit des Run planners in die Zeile ueber der
+        Rezeptstruktur schreiben (emm955). Ohne gerechnete Zeit bleibt die
+        Zeile leer - lieber nichts als eine Zahl von vorhin."""
+        from ..sprache import t as _txt
+        lbl = getattr(self, "_bd_bauzeit_lbl", None)
+        if lbl is None:
+            return
+        s = getattr(self, "_bd_bauzeit_s", None)
+        try:
+            lbl.setText(_txt("Build time: {tot} (as set in the Run planner)").format(
+                tot=self._fmt_dur(s)) if s else "")
+        except RuntimeError:
+            self._bd_bauzeit_lbl = None       # Fenster schon zu
+
     def _fill_bauplan_schedule(self, plan, names, type_id, qty, hdr, sub, tbl, bp_tbl=None,
                                bp_warn_lbl=None):
         from ..sprache import t as _txt   # `t` ist hier lokal belegt
         from PySide6.QtWidgets import QTableWidgetItem
+        # Die Bauzeit-Zeile in "Recipe structure" (emm955) folgt DIESER
+        # Rechnung: erst leeren (kein Charakter / nichts zu bauen -> keine
+        # Zeit), unten mit der Gesamtzeit fuellen.
+        self._bd_bauzeit_s = None
+        self._bd_bauzeit_zeigen()
         mfg_sel = set(self.settings.get("bau_build_chars", []) or [])
         react_sel = set(self.settings.get("bau_reaction_chars", []) or [])
         all_sel = mfg_sel | react_sel
@@ -9879,6 +10444,15 @@ class BauplanTabs:
                 # echten, kostenoptimierten "jobs" oben - hier geht's nur um die
                 # Übersichts-Tabelle.
                 _force_opts = dict(getattr(self, "_bd_opts", None) or {})
+                # Gekaufte Enden des Buendels brauchen keine Blaupause (emm951).
+                # BLACKLIST-ITEMS EBENSO (emm1016): der Plan baut und kauft
+                # sie nicht - `full_build_chain` kannte nur `never_build`
+                # (Fertigungstiefe), nicht `excluded` (Blacklist).
+                from .mw_helpers import bp_kette_ohne as _bko1016
+                _force_opts["chain_ohne"] = _bko1016(
+                    self._multi_gekaufte_enden(),
+                    _force_opts.get("excluded"),
+                    set(self._bd_enden(type_id, recipes) or ()) | {type_id})
                 _bp_build_runs = industry.full_build_chain(
                     type_id, qty, recipes, _force_opts)
                 # NAMEN NACHLADEN (Nutzer: "sind noch Zahlen statt Item-
@@ -9921,6 +10495,32 @@ class BauplanTabs:
                                      "reaction_tier": (_stage_map_rp.get(_tid, 2)
                                                        if activity == industry.REACTION
                                                        else None)})
+                # BLACKLIST-ITEMS SICHTBAR, ABER MARKIERT (emm1028, Nutzer
+                # 24.11.2026: "Blacklistet Items will ich doch angezeigt ...
+                # ueberall sonst wo es sinn macht"). Die Kette bleibt
+                # beschnitten (emm1016: was nur das Blacklist-Item brauchte,
+                # faellt weg); das Item selbst bekommt eine eigene Zeile
+                # "on blacklist" - 0 Runs, zaehlt nie als fehlend.
+                _da1028 = {int(_j["tid"]) for _j in _bp_jobs}
+                _end1028 = set(self._bd_enden(type_id, recipes) or ()) | {type_id}
+                for _tid in sorted(
+                        {int(x) for x in (_force_opts.get("excluded") or ())}
+                        & {int(x) for x in ((plan or {}).get("excluded_hit") or ())}):
+                    if _tid in _da1028 or _tid in _end1028:
+                        continue
+                    bp = recipes.product_to_bp.get(_tid)
+                    if not bp:
+                        continue
+                    _bp_jobs.append({
+                        "tid": _tid, "name": names.get(_tid, f"#{_tid}"),
+                        "runs": 0, "activity": bp[1], "base_time": 0,
+                        "is_end": False, "bp_id": bp[0], "sci_skills": set(),
+                        "is_fuel": self._ist_fuel_block(
+                            _tid, _groups, recipes.reaction_products),
+                        "te_factor": 1.0, "blacklist": True,
+                        "reaction_tier": (_stage_map_rp.get(_tid, 2)
+                                          if bp[1] == industry.REACTION
+                                          else None)})
                 (_n_missing, _n_low, _n_missing_by_stage,
                  _n_low_by_stage) = self._fill_blueprint_tab(_bp_jobs, sched_chars,
                                                              recipes, bp_tbl,
@@ -10273,6 +10873,8 @@ class BauplanTabs:
             tot=self._fmt_dur(tot), react=self._fmt_dur(react_total),
             comp=self._fmt_dur(stt.get('component', 0)),
             end=self._fmt_dur(stt.get('end', 0))) + _extra_t)
+        self._bd_bauzeit_s = tot                     # emm955
+        self._bd_bauzeit_zeigen()
         # WARUM DIESE ZEITEN JETZT STEHENBLEIBEN (emm681). Der Nutzer hat
         # beobachtet, dass sich die Verteilung waehrend des Bauens aendert
         # ("Aber der Plan sollte nicht staendig neu verteilen"). Beim
@@ -10442,8 +11044,11 @@ class BauplanTabs:
             klar ist, welche \u201eMeine Blueprints\u201c-Checkbox zust\u00e4ndig ist."""
             stage = a["stage"]
             if stage == "end":
+                # UEBERSETZT ANZEIGEN (emm1031, Nutzer 24.11.2026): der
+                # Schluessel ging roh in die Stage-Spalte - in der englischen
+                # Fassung stand dort "Endprodukt".
                 # de_scan4: aus - interner SCHLUESSEL (Kategorie/Stufe/Dict), Anzeige uebersetzt woanders
-                return "Endprodukt"
+                return self._kategorie_anzeige("Endprodukt")
                 # de_scan4: an
             tid = a["tid"]
             is_react = stage.startswith("reaction") or stage == "unrefined"
@@ -11111,10 +11716,8 @@ class BauplanTabs:
             # de_scan5: aus - interner Klapp-Schluessel, nie sichtbar
             stage_item.setData(0, Qt.UserRole + 6, "stufe|" + str(stage))
             # de_scan5: an
-            self._runplan_ziel_feld(
-                tbl, stage_item, stage,
-                (res.get("stage_min_times") or {}).get(stage, 0.0),
-                (res.get("stage_min_by") or {}).get(stage))
+            # KEIN ZIELZEIT-FELD MEHR IN DER STUFENZEILE (emm1040, s.
+            # `_runplan_ziel_sekunden`).
             _checked_set = getattr(self, "_bd_runplan_checked", None) or set()
 
             def _apply_struck(titem):
@@ -12572,6 +13175,21 @@ class BauplanTabs:
                             iit.setToolTip(0, _tip0 + _frei_tip)
                         else:
                             iit.setToolTip(0, iit.toolTip(0) + _frei_tip)
+                    # WAS DER HAKEN IST (emm1019, Discord-Nutzer 23.11.2026:
+                    # der gruene Haken war nirgends erklaert). Eine offene
+                    # Zeile hatte gar keinen Tooltip. Nutzer: "kuerzer und
+                    # erwaehne, dass das nur fuer deine persoenliche
+                    # Uebersicht ist". Die Freigabe bleibt als Halbsatz drin -
+                    # sie passiert wirklich (Regel 1).
+                    if (iit.data(0, Qt.CheckStateRole) is not None
+                            and not iit.toolTip(0)):
+                        # DER ABLAUF IN SEINEN WORTEN (emm1026, Nutzer
+                        # 24.11.2026: "immernoch verwirrend. Der Ablauf ist
+                        # so: ich hacke ab wenn ich ingame den job gestartet
+                        # habe (nur fuer mich zur uebersicht), dann blauer
+                        # Dot, ESI hat bauauftrag erkannt, dann gruener Dot,
+                        # Esi bestaetigt bauabschluss").
+                        iit.setToolTip(0, _txt(self.RUNPLAN_ABLAUF_TIP))
                     citem.addChild(iit)
                     _stage_items += 1
                     _c_items += 1
@@ -12657,8 +13275,13 @@ class BauplanTabs:
                             _bp_nm = self._bp_name_fuer(
                                 self._bp_basisname(a.get("tid"), a.get("name")),
                                 a.get("activity"))
+                            # "JOBS" UND "RUNS" STATT "BLUEPRINTS" (emm1038,
+                            # Nutzer 26.11.2026: er las "10 blueprints 10x 3"
+                            # als EINEN Job je Charakter; "ja benennen um auf
+                            # Jobs und Runs"). Jede Blaupause hier ist ein
+                            # gleichzeitiger Job.
                             _kopf = QPushButton(
-                                _txt("{n} blueprints").format(n=njobs))
+                                _txt("{n} jobs").format(n=njobs))
                             _kopf.setCursor(Qt.PointingHandCursor)
                             _kopf.setMinimumHeight(24)
                             # DIE NICHT VERPLANTEN KOPIEN STEHEN NUR IM
@@ -12742,6 +13365,9 @@ class BauplanTabs:
                                         self._run_klick_merken(
                                             _t, _v, _ak in (9, 11))))
                                 _cl.addWidget(_b)
+                                _rl1038 = QLabel(_txt("runs each"))
+                                _rl1038.setStyleSheet(f"color:{_bp_text820};")
+                                _cl.addWidget(_rl1038)
                             _cl.addStretch()
                             # Der Text steckt jetzt IM Widget - die Spalte
                             # selbst leeren, sonst stuende er doppelt da.
@@ -12827,11 +13453,13 @@ class BauplanTabs:
                     citem.setCheckState(0, Qt.Unchecked)
                     _c_offen_n = max(0, _c_items - _c_zustand)
                     citem.setToolTip(0, _txt(
-                        "Cannot tick {name} yet – {offen} of {n} "
-                        "position(s) in this stage still need an ESI dot "
-                        "(green or blue) or your own tick first."
+                        "Open {name} with the arrow and tick the lines "
+                        "below – {offen} of {n} are still open. This line "
+                        "can only be ticked once all of them have a tick or "
+                        "an ESI dot."
                     ).format(name=cmap.get(cid, str(cid)), offen=_c_offen_n,
-                             n=_c_items))
+                             n=_c_items) + "\n\n"
+                        + _txt(self.RUNPLAN_ABLAUF_TIP))
                 stage_item.addChild(citem)
                 _stage_citems.append(citem)
             # ---- FERTIGE STUFE: ZUGEKLAPPT, ABER VOLLSTAENDIG -------------

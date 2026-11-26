@@ -309,6 +309,33 @@ class MainWindowHelpers:
         base, extra = divmod(R, njobs)
         return njobs, [base + 1] * extra + [base] * (njobs - extra)
 
+    def _muell_abraeumen(self):
+        """Reste geschlossener Fenster SOFORT und im GUI-Faden abraeumen
+        (emm1034, 25.11.2026).
+
+        BEFUND: ein Bauplan-Fenster hinterlaesst hunderte Qt-Objekte in
+        Verweis-Zyklen (Lambdas an Signalen) - nur Pythons zyklische
+        Speicherbereinigung raeumt sie ab, und die laeuft IRGENDWANN.
+        Sammelt sich der Muell mehrerer Fenster und wird spaet in EINEM Lauf
+        abgeraeumt, stuerzt der Prozess dabei manchmal ab (gemessen in der
+        b-Suite: erzwungener spaeter Sammellauf 5 Abstuerze in 14, Windows-
+        Code 0xc0000374 "Heap-Beschaedigung"; laufendes Abraeumen 0 in 4).
+        Welches Objekt den Schaden macht, ist NICHT gefunden - deshalb die
+        Ursache "Ansammeln" abstellen statt ein einzelnes Objekt zu raten.
+
+        ES GEHT NUR UM SPEICHER, DEN NIEMAND MEHR ERREICHT: Python raeumt
+        ausschliesslich Objekte ab, auf die kein Verweis mehr zeigt. Plaene,
+        Einstellungen, Bestand und offene Fenster sind davon nie betroffen.
+
+        Kostet einen vollen Sammellauf je Fenster (Zehntelsekunden), an
+        einer Stelle, an der ohnehin ein Fenster auf- oder zugeht. Gibt die
+        Zahl der abgeraeumten Objekte zurueck (Pruefungen)."""
+        import gc as _gc1034
+        try:
+            return _gc1034.collect()
+        except Exception:
+            return 0
+
     def _bd_enden(self, type_id, recipes=None):
         """Die Endprodukt-MENGE des offenen Plans (Multi-Bauplan 1.0.9):
         {type_id} - beim Buendel seine Enden aus den Rezepten (Aufrufer-
@@ -814,6 +841,29 @@ class MainWindowHelpers:
             _n += 1
         return _n
 
+    def _erfundene_enden(self, end_tid=None):
+        """{type_id} der Endprodukte, deren Kopien der Plan ERFINDET (kein
+        "Own BPC") - EINE Stelle (emm1037). Buendel: Eintraege von
+        `_multi_bp_je_ende` mit `erfunden`; Einzelplan: `_bd_bp["end"]`.
+        Im Zweifel leer - dann bleibt alles beim bisherigen, vorsichtigen
+        Deckel (Regel 3)."""
+        aus = set()
+        _mbe = getattr(self, "_multi_bp_je_ende", None)
+        if _mbe is not None:
+            try:
+                for _t, _d in (_mbe() or {}).items():
+                    if (_d or {}).get("erfunden"):
+                        aus.add(int(_t))
+            except Exception:
+                pass
+        _end = (getattr(self, "_bd_bp", None) or {}).get("end") or {}
+        if end_tid is not None and _end.get("erfunden"):
+            try:
+                aus.add(int(end_tid))
+            except (TypeError, ValueError):
+                pass
+        return aus
+
     def _resolve_per_item_runs_cap(self, end_tid=None):
         """{type_id: max Runs je JOB} fuer schedule_build's per_item_runs_cap
         (Nutzer-Befund 19.09.2026, Einherji II: "Der Runplaner denkt ich kann
@@ -842,9 +892,22 @@ class MainWindowHelpers:
                 _m = 0
             if _m >= 1:
                 out[t] = _m
+        # ERFUNDENE ENDEN KENNEN DEN REST ALTER KOPIEN NICHT (emm1037, Nutzer
+        # 26.11.2026: "Endprodukt aufteilung komisch"). GEMESSEN an seiner
+        # planer_diagnose.txt: Retribution 150 Runs in 50 Jobs a 3, Purifier
+        # 100 Runs in 100 Jobs a 1 - Stufe 12.8 statt 3.7 Tage. Er hatte 5
+        # bzw. 8 ALTE Kopien im Hangar; die kleinste (3 / 1 Run) wurde zum
+        # Deckel, obwohl der Plan die Kopien NEU ERFINDET (kein "Own BPC").
+        # Wer erfindet, baut aus den erfundenen Kopien - deren Groesse kommt
+        # unten aus `_multi_runs_cap_je_ende` bzw. `_bd_bp["end"]`.
+        # Ueber die KLASSE gerufen: aa368 uebergibt ein Platzhalter-Objekt,
+        # das nur die gelesenen Felder traegt.
+        _erf = MainWindowHelpers._erfundene_enden(self, end_tid)
         _cache = getattr(self, "_bd_owned_bp_cache", None)
         if _cache:
             for t, _m in self._bpc_runs_by_tid(_cache, _runs, _p2b).items():
+                if t in _erf:
+                    continue
                 out[t] = min(out.get(t, _m), _m)
         # MULTI-BAUPLAN, SCHRITT 4: "Runs/BPC" je ENDPRODUKT. `_bd_bp["end"]`
         # unten kennt nur EIN Endprodukt - im Buendel braucht jedes Ende
@@ -3288,6 +3351,29 @@ def invention_verbraucht(jobs, seit_ts, je_versuch, max_versuche, iso_ts,
     return mats, {b: n for b, n in versuche.items() if n > 0}
 
 
+def datacore_gesamt(je_versuch, versuche):
+    """Gesamtmenge eines Datacores fuer die Invention-Karte: Menge je Versuch
+    x geplante Versuche (emm1035). Nie negativ; ohne Versuche 0."""
+    return max(0, int(je_versuch or 0)) * max(0, int(versuche or 0))
+
+
+def inv_material_ids(plan):
+    """Die Items, die der Plan als ERFINDUNGSMATERIAL fuehrt (Datacores,
+    Decryptoren, Relics) - EINE Stelle (emm1035, Regel 9).
+
+    Sie stehen bewusst in eigenen Feldern (`inv_buy` / `inv_stock_used`),
+    damit ihre Kosten nicht doppelt zaehlen - `_fehlbedarf_jetzt` und
+    `_restbedarf_jetzt` kennen sie deshalb NICHT (reines Fertigungs-
+    Material). Jede Stelle, die "steht nicht im Fehlbedarf" als "gedeckt"
+    liest, muss diese Items ausnehmen: die Einkaufsliste tat das schon
+    (Sitzung 17), die Statusspalte des Materialien-Reiters nicht - dort
+    stand "covered for the remaining runs" neben "fehlt 51" (Nutzer-
+    Screenshot 26.11.2026)."""
+    p = plan or {}
+    return {int(t) for t in (set(p.get("inv_buy") or {})
+                             | set(p.get("inv_stock_used") or {}))}
+
+
 def inv_kaufmenge(plan_fehlt, benoetigt, bestand):
     """Kaufmenge fuer Datacores/Decryptoren auf der Einkaufsliste.
 
@@ -4319,10 +4405,9 @@ def hub_ort_id(hub_daten):
         _reg = int(hub_daten)
     except (TypeError, ValueError):
         return None
-    for _k, _lbl, _rid, _sid in _hubs.NPC_HUBS:
-        if int(_rid) == _reg:
-            return int(_sid)
-    return None
+    # Hub-Nummer (emm952): Region eines festen Hubs oder Stations-Nummer.
+    _h952 = _hubs.aufloesen(_reg)
+    return int(_h952[3]) if _h952 is not None else None
 
 
 def standort_am_hub(ort, hub_id):
@@ -6215,3 +6300,233 @@ def bp_stand_lesen(stand, build_runs, frost_ts):
                 out[_ki] = _vi
         return out
     return _m(stand.get("cap")), _m(stand.get("runs_cap"))
+
+
+def menge_aus_volumen(volumen, tage, prozent):
+    """MENGEN-VORSCHLAG AUS DEM HANDELSVOLUMEN (emm987, Nutzer 22.11.2026:
+    "25% bauen vom taeglichen Handelsvolumen ... oder 300% wenn man den
+    Markt fuer die naechsten 3 Tage auffuellen will").
+
+        Menge = Volumen / Tage x Prozent / 100, AUFgerundet, mindestens 1
+
+    `volumen` = gehandelte Stueck ueber `tage` Tage (Region des Verkaufs-
+    Hubs, Kauf- und Verkaufsorder zusammen - ESI trennt sie nicht).
+    Ohne Volumen, ohne Tage oder ohne Prozent -> None (kein Vorschlag,
+    keine erfundene 1)."""
+    import math
+    try:
+        v, tg, p = float(volumen or 0), float(tage or 0), float(prozent or 0)
+    except (TypeError, ValueError):
+        return None
+    if v <= 0 or tg <= 0 or p <= 0:
+        return None
+    return max(1, int(math.ceil(v / tg * p / 100.0 - 1e-9)))
+
+
+DECRYPTOR_ZIELE = ("profit", "runs", "zeit", "chance")
+
+
+def decryptor_nach_ziel(ranked, dv_nach_name, ziel="profit"):
+    """WELCHE ZEILE DER RANGLISTE GEWINNT (emm988, Nutzer 22.11.2026:
+    "Autodecryptor fuer most Profit ... fuer wenigste Bauslots (also so dass
+    man am meisten Runs bekommt in der T2 Blueprint) ... for fastest
+    Building").
+
+    `ranked` = Rangliste einer Karte, GUENSTIGSTE ZUERST (wie
+    `invention_best_decryptor_by_real_cost`); `dv_nach_name` = {Name:
+    (prob_mult, run_mod, me_mod, te_mod, type_id) | None}.
+      profit -> die erste Zeile (niedrigste Gesamtkosten), wie bisher
+      runs   -> der groesste Runs-Zuschlag (run_mod)
+      zeit   -> der groesste TE-Zuschlag (te_mod = kuerzeste Bauzeit)
+      chance -> der groesste Chancen-Faktor (prob_mult, emm1041); "kein
+                Decryptor" zaehlt als 1.0
+    Gleichstand -> die GUENSTIGERE Zeile (kleinerer Rang). Leere Liste ->
+    None. Unbekanntes Ziel -> wie profit."""
+    ranked = list(ranked or [])
+    if not ranked:
+        return None
+    if ziel not in ("runs", "zeit", "chance"):
+        return ranked[0]
+    _ix = {"runs": 1, "zeit": 3, "chance": 0}[ziel]
+
+    def _wert(r):
+        dv = (dv_nach_name or {}).get(r.get("name"))
+        try:
+            _w = (dv or (1.0, 0, 0, 0))[_ix] or 0
+            # der Chancen-Faktor ist eine Kommazahl (1.2, 1.8, 0.6)
+            return float(_w) if ziel == "chance" else int(_w)
+        except (TypeError, ValueError, IndexError):
+            return 0
+    _best, _bw = None, None
+    for r in ranked:                     # erster Treffer gewinnt = guenstiger
+        w = _wert(r)
+        if _bw is None or w > _bw:
+            _best, _bw = r, w
+    return _best
+
+
+CHECKLISTE = ("tiefe", "repro", "fracht", "decryptor", "invzeit",
+              "einkauf", "frost", "gespeichert")
+
+
+def checkliste_stand(f):
+    """DIE CHECKLISTE DES BAUPLANS (emm1044, Nutzer 26.11.2026: "Ich moechte
+    gerne eine Checklist einfuehren die sich selbst aktualisiert").
+
+    `f` = Fakten des offenen Plans, Rueckgabe [(punkt, ja)] in fester
+    Reihenfolge. NUR ANZEIGE - nichts hiervon rechnet am Plan.
+      tiefe       Fertigungstiefe in DIESEM Plan angeklickt
+      repro       Reprocessing-Haken angeklickt oder einer ist an
+      fracht      ein Frachtsatz (ISK/m3 oder je Fahrt) ist eingetragen
+      decryptor   jede Invention-Karte hat eine bestaetigte Decryptor-Wahl
+      invzeit     der Regler "Invention jobs at once" wurde gezogen
+      einkauf     "Create shopping list" geklickt - oder eingefroren
+                  (Einfrieren heisst "Einkauf erledigt")
+      frost       Plan eingefroren
+      gespeichert Plan gespeichert
+    Die zwei Invention-Punkte gibt es nur, wenn der Plan erfindet."""
+    f = f or {}
+    ber = set(f.get("beruehrt") or ())
+    try:
+        fracht = float(f.get("fracht") or 0) > 0
+    except (TypeError, ValueError):
+        fracht = False
+    aus = [("tiefe", "tiefe" in ber),
+           ("repro", "repro" in ber or bool(f.get("repro_an"))),
+           ("fracht", fracht)]
+    if f.get("invention"):
+        aus.append(("decryptor", bool(f.get("decryptor_alle"))))
+        aus.append(("invzeit", bool(f.get("inv_split"))))
+    aus.append(("einkauf", "einkauf" in ber or bool(f.get("frost"))))
+    aus.append(("frost", bool(f.get("frost"))))
+    aus.append(("gespeichert", bool(f.get("gespeichert"))))
+    # VON HAND UMGESCHALTET (emm1046, Nutzer 26.11.2026: "mit einem
+    # Rechtsklick in der Checkliste soll man ebenfalls zu YES wechseln
+    # koennen oder zurueck zu NO"): die Hand-Antwort gewinnt.
+    hand = f.get("hand") or {}
+    return [(k, bool(hand[k]) if k in hand else v) for k, v in aus]
+
+
+def checkliste_hand_umschalten(f, punkt):
+    """Rechtsklick auf `punkt`: die gezeigte Antwort umdrehen. Liefert die
+    neue Hand-Tabelle. Entspricht die neue Antwort dem, was MoMa selbst
+    erkennt, faellt der Hand-Eintrag weg - dann aktualisiert sich der Punkt
+    wieder von allein."""
+    f = dict(f or {})
+    hand = dict(f.get("hand") or {})
+    gezeigt = dict(checkliste_stand(f))
+    if punkt not in gezeigt:
+        return hand
+    f["hand"] = {}
+    selbst = dict(checkliste_stand(f)).get(punkt)
+    neu = not gezeigt[punkt]
+    if neu == selbst:
+        hand.pop(punkt, None)
+    else:
+        hand[punkt] = neu
+    return hand
+
+
+def bp_kette_ohne(gekaufte_enden, blacklist, enden):
+    """Items, deren Kette der Blueprints-Reiter NICHT zeigt (emm1016,
+    Discord-Nutzer 23.11.2026: Blaupausen von Blacklist-Items wurden weiter
+    verlangt; nachgestellt 24.11.2026 an "RD-Market Stats": der Plan baute
+    und kaufte Acolyte I nicht mehr, die Zeile blieb).
+
+    = gekaufte Buendel-Enden (emm951) + alles auf der Blacklist
+    (`opts["excluded"]`: "bekomme ich, baue und kaufe ich nicht") - AUSSER
+    den Enden selbst: ein Endprodukt kennt die Blacklist in der Rechnung
+    nicht (`production_plan` baut es immer), also bleibt auch seine Zeile."""
+    _enden = {int(x) for x in (enden or ())}
+    aus = {int(x) for x in (gekaufte_enden or ())}
+    aus |= {int(x) for x in (blacklist or ()) if int(x) not in _enden}
+    return sorted(aus)
+
+
+def bp_rest_runs(ketten_runs, plan_runs, rest_runs):
+    """Runs, fuer die der Blueprints-Reiter NOCH eine Blaupause verlangt
+    (emm1015, Discord-Nutzer 23.11.2026: 12 geplant, 4 gebaut - der Reiter
+    wollte weiter Blaupausen fuer 12; Nutzer 24.11.2026: "ja aber es soll
+    klar sein dass es urspruenglich mal 12 waren").
+
+    ketten_runs = Runs der Zeile (aus `full_build_chain`, volle Planmenge),
+    plan_runs   = Runs desselben Items im gerechneten Plan (oder None),
+    rest_runs   = davon noch offen (aus `_rest_runs_jetzt`, oder None).
+
+    Abgezogen wird nur, was der Plan als ERLEDIGT kennt (plan - rest), nie
+    mehr als die Zeile hat. Unbekannt (kein Plan, Item nicht im Plan) =
+    nichts abziehen: lieber eine Blaupause zu viel verlangt (Regel 3)."""
+    try:
+        k = max(0, int(ketten_runs or 0))
+        if plan_runs is None or rest_runs is None:
+            return k
+        erledigt = max(0, int(plan_runs) - max(0, int(rest_runs)))
+    except (TypeError, ValueError):
+        return max(0, int(ketten_runs or 0)) if isinstance(
+            ketten_runs, (int, float)) else 0
+    return max(0, k - erledigt)
+
+
+def enden_ohne_blaupause(urteile, enden):
+    """WELCHE ENDPRODUKTE HABEN KEINE BLAUPAUSE? (emm1001, Nutzer 22.11.2026:
+    "entferne endprodukte von denen ich keine Blueprints habe (also T1
+    Blueprints die fehlen wenn ich davon die T2 machen will und so weiter)").
+
+    `urteile` = die Zeilen des Blueprints-Reiters ({"tid", "bp_id",
+    "erfunden", "quelle", "urteil"}; urteil = ok | fehlt | unklar |
+    ungeladen), `enden` = type_ids der Endprodukte.
+      * Ende mit Zeile "missing"                      -> sicher ohne Blaupause
+      * ERFUNDENES Ende (T2): es zaehlt die QUELLE (T1-Original) - fehlt
+        die, fehlt die Blaupause; die T2-Kopie selbst wird ja erfunden
+      * "unklar" (Besitz eines Charakters/Corp-Hangars nicht lesbar) ->
+        eigene Liste, NIE still mit entfernt (Regel 3)
+      * Ende OHNE Zeile (gekauft, kein Rezept)      -> bleibt
+    -> (sicher, unklar, ungeladen): zwei Listen in der Reihenfolge von
+    `enden`, und True, wenn der Besitz gar nicht geladen ist."""
+    je_tid = {}
+    je_bp = {}
+    for u in (urteile or []):
+        try:
+            if u.get("tid") is not None:
+                je_tid.setdefault(int(u["tid"]), u)
+            if u.get("bp_id") is not None:
+                je_bp.setdefault(int(u["bp_id"]), u)
+        except (TypeError, ValueError):
+            continue
+    sicher, unklar, ungeladen = [], [], False
+    for tid in (enden or []):
+        u = je_tid.get(int(tid))
+        if u is None:
+            continue
+        urteil = u.get("urteil")
+        if u.get("erfunden") and urteil == "ok":
+            # Erst der direkte Besitz des T1-Originals (emm1002: das
+            # Original hat bei Rigs keine eigene Zeile), sonst seine Zeile.
+            q = je_bp.get(int(u.get("quelle") or 0))
+            if u.get("quelle_urteil"):
+                urteil = u["quelle_urteil"]
+            else:
+                urteil = q.get("urteil") if q is not None else "ok"
+        if urteil == "ungeladen":
+            ungeladen = True
+        elif urteil == "missing":
+            sicher.append(int(tid))
+        elif urteil == "unklar":
+            unklar.append(int(tid))
+    return sicher, unklar, ungeladen
+
+
+def prozent_lesen(text):
+    """Getippte Prozentzahl -> float (2 Stellen) oder None (emm1012).
+    Nimmt "1.5", "1,5", " 1,50 % "; leer, Unsinn oder ausserhalb 0..100 =
+    None ("nicht gesetzt") - ein unlesbarer Wert rechnet NICHTS (Regel 1)."""
+    t_ = str(text or "").replace("%", "").replace(",", ".").strip()
+    if not t_:
+        return None
+    try:
+        v = float(t_)
+    except ValueError:
+        return None
+    if not (0.0 <= v <= 100.0):
+        return None
+    return round(v, 2)

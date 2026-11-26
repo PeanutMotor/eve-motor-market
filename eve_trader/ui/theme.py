@@ -712,6 +712,19 @@ _CHECK_ICON = asset_pfad("check.svg")
 # Knopf blieb eine leere Flaeche. Also eigene Pfeil-Grafiken im
 # Symbol-Stahlton (dieselbe Formsprache wie icons.py).
 _SPIN_UP = asset_pfad("spin_up.svg")
+# AUFKLAPP-PFEILE DER BAEUME (emm1020, Discord-Nutzer 23.11.2026: "blau auf
+# blau", kaum zu sehen). Bis hierher zeichnete Qt seine eigenen - klein,
+# dunkel, an kein Theme gebunden. Jetzt eigene, 16 px, hell auf dunklen
+# Themes und dunkel auf dem hellen (`THEME_HELL`), beim Ueberfahren Cyan.
+# Dieselben drei Farben stecken in den branch_*.svg UND in
+# icons.klapp_pixmap (emm1021) - Baum und Karte sehen gleich aus.
+KLAPP_HELL, KLAPP_DUNKEL, KLAPP_HOVER = "#E6EEF7", "#2B323A", "#4FD1C5"
+_BRANCH = {
+    False: (asset_pfad("branch_zu.svg"), asset_pfad("branch_auf.svg")),
+    True: (asset_pfad("branch_zu_hell.svg"), asset_pfad("branch_auf_hell.svg")),
+}
+_BRANCH_HOVER = (asset_pfad("branch_zu_hover.svg"),
+                 asset_pfad("branch_auf_hover.svg"))
 _SPIN_DOWN = asset_pfad("spin_down.svg")
 
 # SENKRECHTES POLSTER EINER TABELLENZELLE (emm515, Nutzer 11.10.2026:
@@ -799,6 +812,7 @@ QListView::indicator {{
     border-radius: {RAD_KLEIN};
     background: {PANEL2};
 }}
+QCheckBox:disabled, QRadioButton:disabled {{ color: {MUTED}; }}
 QCheckBox::indicator:hover, QTreeView::indicator:hover,
 QTableView::indicator:hover, QListView::indicator:hover {{
     border-color: {CYAN};
@@ -914,6 +928,10 @@ QTreeWidget {{ background: {PANEL}; border: 1px solid {BORDER}; color: {TEXT};
     alternate-background-color: {PANEL2};
     font-family: {FONT}; }}
 QTreeWidget::item {{ padding: 2px; }}
+QTreeView::branch:has-children:closed {{ image: url({_BRANCH[bool(THEME_HELL)][0]}); }}
+QTreeView::branch:has-children:open {{ image: url({_BRANCH[bool(THEME_HELL)][1]}); }}
+QTreeView::branch:has-children:closed:hover {{ image: url({_BRANCH_HOVER[0]}); }}
+QTreeView::branch:has-children:open:hover {{ image: url({_BRANCH_HOVER[1]}); }}
 QTreeWidget::item:selected {{ background: #1E3A40; color: {CYAN}; }}
 
 QStatusBar {{ background: {PANEL2}; color: {MUTED}; border-top: 1px solid {BORDER}; }}

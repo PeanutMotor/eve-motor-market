@@ -836,6 +836,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.setWindowIcon(icons.logo_icon())
         self.resize(1040, 720)
         self.settings = config.load_settings()
+        # Zusaetzliche NPC-Stationen als Hub (emm952) - VOR dem Aufbau der
+        # Hub-Boxen, die sie anbieten.
+        hubs.extra_setzen(self.settings.get("npc_hubs_extra"))
         store.init_db()
         # STARTZEIT IN SCHRITTEN (zweite Start-Messung des Nutzers 27.09.2026:
         # Hauptfenster 6,8 s, das Profil mischt aber alle Threads). Je Schritt
@@ -938,8 +941,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # emm824: "Market Stocks" - HIER UND in der keys-Liste von
         # _build_shell an derselben Stelle (nach build/pi), sonst
         # verschieben sich alle folgenden Tabs (die Firesales/PI-Falle).
-        self._build_market_stocks_tab()
-        _lzm("MainWindow: market stocks tab")
+        # (emm1048: `_build_market_stocks_tab()` laeuft jetzt weiter unten,
+        # NACH `_build_assets_tab()` - die Seite haengt im Industry-Stapel
+        # und braucht dort die Nummer 8 hinter Assets (7).)
         self._build_region_tab()
         _lzm("MainWindow: region tab")
         self._build_firesales_tab()
@@ -966,6 +970,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Der "Heute"-Reiter (emm856) ist KOMPLETT raus (emm871,
         # Nutzer: "mhh ne, weg damit").
         self._build_assets_tab()
+        # DOCTRINES (BETA) IST EINE SEITE IM INDUSTRY-REITER (emm1048, Nutzer
+        # 26.11.2026: "koennen wir den tab doctrines Beta in die rechte
+        # Sidebar nehmen von Industry?"). NACH Assets, weil beide Seiten per
+        # addWidget an den Stapel gehaengt werden und der Leisten-Knopf die
+        # Nummer 8 traegt (Assets = 7). Kein addTab mehr - die keys-Liste in
+        # `_build_shell` kennt "stocks" deshalb nicht mehr.
+        self._build_market_stocks_tab()
+        _lzm("MainWindow: market stocks tab")
         # "mstats" ist der LETZTE addTab (emm894) - siehe die keys-Liste
         # in `_build_shell`, wo es ebenfalls hinten steht.
         self._build_mstats_tab()
@@ -1059,7 +1071,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.g_struct_btn.setToolTip(t(
             "Structure: add an Upwell structure as a trading place (needs a "
               "linked character with market/docking access and the "
-              "structure scope). Selectable in the dropdown afterwards."))
+              "structure scope) - or any NPC station. How to copy it: dock "
+              "there in game, right-click the structure/station name and "
+              "choose \u201eCopy Info\u201c, then paste it here. Selectable in "
+              "the dropdown afterwards."))
         self.g_struct_btn.clicked.connect(self.add_structure)
         tb.addWidget(self.g_struct_btn)
         # ENTFERNEN PER RECHTSKLICK auf die Hub-Box (Nutzer 19.09.2026: "gibt
@@ -1158,6 +1173,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             lambda _i: self._standort_pruefen())
         self.g_hub.currentIndexChanged.connect(
             lambda _i: self._standort_pruefen())
+        # CHARAKTER JE HUB (emm954, Discord Robust: "Every time I select a
+        # hub, I also need to select the character for that Hub again").
+        self.g_char.currentIndexChanged.connect(
+            lambda _i: self._hub_char_merken())
+        self.g_hub.currentIndexChanged.connect(
+            lambda _i: self._hub_char_holen())
+        # MARKET STATS UND FAVORITEN RECHNEN GEGEN DEN GLOBALEN HUB (emm970,
+        # Nutzer 21.11.2026: "weil ich jita nicht als Global hub ausgewaehlt
+        # hatte plus danach musste ich nochmal den refresh button druecken").
+        self.g_hub.currentIndexChanged.connect(
+            lambda _i: self._ms_hub_gewechselt())
         self._ort_timer = QTimer(self)
         self._ort_timer.setInterval(90000)     # Standort aendert sich, wenn man fliegt
         self._ort_timer.timeout.connect(self._standort_pruefen)
@@ -1895,7 +1921,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # "mstats" (emm894) steht HINTEN - und sein `_build_mstats_tab()`
         # ist entsprechend der LETZTE addTab-Aufruf. Jede andere Position
         # verschoebe die keys->Widget-Zuordnung aller folgenden Reiter.
-        keys = ["portfolio", "deals", "swing", "build", "stocks", "region",
+        # "stocks" (Doctrines) STEHT HIER NICHT MEHR (emm1048) - Seite im
+        # Industry-Stapel wie Assets, kein addTab.
+        keys = ["portfolio", "deals", "swing", "build", "region",
                 "firesales", "shopping", "sell", "orders", "profit",
                 "transactions", "market", "characters", "settings",
                 "mstats"]
@@ -1916,7 +1944,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                   "swing": t("Swing Trade"), "build": t("Industry"),
                   "region": t("Regional Trading"),
                   "firesales": t("Firesales"), "pi": t("PI"),
-                  "stocks": t("Doctrines (Beta)"),   # emm919, Beta: emm946
+                  "stocks": t("Doctrines"),   # emm919; Beta emm946, wieder raus emm1005
                   "assets": t("Assets"),
                   "mstats": t("Market stats")}
         self._tab_labels = labels
@@ -1930,8 +1958,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # addTab-Reihenfolge, beide sind hier bewusst gleich gehalten.
         # "assets" ist seit emm887 kein Hauptreiter mehr, sondern eine
         # Seite im Industry-Reiter (Leiste, unter "Industry jobs").
-        self._paid_keys = ["deals", "swing", "region", "firesales", "build",
-                           "stocks"]
+        self._paid_keys = ["deals", "swing", "region", "firesales", "build"]
         if config.PI_AKTIV:                     # emm803: PI eingelagert
             self._paid_keys.append("pi")
         self._nav_buttons = {}
@@ -2814,7 +2841,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.statusBar().showMessage(t("No character linked."))
             return
         _gc = self.g_char.currentData() if hasattr(self, "g_char") else None
-        cid = _gc if _gc not in (None, "all") else chars[0]["character_id"]
+        cid = _gc if _gc not in (None, "all") else store.erst_verknuepfter_id()
         send_name = next((c.get("character_name", str(cid))
                           for c in chars if c["character_id"] == cid),
                          str(cid))
@@ -3434,7 +3461,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 lbl = store.get_scan_label()
             except Exception:
                 return True      # unbekannt -> nicht bevormunden
-        return any(lbl == _l for _k, _l, _r, _s in hubs.NPC_HUBS)
+        # AUCH EINE ZUSAETZLICHE NPC-STATION IST EIN HUB (emm952) - sonst
+        # verloere das Portfolio nach ihrem Scan jede Verkaufs-Empfehlung.
+        return any(lbl == _l for _k, _l, _r, _s in hubs.npc_hubs())
 
     def _sell_ready(self, h, quelle_ok=None):
         """Ready to be SOLD NOW: bekannter Einkaufspreis und die NETTO-Marge
@@ -3471,6 +3500,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     # PORTFOLIO-KARTE "ORDERS LAUFEN AUS" (emm937)
     PF_ABLAUF_TAGE = (3, 7, 20)
 
+    # Zeilenhoehe / Zellenrand der Karte "Orders running out" (emm975,
+    # gemessen): Knopf 24 px + 12 px Zellenrand + Luft.
+    PF_ABLAUF_ZEILE = 40
+    PF_ABLAUF_RAND = 14
+
     def _pf_ablauf_karte(self):
         """Karte rechts im Portfolio: eigene offene Orders, deren Laufzeit
         bald endet. Quelle ist der gespeicherte Order-Stand
@@ -3502,10 +3536,46 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.pf_ablauf_cb.currentIndexChanged.connect(
             lambda _i=0: self._pf_ablauf_gewaehlt())
         kopf.addWidget(self.pf_ablauf_cb)
+        # ORDER DIREKT ANPASSEN (emm974, Nutzer 22.11.2026: "jetzt moechte ich
+        # dass man da direkt die order modifizieren kann und wieder ganz
+        # hochstellen kann im Markt, aber nur wenn es sich lohnt natuerlich so
+        # wie order updates halt auch funktioniert"). Der Knopf laedt DENSELBEN
+        # Stand wie "Order update" (`_load_order_mods`) - keine zweite Rechnung.
+        self.pf_ablauf_pruefen = _btn_icon(QPushButton(t("Check prices")), "refresh")
+        self.pf_ablauf_pruefen.setToolTip(t(
+            "Checks every order of this list at ITS place (same check as "
+            "\u201eOrder update\u201c) \u2013 the hub at the top does not matter. "
+            "After that every order shows the new price and whether adjusting "
+            "it is still worth it."))
+        self.pf_ablauf_pruefen.clicked.connect(
+            lambda _c=False: self._pf_ablauf_pruefen_alle())
+        kopf.addWidget(self.pf_ablauf_pruefen)
+        # "NEXT" (emm976, Nutzer "1 ja"): geht nacheinander die Orders durch,
+        # die sich noch lohnen - Markt oeffnen, Preis kopieren, weiter.
+        self.pf_ablauf_next = _btn_icon(QPushButton(t("Next")), "play")
+        self.pf_ablauf_next.setToolTip(t(
+            "Goes through the orders that are still worth adjusting, one "
+            "after another: opens the market in game and copies the new "
+            "price. Orders marked red are skipped."))
+        self.pf_ablauf_next.clicked.connect(lambda _c=False: self._pf_ablauf_next())
+        kopf.addWidget(self.pf_ablauf_next)
+        # NICHT LOHNENDE AUSBLENDEN (emm979, Nutzer 22.11.2026 "1 ja"): die
+        # Liste zeigt dann nur, was man noch anfassen will. Gemerkt.
+        self.pf_ablauf_nur_ok = QCheckBox(t("Hide not worth it"))
+        self.pf_ablauf_nur_ok.setIcon(icons.icon("eye"))
+        self.pf_ablauf_nur_ok.setToolTip(t(
+            "Hides the orders marked red after \u201eCheck prices\u201c (loss, or "
+            "the fees already eat the profit) \u2013 let those run out. Orders "
+            "not checked yet stay visible."))
+        self.pf_ablauf_nur_ok.setChecked(
+            bool(self.settings.get("pf_ablauf_nur_ok", False)))
+        self.pf_ablauf_nur_ok.toggled.connect(
+            lambda _an: self._pf_ablauf_nur_ok_gesetzt())
+        kopf.addWidget(self.pf_ablauf_nur_ok)
         v.addLayout(kopf)
-        tbl = QTableWidget(0, 6)
+        tbl = QTableWidget(0, 7)
         tbl.setHorizontalHeaderLabels([
-            t("Item"), t("Type"), t("Qty left"), t("Price"),
+            t("Item"), t("Type"), t("Qty left"), t("Price"), t("New price"),
             t("Time left"), ""])
         tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         tbl.setSelectionBehavior(QTableWidget.SelectRows)
@@ -3513,8 +3583,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         _hh = tbl.horizontalHeader()
         _hh.setSectionResizeMode(0, _QHV937.Stretch)
-        for _c in range(1, 6):
+        for _c in range(1, 7):
             _hh.setSectionResizeMode(_c, _QHV937.ResizeToContents)
+        # Zeilen so hoch wie der "Modify"-Knopf (26 px) plus Rand - im Bild
+        # war er unten angeschnitten (emm974).
+        # GEMESSEN (emm975, echtes Fenster): die QSS-Regel der Tabellenzelle
+        # nimmt dem Zell-Widget 12 px Hoehe und 12 px Breite. Bei 32 px
+        # Zeilenhoehe blieben den 24 px hohen Knoepfen nur 20 px (unten
+        # angeschnitten, Nutzer-Bild 22.11.2026).
+        tbl.verticalHeader().setDefaultSectionSize(self.PF_ABLAUF_ZEILE)
         tbl.cellDoubleClicked.connect(
             lambda r, _c: self._pf_ablauf_markt(r))
 
@@ -3525,10 +3602,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 return
             _tid0, _nm0 = int(_c0.data(Qt.UserRole)), _c0.text()
             menu, akt = self._ms_item_menue_bauen(
-                _tid0, _nm0, menu=kontext_menue(_t))
+                _tid0, _nm0, menu=kontext_menue(_t),
+                tabelle=_t, zeile=_it0.row())
             chosen = menu.exec(_t.viewport().mapToGlobal(pos))
             if chosen is not None and chosen in akt:
-                self._ms_item_menue_ausfuehren(akt[chosen], _tid0, _nm0)
+                # MEHRERE MARKIERTE ZEILEN (emm971, Nutzer 21.11.2026:
+                # "mehrere items selektieren und add shopping List
+                # funktioniert nicht") - die Einkaufsliste bekommt ALLE.
+                _wahl971 = self._ms_tabellen_wahl(_t, _it0.row())
+                if akt[chosen] == "einkauf" and len(_wahl971) > 1:
+                    self._ms_mehrere_in_den_wagen(_wahl971)
+                else:
+                    self._ms_item_menue_ausfuehren(akt[chosen], _tid0, _nm0)
         kopier_menue(tbl, _menue937)
         self.pf_ablauf_tbl = tbl
         v.addWidget(tbl, 1)
@@ -3537,6 +3622,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.pf_ablauf_leer.setWordWrap(True)
         v.addWidget(self.pf_ablauf_leer)
         return card
+
+    def _pf_ablauf_nur_ok_gesetzt(self):
+        self.settings["pf_ablauf_nur_ok"] = bool(
+            self.pf_ablauf_nur_ok.isChecked())
+        config.save_settings_async(self.settings)
+        self._pf_next_idx = 0
+        self._pf_ablauf_fuellen()
 
     def _pf_ablauf_gewaehlt(self):
         self.settings["pf_ablauf_tage"] = int(
@@ -3548,6 +3640,213 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _c0 = self.pf_ablauf_tbl.item(int(row), 0)
         if _c0 is not None and _c0.data(Qt.UserRole):
             self.open_ingame_market(int(_c0.data(Qt.UserRole)))
+
+    def _pf_ablauf_vorschlag(self, order_id, is_buy):
+        """Was "Order update" zu DIESER Order sagt (emm974) - gelesen aus den
+        dort gerechneten Zeilen (`_ordmod_buy` / `_ordmod_sell`), NICHT neu
+        gerechnet (Regel 9). None: die Order ist noch nicht geprueft (anderer
+        Hub / anderer Charakter / "Check prices" nie gedrueckt).
+
+        -> {"preis", "art", "ok", "grund", "zeile"}  ("ok" = lohnt sich)
+        art   "anpassen": unter-/ueberboten, Preis = der neue aus Order update
+              "erneuern": steht schon vorn - ein Tick besser als der eigene
+              Preis genuegt, damit die Order im Spiel geaendert werden kann
+              und ihre Laufzeit neu beginnt.
+        grund None | "verlust" | "gebuehren" | "ziel" (unter Ziel-Marge:
+              lohnt noch, aber weniger als geplant)."""
+        try:
+            _oid = int(order_id)
+        except (TypeError, ValueError):
+            return None
+        # Zuerst der Stand der Karte selbst (emm975, je Ort geprueft), sonst
+        # der von "Order update" am Hub oben.
+        _r = (getattr(self, "_pf_ordmod", None) or {}).get(_oid)
+        if _r is None:
+            _zeilen = getattr(self, "_ordmod_buy" if is_buy else "_ordmod_sell",
+                              None) or []
+            _r = next((x for x in _zeilen
+                       if x.get("order_id") and int(x["order_id"]) == _oid
+                       and not x.get("erledigt884")), None)
+        if _r is None:
+            return None
+        if _r.get("flag"):
+            _preis, _art = float(_r.get("newp") or 0.0), "anpassen"
+        else:
+            _mine = float(_r.get("mine") or 0.0)
+            _preis = (self._overbid_price(_mine) if is_buy
+                      else self._undercut_price(_mine))
+            _art = "erneuern"
+        if not _preis or _preis <= 0:
+            return None
+        if _r.get("loss"):
+            _grund = "verlust"
+        elif _r.get("fee_wiped_out"):
+            _grund = "gebuehren"
+        elif _r.get("under_target"):
+            _grund = "ziel"
+        else:
+            _grund = None
+        return {"preis": _preis, "art": _art, "grund": _grund,
+                "ok": _grund in (None, "ziel"), "zeile": _r}
+
+    def _pf_ablauf_min(self, order_id):
+        """Knopf "Min profit" der Karte (emm976): Markt oeffnen und den
+        Mindestgewinn-Preis kopieren - derselbe Preis (`minp`) und derselbe
+        Kopierweg wie in Order update. -> True, wenn kopiert."""
+        _v = self._pf_ablauf_vorschlag(order_id, False)
+        _r = (_v or {}).get("zeile") or {}
+        if not _r.get("minp"):
+            return False
+        self.open_ingame_market(int(_r["tid"]), _r.get("char_id"))
+        return bool(self._copy_order_price(
+            _r["minp"], _r.get("name") or "", is_buy=False))
+
+    def _pf_ablauf_next(self):
+        """"Next" der Karte (emm976): die naechste Order, die sich noch lohnt
+        (gruen oder amber), in der Reihenfolge der Tabelle. Ungeprueft ->
+        erst pruefen. -> order_id der bearbeiteten Order oder None."""
+        tbl = getattr(self, "pf_ablauf_tbl", None)
+        if tbl is None:
+            return None
+        _alle, _gut = [], []
+        for _r in range(tbl.rowCount()):
+            _c0 = tbl.item(_r, 0)
+            if _c0 is None or not _c0.data(Qt.UserRole + 1):
+                continue
+            _oid, _zb = int(_c0.data(Qt.UserRole + 1)), bool(_c0.data(Qt.UserRole + 2))
+            _v = self._pf_ablauf_vorschlag(_oid, _zb)
+            _alle.append(_v)
+            if _v is not None and _v["ok"]:
+                _gut.append((_r, _oid, _zb))
+        if _alle and all(_v is None for _v in _alle):
+            self._flash_tip(t("Checking the prices first \u2026"))
+            self._pf_ablauf_pruefen_alle()
+            return None
+        if not _gut:
+            self._flash_tip(t("No order here is worth adjusting."))
+            return None
+        _idx = int(getattr(self, "_pf_next_idx", 0) or 0)
+        if _idx >= len(_gut):
+            _idx = 0
+            # GENAU EINE lohnende Order (emm979, Nutzer 22.11.2026: "ich
+            # glaube der next button bleibt beim letzten item haengen") -
+            # dann gibt es kein "naechstes"; das sagen statt "von vorn".
+            self._flash_tip(
+                t("Only this one order is worth adjusting.") if len(_gut) == 1
+                else t("End of list \u2013 starting over"))
+        _r, _oid, _zb = _gut[_idx]
+        self._pf_next_idx = _idx + 1
+        tbl.selectRow(_r)
+        tbl.scrollToItem(tbl.item(_r, 0))
+        self._pf_ablauf_anpassen(_oid, _zb)
+        return _oid
+
+    def _hub_fuer_ort(self, location_id):
+        """(region, station, structure, standings_key, name) des Hubs aus der
+        Hub-Liste oben, der an `location_id` liegt - oder None, wenn der Ort
+        nicht in der Liste steht (emm975). Dieselben Angaben, die
+        `_active_hub` / `_active_hub_key` fuer den GEWAEHLTEN Hub liefern."""
+        try:
+            _loc = int(location_id)
+        except (TypeError, ValueError):
+            return None
+        _cb = getattr(self, "g_hub", None)
+        if _cb is None:
+            return None
+        for _i in range(_cb.count()):
+            _d = _cb.itemData(_i)
+            if isinstance(_d, dict) and _d.get("structure_id"):
+                if int(_d["structure_id"]) == _loc:
+                    return ((_d.get("region_id") or config.FORGE_REGION), None,
+                            _d, None, _cb.itemText(_i))
+            elif isinstance(_d, int):
+                _h = hubs.aufloesen(_d)
+                if _h is not None and _h[3] and int(_h[3]) == _loc:
+                    _key = next((_k for _k, _lbl, _r, _s in hubs.NPC_HUBS
+                                 if _s == _h[3]), None)
+                    return (_h[2], _h[3], None, _key, _cb.itemText(_i))
+        return None
+
+    def _pf_ablauf_pruefen_alle(self):
+        """"Check prices" der Karte (emm975): die auslaufenden Orders nach ORT
+        gruppieren und je Ort den Lauf von "Order update" fahren - einer nach
+        dem anderen. Orte, die nicht in der Hub-Liste stehen, bleiben
+        ungeprueft und werden am Ende genannt. -> Anzahl der Orte im Lauf."""
+        if getattr(self, "_pf_pruef_laeuft", False) or getattr(
+                self, "_ord_laeuft", False):
+            return 0
+        try:
+            _tage = int(self.pf_ablauf_cb.currentData() or 7)
+            _zeilen = store.auslaufende_orders(self._pf_char_cid(), _tage)
+        except Exception:
+            _zeilen = []
+        _je_ort = {}
+        for _z in _zeilen:
+            _je_ort.setdefault(_z.get("location_id"), set()).add(
+                int(_z["character_id"]))
+        _schlange, _ohne = [], 0
+        for _loc, _cids in _je_ort.items():
+            _hub = self._hub_fuer_ort(_loc)
+            if _hub is None:
+                _ohne += sum(1 for _z in _zeilen if _z.get("location_id") == _loc)
+            else:
+                _schlange.append((_hub, sorted(_cids)))
+        if not _schlange:
+            self.statusBar().showMessage(
+                t("{n} order(s) are at places that are not in your hub list "
+                  "\u2013 add the place with \u201e+\u201c next to the hub box.").format(
+                      n=_ohne) if _ohne else t("No order to check."))
+            return 0
+        self._pf_pruef_laeuft = True
+        self._pf_next_idx = 0                    # "Next" beginnt von vorn
+        self.__dict__["_pf_ordmod"] = {}
+        _anz = len(_schlange)
+
+        def _weiter(fehler=False):
+            if not _schlange:
+                self._pf_pruef_laeuft = False
+                self.statusBar().showMessage(
+                    t("Orders checked at {n} place(s).").format(n=_anz)
+                    + ((" " + t("{n} order(s) are at places that are not in your "
+                                "hub list \u2013 add the place with \u201e+\u201c next to "
+                                "the hub box.").format(n=_ohne)) if _ohne else ""))
+                return
+            _hub, _cids = _schlange.pop(0)
+            self._ord_karte_auftrag = {"ort": _hub, "cids": _cids,
+                                       "danach": _weiter}
+            self._load_order_mods()
+        _weiter()
+        return _anz
+
+    def _pf_ablauf_anpassen(self, order_id, is_buy):
+        """Knopf "Modify" in der Karte: Markt im Spiel oeffnen und den neuen
+        Preis kopieren - DERSELBE Weg wie in Order update
+        (`_copy_order_price` mit seinen Rueckfragen bei Verlust, aufgezehrten
+        Gebuehren und unter Ziel-Marge). -> True, wenn wirklich kopiert."""
+        _v = self._pf_ablauf_vorschlag(order_id, is_buy)
+        if _v is None:
+            # Noch nicht geprueft: selbst pruefen statt den Nutzer zu
+            # schicken (emm975) - danach zeigt die Zeile den Preis.
+            self._flash_tip(t("Checking the prices first \u2026"))
+            self._pf_ablauf_pruefen_alle()
+            return False
+        _r = _v["zeile"]
+        self.open_ingame_market(int(_r["tid"]), _r.get("char_id"))
+        _ok = self._copy_order_price(
+            _v["preis"], _r.get("name") or "",
+            loss=bool(_r.get("loss")), fee_wiped=bool(_r.get("fee_wiped_out")),
+            is_buy=bool(is_buy), best_sell=_r.get("best_sell", 0),
+            cost=_r.get("cost", 0), mod_count=int(_r.get("mod_count", 0) or 0),
+            cum_fee=_r.get("cum_fee", 0),
+            under_target=bool(_r.get("under_target")),
+            marge_neu=float(_r.get("marge_neu", 0) or 0),
+            ziel=float(_r.get("ziel", 0) or 0))
+        if _ok and _r.get("order_id"):
+            try:                       # Uhr starten wie "Next" in Order update
+                store.order_intervall_start(_r["order_id"], _r.get("issued") or "")
+            except Exception as _e974:
+                self._log_exception("Order-Intervall: Uhr starten", str(_e974))
+        return bool(_ok)
 
     @staticmethod
     def _pf_restzeit_text(rest_s):
@@ -3571,6 +3870,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             zeilen = store.auslaufende_orders(self._pf_char_cid(), _tage)
         except Exception:
             zeilen = []
+        # NICHT LOHNENDE AUSBLENDEN (emm979): nur GEPRUEFTE mit rotem Urteil.
+        _versteckt979 = 0
+        if bool(self.settings.get("pf_ablauf_nur_ok", False)):
+            _sicht979 = []
+            for _z979 in zeilen:
+                _v979 = self._pf_ablauf_vorschlag(_z979["order_id"],
+                                                  _z979["is_buy"])
+                if _v979 is not None and not _v979["ok"]:
+                    _versteckt979 += 1
+                else:
+                    _sicht979.append(_z979)
+            zeilen = _sicht979
         _namen = store.cached_names([z["type_id"] for z in zeilen])
         try:
             _chars = {int(c["character_id"]): c.get("character_name")
@@ -3579,10 +3890,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _chars = {}
         tbl.setSortingEnabled(False)
         tbl.setRowCount(len(zeilen))
+        _breit975 = 0
         for r, z in enumerate(zeilen):
             _tid = int(z["type_id"])
             it0 = QTableWidgetItem(_namen.get(_tid) or f"#{_tid}")
             it0.setData(Qt.UserRole, _tid)
+            it0.setData(Qt.UserRole + 1, int(z["order_id"]))      # emm976: Next
+            it0.setData(Qt.UserRole + 2, bool(z["is_buy"]))
             _ic = self._table_icon(_tid)
             if _ic:
                 it0.setIcon(_ic)
@@ -3600,6 +3914,39 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             it3.setToolTip(t("Exactly: {isk} ISK").format(
                 isk=f"{z['price']:,.2f}"))
             tbl.setItem(r, 3, it3)
+            # NEUER PREIS (emm974) - aus dem Stand von "Order update".
+            _v974 = self._pf_ablauf_vorschlag(z["order_id"], z["is_buy"])
+            if _v974 is None:
+                it974 = NumericItem("\u2013", None)
+                it974.setForeground(QColor(theme.MUTED))
+                it974.setToolTip(t(
+                    "Not checked yet: press \u201eCheck prices\u201c."))
+            else:
+                # GENAU, nicht gekuerzt (im Bild gemessen: ein Tick unter
+                # 6.4m stand wieder als "6.4m" da - der Unterschied, um den
+                # es geht, war unsichtbar).
+                it974 = NumericItem(isk(_v974["preis"], suffix=False),
+                                    _v974["preis"])
+                it974.setForeground(QColor(
+                    theme.RED if not _v974["ok"] else
+                    theme.AMBER if _v974["grund"] == "ziel" else theme.GREEN))
+                it974.setToolTip(
+                    t("Exactly: {isk} ISK").format(isk=f"{_v974['preis']:,.2f}")
+                    + "\n" + (
+                        t("You are under-/outbid \u2013 this price puts the order "
+                          "back on top.") if _v974["art"] == "anpassen" else
+                        t("Your order is already on top \u2013 one tick better is "
+                          "enough to modify it in game, which restarts its time "
+                          "on the market."))
+                    + "\n" + {
+                        "verlust": t("NOT worth it: at this price you make a loss."),
+                        "gebuehren": t("NOT worth it: the broker fees of earlier "
+                                       "changes already eat the profit."),
+                        "ziel": t("Worth it, but below your target margin."),
+                        None: t("Worth it."),
+                    }[_v974["grund"]])
+            it974.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            tbl.setItem(r, 4, it974)
             it4 = NumericItem(self._pf_restzeit_text(z["rest_s"]),
                               z["rest_s"])
             it4.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -3609,8 +3956,50 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             it4.setToolTip(t("Expires {datum}").format(
                 datum=_dt937.datetime.fromtimestamp(z["ablauf_ts"])
                 .strftime("%d.%m.%Y %H:%M")))
-            tbl.setItem(r, 4, it4)
-            tbl.setItem(r, 5, QTableWidgetItem(""))
+            tbl.setItem(r, 5, it4)
+            tbl.setItem(r, 6, QTableWidgetItem(""))
+            _zelle974 = QWidget()
+            _zl974 = QHBoxLayout(_zelle974)
+            _zl974.setContentsMargins(4, 1, 4, 1)
+            _zl974.setSpacing(6)
+            _mod974 = _btn_icon(QPushButton(t("Modify")), "copy")
+            _mod974.setCursor(Qt.PointingHandCursor)
+            _mod974.setToolTip(t(
+                "Opens the market in game and copies the new price \u2013 right-"
+                "click your order there, \u201emodify\u201c and paste. Warns first "
+                "when it is not worth it, like \u201eOrder update\u201c."))
+            # IMMER KLICKBAR (emm975): ungeprueft startet der Klick die
+            # Pruefung selbst. Hoehe wie der Markt-Knopf daneben - mit den
+            # 26 px von `knopf_passend` war er unten angeschnitten
+            # (Nutzer-Bild 22.11.2026).
+            knopf_passend(_mod974)
+            _mod974.setFixedHeight(24)
+            _mod974.clicked.connect(
+                lambda _c=False, _o=z["order_id"], _b=z["is_buy"]:
+                    self._pf_ablauf_anpassen(_o, _b))
+            _zl974.addWidget(_mod974)
+            # "MIN PROFIT" BEI VERLUST (emm976, Nutzer "2 ja") - wie in Order
+            # update (emm926): der niedrigste Preis, der noch Gewinn bringt.
+            _minp976 = ((_v974 or {}).get("zeile") or {}).get("minp")
+            if (_v974 is not None and not z["is_buy"]
+                    and _v974["grund"] == "verlust" and _minp976):
+                _min976 = _btn_icon(QPushButton(t("Min profit")), "copy")
+                _min976.setCursor(Qt.PointingHandCursor)
+                _min976.setToolTip(t(
+                    "Copy {price} – the lowest price that still earns "
+                    "{pct} % net (after tax, broker and relist fees). Not "
+                    "the cheapest on the market, but no loss.").format(
+                        price=isk(_minp976),
+                        pct=f"{float(_v974['zeile'].get('fee_min', 0) or 0):g}"))
+                _min976.setStyleSheet(
+                    f"QPushButton{{background:{theme.AMBER}; border:1px solid {theme.AMBER}; "
+                    f"color:{theme.BG}; border-radius:{theme.RAD}; padding:2px 6px;}}"
+                    f"QPushButton:hover{{background:{theme.PANEL2}; color:{theme.AMBER};}}")
+                knopf_passend(_min976)
+                _min976.setFixedHeight(24)
+                _min976.clicked.connect(
+                    lambda _c=False, _o=z["order_id"]: self._pf_ablauf_min(_o))
+                _zl974.addWidget(_min976)
             _kn = QPushButton()
             _kn.setIcon(icons.icon("globe"))
             _kn.setToolTip(t("Open market in game"))
@@ -3618,14 +4007,25 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _kn.setFixedSize(30, 24)
             _kn.clicked.connect(
                 lambda _c=False, _t=_tid: self.open_ingame_market(_t))
-            tbl.setCellWidget(r, 5, _kn)
+            _zl974.addWidget(_kn)
+            tbl.setCellWidget(r, 6, _zelle974)
+            _breit975 = max(_breit975, _zelle974.sizeHint().width())
         _kopf937 = tbl.horizontalHeader()
+        # KNOPF-SPALTE SO BREIT WIE IHRE KNOEPFE + Zellenrand (emm975):
+        # `ResizeToContents` kennt Zell-WIDGETS nicht - die beiden Knoepfe
+        # lagen uebereinander.
+        if _breit975:
+            from PySide6.QtWidgets import QHeaderView as _QHV975
+            _kopf937.setSectionResizeMode(6, _QHV975.Fixed)
+            tbl.setColumnWidth(6, _breit975 + self.PF_ABLAUF_RAND)
         _kopf937.setSortIndicator(-1, Qt.AscendingOrder)   # dringendste oben
         tbl.setSortingEnabled(True)
+        _hin979 = (t("{n} order(s) hidden \u2013 not worth adjusting.").format(
+            n=_versteckt979) if _versteckt979 else "")
         self.pf_ablauf_leer.setText(
-            "" if zeilen else
+            _hin979 if (zeilen or _versteckt979) else
             t("No open order runs out within {n} days.").format(n=_tage))
-        self.pf_ablauf_leer.setVisible(not zeilen)
+        self.pf_ablauf_leer.setVisible(bool(_hin979) or not zeilen)
 
         def _bilder_nach(_t=tbl):
             try:
@@ -4064,6 +4464,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         a_open = m.addAction(t("Open market in game"))
         a_chart = m.addAction(t("Show history"))
         a_cart = m.addAction(t("→ Shopping list"))
+        self._fav_aktion(m, tid, nm, tabelle=self.pf_table, zeile=it.row())
         chosen = m.exec(self.pf_table.viewport().mapToGlobal(pos))
         if chosen == a_open:
             self.open_ingame_market(tid)
@@ -5152,8 +5553,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # cooldown: ESI market orders only refresh every few minutes, so a fresh
         # scan of the SAME hub is reused instead of re-hammering ESI (repeated
         # quick re-scans are exactly what triggers the throttling / slow scans).
+        # HUB-NUMMER -> ECHTE REGION (emm952): `region` kommt als Hub-Nummer
+        # herein (Region eines festen Hubs ODER Stations-Nummer einer
+        # zusaetzlichen NPC-Station). Ab hier ist `region` wieder die Region.
+        hub_id = region
+        region = hubs.region_von(hub_id)
         age = store.snapshot_age_seconds()
-        if (age is not None and age < 120 and store.get_scan_region() == region
+        if (age is not None and age < 120 and store.get_scan_hub() == hub_id
                 and store.get_snapshot() and not getattr(self, "_scan_struct_id", None)):
             n = f"{len(store.get_snapshot()):,}".replace(",", "'")
             secs = int(120 - age)
@@ -5183,9 +5589,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if lbl is not None:
                 lbl.setText(t("Scanning {hub} \u2026").format(hub=hub_label))
         self._scan_struct_id = None      # NPC-Scan → evtl. Struktur-Marker löschen
-        station = hubs.station_for_region(region)
+        station = hubs.station_for_region(hub_id)
         w = Worker(scanner.build_snapshot, with_progress=True, with_cancel=True,
-                   region=region, station=station, hub_label=hub_label)
+                   region=region, station=station, hub_label=hub_label,
+                   hub_id=hub_id)
         w.progress.connect(
             lambda d, t: self._scan_progress(hub_label, d, t))
 
@@ -5207,7 +5614,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # neu rechnen - sonst bliebe "—" bis zum naechsten
             # manuellen Refresh stehen.
             try:
-                if store.hub_source(region) == store.get_hub_source():
+                if store.hub_source(hub_id) == store.get_hub_source():
                     self._prices = self._hub_preise()
                     self._recompute()
             except Exception:
@@ -5262,6 +5669,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._scan_alter_pruefen()
         except Exception:
             pass
+        # WER GERADE AUF DER SEITE STEHT, BEKOMMT DIE NEUEN ZAHLEN (emm995,
+        # Nutzer-Bilder 22.11.2026: Hub auf 4-HWWF, Market scan gedrueckt -
+        # My Blueprints zeigte weiter die Jita-Gewinne). Bis hier rechnete
+        # nur das OEFFNEN der Seite neu (`_bau_nav`, emm985); wer darauf
+        # stehen blieb, sah den alten Stand. Gleiche Frage, gleiche Stelle:
+        # `_econ_neu_wenn_veraltet` - ohne veralteten Stand passiert nichts.
+        try:
+            _bs995 = getattr(self, "b_stack", None)
+            if _bs995 is not None and _bs995.currentIndex() in (1, 5):
+                self._econ_neu_wenn_veraltet()
+        except Exception as _e995:
+            self._log_exception("Gewinne nach dem Scan neu rechnen", str(_e995))
 
     def _scan_progress(self, hub_label, d, t):
         from ..sprache import t as _txt   # `t` ist hier die Seitenzahl
@@ -5294,7 +5713,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if structure:
             self._do_structure_scan(structure, label)
         else:
-            self._do_scan(region, label)
+            self._do_scan(hubs.hub_id_fuer(region, station), label)
 
     def _do_structure_scan(self, structure, label):
         """Scan einer Upwell-Struktur: das ESI liefert das ganze Orderbuch der Struktur
@@ -5402,9 +5821,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # die Warnung nicht fuer immer stumm bleiben.
             QTimer.singleShot(15 * 60 * 1000,
                               lambda: setattr(self, "_scan_laeuft", False))
-        region = self.d_hub.currentData() if hasattr(self, "d_hub") else config.FORGE_REGION
-        label = self.d_hub.currentText() if hasattr(self, "d_hub") else "Jita"
-        self._do_scan(region, label, hintergrund=_hg)
+        # DEN HUB, DEN DER NUTZER SIEHT (emm960). Bis emm959 las diese
+        # Stelle die versteckte Box `d_hub` - die steht nach dem Start immer
+        # auf Jita, weil der gemerkte Hub mit blockierten Signalen in `g_hub`
+        # zurueckgeholt wird. GEMESSEN am echten Fenster: gemerkt Amarr ->
+        # g_hub Amarr, d_hub Jita -> der Start-Scan holte Jita, waehrend oben
+        # Amarr stand. Jetzt derselbe Weg wie der Knopf (`scan_global`).
+        region, station, structure = self._active_hub()
+        label = self.g_hub.currentText() if hasattr(self, "g_hub") else "Jita"
+        if structure:
+            self._do_structure_scan(structure, label)
+        else:
+            self._do_scan(hubs.hub_id_fuer(region, station), label, hintergrund=_hg)
 
     def scan_swing(self):
         region = self.h_hub.currentData() if hasattr(self, "h_hub") else config.FORGE_REGION
@@ -5690,6 +6118,52 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     lbls.remove(lbl)
                 except ValueError:
                     pass
+
+    def _hub_char_schluessel(self):
+        """Woran der gemerkte Charakter haengt: die Hub-Nummer (NPC) oder
+        "struct:<id>" (Struktur). None, wenn nichts gewaehlt ist."""
+        _d = self.g_hub.currentData() if hasattr(self, "g_hub") else None
+        if isinstance(_d, dict) and _d.get("structure_id"):
+            return f"struct:{int(_d['structure_id'])}"
+        if isinstance(_d, int):
+            return str(_d)
+        return None
+
+    def _hub_char_merken(self):
+        """Der oben gewaehlte Charakter gehoert ab jetzt zu DIESEM Hub
+        (emm954). Laeuft bei jeder Charakter-Wahl - nicht, waehrend
+        `_hub_char_holen` ihn gerade selbst einstellt."""
+        if getattr(self, "_hub_char_laeuft", False) or not hasattr(self, "g_char"):
+            return
+        _k = self._hub_char_schluessel()
+        _c = self.g_char.currentData()
+        if _k is None or _c is None:
+            return
+        _alle = dict(self.settings.get("hub_char") or {})
+        if _alle.get(_k) == _c:
+            return
+        _alle[_k] = _c
+        self.settings["hub_char"] = _alle
+        config.save_settings_async(self.settings)
+
+    def _hub_char_holen(self):
+        """Hub gewechselt -> den dort zuletzt benutzten Charakter wieder
+        einstellen (emm954). Ist fuer den Hub nichts gemerkt oder der
+        Charakter nicht mehr verknuepft, bleibt der aktuelle stehen."""
+        if not hasattr(self, "g_char"):
+            return
+        _k = self._hub_char_schluessel()
+        _c = (self.settings.get("hub_char") or {}).get(_k) if _k else None
+        if _c is None:
+            return
+        _i = self.g_char.findData(_c)
+        if _i < 0 or _i == self.g_char.currentIndex():
+            return
+        self._hub_char_laeuft = True
+        try:
+            self.g_char.setCurrentIndex(_i)
+        finally:
+            self._hub_char_laeuft = False
 
     def _hub_merken(self):
         """Die aktuelle Hub-Auswahl in den Einstellungen ablegen - Strukturen
@@ -6987,6 +7461,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             a_open = menu.addAction(t("Open market in game"))
             a_chart = menu.addAction(t("Show history"))
             a_cart = menu.addAction(t("→ Shopping list"))
+            self._fav_aktion(menu, tid, nm, tabelle=tbl, zeile=r, spalte=1)
             chosen = menu.exec(tbl.viewport().mapToGlobal(pos))
             if chosen == a_open:
                 self.open_ingame_market(tid)
@@ -7538,6 +8013,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         a_chart = menu.addAction(t("Show history"))
         a_open = menu.addAction(t("Open market in game"))
         a_buy = menu.addAction(t("→ Shopping list"))
+        self._fav_aktion(menu, tid, name, tabelle=self.deals_table, zeile=row)
         a_batch = None
         if len(sel_rows) > 1:
             a_batch = menu.addAction(
@@ -7572,7 +8048,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         comp = d.get("competitors", 0) or 0
         return max(1, int(round(dv / (comp + 1))))
 
-    def _add_deal_to_cart(self, tid, name, qty=None):
+    def _add_deal_to_cart(self, tid, name, qty=None, quelle="daytrade"):
+        # `quelle` (emm973): "daytrade" = eigene Buy-Order, bleibt aus dem
+        # Multibuy heraus. Market stats uebergibt "" - dort wird sofort aus
+        # den Sell-Orders gekauft (Nutzer 22.11.2026: "Copy Multi buy geht
+        # nicht mehr in Shopping List"; alle 13 Zeilen kamen aus Market stats
+        # und trugen die Daytrade-Marke).
         if tid in self._cart_ids():
             return False
         deals = self._ladder_ctx.get("day", {}).get("deals", {})
@@ -7580,7 +8061,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         sugg = self._deal_default_qty(d) if d else 0   # Tagesvolumen-Vorschlag merken
         if qty is None:
             qty = 1                                    # Standard: 1 Stück
-        store.add_shopping(tid, name, qty, 0, 0, source="daytrade", sugg_qty=sugg)
+        store.add_shopping(tid, name, qty, 0, 0, source=quelle, sugg_qty=sugg)
         return True
 
 
@@ -7626,7 +8107,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # ersten verlinkten. EVE öffnet das Marktfenster nur im Client, in dem
             # genau dieser Charakter eingeloggt ist.
             gc = self.g_char.currentData() if hasattr(self, "g_char") else None
-            cid = gc if gc not in (None, "all") else chars[0]["character_id"]
+            cid = gc if gc not in (None, "all") else store.erst_verknuepfter_id()
         # Name des sendenden Charakters (für die Rückmeldung).
         send_name = next((c.get("character_name", str(cid))
                           for c in chars if c["character_id"] == cid), str(cid))
@@ -7714,7 +8195,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _hh.addStretch()
 
         def _upd(_=False):
-            hdr.setText(f"{'▾' if hdr.isChecked() else '▸'}  {title}")
+            icons.klapp_setzen(hdr, hdr.isChecked(), title)
             inner.setVisible(hdr.isChecked())
             # Obere Hälfte der Trading-Tabs an die neue Höhe anpassen (kein
             # schwarzer Leerraum nach dem Ein-/Ausklappen der Feinfilter).
@@ -10286,8 +10767,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             "QRadioButton{padding:2px 0;}"
             f"QRadioButton::indicator{{width:13px; height:13px; "
             f"border-radius:{theme.RAD}; border:2px solid {theme.MUTED};}}"
-            f"QRadioButton::indicator:checked{{border:2px solid {theme.CYAN}; "
-            f"background:{theme.CYAN};}}"
+            # HAKEN STATT GEFUELLTER FLAECHE (emm1024, Nutzer 24.11.2026:
+            # "kriegt keinen hacken nur so blau ... ich will hacken") -
+            # dasselbe Bild wie jede Checkbox (theme: gruener Rand + Haken).
+            f"QRadioButton::indicator:checked{{border:2px solid {theme.GREEN}; "
+            f"background:{theme.PANEL2}; image:url({theme._CHECK_ICON});}}"
             f"QRadioButton:checked{{color:{theme.CYAN}; font-weight:700;}}")
         for key, lbl, _keys, tip in self._DEPTH_LEVELS:
             rb = QRadioButton(t(lbl))
@@ -10299,6 +10783,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             v.addWidget(rb)
             rb.toggled.connect(
                 lambda checked, _k=key: self._apply_depth(_k) if checked else None)
+            # Checkliste (emm1044): `clicked` kommt nur vom Nutzer, nie vom
+            # Vorbelegen.
+            rb.clicked.connect(lambda *_a: self._cl_merken("tiefe"))
         self._depth_custom_lbl = QLabel(t("\u2022 Own selection"))
         self._depth_custom_lbl.setStyleSheet(f"color:{theme.AMBER};")
         self._depth_custom_lbl.setVisible(_cur is None)
@@ -10431,6 +10918,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             head = QLabel(" " + t("Build or buy?"))
             head.setStyleSheet(f"color:{theme.CYAN}; font-weight:600;")
             pv.addWidget(head)
+        # SPERRE SICHTBAR (emm1027, Nutzer 24.11.2026: "ausserdem kann ich
+        # nichts anklicken") - beim eingefrorenen Plan sind die Haken
+        # absichtlich gesperrt (Sitzung 17), man sah es ihnen aber nicht an.
+        # Die Zeile blendet der Frost-Zweig in rebuild() ein.
+        self._bp_own_frost_lbl = QLabel(
+            t("Plan frozen \u2013 unfreeze it first to change this."))
+        self._bp_own_frost_lbl.setStyleSheet(f"color:{theme.AMBER};")
+        self._bp_own_frost_lbl.setWordWrap(True)
+        pv.addWidget(self._bp_own_frost_lbl)
+        self._bp_own_frost_lbl.hide()
         allkeys = [k for k, _ in self._OWNED_BP_CATS]
         # Pro-Bauplan gespeichert (self._bd_owned_bp), NICHT mehr global -
         # sonst hätte ein Abhaken in EINEM Bauplan alle anderen (auch zukünftige)
@@ -10640,14 +11137,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         hi.setToolTip(t("Manufacturing time implant (Zainou 'Beancounter' Industry BX-80X). "
                         "Detected automatically via ESI (button below) or chosen by hand."))
         g.addWidget(hi, 0, col_implant)
-        chars = store.list_characters()
-        slots_map = self.settings.get("bau_char_slots", {}) or {}
-
-        def _slot_sum(ch):
-            sl = slots_map.get(str(ch["character_id"]))
-            return sum(sl) if sl else -1
-        chars = sorted(chars, key=lambda c: (-_slot_sum(c),
-                                             (c.get("character_name") or "").lower()))
+        # ALPHABETISCH (emm956, Nutzer 18.11.2026 mit Bild: "Runplaner nicht
+        # alphabetisch"). Bis emm955 stand hier "meiste Slots zuerst" - das
+        # war die eine Charakterliste, die emm954 uebersehen hat (Regel 9a).
+        # EINE Reihenfolge fuer alle Listen: die aus store.list_characters().
+        chars = sorted(store.list_characters(),
+                       key=lambda c: (c.get("character_name") or "").lower())
         sels = {key: set(self.settings.get(key, []) or []) for key, _l in self._ROSTER_ROLES}
         # HINWEIS NUR, WENN ETWAS FEHLT (Nutzer, Sitzung 12: "ich hasse Infos,
         # die das Tool ueberladen aussehen lassen"). Ein Charakter ohne jede
@@ -11615,11 +12110,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     _STRUCT_ROLE_JOBCOST = {
         "raitaru": 3.0, "azbel": 4.0, "sotiyo": 5.0,
         "athanor": 0.0, "tatara": 0.0,
+        "astrahus": 0.0, "fortizar": 0.0, "keepstar": 0.0,      # emm983
     }
 
     _STRUCT_ROLE_ME = {
         "raitaru": 1.0, "azbel": 1.0, "sotiyo": 1.0,
         "athanor": 0.0, "tatara": 0.0,
+        "astrahus": 0.0, "fortizar": 0.0, "keepstar": 0.0,      # emm983
     }
 
     def _bau_me_maps(self, ids, groups, reaction_products, cat_me_map=None,
@@ -12018,7 +12515,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         cid = fav.get("character_id") if fav else None
         if not cid:
             chars = store.list_characters()
-            cid = chars[0]["character_id"] if chars else None
+            cid = store.erst_verknuepfter_id() if chars else None
         if not cid:
             return
         client_id = self.settings.get("client_id")
@@ -12331,6 +12828,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if fresh:
             self.settings["bau_transport_rate"] = 0.0
             self.settings["bau_transport_trip_cost"] = 0.0
+            self.settings["bau_transport_min_vol"] = 0.0     # emm961
+            self.settings["bau_transport_min_flat"] = 0.0
             self.settings["bau_extra_cost"] = 0.0
             # Sicherheit ist eine Entscheidung PRO PLAN - ein neuer Plan
             # startet bei der Vorgabe, nicht beim Wert des letzten.
@@ -12392,6 +12891,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self._bd_own_bpc_runs = 0       # neuer Plan -> Runs/BPC-Feld zurückgesetzt
                 self._bd_invention_char = 0     # neuer Plan -> wieder "Bester automatisch"
                 self._bd_inv_split = {}         # neuer Plan -> Invention-Regler ganz links (emm328)
+                self._bd_cl = set()             # neuer Plan -> Checkliste leer (emm1044)
+                self._bd_cl_hand = {}           # ... auch die Hand-Antworten (emm1046)
                 # emm411: Invention-Bedarf des VORIGEN Fensters weg - sonst
                 # zeigten Science-Block und Gesamtzeile beim naechsten Plan
                 # (ohne eigenen Invention-Tab-Aufbau) die alten Blaupausen.
@@ -12451,6 +12952,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self._bd_buy_hub_seite = {}
                 self._bd_multi_hub_an = False
                 self._bd_mh_stand = {}
+                self._bd_mh_pauschal_aus = set()         # emm961
                 self._bd_frozen = None          # neuer Plan -> nicht eingefroren
                 # Verkaufscharakter: bester (guenstigste Gesamtgebuehr).
                 # Standard-Verkaufsort = der Hub oben (emm437, Discord elglebo:
@@ -12500,6 +13002,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # in config.load_settings relevant.
                 self.settings["bau_transport_rate"] = 0.0
                 self.settings["bau_transport_trip_cost"] = 0.0
+                self.settings["bau_transport_min_vol"] = 0.0     # emm961
+                self.settings["bau_transport_min_flat"] = 0.0
                 self.settings["bau_extra_cost"] = 0.0
                 config.save_settings(self.settings)
             self._bd_bp_type = type_id
@@ -12518,6 +13022,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._bd_te_je_ende = dict(_bp_multi.get("te") or {})
             self._bd_own_bpc_je_ende = dict(_bp_multi.get("own_bpc") or {})
             self._bd_own_bpc_runs_je_ende = dict(_bp_multi.get("own_bpc_runs") or {})
+            # KAUF-SCHALTER DES BUENDELS (emm951): plan-eigen, Vorgabe AUS.
+            self._bd_enden_kauf_billig = bool(_bp_multi.get("kauf_billig"))
+            self._bd_enden_kauf_faction = bool(_bp_multi.get("kauf_faction"))
             self._bd_qty = 1
         elif type_id != industry.BUENDEL_ID:
             self._bd_buendel_enden = None
@@ -12526,6 +13033,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._bd_te_je_ende = {}
             self._bd_own_bpc_je_ende = {}
             self._bd_own_bpc_runs_je_ende = {}
+            self._bd_enden_kauf_billig = False
+            self._bd_enden_kauf_faction = False
         elif not getattr(self, "_bd_buendel_enden", None):
             QMessageBox.information(self, t("Multi build plan"),
                                     t("This multi build plan has no end products."))
@@ -13618,7 +14127,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # bleibt 5 (`_bau_page_btns` ist nach Seitennummer sortiert, nicht
         # nach der Reihenfolge in der Leiste - wie bei SETUP, emm470).
         rv.addSpacing(2)
-        b_bfs = page_btn(t("Build from stock (Beta)"), 5, icon="package")
+        b_bfs = page_btn(t("Build from stock"), 5, icon="package")
 
         header(t("PRODUCTION"), theme.GREEN)
         # Nutzer-Wunsch: "Neuer Bauplan" gehört zu PRODUKTION, nicht zu
@@ -13657,6 +14166,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # (_open_multi_bauplan_dialog) ist ausgebaut (Aufraeumen 26.09.2026).
         rv.addSpacing(2)
         b_plans = page_btn(t("My build plans"), 2, icon="copy")
+        # DOCTRINES (BETA) UNTER PRODUCTION (emm1048 in die Leiste geholt;
+        # emm1049, Nutzer 26.11.2026: "Doctrines haette ich gerne unter
+        # Production" - zuerst stand der Knopf unter PLANNING). Seite 8
+        # (hinter Assets = 7).
+        rv.addSpacing(2)
+        # OHNE "(Beta)" (emm1050, Nutzer 26.11.2026: "Entferne das beta
+        # wieder ... wir sind damit ja fertig und es funktioniert").
+        b_docs = page_btn(t("Doctrines"), 8, icon="clipboard")
+        self._bau_docs_btn = b_docs
         # (Bau-Kalender entfernt - "Strukturen" ist jetzt Seite 3.)
 
         # EIGENER UEBERTITEL FUER DEN IST-ZUSTAND (emm490, Nutzer: "ich
@@ -13700,14 +14218,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # bestimmt der breiteste Knopf die Leiste, mit 210 px als Untergrenze.
         _breit = 210
         for _b in (b_scan, b_myblue, b_plans, b_struct, b_jobs, b_bfs, b_lager,
-                   self._bau_newplan_btn):
+                   b_docs, self._bau_newplan_btn):
             try:
                 _breit = max(_breit, _b.sizeHint().width() + 30)
             except Exception:
                 pass
         rail.setFixedWidth(_breit)
         self._bau_page_btns = [b_scan, b_myblue, b_plans, b_struct, b_jobs, b_bfs,
-                               b_lager, b_assets]   # 7 = Assets (emm887)
+                               b_lager, b_assets,   # 7 = Assets (emm887)
+                               b_docs]              # 8 = Doctrines (emm1048)
         # BEIM AUFBAU SCHON RICHTIG: sonst stuende die Leiste bis zum ersten
         # Klick durchweg neutral da - also genau in dem Moment ohne Antwort,
         # in dem man zum ersten Mal hinsieht. Gefragt wird der Stapel selbst,
@@ -13980,8 +14499,169 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         dlg.raise_()
         dlg.activateWindow()
 
+    # ---------------------------------------------------------- emm998
+    # VERKAUFS-HUB FUER MY BLUEPRINTS / BUILD FROM STOCK / BAU-SCANNER
+    # (Nutzer 22.11.2026: "der global Hub immer einkaufsort ... und der
+    # verkaufsort per Dropdown menu im my blueprints tab ... ebenso im
+    # Scanner Tab"). EINGEKAUFT wird immer am Hub oben (letzter Market
+    # scan); VERKAUFT am gewaehlten Hub - bepreist aus DESSEN letztem
+    # gespeicherten Market scan (ein Abruf je Item waere bei hunderten
+    # Blaupausen nicht machbar). Kein Scan gespeichert -> es wird NICHT
+    # gerechnet, sondern gesagt (nie ein Gewinn aus einem geratenen Preis).
+    def _ind_sell_key(self):
+        """Gewaehlter Verkaufs-Hub: None = wie der Hub oben, sonst
+        "jita"/... oder ("struct", id)."""
+        k = self.settings.get("ind_sell_hub")
+        if isinstance(k, (list, tuple)) and len(k) == 2 and k[0] == "struct":
+            try:
+                return ("struct", int(k[1]))
+            except (TypeError, ValueError):
+                return None
+        return k if isinstance(k, str) and k else None
+
+    def _ind_sell_ziel(self):
+        """{"eigen", "quelle", "name", "region"} des Verkaufs-Hubs.
+        eigen False = verkauft wird am Hub oben (Quelle des letzten Scans)."""
+        leer = {"eigen": False, "quelle": None, "name": "", "region": None}
+        key = self._ind_sell_key()
+        if key is None:
+            return leer
+        if isinstance(key, tuple):
+            for f in self._market_structures():
+                if f.get("structure_id") == key[1]:
+                    _r = f.get("region_id") or f.get("region")
+                    return {"eigen": True, "quelle": store.struct_source(key[1]),
+                            "name": str(f.get("name") or key[1]).strip(),
+                            "region": int(_r) if _r else None}
+            return {"eigen": True, "quelle": store.struct_source(key[1]),
+                    "name": str(key[1]), "region": None}
+        for _k, _lbl, _region, _st in hubs.NPC_HUBS:
+            if _k == key:
+                return {"eigen": True, "quelle": store.hub_source(int(_region)),
+                        "name": str(_lbl), "region": int(_region)}
+        return leer
+
+    def _ind_sell_combo(self):
+        """Ein Dropdown "Sell in" (My Blueprints UND Scanner zeigen je
+        eines; beide haengen an derselben Einstellung und laufen mit)."""
+        cb = QComboBox(); cb.setMinimumWidth(150); cb.setMaximumWidth(240)
+        cb.addItem(t("Same as the hub above"), None)
+        for _lbl, _key in self._sell_hub_choices(self._market_structures()):
+            cb.addItem(_lbl, _key)
+        cb.setToolTip(t(
+            "Materials are always bought at the hub at the top (its last "
+            "market scan). The product is sold at THIS hub \u2013 priced from "
+            "that hub\u2019s last stored market scan. No stored scan: select "
+            "it as the hub at the top once and run \u201eMarket scan\u201c."))
+        self._ind_sell_combo_stellen(cb)
+        ohne_mausrad(cb)
+        cb.currentIndexChanged.connect(
+            lambda _i=0, _c=cb: self._ind_sell_gewaehlt(_c.currentData()))
+        if not hasattr(self, "_ind_sell_cbs"):
+            self._ind_sell_cbs = []
+        self._ind_sell_cbs.append(cb)
+        return cb
+
+    def _ind_sell_combo_stellen(self, cb):
+        """Dropdown auf die gespeicherte Wahl stellen, ohne Signal."""
+        key = self._ind_sell_key()
+        ix = 0
+        for i in range(cb.count()):
+            d = cb.itemData(i)
+            d = tuple(d) if isinstance(d, (list, tuple)) else d
+            if d == key:
+                ix = i
+                break
+        cb.blockSignals(True)
+        cb.setCurrentIndex(ix)
+        cb.blockSignals(False)
+
+    def _ind_sell_gewaehlt(self, key):
+        key = tuple(key) if isinstance(key, (list, tuple)) else (key or None)
+        if key == self._ind_sell_key():
+            return
+        self.settings["ind_sell_hub"] = list(key) if isinstance(key, tuple) else key
+        config.save_settings_async(self.settings)
+        for cb in list(getattr(self, "_ind_sell_cbs", None) or []):
+            try:
+                self._ind_sell_combo_stellen(cb)
+            except RuntimeError:
+                pass
+        _bs = getattr(self, "b_stack", None)
+        if _bs is not None and _bs.currentIndex() in (1, 5):
+            self._econ_neu_wenn_veraltet()
+        elif getattr(self, "build_status", None) is not None:
+            self.build_status.setText(t(
+                "Sell hub changed \u2013 press \u201eFind blueprints\u201c again."))
+
+    def _econ_veraltet(self):
+        """Stammen die gemerkten Gewinnzahlen (My Blueprints / Build from
+        stock) von einem ANDEREN Markt-Scan als dem aktuellen? (emm985,
+        Nutzer-Bild 22.11.2026: oben stand Jita, die Gewinne waren noch die
+        von RD-G2R - Tungsten Carbide Armor Plate -2.4 Mio/Stk.)
+        ABGELEITET aus der gemerkten Scan-Quelle, kein eigener Merker, der
+        beim Hub-Wechsel gesetzt werden muesste. Ohne gemerkte Quelle (nie
+        gerechnet) -> False: dann gibt es nichts Veraltetes."""
+        _st = getattr(self, "_bp_econ_stand", None) or {}
+        _q = _st.get("quelle")
+        if not _q:
+            return False
+        try:
+            if str(_q) != str(store.get_scan_source()):
+                return True
+            # emm998: auch ein anderer VERKAUFS-Hub macht den Stand alt.
+            if _st.get("sell_quelle") != self._ind_sell_ziel()["quelle"]:
+                return True
+            # AUCH DER HUB OBEN ZAEHLT (emm986, Nutzer-Bilder 22.11.2026: Hub
+            # auf 4-HWWF gestellt, noch KEIN neuer Scan - die Jita-Gewinne
+            # blieben stehen). Verglichen wird wie beim Laden (`_hub_ok`).
+            _h = _st.get("hub")
+            return bool(_h is not None and str(_h) != str(
+                self._short_hub_label(self._active_hub_label())))
+        except Exception:
+            return False
+
+    def _econ_neu_wenn_veraltet(self):
+        """Beim OEFFNEN von My Blueprints / Build from stock: veraltete
+        Gewinne neu rechnen (ein Lauf gleichzeitig). -> True, wenn
+        gestartet. Nicht beim Hub-Wechsel selbst - das Rechnen geht ueber
+        alle Blaupausen (Nutzer "macht das sinn?" -> "ja")."""
+        if not self._econ_veraltet():
+            return False
+        if getattr(self, "_bfs_mb_laeuft", False):
+            return False
+        _b = getattr(self, "bp_refresh_btn", None)
+        if _b is not None and not _b.isEnabled():
+            return False                              # laedt schon
+        self._bfs_mb_laden()
+        return True
+
+    # STARTSEITE DES INDUSTRY-REITERS = STRUCTURES (emm1051, Nutzer
+    # 26.11.2026: "lass Setup als erstes kommen wenn man auf Industry klickt,
+    # also Structures soll auf gehen. damit klar ist, okey ich muss erstmal
+    # eine Struktur adden"). Vorher stand der Scanner (Seite 0) vorn. Gilt
+    # fuer das ERSTE Oeffnen nach dem Programmstart - wer danach auf eine
+    # andere Seite geht, bleibt dort, auch wenn er zwischendurch den Reiter
+    # wechselt.
+    BAU_STARTSEITE = 3
+
+    def _ms_zeigen(self):
+        """Zur Doctrines-Seite gehen (Industry-Reiter, rechte Leiste) -
+        EINE Stelle (emm1048). True, wenn die Seite jetzt vorn steht."""
+        w = getattr(self, "_ms_w", None)
+        if w is None:
+            return False
+        self._go_tab("build")
+        self._bau_nav(self.b_stack.indexOf(w))
+        return self.b_stack.currentWidget() is w
+
     def _bau_nav(self, idx):
         self.b_stack.setCurrentIndex(idx)
+        if idx in (1, 5):                                # emm985
+            try:
+                self._econ_neu_wenn_veraltet()
+            except Exception as _e985:
+                self._log_exception("Gewinne neu rechnen", str(_e985))
         # ASSETS LAEDT BEIM ERSTEN OEFFNEN VON SELBST (emm863, Muster PI
         # emm801) - danach entscheidet der Refresh-Knopf. Der Ausloeser
         # sass bis emm887 am Tab-Wechsel; seit die Seite hier im Stapel
@@ -13993,6 +14673,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if _asw887 is not None and self.b_stack.currentWidget() is _asw887:
             try:
                 self._assets_seite_gezeigt()
+            except Exception:
+                pass
+        # DOCTRINES HOLT DEN MARKT BEIM OEFFNEN (emm854/emm1014) - seit
+        # emm1048 hier, am Seitenwechsel, nicht mehr am Tab-Wechsel.
+        _msw1048 = getattr(self, "_ms_w", None)
+        if _msw1048 is not None and self.b_stack.currentWidget() is _msw1048:
+            try:
+                self._ms_tab_geoeffnet()
             except Exception:
                 pass
         # DIE OFFENE SEITE IST HERVORGEHOBEN (Nutzer, 15.09.2026). Hier stand
@@ -14081,6 +14769,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._funfact_entfernen(pid)    # emm570: Reopen nimmt ihn heraus
             _plan["done_manual"] = False
             _plan.pop("done_ts", None)
+            _plan.pop("gewinn_fest", None)  # emm989: wieder offen = wieder live
             # Was DIESES Buendel beim Abschliessen mit abgeschlossen hat,
             # geht mit ihm wieder auf (s. unten) - nichts sonst.
             for _q in self._plan_buendel_mitglieder_plaene(_plan):
@@ -14108,6 +14797,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _plan["done_ts"] = _t_done.time()   # emm388: ab hier zaehlen die 30
                                             # Tage bis zum Archiv
         _plan["reserve"] = False          # Schloss auf, s. Docstring
+        # GEWINN FESTSCHREIBEN (emm989, Nutzer 22.11.2026: "wenn ich
+        # Bauplaene mit Done beendet habe sollte auch der Profit eingefroren
+        # werden"). Genau die Zahlen, die die Gewinn-Uebersicht JETZT zeigt -
+        # beim Buendel je Ende. Ohne Zahl (nicht schaetzbar) wird nichts
+        # festgeschrieben, nie eine erfundene 0.
+        _fest989 = self._gewinn_fest_aus_uebersicht(pid)
+        if _fest989:
+            _plan["gewinn_fest"] = _fest989
         self._funfact_erfassen(_plan, "done")   # emm570: Funfact-Statistik
         # MITGLIEDER EINES BUENDELS SCHLIESSEN MIT (Nutzer-Screenshot
         # 28.09.2026: Multiplan 1 auf "Done" -> Ametat II, Flycatcher und
@@ -14811,6 +15508,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.bp_progress_btn.clicked.connect(
             self._plan_nach_fortschritt_sortieren)
         head_row.addWidget(self.bp_progress_btn)
+        # ARCHIV VON HAND (emm949, Nutzer 15.11.2026: "gerne wuerde ich
+        # Plaene archivieren und ausblenden koennen und bei Bedarf
+        # zurueckholen"). Der Knopf oeffnet die Liste der archivierten
+        # Plaene; die Zahl steht gleich darauf.
+        self.bp_archiv_btn = QPushButton(
+            " " + t("Archive ({n})").format(n=config.bauplan_archiv_anzahl()))
+        self.bp_archiv_btn.setIcon(icons.icon("package"))
+        self.bp_archiv_btn.setToolTip(t(
+            "Shows the archived build plans. Archived plans are hidden here "
+            "and can be restored at any time - nothing is deleted. To archive "
+            "a completed plan, use „Archive“ on its card."))
+        self.bp_archiv_btn.clicked.connect(lambda *_a: self._plan_archiv_dialog())
+        self.bp_archiv_btn.setMinimumWidth(40)
+        head_row.addWidget(self.bp_archiv_btn)
         head_row.addStretch()
         # DIE KOPFZEILE DARF DIE SEITE NICHT BREITER MACHEN (Nutzer-Befund
         # 19.09.2026, pruefe.py auf Windows: b66 rot, Seite 1'191 px statt
@@ -15216,6 +15927,19 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             ab.clicked.connect(
                 lambda *_a, pid=p["id"]: self._mark_plan_done(pid))
             row.addWidget(ab)
+            # ARCHIVIEREN (emm949): nur erledigte Plaene, und nie ein
+            # Mitglied allein - das Buendel nimmt seine Mitglieder mit.
+            if _ist_fertig and p.get("id") not in _multi_kind_ids:
+                ar = QPushButton(t("Archive"))
+                ar.setIcon(icons.icon("package"))
+                ar.setToolTip(t(
+                    "Moves this completed plan to the archive: it disappears "
+                    "from this list and from the profit overview, nothing is "
+                    "deleted. Bring it back with the „Archive“ button at "
+                    "the top."))
+                ar.clicked.connect(
+                    lambda *_a, pid=p["id"]: self._plan_archivieren(pid))
+                row.addWidget(ar)
             de = QPushButton(t("Delete"))
             de.setIcon(icons.icon("trash"))
             de.clicked.connect(lambda *_a, pid=p["id"]: self._delete_saved_plan_fragen(pid))
@@ -15313,7 +16037,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _pfb = self._plan_multi_pfeil.get(_pid)
             if _pfb is not None:
                 _pfb.setChecked(_auf)
-                _pfb.setIcon(icons.icon("chevron" if _auf else "arrow_right"))
+                icons.klapp_setzen(_pfb, _auf)
                 _pfb.toggled.connect(
                     lambda on, pid=_pid: self._plan_gruppe_toggle(pid, on))
         _n_offen, _n_fertig = _lz.count(), _lzf.count()
@@ -15321,16 +16045,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _kopf_offen.setStyleSheet(f"color:{theme.AMBER}; font-size:13px; "
                                   f"font-weight:800; letter-spacing:2px; padding:2px 4px;")
         _kopf_fertig = QLabel(t("COMPLETED ({n})").format(n=_n_fertig))
-        # ARCHIV (emm388): erledigte Plaene aelter als 30 Tage wandern in
-        # bauplan_archiv.json (nichts wird geloescht) - der Kopf sagt es.
-        _n_arch = config.bauplan_archiv_anzahl()
-        if _n_arch:
-            _kopf_fertig.setText(_kopf_fertig.text() + "  \u00b7  "
-                                 + t("{n} archived").format(n=_n_arch))
-            _kopf_fertig.setToolTip(t(
-                "Completed plans older than 30 days are moved to "
-                "bauplan_archiv.json in the app data folder - nothing is "
-                "deleted."))
+        # Das Archiv steht seit emm949 als eigener Knopf in der Kopfzeile
+        # (`bp_archiv_btn`) - hier keine zweite Zahl mehr.
         _kopf_fertig.setStyleSheet(f"color:{theme.MUTED}; font-size:13px; "
                                    f"font-weight:800; letter-spacing:2px; "
                                    f"padding:12px 4px 2px 4px;")
@@ -15340,6 +16056,26 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _lv_alles.addWidget(_kopf_fertig)
         _lv_alles.addWidget(_fertig_box)
         _kopf_fertig.setVisible(_n_fertig > 0)
+        # DRITTE ZEILE "ARCHIVE (n)" (emm959, Nutzer 20.11.2026: "in My
+        # Buildplans moechte ich unterhalb von In progress und Completed,
+        # ebenfalls Archive(Anzahl) sehen"). Immer da, auch bei 0 - man soll
+        # sehen, DASS es ein Archiv gibt. Ein Klick oeffnet dieselbe Liste
+        # wie der Knopf in der Kopfzeile; die Zahl kommt aus derselben
+        # Quelle (`config.bauplan_archiv_anzahl`).
+        _kopf_archiv = QPushButton(
+            t("ARCHIVE ({n})").format(n=config.bauplan_archiv_anzahl()))
+        _kopf_archiv.setFlat(True)
+        _kopf_archiv.setIcon(icons.icon("package"))
+        _kopf_archiv.setCursor(Qt.PointingHandCursor)
+        _kopf_archiv.setToolTip(t("Archived build plans - click to see them and bring them back."))
+        _kopf_archiv.setStyleSheet(
+            f"QPushButton{{color:{theme.MUTED}; font-size:13px; font-weight:800; "
+            f"letter-spacing:2px; padding:12px 4px 2px 4px; border:none; "
+            f"background:transparent; text-align:left;}}"
+            f"QPushButton:hover{{color:{theme.CYAN};}}")
+        _kopf_archiv.clicked.connect(lambda *_a: self._plan_archiv_dialog())
+        self._plan_archiv_kopf = _kopf_archiv
+        _lv_alles.addWidget(_kopf_archiv, 0, Qt.AlignLeft)
         _lv_alles.addStretch()
         # Erledigte blass, mit der Maus darueber wieder normal.
         self._plan_blass = []
@@ -15500,6 +16236,22 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 continue
         _ab = getattr(self, "_gewinn_abschnitt_summe", None) or {}
         _sum_offen = _summe - (_sum_fertig if _mit_fertig else 0.0)
+        # ARCHIV (emm989): eigene Zeile, zaehlt nur mit Haken ins Total.
+        _mit_archiv = bool(self.settings.get("gewinn_archiv_mitzaehlen"))
+        _ar989 = getattr(self, "_gewinn_archiv_stand", None)
+        if _ar989 and _ar989[1]:
+            if _mit_archiv:
+                _summe += _ar989[0]
+                _gez += _ar989[1]
+            _la = _ab.get("archiv")
+            try:
+                if _la is not None and _la.parent() is not None:
+                    _la.setText(self._gewinn_betrag(_ar989[0]))
+                    _la.setStyleSheet(
+                        self._gewinn_wert_stil(_ar989[0], fett=800) if _mit_archiv
+                        else f"font-family:{theme.MONO}; color:{theme.MUTED}; font-weight:800;")
+            except RuntimeError:
+                pass
         for _wer, _v in (("open", _sum_offen), ("done", _sum_fertig)):
             _l = _ab.get(_wer)
             try:
@@ -15546,7 +16298,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             f"QPushButton:hover{{color:{theme.CYAN};}}")
 
         def _txt(on, _b=b, _t=text):
-            _b.setText(("▾ " if on else "▸ ") + _t)
+            icons.klapp_setzen(_b, on, _t)
         _txt(bool(offen))
         b._klapp_text = _txt
         return b
@@ -15561,6 +16313,68 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             offen.discard(str(pid))
         self.settings["gewinn_gruppen_offen"] = sorted(offen)
         config.save_settings_async(self.settings)
+
+    def _gewinn_fest_aus_uebersicht(self, pid):
+        """{Schluessel: Gewinn} eines Plans aus der Gewinn-Uebersicht, wie
+        sie JETZT dasteht (emm989): der Plan selbst oder - beim Buendel -
+        seine Enden ("<pid>:<tid>"). Schluessel als Text (JSON)."""
+        werte = getattr(self, "_plan_sum_werte", None) or {}
+        aus = {}
+        for k, v in werte.items():
+            if k == pid or (isinstance(k, str) and k.startswith(f"{pid}:")):
+                try:
+                    aus[str(k)] = float(v)
+                except (TypeError, ValueError):
+                    continue
+        return aus
+
+    def _gewinn_fest_karte(self):
+        """{Schluessel: festgeschriebener Gewinn} aller ERLEDIGTEN
+        gespeicherten Plaene (emm989)."""
+        aus = {}
+        for p in self.settings.get("bau_saved_plans", []) or []:
+            if p.get("done_manual") and isinstance(p.get("gewinn_fest"), dict):
+                aus.update({str(k): v for k, v in p["gewinn_fest"].items()})
+        return aus
+
+    def _gewinn_archiv_summe(self):
+        """(Summe, Plaene mit Gewinn, Plaene ohne) ueber das ARCHIV (emm989).
+        Je Plan: der beim Abschluss festgeschriebene Gewinn (`gewinn_fest`),
+        sonst der damals in der Funfact-Statistik gemerkte (emm573), sonst
+        KEINE Zahl - es wird nichts nachgeschaetzt. Mitglieder eines
+        archivierten Buendels zaehlen nicht einzeln."""
+        alt = config.bauplan_archiv_lesen() or []
+        kinder = {str(q) for p in alt for q in (p.get("quellen") or [])}
+        ff = ((self.settings.get("funfact") or {}).get("plaene") or {}
+              if isinstance(self.settings.get("funfact"), dict) else {})
+        summe, mit, ohne = 0.0, 0, 0
+        for p in alt:
+            if str(p.get("id")) in kinder:
+                continue
+            g = None
+            if isinstance(p.get("gewinn_fest"), dict) and p["gewinn_fest"]:
+                try:
+                    g = float(sum(float(v) for v in p["gewinn_fest"].values()))
+                except (TypeError, ValueError):
+                    g = None
+            if g is None:
+                _f = (ff.get(str(p.get("id"))) or {}).get("gewinn")
+                try:
+                    g = float(_f) if _f is not None else None
+                except (TypeError, ValueError):
+                    g = None
+            if g is None:
+                ohne += 1
+            else:
+                summe += g
+                mit += 1
+        return summe, mit, ohne
+
+    def _gewinn_archiv_zaehlen(self, on):
+        """Haken am ARCHIVE-Kopf: archivierte Plaene zaehlen ins Total."""
+        self.settings["gewinn_archiv_mitzaehlen"] = bool(on)
+        config.save_settings_async(self.settings)
+        self._plan_total_zeigen()
 
     def _gewinn_fertig_zaehlen(self, on):
         """Haken am COMPLETED-Kopf: erledigte Plaene zaehlen ins Total."""
@@ -15811,6 +16625,45 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._plan_sum_labels[_key_ov] = wert
             self._plan_sum_namen[_key_ov] = nm
             self._gewinn_zeile_stil(_key_ov)
+        # ARCHIVE (emm989, Nutzer 22.11.2026: "ein Kaestchen wo ich Archive
+        # anhaken kann damit mir auch dieser Profit angezeigt wird, damit ich
+        # nie vergesse wieviel Geld ich gemacht habe"). Eine Zeile wie der
+        # COMPLETED-Kopf: Haken, Titel, Summe.
+        try:
+            _ar_n989 = config.bauplan_archiv_anzahl()
+        except Exception:
+            _ar_n989 = 0
+        self._gewinn_archiv_stand = None
+        self._gewinn_archiv_haken = None
+        if _ar_n989:
+            try:
+                self._gewinn_archiv_stand = self._gewinn_archiv_summe()
+            except Exception as _e989:
+                self._log_exception("Gewinn-Uebersicht: Archiv", str(_e989))
+            _s989 = self._gewinn_archiv_stand or (0.0, 0, 0)
+            ar = QHBoxLayout(); ar.setContentsMargins(0, 6, 0, 2); ar.setSpacing(6)
+            ahk = QCheckBox()
+            ahk.setChecked(bool(self.settings.get("gewinn_archiv_mitzaehlen")))
+            ahk.setToolTip(t("Count archived plans in the profit total"))
+            ahk.toggled.connect(self._gewinn_archiv_zaehlen)
+            ar.addWidget(ahk, 0)
+            self._gewinn_archiv_haken = ahk
+            alk = QLabel(t("ARCHIVE ({n})").format(n=_s989[1] + _s989[2]))
+            alk.setStyleSheet(f"color:{theme.MUTED}; font-weight:800; "
+                              f"letter-spacing:1px;")
+            ar.addWidget(alk, 1)
+            asum989 = QLabel(self._gewinn_betrag(_s989[0]) if _s989[1] else "\u2013")
+            asum989.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            asum989.setStyleSheet(self._gewinn_wert_stil(None))
+            _tip989 = t("Profit as it stood when each plan was completed. "
+                        "{mit} of {n} archived plans have a recorded profit; "
+                        "the others were completed without one and are NOT "
+                        "included.").format(mit=_s989[1], n=_s989[1] + _s989[2])
+            asum989.setToolTip(_tip989)
+            alk.setToolTip(_tip989)
+            ar.addWidget(asum989, 0)
+            iv.addLayout(ar)
+            self._gewinn_abschnitt_summe["archiv"] = asum989
         iv.addStretch(1)
         strich = QFrame(); strich.setFrameShape(QFrame.HLine)
         strich.setStyleSheet(f"color:{theme.BORDER};")
@@ -16098,6 +16951,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Dialog (oben, opts["rig_me_map"]); hier fehlte der Rig bisher.
             opts["rig_me_map"] = _rig_me_map
             opts["ec_me_map"] = _ec_me_map
+            if type_id == industry.BUENDEL_ID:
+                # Kauf-Schalter DIESES Plans (emm951) - dieselbe Uebersetzung
+                # wie im Fenster, sonst weicht die Karte vom Dialog ab.
+                self._multi_kauf_opts(
+                    opts, recipes, industry.buendel_enden(recipes),
+                    billig=bool(p.get("enden_kauf_billig")),
+                    faction=bool(p.get("enden_kauf_faction")))
             plan = industry.production_plan(type_id, qty, _pm_mat.get, recipes, opts)
             # DERSELBE BESTANDS-DOPPELZAEHLER wie frueher in rebuild(): hier
             # wurde der Bestand zum MARKTPREIS auf total_cost draufgerechnet,
@@ -16248,12 +17108,30 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # Stueck ueber ALLE Enden gegen die Summe ihrer Mengen.
                 _rec9 = recipes
                 _enden9 = p.get("enden") or []
+                _gek9 = set()
                 if type_id == industry.BUENDEL_ID:
                     try:
                         _rec9 = industry.buendel_rezepte(
                             recipes, [(int(a), int(b)) for a, b in _enden9])
                     except (ValueError, TypeError):
                         continue
+                    # GEKAUFTE ENDEN ZAEHLEN NICHT ZUM BAU-ZIEL (emm951):
+                    # was der Plan kauft, bekommt nie einen Job - der Balken
+                    # bliebe sonst fuer immer unter 100 %. `enden_gekauft`
+                    # schreibt "Save build plan" aus der Entscheidung des
+                    # Plans. Waeren ALLE Enden gekauft, bleibt es beim alten
+                    # Ziel (ein Ziel von 0 gibt es nicht).
+                    _gek9 = set()
+                    for _g9 in (p.get("enden_gekauft") or []):
+                        try:
+                            _gek9.add(int(_g9))
+                        except (TypeError, ValueError):
+                            pass
+                    _bau9 = [(a, b) for a, b in _enden9 if int(a) not in _gek9]
+                    if _bau9:
+                        _enden9 = _bau9
+                    else:
+                        _gek9 = set()
                     target_qty = sum(int(b) for _a, b in _enden9)
                 _endset9 = self._bd_enden(type_id, _rec9)
                 since = (p.get("id", 0) or 0) / 1000.0   # Plan-ID ist ms-Timestamp
@@ -16331,11 +17209,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # seine Jobs bildet - keine zweite Ableitung (Arbeitsregel 9).
                 _plan9 = None
                 try:
+                    _o9 = (dict(self._bd_opts or {}) if getattr(
+                        self, "_bd_opts", None) else {"adjusted_prices": adj})
+                    # Die Kauf-Schalter eines GERADE OFFENEN anderen Plans
+                    # gelten hier nicht - dieser Plan nennt seine gekauften
+                    # Enden selbst (emm951).
+                    _o9.pop("enden_kauf_billig", None)
+                    _o9.pop("kauf_enden", None)
+                    if _gek9:
+                        _o9["kauf_enden"] = sorted(_gek9)
                     _plan9 = industry.production_plan(
                         type_id, 1 if type_id == industry.BUENDEL_ID else target_qty,
-                        pm.get, _rec9,
-                        dict(self._bd_opts or {}) if getattr(
-                            self, "_bd_opts", None) else {"adjusted_prices": adj})
+                        pm.get, _rec9, _o9)
                 except Exception as _pl_err:
                     # Kein Plan -> kein Positions-Anteil. Der Stueck-Anteil
                     # unten traegt die Anzeige dann allein. NICHT still:
@@ -16979,8 +17864,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # _plan_total_zeigen aus _plan_sum_werte (emm343: ohne die
             # abgehakten Zeilen, auch beim Umschalten ohne neue Schaetzung).
             self._plan_sum_werte = {}
+            _fest989 = self._gewinn_fest_karte()         # emm989
             for pid, wlbl in list(getattr(self, "_plan_sum_labels", {}).items()):
                 if not wlbl or wlbl.parent() is None:
+                    continue
+                if str(pid) in _fest989:
+                    # ERLEDIGT = EINGEFROREN: die Zahl vom Abschluss, nicht
+                    # die Preise von heute.
+                    pr = float(_fest989[str(pid)])
+                    self._plan_sum_werte[pid] = pr
+                    wlbl.setText(self._gewinn_betrag(pr))
+                    wlbl.setStyleSheet(
+                        f"color:{theme.GREEN if pr > 0 else theme.RED}; font-weight:700;")
+                    wlbl.setToolTip(t("Profit frozen when the plan was completed."))
+                    self._gewinn_zeile_stil(pid)
                     continue
                 _e = _enden.get(pid) if isinstance(pid, str) else None
                 if _e is not None:
@@ -17190,6 +18087,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             t("Only show blueprints of one specific linked character."))
         self.bp_myb_char.currentIndexChanged.connect(self._apply_bp_filter)
         frow2.addWidget(self.bp_myb_char)
+        # VERKAUFS-HUB (emm998): Einkauf = Hub oben, Verkauf = hier.
+        _sell_lbl998 = QLabel(t("Sell in:"))
+        _sell_lbl998.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
+        frow2.addWidget(_sell_lbl998)
+        self.bp_myb_sell = self._ind_sell_combo()
+        frow2.addWidget(self.bp_myb_sell)
         frow.addSpacing(12)
         typ_lbl = QLabel(t("Type:"))
         typ_lbl.setStyleSheet(f"color:{theme.MUTED}; font-weight:700;")
@@ -17419,6 +18322,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                          == self._short_hub_label(_hub_l0))
         except Exception:
             _scan_l0, _hub_l0, _hub_ok = "", "", True
+        _sz998 = self._ind_sell_ziel()                 # emm998, im UI-Thread
 
         def job():
             rows = []
@@ -17478,11 +18382,25 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # möglich, wenn Baurezepte (SDE) geladen UND ein Markt-Scan da ist.
             profit_by_bp = {}
             econ_ready = False
+            # Quelle ZUERST lesen und den Schnappschuss ausdruecklich von
+            # ihr holen (emm985) - sonst koennte ein Scan zwischen beiden
+            # Zeilen die Zuordnung verfaelschen.
             try:
-                snapshot = store.get_snapshot()
+                _quelle985 = store.get_scan_source()
+                snapshot = store.get_snapshot(_quelle985)
             except Exception:
-                snapshot = None
-            if industry.sde_ready() and snapshot and _hub_ok:
+                _quelle985, snapshot = None, None
+            # VERKAUFSPREISE VOM GEWAEHLTEN VERKAUFS-HUB (emm998) - aus
+            # dessen letztem gespeicherten Scan. Fehlt der, wird nicht
+            # gerechnet (`sell_fehlt`), statt mit Einkaufspreisen zu raten.
+            _sell_snap998 = None
+            if _sz998["eigen"]:
+                try:
+                    _sell_snap998 = store.get_snapshot(_sz998["quelle"])
+                except Exception:
+                    _sell_snap998 = None
+            _sell_ok998 = (not _sz998["eigen"]) or bool(_sell_snap998)
+            if industry.sde_ready() and snapshot and _hub_ok and _sell_ok998:
                 econ_ready = True
                 recipes = industry.recipes_cached()
                 # Blueprint-type_id -> (Produkt-type_id, activity). Alle baubaren
@@ -17521,6 +18439,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         return "T3"
                     return "T1"
                 pm = {s["type_id"]: s["sell_min"] for s in snapshot if s["sell_min"] > 0}
+                # EINKAUF = pm (Hub oben). VERKAUF = sell_pm (emm998).
+                sell_pm = pm if not _sz998["eigen"] else {
+                    s["type_id"]: s["sell_min"] for s in _sell_snap998
+                    if s["sell_min"] > 0}
                 adj = {}
                 try:
                     adj = esi.adjusted_prices() or {}
@@ -17658,7 +18580,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         "race": _race_map.get(product_id),
                         "product_id": product_id,
                         "hours": None, "isk_h": None}
-                    sell = pm.get(product_id)
+                    sell = sell_pm.get(product_id)
+                    # emm1004: KEIN ANGEBOT am Verkaufsort gemerkt - die
+                    # Zeile sagt es, statt nur Striche zu zeigen.
+                    entry["kein_angebot"] = not (sell and sell > 0)
                     if sell and sell > 0 and bp_type in _inv_bp_types:
                         # 🧪-Zeile: BESTEN Decryptor per echter Plan-Rechnung
                         # wählen (Nutzer-Wunsch) - jede Option mit ihrer
@@ -17868,13 +18793,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 volmap = {}
             # ABSATZ JE PRODUKT (emm349) aus der lokalen Historie.
             try:
-                absatz = self._absatz_je_typ(list(_pids)) if _pids else {}
+                # emm998: Absatz und Trend am VERKAUFS-Ort, wenn einer
+                # gewaehlt ist und seine Region bekannt ist.
+                absatz = (self._absatz_je_typ(list(_pids), _sz998["region"])
+                          if _pids else {})
             except Exception:
                 absatz = {}
             # PREIS-TREND JE PRODUKT (emm499): Abweichung vom Durchschnitt
             # + Bewegung, dieselbe lokale Historie wie der Absatz.
             try:
-                trend = self._preis_trend_je_typ(list(_pids)) if _pids else {}
+                trend = (self._preis_trend_je_typ(list(_pids), _sz998["region"])
+                         if _pids else {})
             except Exception:
                 trend = {}
             # JITA ALS RICHTSCHNUR (emm838). Nutzer 06.11.2026: "Items die
@@ -17909,10 +18838,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 _hist_region = store.get_scan_region()
             except Exception:
                 _hist_region = 0
+            # emm1003: mit eigenem Verkaufs-Hub zaehlt DESSEN Region - ist
+            # sie unbekannt, steht "no data" statt einer fremden Zahl.
+            if _sz998["eigen"]:
+                _hist_region = int(_sz998["region"] or 0)
             return {"rows": rows, "names": names, "mock": used_mock,
                     "volmap": volmap, "absatz": absatz, "trend": trend,
                     "profit_by_bp": profit_by_bp, "econ_ready": econ_ready,
                     "hub_falsch": not _hub_ok,
+                    # ZU WELCHEM SCAN dieser Stand gehoert (emm985) - seit
+                    # emm986 IMMER, auch wenn wegen "Hub oben != Scan" nicht
+                    # gerechnet wurde: sonst bliebe die Seite nach dem
+                    # nachgeholten Scan fuer immer leer.
+                    "econ_quelle": _quelle985,
+                    "sell_fehlt": not _sell_ok998,
                     "jita_pm": jita_pm, "ist_jita": _ist_jita,
                     "hist_region": _hist_region,
                     # Rechen-Eingang fuer "Compare with My Blueprints" (emm437):
@@ -17932,7 +18871,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Wirtschaftlichkeit, die diese Tabelle zeigt, keine zweite Rechnung.
             self._bp_econ_stand = {"profit_by_bp": dict(profit_by_bp),
                                    "names": dict(names or {}),
-                                   "eingang": res.get("mb_eingang")}
+                                   "eingang": res.get("mb_eingang"),
+                                   "quelle": res.get("econ_quelle"),
+                                   "sell_quelle": _sz998["quelle"],
+                                   "hub": self._short_hub_label(_hub_l0)}
             self._mb_vergleich_notiz(
                 "My Blueprints loaded: %d rows, prices calculated: %s, "
                 "hub of the scan differs: %s" % (
@@ -17942,6 +18884,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # NACH dem Fuellen der Tabelle.
             QTimer.singleShot(0, lambda: self._bp_geladen_melden(True))
             econ_ready = res.get("econ_ready", False)
+            # emm1004: der Ort, an dem verkauft wird (fuer "no offer").
+            _ort1004 = (_sz998["name"] if _sz998["eigen"]
+                        else self._short_hub_label(_hub_l0))
             volmap = res.get("volmap", {}) or {}
             _tbl = self.bp_table
             _tbl.setSortingEnabled(False)
@@ -18119,6 +19064,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     if econ and econ.get("profit") is not None and j in (10, 11, 15, 17):
                         it.setForeground(QColor(theme.GREEN if econ["profit"] > 0
                                                 else theme.RED))
+                    # KEIN ANGEBOT AM VERKAUFSORT (emm1004, Nutzer 23.11.2026:
+                    # "welche anzeige kommt wenn der markt keine verkaufspreise
+                    # anzeigt" -> "Ja, einbauen"): die Gewinn-Zelle sagt es.
+                    if j == 10 and econ and econ.get("kein_angebot"):
+                        it.setText(_txt("no offer"))
+                        it.setForeground(QColor(theme.AMBER))
+                        it.setToolTip(_txt(
+                            "No sell order for this item at {hub} – without a "
+                            "price there is no profit to calculate. You would be "
+                            "the only seller; the Jita column gives a guide "
+                            "price.").format(hub=_ort1004))
                     # Filter-Metadaten + Bauplan-Ziel an der ERSTEN Zelle ablegen
                     # (Qt.UserRole). So findet der Filter die Kategorie an der
                     # jeweiligen Zeile auch nach dem Sortieren.
@@ -18215,13 +19171,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # danach DIESEN Fuelllauf wiederholen - wie beim Icon-Nachtrag.
             _fehlt_abs = [t_ for t_, v_ in (res.get("absatz") or {}).items() if v_ is None]
             if _fehlt_abs:
+                # VERKAUFS-REGION AUCH BEIM NACHLADEN (emm1003, Nutzer-Bild
+                # 23.11.2026: "Sell in: RD-G2R", Sold/day zeigte Jita-Zahlen -
+                # Reactive Armor Hardener 1'935/Tag). Der erste Lauf fragte
+                # die Verkaufs-Region, fand dort noch keine Historie, und
+                # DIESER Nachlauf holte und zeigte dann die Scan-Region.
+                _reg1003 = _sz998["region"] if _sz998["eigen"] else None
+
                 def _abs_neu(_res=res):
-                    _res["absatz"] = self._absatz_je_typ(list(_res.get("absatz") or {}))
+                    _res["absatz"] = self._absatz_je_typ(
+                        list(_res.get("absatz") or {}), _reg1003)
                     # Trend aus denselben nachgeladenen Historien (emm499).
                     _res["trend"] = self._preis_trend_je_typ(
-                        list(_res.get("absatz") or {}))
+                        list(_res.get("absatz") or {}), _reg1003)
                     done(_res)
-                self._absatz_nachladen(_fehlt_abs, fertig=_abs_neu)
+                if not (_sz998["eigen"] and not _reg1003):
+                    self._absatz_nachladen(_fehlt_abs, region=_reg1003,
+                                           fertig=_abs_neu)
             # ICON-NACHTRAG (Auftrag C): fehlende Item-Bilder im Hintergrund
             # holen und DIESEN Fuelllauf wiederholen - sonst bleiben die
             # Plaetze bis zum naechsten Tab-Besuch leer. res steckt in der
@@ -18240,6 +19206,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self.bp_status.setText(_txt(
                     "\u26a0 Sample data ({n}) \u2013 no characters linked or blueprint "
                     "scope missing. Re-link the character in game.").format(n=len(rows)))
+            elif res.get("sell_fehlt"):
+                self.bp_status.setText(_txt(
+                    "\u26a0 No market scan stored for the sell hub {hub}. Select "
+                    "it as the hub at the top once and run \u201eMarket scan\u201c "
+                    "\u2013 or set \u201eSell in\u201c back.").format(hub=_sz998["name"]))
             elif res.get("hub_falsch"):
                 self.bp_status.setText(_txt(
                     "\u26a0 Prices are from {scan}, the hub at the top is {hub} "
@@ -18262,6 +19233,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 # fuer KEINE Zeile einen Absatz - das einmal oben zu sagen
                 # ist ehrlicher, als es 285-mal in Spalten zu verstecken.
                 _kein_vol = not res.get("hist_region")
+                _ohne1004 = sum(1 for e in profit_by_bp.values()
+                                if e.get("kein_angebot"))
                 self.bp_status.setText(
                     _txt("{n} blueprints").format(n=_own)
                     + (_txt(" \u00b7 {n} inventable T2 from your T1").format(n=n_inv)
@@ -18270,7 +19243,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                         calc=n_calc, prof=n_profitable)
                     + (_txt(" \u00b7 \u26a0 no trade volume for this hub "
                             "(region unknown) \u2013 compare with the Jita "
-                            "column") if _kein_vol else ""))
+                            "column") if _kein_vol else "")
+                    + (_txt(" \u00b7 {n} without an offer at {hub}").format(
+                        n=_ohne1004, hub=_ort1004) if _ohne1004 else "")
+                    + (_txt(" \u00b7 sells in {hub}").format(hub=_sz998["name"])
+                       if _sz998["eigen"] else ""))
             # DIE JITA-SPALTE IST UEBERFLUESSIG, WENN DER HUB JITA IST -
             # dann zeigt sie dasselbe wie "Sale/unit".
             # NUR AUSBLENDEN, NIE EINBLENDEN: welche Spalten sichtbar sind,
@@ -18796,6 +19773,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Regler "Invention jobs at once" je Blaupause (emm328): kommt aus dem
         # Plan; alte Plaene ohne Feld starten links (1 Kopie).
         self._bd_inv_split = self._inv_split_aus_plan(p)
+        self._bd_cl = set(p.get("checkliste") or ())     # Checkliste (emm1044)
+        self._bd_cl_hand = {str(k): bool(v) for k, v in
+                            (p.get("checkliste_hand") or {}).items()}   # emm1046
         # Science-Stufen im Runplaner (emm411): die Invention-Zahlen des
         # VORHER offenen Plans duerfen nie in diesen Plan durchsickern -
         # der Invention-Tab-Aufbau fuellt das Dict fuer den neuen Plan.
@@ -18824,6 +19804,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self._bd_buy_hub_fracht = {
             str(_k): float(_v) for _k, _v in
             (p.get("buy_hub_fracht") or {}).items() if _v}
+        # emm961: welche Hubs der Plan wegen der Fracht-Pauschale NICHT
+        # beliefern laesst - gehoert zum Plan, sonst wuerde die Einkaufsliste
+        # eines eingefrorenen Plans beim Wiederoeffnen anders aufgeteilt.
+        self._bd_mh_pauschal_aus = {
+            str(_k) for _k in (p.get("mh_pauschal_aus") or [])}
         # emm733 ("Wie kaufen?"): je Hub Sell- oder Buy-Orders; gespeichert
         # werden nur Abweichungen vom Standard "sell".
         self._bd_buy_hub_seite = {
@@ -18876,6 +19861,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.settings["bau_transport_rate"] = float(p.get("transport_rate", 0) or 0)
         self.settings["bau_transport_trip_cost"] = float(
             p.get("transport_trip_cost", 0) or 0)
+        # emm961: Mindestvolumen + Pauschale gehoeren wie der ISK/m3-Satz
+        # zum Plan; ein Plan ohne die Felder hat keine (0 = aus).
+        self.settings["bau_transport_min_vol"] = float(
+            p.get("transport_min_vol", 0) or 0)
+        self.settings["bau_transport_min_flat"] = float(
+            p.get("transport_min_flat", 0) or 0)
         self.settings["bau_extra_cost"] = float(p.get("extra_cost", 0) or 0)
         # gespeicherte Blaupausen-Einstellungen dieses Plans laden
         self._bd_bp_pending = p.get("bp")
@@ -18890,6 +19881,113 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # Nebenwirkung (`bp`-Nutzlast vorhanden?) erraten, und Plaene ohne
         # bp verloren beim Oeffnen ME/TE und "Eigene BPC".
         self._bd_loading_saved = True
+
+    def _plan_archivieren(self, pid):
+        """Einen ERLEDIGTEN Plan von Hand ins Archiv (emm949). Gibt die Zahl
+        der verschobenen Plaene zurueck (ein Buendel nimmt seine Mitglieder
+        mit); 0 = nichts passiert, der Hinweis sagt es."""
+        n = config.plaene_ins_archiv(self.settings, [pid])
+        if not n:
+            self._flash_tip(t(
+                "Could not archive this plan - only completed plans that are "
+                "not part of an open multi build plan can be archived."))
+            return 0
+        config.save_settings(self.settings)
+        if getattr(self, "_bd_open_plan_id", None) == pid:
+            self._bd_open_plan_id = None
+        self._reload_saved_plans()
+        self._flash_tip(t("{n} plan(s) archived - bring them back with "
+                          "„Archive“ at the top.").format(n=n))
+        return n
+
+    def _plan_archiv_zurueck(self, ids):
+        """Archivierte Plaene zurueck in "Meine Bauplaene" (emm949)."""
+        n = config.plaene_aus_archiv(self.settings, ids,
+                                     speichern=config.save_settings)
+        if n:
+            self._reload_saved_plans()
+        return n
+
+    def _plan_archiv_zeilen(self):
+        """Was das Archiv-Fenster zeigt: [(id, Name, erledigt, archiviert)],
+        neueste zuerst. Mitglieder eines archivierten Buendels stehen nicht
+        einzeln da - sie kommen mit ihrem Buendel zurueck."""
+        import datetime as _dt_ar
+        alt = config.bauplan_archiv_lesen() or []
+        kinder = {str(q) for p in alt for q in (p.get("quellen") or [])}
+
+        def _tag(ts):
+            try:
+                return _dt_ar.datetime.fromtimestamp(float(ts)).date().isoformat() if ts else "–"
+            except (TypeError, ValueError, OSError):
+                return "–"
+        zeilen = [(p.get("id"), str(p.get("label") or p.get("item_name") or p.get("id")),
+                   _tag(p.get("done_ts")), _tag(p.get("archiviert_ts")),
+                   float(p.get("archiviert_ts") or 0))
+                  for p in alt if str(p.get("id")) not in kinder]
+        zeilen.sort(key=lambda z: -z[4])
+        return [z[:4] for z in zeilen]
+
+    def _plan_archiv_dialog(self, zeigen=True):
+        """Liste der archivierten Plaene mit "Restore" (emm949). Normale
+        Tabelle wie im Rest von MoMa. `zeigen=False` baut nur (Pruefung)."""
+        from PySide6.QtWidgets import QAbstractItemView as _AIV_ar
+        dlg = QDialog(self)
+        dlg.setWindowTitle(t("Archived build plans"))
+        dlg.resize(620, 460)
+        v = QVBoxLayout(dlg)
+        tab = QTableWidget()
+        tab.setColumnCount(3)
+        tab.setHorizontalHeaderLabels(
+            [t("Build plan"), t("Completed"), t("Archived")])
+        tab.setEditTriggers(_AIV_ar.NoEditTriggers)
+        tab.setSelectionBehavior(_AIV_ar.SelectRows)
+        tab.setSelectionMode(_AIV_ar.ExtendedSelection)
+        tab.verticalHeader().setVisible(False)
+        tab.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        kopier_menue(tab)                     # Rechtsklick -> Copy
+        v.addWidget(tab, 1)
+        leer = QLabel(t("The archive is empty. Use „Archive“ on a "
+                        "completed plan to move it here."))
+        leer.setWordWrap(True)
+        leer.setStyleSheet(f"color:{theme.MUTED};")
+        v.addWidget(leer)
+        zeile = QHBoxLayout()
+        zurueck = QPushButton(t("Restore selected"))
+        zurueck.setIcon(icons.icon("refresh"))
+        zu = QPushButton(t("Close"))
+        zeile.addStretch(); zeile.addWidget(zurueck); zeile.addWidget(zu)
+        v.addLayout(zeile)
+
+        def _fuellen():
+            zl = self._plan_archiv_zeilen()
+            tab.setRowCount(len(zl))
+            for i, (pid9, name, fertig, arch) in enumerate(zl):
+                it = QTableWidgetItem(name)
+                it.setData(Qt.UserRole, pid9)
+                tab.setItem(i, 0, it)
+                tab.setItem(i, 1, QTableWidgetItem(fertig))
+                tab.setItem(i, 2, QTableWidgetItem(arch))
+            leer.setVisible(not zl)
+            zurueck.setEnabled(bool(zl))
+
+        def _holen():
+            ids = sorted({tab.item(ix.row(), 0).data(Qt.UserRole)
+                          for ix in tab.selectionModel().selectedRows()}, key=str)
+            if not ids:
+                self._flash_tip(t("Select one or more plans in the list first."))
+                return 0
+            n = self._plan_archiv_zurueck(ids)
+            _fuellen()
+            return n
+
+        zurueck.clicked.connect(lambda *_a: _holen())
+        zu.clicked.connect(lambda *_a: dlg.accept())
+        _fuellen()
+        dlg._tab, dlg._holen, dlg._zurueck_btn = tab, _holen, zurueck
+        if zeigen:
+            dlg.exec()
+        return dlg
 
     def _delete_saved_plan_fragen(self, pid):
         """ERST FRAGEN, DANN LOESCHEN (Nutzer 30.09.2026: "wenn man einen
@@ -18938,6 +20036,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         ("sotiyo", "Sotiyo \u2013 XL Engineering Complex"),
         ("athanor", "Athanor \u2013 M Refinery"),
         ("tatara", "Tatara \u2013 L Refinery"),
+        # CITADELS (emm983, Nutzer 22.11.2026: "dafuer muessen keepstars
+        # erkannt werden koennen in my structures weil ich aktuell alle meine
+        # blueprints und materialien auf einer keepstar habe"). Vorher wurden
+        # sie beim Verknuepfen uebersprungen - eine Keepstar konnte gar kein
+        # Bau-Struktur-Eintrag werden. KEIN Rollenbonus (weder Material noch
+        # Zeit noch Jobkosten); die Rigs zaehlen wie ueberall.
+        # KEEPSTAR GEMESSEN (Nutzer-Screenshot 22.11.2026, Info-Fenster
+        # "Traits"): 25 % Kampf-Rigs, 25 % weniger Treibstoff der
+        # Service-Module, 30 % Burst Projectors/Bomb Launcher - KEIN
+        # Industrie-Bonus. Fortizar und Astrahus: gleiche Bauart, nicht
+        # einzeln gemessen.
+        ("astrahus", "Astrahus \u2013 M Citadel"),
+        ("fortizar", "Fortizar \u2013 L Citadel"),
+        ("keepstar", "Keepstar \u2013 XL Citadel"),
         # NPC-STATION (Nutzer-Wunsch aus Discord, Sitzung 19: "can you add a
         # station for industry. Like system cost index, npc station taxes, no
         # rigs, no bonuses"). Kein Upwell-Bau, sondern eine gewoehnliche
@@ -18958,6 +20070,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         "sotiyo":  {"mfg": 30.0, "react": 0.0},
         "athanor": {"mfg": 0.0, "react": 0.0},
         "tatara":  {"mfg": 0.0, "react": 25.0},
+        # Citadels (emm983): kein eingebauter Bonus, ausdruecklich 0.
+        "astrahus": {"mfg": 0.0, "react": 0.0},
+        "fortizar": {"mfg": 0.0, "react": 0.0},
+        "keepstar": {"mfg": 0.0, "react": 0.0},
         # NPC-Stationen haben KEINEN eingebauten Bonus - weder Zeit noch
         # Material. Ohne diesen Eintrag faengt `.get(typ, ...)` sie zwar ab,
         # aber der Eintrag steht hier ausdruecklich, damit niemand spaeter
@@ -19221,6 +20337,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         "sotiyo": ({"mfg", "invention", "copy", "research"}, "XL"),
         "athanor": ({"react"}, "M"),
         "tatara": ({"react"}, "L"),
+        # Citadels (emm983): fertigen, erfinden, kopieren, forschen wie ein
+        # Engineering Complex - Reaktionen NICHT (Reactor-Module gibt es nur
+        # fuer Refineries). Rig-Groesse nach Strukturgroesse.
+        "astrahus": ({"mfg", "invention", "copy", "research"}, "M"),
+        "fortizar": ({"mfg", "invention", "copy", "research"}, "L"),
+        "keepstar": ({"mfg", "invention", "copy", "research"}, "XL"),
         # OHNE DIESEN EINTRAG WAERE DIE STATION TOT: `_bau_struct_for_activity`
         # waehlt Strukturen ueber genau diese Menge aus. Eine NPC-Station kann
         # fertigen, erfinden, kopieren und forschen - REAKTIONEN NICHT, die
@@ -19235,11 +20357,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     # (Materialien) baut ein Raitaru dagegen ganz normal – die bleiben nutzbar.
     _STRUCT_EXCLUDE_DOMAINS = {
         "raitaru": {"capital_ship"},
+        # Astrahus (emm983): Medium wie der Raitaru - dieselbe Regel.
+        "astrahus": {"capital_ship"},
     }
 
     # Rig-Slots je Struktur-Typ: alle Upwell-Strukturen haben 3 Rig-Slots.
     _STRUCT_RIG_SLOTS = {
         "raitaru": 3, "azbel": 3, "sotiyo": 3, "athanor": 3, "tatara": 3,
+        "astrahus": 3, "fortizar": 3, "keepstar": 3,            # emm983
         # NPC-Station: keine Rig-Slots. `_apply_slot_vis` blendet die drei
         # Zeilen damit von selbst aus, und `_save` schreibt eine leere
         # Rig-Liste - es gibt also keinen Weg, einer Station versehentlich
@@ -19522,7 +20647,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         Einkauf rechnet weiter mit dem gescannten Hub.
         """
         key = getattr(self, "_bd_sell_hub", None)
-        if not key or key == hubs.hub_key_for_region(store.get_scan_region()):
+        if not key or key == hubs.standings_key(store.get_scan_hub()):
             self._bd_hub_sell_price = None      # gescannter Hub -> Snapshot
             self._bd_hub_sell_je_ende = {}
             _fn = getattr(self, "_bd_full_rebuild", None)
@@ -19671,7 +20796,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         return ("buy" if (getattr(self, "_bd_buy_hub_seite", None) or {})
                 .get(str(key)) == "buy" else "sell")
 
-    def _bd_multihub_books(self):
+    def _bd_multihub_books(self, alle=False):
         """{hub_key: {tid: [(preis, menge), ...]}} des letzten Hub-Scans
         dieses Fensters - oder {}, wenn noch nicht gescannt (dann rechnet
         der Plan wie bisher mit dem gescannten Hub, und die Karte sagt es).
@@ -19698,10 +20823,25 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # warnt, Knopf blinkt, Kopier-Knopf kopiert nichts), bis neu
         # gescannt ist. Gleiche eine Stelle wie der Hub-Wechsel-Filter.
         _seiten = _stand.get("seiten") or {}
-        return {_k: _v for _k, _v in books.items()
-                if str(_k) in _keys
-                and (_seiten.get(str(_k)) or "sell")
-                == self._bd_hub_seite(_k)}
+        _erg961 = {_k: _v for _k, _v in books.items()
+                   if str(_k) in _keys
+                   and (_seiten.get(str(_k)) or "sell")
+                   == self._bd_hub_seite(_k)}
+        # HUBS UNTER DER FRACHT-PAUSCHALE (emm961): ein Hub, dessen Anteil
+        # so klein ist, dass die Mindestvolumen-Pauschale mehr kostet als
+        # sein Preisvorteil bringt, liefert nichts (`_bd_mh_pauschal_aus`,
+        # gerechnet von `industry.multihub_pauschal_wahl` im Bauplan).
+        # HIER gefiltert, damit ALLE Leser folgen (Preisfunktion,
+        # Frachtanteile, Karte, Kopier-Knoepfe - dieselbe eine Stelle wie
+        # emm725). `alle=True` liefert die ungefilterten Buecher - fuer die
+        # Wahl selbst und fuer die Frage "ist der Hub gescannt?".
+        if alle:
+            return _erg961
+        _aus961 = {str(_h) for _h in
+                   (getattr(self, "_bd_mh_pauschal_aus", None) or ())}
+        if not _aus961:
+            return _erg961
+        return {_k: _v for _k, _v in _erg961.items() if str(_k) not in _aus961}
 
     def _bd_multihub_scan(self, fertig=None):
         """Beide Kauf-Hubs auf AKTUELLEN Preisstand bringen (emm722,
@@ -19915,6 +21055,28 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         Quelle wird als unsicher zur\u00fcckgegeben (hub_key None/unbekannt).
         """
         s = settings or {}
+        # SPIELERSTRUKTUR MIT EINGETRAGENER GEBUEHR (emm1006, Nutzer
+        # 23.11.2026: "baue im Bauplan unter Details direkt neben dem
+        # dropdown wo man den sell Hub waehlt ein, dass man broker gebuehr
+        # eingeben kann"). `hub_key` = ("struct", id): die Broker Fee setzt
+        # der Besitzer, ESI liefert sie nicht - der Nutzer liest sie im
+        # Verkaufsfenster ab und traegt sie EINMAL je Struktur ein
+        # (`struct_fees`, mit SCC-Zuschlag). Die Sales Tax bleibt die des
+        # Charakters (Skill). Ohne Eintrag: wie bisher der Wert des
+        # Charakters bzw. der globale.
+        if isinstance(hub_key, (list, tuple)):
+            _tax, _brk, _qu = cls._fees_for_sell_char(s, cid)
+            try:
+                _e = (s.get("struct_fees") or {}).get(str(int(hub_key[1]))) or {}
+                if _e.get("broker") is not None:
+                    # emm1013: der SCC-Zuschlag ist FEST (config), kein
+                    # Feld mehr; ein alter gespeicherter "scc"-Wert rechnet
+                    # nicht mehr (Regel 7a).
+                    _brk = (float(_e["broker"])
+                            + config.SCC_ZUSCHLAG_STRUKTUR_PCT) / 100.0
+            except (IndexError, TypeError, ValueError):
+                pass
+            return _tax, _brk, _qu
         cf = (s.get("char_fees") or {}).get(str(cid)) if cid else None
         st = (s.get("hub_standings", {}) or {}).get(hub_key or "") or {}
         if cf and hub_key and st:
@@ -20057,6 +21219,46 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         uniq = list(dict.fromkeys(hits))
         return uniq[0] if len(uniq) == 1 else None
 
+    @staticmethod
+    def _bau_struktur_aus_kopie(s):
+        """Ein Struktur-Eintrag, dessen NAME eine Ingame-Kopie ist (emm963).
+
+        NUTZER 21.11.2026 (Bild "Not assigned"): er hatte "Copy Info" in das
+        Namensfeld der Bau-Struktur geklebt. Gespeichert stand
+        `<url=showinfo:35827//1047386487896 alt='Current Station'>KQK1-2 -
+        Workshop</url>` - die Karte zeigte das als Name (Qt schluckt die
+        fremde Markierung), die Meldung den Rohtext, und der Namensvergleich
+        beim Verknuepfen konnte nie treffen. Dabei steht die Struktur-NUMMER
+        schon in der Kopie.
+
+        Diese eine Stelle macht daraus einen sauberen Namen und - wenn noch
+        keine Verknuepfung besteht - verknuepft DIREKT ueber die Nummer
+        (fuer den Bestand genuegt die structure_id, s. Bestands-Worker).
+        -> True, wenn dabei NEU verknuepft wurde."""
+        import re
+        if not isinstance(s, dict):
+            return False
+        roh = str(s.get("name") or "")
+        m = re.search(r"<url=showinfo:\d+//(\d+)[^>]*>(.*?)</url>", roh)
+        if not m:
+            return False
+        sauber = (m.group(2) or "").strip()
+        if sauber:
+            s["name"] = sauber
+        if s.get("link_structure_id"):
+            return False
+        try:
+            sid = int(m.group(1))
+        except (TypeError, ValueError):
+            return False
+        if sid <= 0:
+            return False
+        s["link_structure_id"] = sid
+        s["link_character_id"] = 0
+        s["link_auto"] = True
+        s["link_auto_done"] = True
+        return True
+
     @classmethod
     def _autolink_bau_structures(cls, bau_structures, known, force=False):
         """Bau-Strukturen EINMALIG automatisch mit ihrer echten EVE-Struktur
@@ -20068,6 +21270,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         made = []
         by_id = {f.get("structure_id"): f for f in (known or [])}
         for s in (bau_structures or []):
+            # Name aus einer Ingame-Kopie (emm963): saeubern und direkt ueber
+            # die Nummer verknuepfen - auch fuer schon gespeicherte Eintraege.
+            if cls._bau_struktur_aus_kopie(s):
+                made.append((s.get("name"),
+                             (by_id.get(s.get("link_structure_id")) or {}).get("name")
+                             or s.get("name")))
+                continue
             if s.get("link_structure_id"):
                 continue
             # BUG (Nutzer): der Marker `link_auto_done` sollte eine bewusste
@@ -20100,7 +21309,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         te = self._struct_te_rig_pct(s)
         rr = self._struct_reaction_rig_pct(s)
         co = self._struct_cost_rig_pct(s)
-        iv = self._struct_extra_rig_pct(s, "invention")
+        # MAL SICHERHEIT (emm964, Nutzer-Bild 21.11.2026: die Karte von "Bel
+        # Labs" in KQK1-2 zeigte "Invention -20%", das Spiel zeigt -42 %).
+        # Die RECHNUNG im Invention-Reiter nimmt den Rig schon mal Sicherheit
+        # (emm325) - nur diese Anzeige zeigte den nackten Rig. Im Nullsec
+        # x2,1, wie bei ME/TE daneben.
+        iv = self._struct_extra_rig_pct(s, "invention") * float(
+            s.get("security", 1.0) or 1.0)
         bonuses = []
         if me:
             bonuses.append(f"ME {me:.1f}%")
@@ -20641,6 +21856,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     # Prozentwert wie im Feld - _bau_jobcost_opts teilt selbst
                     # durch 100. Genau der Schluessel, den die Rechnung liest.
                     "facility_tax": float(ftax_sp.value())}
+            # Ingame-Kopie im Namensfeld (emm963): sauberer Name + direkte
+            # Verknuepfung ueber die Struktur-Nummer aus der Kopie.
+            self._bau_struktur_aus_kopie(data)
             # Verknüpfung mit echter EVE-Struktur (für ortsgebundenes Assets-Abziehen).
             # Bei einer NPC-Station ist die gewaehlte Station zugleich der
             # echte Ort - eine zweite Verknuepfung waere doppelte Arbeit.
@@ -20691,8 +21909,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
         Der Typ kommt aus dem ESI-TYPNAMEN ("Raitaru" -> raitaru), nicht aus
         fest eingetragenen Typ-IDs. Uebersprungen (mit Grund): Strukturen, die
-        schon mit einem Eintrag verknuepft sind, und alles ausser Engineering
-        Complexes/Refineries (Citadels haben keinen Bau-Rollenbonus).
+        schon mit einem Eintrag verknuepft sind, und alles, worin man nicht
+        baut (Sprungtore u. ae.). Citadels werden seit emm983 MIT angelegt -
+        ohne Rollenbonus.
         Rueckgabe: (neue_eintraege, [(name, grund), ...]).
         """
         bekannt = {k for k, _l in cls._STRUCT_TYPES}
@@ -20705,7 +21924,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 continue
             typ = str(typnamen.get(f.get("type_id")) or "").strip().lower()
             if typ not in bekannt:
-                weg.append((nm, "not an engineering complex or refinery"))
+                weg.append((nm, "not a structure you can build in"))
                 continue
             sysid = f.get("solar_system_id")
             sy = systeme.get(sysid) or {}
@@ -20734,18 +21953,99 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             })
         return neu, weg
 
-    def _bau_funde_frage(self, text):
-        """Frage vor dem Anlegen - Vorgabe ANLEGEN (Nutzer-Wunsch). Eigene
-        Methode, damit die Pruefung sie ersetzen kann (kein modales Fenster)."""
-        _box = QMessageBox(self)
-        _box.setIcon(QMessageBox.Question)
-        _box.setWindowTitle(t("Structures added"))
-        _box.setText(text)
-        _ja = _box.addButton(t("Create entries"), QMessageBox.AcceptRole)
-        _box.addButton(t("Only save as locations"), QMessageBox.RejectRole)
-        _box.setDefaultButton(_ja)
-        _box.exec()
-        return _box.clickedButton() is _ja
+    def _bau_funde_dialog(self, kopf, kand):
+        """AUSWAHL-DIALOG fuer gefundene Strukturen (emm984, Nutzer 22.11.2026,
+        Bild mit 23 Funden: "ich wuerde hier gerne einfach eine Struktur
+        auswaehlen und nicht entweder alle oder keine"). Normale Tabelle mit
+        Haken je Zeile. Vorgabe: NICHTS angehakt - ausser es gibt nur EINEN
+        Fund (dann wie frueher: anlegen ist die Vorgabe).
+        -> (dlg, tabelle, knopf_anlegen, gewaehlt()) - getrennt vom exec(),
+        damit die b-Suite ihn ohne modales Fenster prueft."""
+        from PySide6.QtWidgets import QHeaderView as _QHV984
+        dlg = QDialog(self)
+        dlg.setWindowTitle(t("Structures added"))
+        dlg.resize(620, 560)
+        v = QVBoxLayout(dlg)
+        _k = QLabel(kopf)
+        _k.setWordWrap(True)
+        v.addWidget(_k)
+        tbl = QTableWidget(len(kand), 3)
+        tbl.setHorizontalHeaderLabels(["", t("Structure"), t("Type")])
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+        tbl.setSelectionMode(QTableWidget.NoSelection)
+        kopier_menue(tbl)
+        for r, f in enumerate(kand):
+            _h = QTableWidgetItem("")
+            _h.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+            _h.setCheckState(Qt.Checked if len(kand) == 1 else Qt.Unchecked)
+            tbl.setItem(r, 0, _h)
+            tbl.setItem(r, 1, QTableWidgetItem(str(f.get("name") or "?")))
+            tbl.setItem(r, 2, QTableWidgetItem(str(f.get("type_name") or "")))
+        _kh = tbl.horizontalHeader()
+        _kh.setSectionResizeMode(0, _QHV984.Fixed)
+        tbl.setColumnWidth(0, 34)
+        _kh.setSectionResizeMode(1, _QHV984.Stretch)
+        _kh.setSectionResizeMode(2, _QHV984.ResizeToContents)
+        v.addWidget(tbl, 1)
+        _hin = QLabel(t(
+            "Tick the structures you build in. Name, type, system, security, "
+            "cost index and the link are filled in \u2013 you only add the rigs."))
+        _hin.setObjectName("Muted")
+        _hin.setWordWrap(True)
+        v.addWidget(_hin)
+        h = QHBoxLayout()
+        _alle = QPushButton(t("All"))
+        _keine = QPushButton(t("None"))
+        h.addWidget(_alle)
+        h.addWidget(_keine)
+        h.addStretch(1)
+        _ja = QPushButton(t("Create entries"))
+        _nein = QPushButton(t("Only save as locations"))
+        h.addWidget(_ja)
+        h.addWidget(_nein)
+        v.addLayout(h)
+
+        def gewaehlt():
+            return [kand[r] for r in range(tbl.rowCount())
+                    if tbl.item(r, 0).checkState() == Qt.Checked]
+
+        def _stand(*_a):
+            _n = len(gewaehlt())
+            _ja.setEnabled(_n > 0)
+            _ja.setText(t("Create entries ({n})").format(n=_n) if _n
+                        else t("Create entries"))
+
+        def _setze(zustand):
+            tbl.blockSignals(True)
+            for r in range(tbl.rowCount()):
+                tbl.item(r, 0).setCheckState(zustand)
+            tbl.blockSignals(False)
+            _stand()
+
+        def _zelle(r, _c):
+            # Klick irgendwo in die Zeile schaltet den Haken (die Haken-Zelle
+            # selbst schaltet Qt schon).
+            if _c != 0:
+                _i = tbl.item(r, 0)
+                _i.setCheckState(Qt.Unchecked if _i.checkState() == Qt.Checked
+                                 else Qt.Checked)
+        tbl.itemChanged.connect(_stand)
+        tbl.cellClicked.connect(_zelle)
+        _alle.clicked.connect(lambda: _setze(Qt.Checked))
+        _keine.clicked.connect(lambda: _setze(Qt.Unchecked))
+        _ja.clicked.connect(lambda: dlg.accept())
+        _nein.clicked.connect(lambda: dlg.reject())
+        _stand()
+        return dlg, tbl, _ja, gewaehlt
+
+    def _bau_funde_wahl(self, kopf, kand):
+        """Welche der Funde sollen Bau-Strukturen werden? -> Liste (leer =
+        keine). Eigene Methode, damit die Pruefung sie ersetzen kann."""
+        dlg, _tbl, _ja, gewaehlt = self._bau_funde_dialog(kopf, kand)
+        if dlg.exec() != QDialog.Accepted:
+            return []
+        return gewaehlt()
 
     def _bau_funde_anbieten(self, added, funde):
         """Nach der Struktur-Suche: aus den Funden auf Wunsch fertige
@@ -20763,15 +22063,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 t("Found and saved:\n\n") + _liste
                 + t("\n\nNow choose it in the \u201eBuild location\u201c dropdown above."))
             return
-        _kliste = "\n".join(
-            f"\u2022 {f.get('name')} ({f.get('type_name')})" for f in _kand)
-        if not self._bau_funde_frage(
-                (t("Found and saved:\n\n") + _liste + "\n\n" if added else "")
-                + t("These can become build structures:") + "\n" + _kliste
-                + t("\n\nCreate build-structure entries for them? Name, type, system, "
-                    "security, cost index and the link are filled in \u2013 you only "
-                    "add the rigs. (Only engineering complexes and refineries; "
-                    "citadels are skipped.)")):
+        # AUSWAHL JE STRUKTUR (emm984) statt "alle oder keine".
+        _kand = self._bau_funde_wahl(
+            (t("Found and saved:\n\n") + _liste + "\n\n" if added else "")
+            + t("These can become build structures:"), _kand)
+        if not _kand:
             return
         _tax = self.settings.get("bau_facility_tax", 0.25)
 
@@ -21132,7 +22428,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         lbl.setAlignment(Qt.AlignCenter)
         return lbl
 
-    def _bp_fehlende_kopieren(self):
+    def _bp_fehlende_kopieren(self, _nachgeladen=False):
         """Knopf "Buy Missing Blueprints" im Blueprints-Reiter: fehlende
         Blaupausen als EVE-Multibuy ("Name<TAB>Menge", wie die Einkaufsliste)
         in die Zwischenablage. Rueckmeldung im Reiter selbst - ein Flash-Tip
@@ -21149,9 +22445,30 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     _lbl.show()
                 except RuntimeError:
                     pass
+        # DER KNOPF HOLT DEN BESITZ SELBST (emm1032, Nutzer 24.11.2026: "ja"
+        # auf den Vorschlag): ohne geladenen Besitz EIN Ladeversuch, danach
+        # wird kopiert. `_nachgeladen` verhindert die Schleife - bleibt die
+        # Liste auch danach unbekannt (Abruf gescheitert, Charakter fehlt),
+        # steht der Hinweis da wie bisher.
+        _lader = getattr(self, "_bd_bp_besitz_laden", None)
+        if (_liste is None and not _nachgeladen and _lader is not None
+                and not getattr(self, "_bd_bp_laedt", False)):
+            _sag(t("Loading blueprint ownership \u2026 the list is copied "
+                   "right after."), theme.MUTED)
+            try:
+                _lader(auto=True,
+                       danach=lambda: self._bp_fehlende_kopieren(True))
+                return 0
+            except RuntimeError:
+                pass                  # Lader gehoert zu einem alten Fenster
+        if _liste is None and getattr(self, "_bd_bp_laedt", False):
+            _sag(t("loading ownership …"), theme.MUTED)   # laeuft gerade
+            return 0
         if _liste is None:
-            _sag(t("Load ESI ownership first \u2013 without it nobody knows which "
-                   "blueprints are missing."), theme.AMBER)
+            _sag(t("Blueprint ownership is not loaded yet \u2013 open the "
+                   "Blueprints tab or use Tools \u2192 \u201eLoad everything "
+                   "from ESI\u201c. Without it nobody knows which blueprints "
+                   "are missing."), theme.AMBER)
             return 0
         if not _liste:
             _sag(t("No blueprint is missing \u2713 (invented T2 copies are not "
@@ -21385,6 +22702,17 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         except Exception:
             _bp_stage_map = {}
         rows = []
+        # NUR DIE OFFENEN RUNS BRAUCHEN EINE BLAUPAUSE (emm1015). Dieselbe
+        # Rest-Rechnung wie Runplaner und Einkaufsliste (`_rest_runs_jetzt`),
+        # nichts nachgebaut. Ohne gerechneten Plan: None = volle Menge.
+        from .mw_helpers import bp_rest_runs as _bp_rest1015
+        try:
+            _rest1015 = self._rest_runs_jetzt()
+            _plan1015 = (((getattr(self, "_bd_plan_ref", None) or {})
+                          .get("plan") or {}).get("build_runs") or {})
+        except Exception as _e1015:
+            self._log_exception("Blueprints-Tab: Rest-Runs", str(_e1015))
+            _rest1015, _plan1015 = None, {}
         for j in jobs:
             # DAS BUENDEL IST KEINE BLAUPAUSE (Nutzer-Befund 21.09.2026:
             # "im Blueprint-Tab wird Multiplan als Blueprint gewertet, ist
@@ -21399,7 +22727,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 continue
             bp_id = j.get("bp_id")
             activity = j.get("activity")
-            total_runs = int(j.get("runs", 0) or 0)
+            plan_runs1015 = int(j.get("runs", 0) or 0)
+            _t1015 = j.get("tid")
+            total_runs = _bp_rest1015(
+                plan_runs1015,
+                _plan1015.get(_t1015) if _rest1015 is not None else None,
+                (_rest1015 or {}).get(_t1015) if _rest1015 is not None
+                and _t1015 in _plan1015 else None)
             max_runs = recipes.activity_max_runs.get((bp_id, activity), 0) if recipes else 0
             avail_slots = slots_by_activity.get(activity, 1)
             copies, jobs_needed, waves = industry.recommended_bp_copies(
@@ -21489,9 +22823,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                          "inventable": _erfindbar,
                          "name": self._bp_name_fuer(_basis_bp, activity),
                          "stage": stage,
-                        "runs": total_runs, "max_runs": max_runs, "copies": copies,
+                        "runs": total_runs, "plan_runs": plan_runs1015,
+                        "max_runs": max_runs, "copies": copies,
                         "waves": waves, "have": have, "bpc_runs": bpc_runs,
-                        "bp_id": bp_id, "tid": j.get("tid")})
+                        "bp_id": bp_id, "tid": j.get("tid"),
+                        "blacklist": bool(j.get("blacklist"))})
         # T1-ORIGINALE DER INVENTION ALS SOLCHE BENENNEN (emm323, Nutzer
         # 01.10.2026: "die zu inventenden T1-Blueprint-Originale werden als
         # Component deklariert - aber es sind Blueprints ... suche ich im
@@ -21558,6 +22894,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self._bd_bp_kaufliste = (None if (owned is None or _bp_fehler) else [
             (r["name"], 1) for r in rows
             if not r.get("inventable")
+            and not r.get("blacklist")          # emm1028: nie kaufen
             and not (r.get("have") or 0) and not (r.get("bpc_runs") or 0)
             # IM JOB = BESESSEN (emm507): eine Blaupause im Kopier-/
             # Forschungsjob gehoert ihm - sie zu kaufen waere doppelt.
@@ -21573,11 +22910,34 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         n_low = 0
         n_missing_by_stage = {}
         n_low_by_stage = {}
+        _urteile1001 = []
         for i, r in enumerate(rows):
             have = r["have"]
             bpc_runs = r["bpc_runs"]
-            if have is None:
-                have_txt, status_txt, status_col = "?", t("Load ESI ownership"), theme.MUTED
+            if r.get("blacklist"):
+                # AUF DER BLACKLIST (emm1028): sichtbar, aber nichts zu tun -
+                # der Plan baut und kauft es nicht.
+                have_txt = ("\u2013" if have is None else str(have) if have
+                            else f"{bpc_runs} Runs (BPC)" if bpc_runs else "0")
+                status_txt = t("on blacklist \u2013 provided, no blueprint needed")
+                status_col = theme.MUTED
+            elif r["runs"] <= 0 < r.get("plan_runs", 0):
+                # ALLES GEBAUT (emm1015): fuer 0 offene Runs braucht es keine
+                # Blaupause - kein Fehlen, kein "zu wenig", egal was im
+                # Hangar liegt (eine verbrauchte Kopie ist zu Recht weg).
+                have_txt = ("\u2013" if have is None else str(have) if have
+                            else f"{bpc_runs} Runs (BPC)" if bpc_runs else "0")
+                status_txt = t("all runs built \u2713 \u2013 no blueprint needed")
+                status_col = theme.GREEN
+            elif have is None:
+                # KEIN VERWEIS AUF EINEN KNOPF, DEN ES NICHT GIBT (emm1018):
+                # waehrend der Reiter selbst laedt "loading", sonst der
+                # echte Weg von Hand.
+                have_txt, status_col = "?", theme.MUTED
+                status_txt = (t("loading ownership \u2026")
+                              if getattr(self, "_bd_bp_laedt", False)
+                              else t("ownership not loaded \u2013 Tools \u2192 "
+                                     "\u201eLoad everything from ESI\u201c"))
             elif r.get("invented") and not have and bpc_runs < r["runs"]:
                 # T2-Kopie, die der Plan ERFINDET: kein Fehlen, kein Rot.
                 have_txt = (f"{bpc_runs} Runs (BPC)" if bpc_runs else "0")
@@ -21692,6 +23052,34 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # richtigen Struktur stehen). Nur bei "genug" - wo ohnehin etwas
             # fehlt, sagt die Zeile schon das Wichtigere. Nicht rot: der
             # Besitz stimmt ja (Entscheid Sitzung 20 gilt weiter).
+            # URTEIL JE ZEILE GEMERKT (emm1001): "Endprodukte ohne Blaupause
+            # entfernen" fragt genau das, was diese Tabelle zeigt - keine
+            # zweite Rechnung ueber den Besitz.
+            # BESITZ DES T1-ORIGINALS DIREKT (emm1002, gemessen 23.11.2026 an
+            # seinem Plan): ein T2-RIG braucht sein T1-Item NICHT als Zutat,
+            # das T1-Original hat dann KEINE Zeile in dieser Tabelle - die
+            # Frage "habe ich das Original?" lief ins Leere und drei von fuenf
+            # Rigs ohne Original waeren im Plan geblieben. Hier aus derselben
+            # Besitz-Zaehlung beantwortet, die auch die Zeilen fuellt.
+            _q1002 = (int((_inv_tab9.get(r["bp_id"]) or (0,))[0] or 0)
+                      if r.get("invented") else 0)
+            if not _q1002:
+                _qu1002 = None
+            elif owned is None:
+                _qu1002 = "ungeladen"
+            elif ((owned.get(_q1002) or 0) > 0 or (owned_bpc.get(_q1002) or 0) > 0
+                  or im_job.get(_q1002) or _vertrag777.get(_q1002)):
+                _qu1002 = "ok"
+            else:
+                _qu1002 = "unklar" if _bp_fehler else "missing"
+            _urteile1001.append({
+                "tid": r.get("tid"), "bp_id": r.get("bp_id"),
+                "erfunden": bool(r.get("invented")),
+                "quelle": _q1002, "quelle_urteil": _qu1002,
+                "urteil": ("ungeladen" if r["have"] is None
+                           else "missing" if status_col == theme.RED
+                           else "unklar" if have_txt == "?"
+                           else "ok")})
             _weg509 = _unb509 = 0
             if status_col == theme.GREEN:
                 for _b509 in (_bes507.get(r["bp_id"]) or []):
@@ -21705,15 +23093,55 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     elif _art509 == "unknown":
                         _unb509 += _q509
             _fz561, _ft561 = self.bp_forschung_text(r.get("forschung"))
+            # URSPRUNG BLEIBT SICHTBAR (emm1015, Nutzer: "es soll klar sein
+            # dass es urspruenglich mal 12 waren"): "8 of 12", Tooltip nennt
+            # geplant / gebaut / offen. Sortiert wird nach den OFFENEN Runs.
+            _pr1015 = int(r.get("plan_runs", r["runs"]) or 0)
+            _zahl1015 = lambda _n: f"{int(_n):,}".replace(",", "'")
+            if _pr1015 > r["runs"]:
+                _runs_txt1015 = t("{rest} of {plan}").format(
+                    rest=_zahl1015(r["runs"]), plan=_zahl1015(_pr1015))
+                _runs_tip1015 = t(
+                    "Planned: {plan} runs. Already built or running: {done}. "
+                    "Still open: {rest} \u2013 blueprints are only needed for "
+                    "the open runs.").format(
+                    plan=_zahl1015(_pr1015), done=_zahl1015(_pr1015 - r["runs"]),
+                    rest=_zahl1015(r["runs"]))
+            else:
+                _runs_txt1015, _runs_tip1015 = _zahl1015(r["runs"]), ""
+            if r.get("blacklist"):
+                _runs_txt1015 = "\u2013"            # emm1028: nichts zu bauen
             cells = [
-                r["name"], self._kategorie_anzeige(r["stage"]), f"{r['runs']:,}".replace(",", "'"),
+                r["name"], self._kategorie_anzeige(r["stage"]), _runs_txt1015,
                 (f"{r['max_runs']:,}".replace(",", "'") if r["max_runs"] else "\u2013"),
                 str(r["copies"]), have_txt, status_txt, _fz561,
             ]
+            # SORTIERWERTE (emm1000, Nutzer 22.11.2026: "ich kann die columns
+            # des Blueprints Tabs nicht sortieren wie zbsp Status ... ich kann
+            # zwar klicken, aber passiert nix"). Die Status-Zelle hat seit der
+            # Pille (emm509) LEEREN Text - Qt sortierte lauter gleiche Zellen.
+            # Jetzt traegt jede Zelle ihren Wert: Zahlen als Zahl (vorher als
+            # Text: "1'000" < "20"), der Status als Rang fehlt < knapp/unklar
+            # < offen < genug, bei Gleichstand der Wortlaut.
+            _rang1000 = {theme.RED: 0, theme.AMBER: 1, theme.MUTED: 2,
+                         theme.GREEN: 3}.get(status_col, 2)
+            try:
+                _hat1000 = int("".join(ch for ch in str(have_txt).split()[0]
+                                       if ch.isdigit()) or -1)
+            except (IndexError, ValueError):
+                _hat1000 = -1
+            _sortwert1000 = {2: int(r["runs"] or 0), 3: int(r["max_runs"] or 0),
+                             4: int(r["copies"] or 0), 5: _hat1000,
+                             6: (_rang1000, str(status_txt))}
             for col, text in enumerate(cells):
-                it = QTableWidgetItem(text)
+                if col in _sortwert1000:
+                    it = NumericItem(text, _sortwert1000[col])
+                else:
+                    it = QTableWidgetItem(text)
                 if col >= 2:
                     it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if col == 2 and _runs_tip1015:
+                    it.setToolTip(_runs_tip1015)
                 if col == 6:
                     it.setForeground(QColor(status_col))
                 if col == 0:
@@ -21818,6 +23246,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _noetig515 = _pill.sizeHint().height() + theme.ZELL_POLSTER_V
             if tbl.rowHeight(i) < _noetig515:
                 tbl.setRowHeight(i, _noetig515)
+        self._bd_bp_urteil = _urteile1001
         tbl.setSortingEnabled(True)
         # KONTEXTMENUE ZUM KOPIEREN (Nutzer, Sitzung 9: "diese Option
         # gefaellt mir - fuege das auch beim Tab Blueprints ein"). Gleiche
@@ -22453,6 +23882,23 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         build_opts = self._bau_scan_build_opts(_rec0)
 
         region = store.get_scan_region()
+        # VERKAUFS-HUB (emm998): die KANDIDATEN (Verkaufspreis, Angebot) und
+        # die Handelshistorie kommen vom Verkaufs-Hub, die MATERIALPREISE
+        # bleiben beim Hub oben (`price_snapshot=snapshot`, die Trennung
+        # kennt find_deals schon). Ohne gespeicherten Scan dort: nicht
+        # rechnen, sagen.
+        _sz998 = self._ind_sell_ziel()
+        if _sz998["eigen"]:
+            _sell_snap998 = store.get_snapshot(_sz998["quelle"])
+            if not _sell_snap998:
+                self.build_status.setText(t(
+                    "\u26a0 No market scan stored for the sell hub {hub}. Select "
+                    "it as the hub at the top once and run \u201eMarket scan\u201c "
+                    "\u2013 or set \u201eSell in\u201c back.").format(hub=_sz998["name"]))
+                return
+            snap = [s for s in _sell_snap998 if _ok(s["type_id"])]
+            if _sz998["region"]:
+                region = _sz998["region"]
         self._sync_fees_to_hub(region)   # broker fee for this hub's standings
         self.build_status.setText(t("Calculating build profits \u2026"))
         self.b_compute_btn.setEnabled(False)
@@ -22486,9 +23932,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # eine Umbenennung ihn mitgenommen hat (Sitzung 16, pyflakes).
         from ..sprache import t as _txt
         names = store.cached_names([d["type_id"] for d in deals])
-        hub = store.get_scan_region()
-        hubname = next((lbl for _k, lbl, rid, _s in hubs.NPC_HUBS if rid == hub),
-                       "Hub")
+        # Der NAME des gescannten Hubs ueber seine Hub-Nummer (emm952) - eine
+        # zusaetzliche Station in The Forge hiesse sonst "Jita".
+        _h952 = hubs.aufloesen(store.get_scan_hub())
+        hubname = _h952[1] if _h952 is not None else "Hub"
         _diag = getattr(self, "_last_build_diag", None) or {}
         _parts = [_txt("{n} buildable hits ({hub}).").format(n=len(deals), hub=hubname)]
         _nh = _diag.get("no_history", 0)
@@ -25197,6 +26644,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             a_open = m.addAction(t("Open market in game"))
             a_chart = m.addAction(t("Show history"))
             a_cart = m.addAction(t("→ Shopping list"))
+            self._fav_aktion(m, tid, nm, tabelle=tbl, zeile=it.row(), spalte=1)
             ch = m.exec(tbl.viewport().mapToGlobal(pos))
             if ch == a_open:
                 self.open_ingame_market(tid)
@@ -26403,6 +27851,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         a_chart = menu.addAction(t("Show history"))
         a_open = menu.addAction(t("Open market in game"))
         a_buy = menu.addAction(t("→ Shopping list"))
+        self._fav_aktion(menu, tid, name, tabelle=self.hold_table, zeile=row)
         a_batch = None
         if len(sel_rows) > 1:
             a_batch = menu.addAction(t("\u2192 selection into the cart ({n} items)").format(n=len(sel_rows)))
@@ -26732,7 +28181,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.statusBar().showMessage(t("No character linked."))
             return
         _gc = self.g_char.currentData() if hasattr(self, "g_char") else None
-        cid = _gc if _gc not in (None, "all") else chars[0]["character_id"]
+        cid = _gc if _gc not in (None, "all") else store.erst_verknuepfter_id()
         send_name = next((c.get("character_name", str(cid))
                           for c in chars if c["character_id"] == cid),
                          str(cid))
@@ -26776,7 +28225,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _chars = store.list_characters() or []
         except Exception:
             _chars = []
-        _char0 = _chars[0]["character_id"] if _chars else None
+        _char0 = store.erst_verknuepfter_id() if _chars else None
         try:
             _fav_char = {int(f.get("structure_id") or 0): f.get("character_id")
                          for f in store.list_favorites()
@@ -27445,7 +28894,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         cur_s = self.rg_src.currentData()
         cur_t = self.rg_tgt.currentData()
         items = [{"kind": "hub", "name": label, "region_id": rid, "station_id": sid}
-                 for (_k, label, rid, sid) in hubs.NPC_HUBS]
+                 for (_k, label, rid, sid) in hubs.npc_hubs()]     # emm952: + Zusatz-Stationen
         # Strukturen NUR mit best\u00e4tigtem Markt-Service zeigen (gleicher Filter
         # wie beim globalen Hub-Dropdown, s. _reload_hub_structures) - kaufen/
         # verkaufen geht nur, wo ein Markt-Modul verbaut ist. Eine Azbel wie
@@ -27543,7 +28992,10 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self, t("Add structure"),
                 t("Choose a structure (found from your orders) \u2013 or paste "
                   "an in-game link straight into this field (e.g. your "
-                  "Azbel):"),
+                  "Azbel). The link or ID of an NPC station works too - it "
+                  "is added as a market hub.\n\nHow to copy it: dock there "
+                  "in game, right-click the structure/station name and "
+                  "choose \u201eCopy Info\u201c:"),
                 labels, 0, True)
             if not ok:
                 return
@@ -27558,13 +29010,13 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 if _sid893 is None:
                     QMessageBox.information(
                         self, t("Not recognised"),
-                        t("Could not find a structure ID. Paste the structure "
-                          "link copied in game or enter the plain ID (digits "
-                          "only)."))
+                        t("Could not find a structure ID. In game, dock at the "
+                          "structure or station, right-click its name and choose "
+                          "\u201eCopy Info\u201c, then paste that here - or enter "
+                          "the plain ID (digits only)."))
                     return
                 self._finish_add_structure(_sid893,
-                                           store.list_characters()[0]
-                                           ["character_id"])
+                                           store.erst_verknuepfter_id())
                 return
             f = found[labels.index(choice)]
             store.add_favorite({"kind": "structure", "name": f["name"],
@@ -27968,10 +29420,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if sid is None:
             QMessageBox.information(
                 self, t("Not recognised"),
-                t("Could not find a structure ID. Paste the structure link copied "
-                  "in game or enter the plain ID (digits only)."))
+                t("Could not find a structure ID. In game, dock at the "
+                  "structure or station, right-click its name and choose "
+                  "\u201eCopy Info\u201c, then paste that here - or enter "
+                  "the plain ID (digits only)."))
             return
-        self._finish_add_structure(sid, chars[0]["character_id"])
+        self._finish_add_structure(sid, store.erst_verknuepfter_id())
 
     def _finish_add_structure(self, structure_id, cid):
         # STATION ODER STRUKTUR? (Sitzung 19) Der Struktur-Endpunkt kennt nur
@@ -28010,6 +29464,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                  "character_id": cid,
                  "region_id": info.get("region_id"),
                  "station_id": structure_id if _ist_station else None})
+            # NPC-STATION -> AUCH ALS MARKT-HUB (emm952, Discord Robust: "add
+            # another NPC station to Hubs"). Vorher war sie nur Bau-Ort.
+            if _ist_station:
+                self._npc_hub_dazu(structure_id, info.get("name"),
+                                   info.get("region_id"))
             self._reload_locations()
             if hasattr(self, "g_hub"):
                 self._reload_hub_structures()
@@ -28809,6 +30268,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         menu = kontext_menue(self)
         a_open = menu.addAction(t("Open market in game"))
         a_buy = menu.addAction(t("→ Shopping list"))
+        self._fav_aktion(menu, tid, name, tabelle=self.rg_table, zeile=row)
         a_batch = None
         if len(sel_rows) > 1:
             a_batch = menu.addAction(t("\u2192 selection into the cart ({n} items)").format(n=len(sel_rows)))
@@ -29038,9 +30498,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if isinstance(data, dict) and data.get("structure_id"):
             return (data.get("region_id") or config.FORGE_REGION), None, data
         rid = data if isinstance(data, int) else config.FORGE_REGION
-        for _k, _lbl, r, s in hubs.NPC_HUBS:
-            if r == rid:
-                return r, s, None
+        # Hub-Nummer aufloesen (emm952): Region eines festen Hubs oder
+        # Stations-Nummer einer zusaetzlichen NPC-Station.
+        _h952 = hubs.aufloesen(rid)
+        if _h952 is not None:
+            return _h952[2], _h952[3], None
         return config.FORGE_REGION, config.JITA_STATION, None
 
     def _structure_agg(self, structure, max_age=300):
@@ -29158,6 +30620,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         entfernbar - dann gibt es keinen Eintrag."""
         from PySide6.QtWidgets import QMenu, QMessageBox
         data = self.g_hub.currentData()
+        if isinstance(data, int) and hubs.ist_extra(data):
+            # ZUSAETZLICHE NPC-STATION (emm952): entfernbar wie eine Struktur.
+            _nm952 = self.g_hub.currentText()
+            _m952 = QMenu(self)
+            _a952 = _m952.addAction(
+                icons.icon("trash"),
+                t("Remove \u201e{name}\u201c from the list").format(name=_nm952))
+            if _m952.exec(self.g_hub.mapToGlobal(pos)) is _a952:
+                self._npc_hub_entfernen(int(data))
+            return
         if not isinstance(data, dict) or not data.get("structure_id"):
             return
         name = data.get("name") or str(data.get("structure_id"))
@@ -29175,6 +30647,45 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if box.exec() != QMessageBox.Yes:
             return
         self._hub_entfernen(int(data["structure_id"]))
+
+    def _npc_hub_dazu(self, station_id, name, region_id):
+        """Eine NPC-Station als zusaetzlichen Markt-Hub merken (emm952).
+        True = neu dazugekommen. Ohne Region geht es nicht (Orders und
+        Historie haengen an ihr); die fuenf festen Hubs bleiben, was sie sind."""
+        try:
+            sid, rid = int(station_id), int(region_id or 0)
+        except (TypeError, ValueError):
+            return False
+        if sid < hubs.STATION_AB or rid <= 0:
+            return False
+        if any(sid == h[3] for h in hubs.npc_hubs()):
+            return False
+        liste = [dict(e) for e in (self.settings.get("npc_hubs_extra") or [])
+                 if isinstance(e, dict)]
+        liste.append({"station_id": sid, "name": str(name or sid), "region_id": rid})
+        self.settings["npc_hubs_extra"] = liste
+        hubs.extra_setzen(liste)
+        config.save_settings(self.settings)
+        return True
+
+    def _npc_hub_entfernen(self, station_id):
+        """Zusaetzliche NPC-Station aus der Hub-Liste nehmen (emm952). Ihre
+        gespeicherten Preise bleiben in der Datenbank liegen - kommt sie
+        wieder dazu, sind sie noch da."""
+        sid = int(station_id)
+        self.settings["npc_hubs_extra"] = [
+            e for e in (self.settings.get("npc_hubs_extra") or [])
+            if not (isinstance(e, dict) and int(e.get("station_id") or 0) == sid)]
+        hubs.extra_setzen(self.settings["npc_hubs_extra"])
+        if self.settings.get("ui_hub") == sid:
+            self.settings["ui_hub"] = None
+        config.save_settings(self.settings)
+        self._reload_hub_structures()
+        try:
+            self._reload_locations()
+        except Exception:
+            pass
+        self.statusBar().showMessage(t("Station removed from the hub list."))
 
     def _hub_entfernen(self, structure_id):
         """Alle gemerkten Eintraege dieser Struktur loeschen und die Boxen neu
@@ -29206,6 +30717,26 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.g_hub.clear()
         for _k, label, rid, _sid in hubs.NPC_HUBS:
             self.g_hub.addItem(label, rid)
+        # ZUSAETZLICHE NPC-STATIONEN (emm952): ihre Hub-Nummer ist die
+        # Station. Die drei versteckten Boxen muessen dieselben Eintraege
+        # tragen - sonst faende `_sync_hubs` die Station dort nicht und der
+        # Scan liefe weiter gegen den alten Hub.
+        for _k, label, _rid, _sid in hubs.EXTRA:
+            self.g_hub.addItem(label, _sid)
+        for _attr952 in ("d_hub", "h_hub", "b_hub"):
+            _cb952 = getattr(self, _attr952, None)
+            if _cb952 is None:
+                continue
+            _cb952.blockSignals(True)
+            for _i952 in range(_cb952.count() - 1, -1, -1):
+                _d952 = _cb952.itemData(_i952)
+                if isinstance(_d952, int) and _d952 >= hubs.STATION_AB \
+                        and not hubs.ist_extra(_d952):
+                    _cb952.removeItem(_i952)
+            for _k, label, _rid, _sid in hubs.EXTRA:
+                if _cb952.findData(_sid) < 0:
+                    _cb952.addItem(label, _sid)
+            _cb952.blockSignals(False)
         try:
             store.dedupe_favorites()      # Doppelte aus alten Fassungen (19.09.2026)
             structs = [f for f in store.list_favorites() if f.get("kind") == "structure"]
@@ -29261,6 +30792,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if idx >= 0:
                 self.g_hub.setCurrentIndex(idx)
         self.g_hub.blockSignals(False)
+        # Die drei versteckten Boxen mitziehen (emm960): die Auswahl oben
+        # wurde mit blockierten Signalen gesetzt, `_hub_changed` lief also
+        # nicht. Strukturen stehen dort nicht drin - dann bleibt es, wie es ist.
+        _cur960 = self.g_hub.currentData()
+        if _cur960 is not None and not isinstance(_cur960, dict):
+            self._sync_hubs(_cur960, exclude=self.g_hub)
         if to_probe:
             self._probe_structure_markets(to_probe)
         self._regionen_nachladen(shown, self._reload_hub_structures)
@@ -29645,6 +31182,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _sh_tools_menu.addAction(_sh_budget_wa)
         _sh_sugg_act = _sh_tools_menu.addAction(
             icons.icon("target"), t("Suggested quantity"))
+        # GEKAUFTES ABZIEHEN (emm980): Schalter, gemerkt, Vorgabe AN.
+        self._sh_abziehen_act = _sh_tools_menu.addAction(
+            icons.icon("cart"), t("Deduct what I bought"))
+        self._sh_abziehen_act.setCheckable(True)
+        self._sh_abziehen_act.setChecked(
+            bool(self.settings.get("sh_kaeufe_abziehen", True)))
+        self._sh_abziehen_act.setToolTip(t(
+            "When your wallet shows a purchase of an item on this list, the "
+            "quantity here goes down by what you bought; a fully bought row "
+            "disappears. Counts only purchases made after the row was added. "
+            "The wallet does not say what a purchase was for \u2013 buying the "
+            "same item for something else counts too."))
+        self._sh_abziehen_act.toggled.connect(
+            lambda _an: self._sh_abziehen_gesetzt(_an))
         _sh_tools_sep = _sh_tools_menu.addSeparator()
         _sh_clear_act = _sh_tools_menu.addAction(
             icons.icon("trash", theme.RED), t("Clear list"))
@@ -29700,21 +31251,38 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
         addrow = QFrame(); addrow.setObjectName("Card")
         a = QHBoxLayout(addrow); a.setContentsMargins(12, 8, 12, 8)
-        self.sh_name = QLineEdit(); self.sh_name.setPlaceholderText(t("Item (exact, e.g. PLEX)"))
+        self.sh_name = QLineEdit()
+        self.sh_name.setPlaceholderText(t("Add any item: type its name \u2026"))
+        self.sh_name.setClearButtonEnabled(True)
         self.sh_qty = QSpinBox(); self.sh_qty.setRange(1, 1_000_000_000)
         self.sh_qty.setGroupSeparatorShown(True); self.sh_qty.setValue(1)
-        addbtn = QPushButton(t("Add")); addbtn.clicked.connect(self.shopping_add)
+        addbtn = QPushButton(t("Add"))
+        addbtn.clicked.connect(lambda: self.shopping_add())
         addbtn.setIcon(icons.icon("plus"))
         a.addWidget(self.sh_name, 1)
         a.addWidget(QLabel(t("Quantity:")))
         a.addWidget(self.sh_qty)
         a.addWidget(addbtn)
         root.addWidget(addrow)
-        # Nutzer (Layout-Programm): "das Eingabefeld kann komplett weg, auch
-        # Mengenangabe und Hinzufuegen-Knopf". UNSICHTBAR statt geloescht -
-        # shopping_add/sh_name/sh_qty bleiben am Leben (Handler, Tests,
-        # kuenftige Kontextmenue-Wege), aber die Kopfflaeche ist frei.
-        addrow.setVisible(False)
+        # WIEDER SICHTBAR (emm957, Discord Spaceballs 2, 20.11.2026: "add
+        # just a simple input field on the site of shopping list where one
+        # can add items manually by typing the name"; Nutzer: "bitte einmal
+        # so ausfuehren"). Die Zeile war im Layout-Programm auf seinen
+        # Wunsch ausgeblendet worden - dieser Entscheid ist damit ERSETZT.
+        # Neu: der Name muss nicht mehr exakt getippt sein - Vorschlaege aus
+        # dem Namens-Cache (wie im Preisverlauf), Enter fuegt hinzu.
+        from PySide6.QtWidgets import QCompleter
+        from PySide6.QtCore import QStringListModel
+        self._sh_namen_ids = None            # erst beim ersten Tippen geladen
+        self._sh_namen_modell = QStringListModel(self)
+        _comp957 = QCompleter(self._sh_namen_modell, self.sh_name)
+        _comp957.setCompletionMode(QCompleter.PopupCompletion)
+        _comp957.setFilterMode(Qt.MatchContains)
+        _comp957.setCaseSensitivity(Qt.CaseInsensitive)
+        _comp957.setMaxVisibleItems(12)
+        self.sh_name.setCompleter(_comp957)
+        self.sh_name.textEdited.connect(lambda _t: self._sh_namen_laden())
+        self.sh_name.returnPressed.connect(lambda: self.shopping_add())
 
         # HINWEIS: Die frühere Spalte 0 („Gekauft“-Abhaken mit Durchstreichen)
         # wurde bewusst entfernt (Feature raus, vereinfacht den Wagen). Die
@@ -29722,7 +31290,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # nicht mehr gelesen/geschrieben.
         self.sh_table = QTableWidget(0, 11)
         self.sh_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.sh_table.setSelectionMode(QTableWidget.SingleSelection)
+        # MEHRERE ZEILEN MARKIERBAR (emm976): Kaufart umstellen (emm973) und
+        # "Add n items to favourites" gelten fuer alle markierten Zeilen.
+        self.sh_table.setSelectionMode(QTableWidget.ExtendedSelection)
         # SPALTEN-AUSDUENNUNG (Nutzer, Layout-Programm: "zu viele Zahlen -
         # nur Menge, Sofortkauf, Oe-Verkauf, dahinter Marge, und Gewinn").
         # Spalte 6 (war Kosten) wird zur MARGE; Buy-Order (4) und Erloes (7)
@@ -29754,7 +31324,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         hdr = self.sh_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)    # Item-Name
         hdr.setSectionResizeMode(1, QHeaderView.Fixed)      # Buy/Öffnen-Buttons
-        self.sh_table.setColumnWidth(1, 290)
+        self.sh_table.setColumnWidth(1, 400)       # emm979: + Kaufart-Knopf
         for col in range(2, 10):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(10, QHeaderView.Fixed)     # Löschen
@@ -29772,7 +31342,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.sh_table.setEditTriggers(QTableWidget.DoubleClicked)  # 1-Klick kopiert Menge
         self.sh_table.itemSelectionChanged.connect(self._show_buy_suggestion)
         kopier_menue(self.sh_table, self._shopping_menu)
-        root.addWidget(self.sh_table, 2)
+        # FAVORITENLISTE RECHTS (emm962, Nutzer 21.11.2026: "Rechts im
+        # Einkaufswagen werden wir eine Favouritenliste einbauen ... damit
+        # man immer und immer wieder seine lieblings Trading Items handeln
+        # kann direkt aus dem Einkaufswagen heraus"). Eine normale Tabelle
+        # wie ueberall in MoMa, kein eigenes Zeilen-Design.
+        _sh_mitte = QHBoxLayout()
+        _sh_mitte.setContentsMargins(0, 0, 0, 0); _sh_mitte.setSpacing(8)
+        _sh_mitte.addWidget(self.sh_table, 1)
+        _sh_mitte.addWidget(self._fav_panel_bauen())
+        root.addLayout(_sh_mitte, 2)
 
         tot = QHBoxLayout()
         self.sh_t_cost_c, self.sh_t_cost = kpi_card(t("Total cost"))
@@ -30024,7 +31603,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
             # col 0: item name + carries id/type_id
             src = (r.get("source") or "")
-            tag = {"daytrade": "⚡ ", "swing": "↗ "}.get(src, "")
+            # KEIN BLITZ/PFEIL MEHR VOR DEM NAMEN (emm979, Nutzer 22.11.2026:
+            # "dieses Blitz symbol ist eh verwirrend, ich wusste bisher gar
+            # nicht was es bedeutet"). Die Kaufart steht jetzt als Knopf in
+            # der Aktionsspalte ("Buy order" / "Instant").
+            tag = ""
             if _teuer:
                 tag = "❗ " + tag
             nm_it = QTableWidgetItem(tag + store.item_name_rein(r["name"]))
@@ -30054,7 +31637,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                    "this item in game.").format(src=src_txt) + _teuer_hinweis)
             else:
                 nm_it.setForeground(QColor(theme.TEXT))
-                nm_it.setToolTip(t("Source: {src}. (\u26a1 Daytrade \u00b7 \u2197 Swing)").format(src=src_txt)
+                nm_it.setToolTip(t("Source: {src}.").format(src=src_txt)
                                  + _teuer_hinweis)
             nm_it.setData(Qt.UserRole, r["id"])
             nm_it.setData(Qt.UserRole + 1, r["type_id"])
@@ -30099,7 +31682,28 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 f"QPushButton:hover{{background:{theme.CYAN_FILL}; color:{theme.CYAN};}}")
             knopf_passend(qtyb)             # emm861
             qtyb.clicked.connect(lambda _, q=qty: self._copy_qty(q))
-            al.addWidget(copyb); al.addWidget(openb); al.addWidget(qtyb); al.addStretch()
+            # KAUFART ALS KNOPF (emm979): sagt in Worten, wie die Zeile
+            # gekauft wird, und schaltet beim Klick um.
+            _dt979 = (src == "daytrade")
+            artb = QPushButton(t("Buy order") if _dt979 else t("Instant"))
+            artb.setCursor(Qt.PointingHandCursor)
+            artb.setToolTip(
+                (t("Buy order: you place your own, cheaper buy order and wait. "
+                   "NOT part of \u201eCopy multibuy\u201c.") if _dt979 else
+                 t("Instant: bought right away from the sell orders. Part of "
+                   "\u201eCopy multibuy\u201c."))
+                + "\n" + t("Click to switch."))
+            _f979 = theme.AMBER if _dt979 else theme.CYAN
+            artb.setStyleSheet(
+                f"QPushButton{{background:transparent; border:1px solid {_f979}; "
+                f"color:{_f979}; border-radius:{theme.RAD}; padding:2px 6px;}}"
+                f"QPushButton:hover{{background:{theme.PANEL2};}}")
+            knopf_passend(artb)
+            artb.clicked.connect(
+                lambda _, _rid=r["id"], _neu=("" if _dt979 else "daytrade"):
+                    self._shopping_kaufart([_rid], _neu))
+            al.addWidget(copyb); al.addWidget(openb); al.addWidget(qtyb)
+            al.addWidget(artb); al.addStretch()
             self.sh_table.setCellWidget(i, 1, act)
 
             # data columns 2..8
@@ -30186,8 +31790,11 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                      for _r in range(self.sh_table.rowCount())
                      if self.sh_table.cellWidget(_r, 1) is not None),
                     default=0)
+        # +14 statt +6 (emm979): GEMESSEN nimmt die Zellen-Regel des Themas
+        # 12 px Breite - mit dem vierten Knopf war dessen rechter Rand
+        # abgeschnitten.
         if _w861:
-            self.sh_table.setColumnWidth(1, _w861 + 6)
+            self.sh_table.setColumnWidth(1, _w861 + 14)
         # EHRLICH AUSWEISEN, WOHER DIE SUMME KOMMT (Arbeitsregel 6/10): eine
         # geschaetzte Summe darf nicht wie eine gerechnete aussehen.
         self.sh_t_cost.setText(isk(tot_cost) + (" \u2248" if _n_est else ""))
@@ -30595,16 +32202,144 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         return sell_preis_ziel_modus(
             self._optimal_sell_price(_basis) or 0.0, undercut)
 
+    def _sell_menge(self, h):
+        """Menge einer Zeile der Verkaufsliste (emm972, Nutzer 22.11.2026:
+        "ich will in der Sell und shopping Liste die Anzahl der Items
+        zusaetzlich auch manuell aendern koennen"). Von Hand gesetzt
+        (`sell_menge_hand` {type_id: Stueck}), sonst der ganze Bestand. Eine
+        Handmenge gilt nur ZWISCHEN 1 und dem Bestand - mehr, als da ist,
+        kann niemand verkaufen."""
+        _voll = int(getattr(h, "quantity", 0) or 0)
+        _e979 = (self.settings.get("sell_menge_hand") or {}).get(
+            str(int(h.type_id)), 0)
+        # GEMERKT WIRD [Handmenge, Bestand beim Setzen] (emm979, Nutzer
+        # 22.11.2026 "3 ja"): hat sich der Bestand seitdem geaendert (es
+        # wurde verkauft oder nachgekauft), gilt die alte Zahl nicht mehr.
+        # Eine nackte Zahl (Stand emm972) gilt wie bisher.
+        try:
+            if isinstance(_e979, (list, tuple)):
+                _hand = int(_e979[0] or 0)
+                if len(_e979) > 1 and _e979[1] is not None \
+                        and int(_e979[1]) != _voll:
+                    _hand = 0
+            else:
+                _hand = int(_e979 or 0)
+        except (TypeError, ValueError, IndexError):
+            _hand = 0
+        return _hand if 0 < _hand < _voll else _voll
+
+    def _sell_menge_setzen(self, tid, menge, voll):
+        """Handmenge merken; 0/leer oder >= Bestand loescht sie wieder."""
+        _d = dict(self.settings.get("sell_menge_hand") or {})
+        try:
+            _m = int(menge or 0)
+        except (TypeError, ValueError):
+            _m = 0
+        if _m <= 0 or _m >= int(voll or 0):
+            _d.pop(str(int(tid)), None)
+        else:
+            _d[str(int(tid))] = [_m, int(voll or 0)]     # emm979: mit Bestand
+        self.settings["sell_menge_hand"] = _d
+        config.save_settings_async(self.settings)
+        self._render_sell_list()
+
+    def _menge_fragen(self, name, aktuell, hoechst):
+        """EIN Eingabefenster fuer die Menge - Verkaufs- und Einkaufsliste
+        (emm972). -> neue Menge oder None (abgebrochen)."""
+        from PySide6.QtWidgets import QInputDialog
+        _wert, _ok = QInputDialog.getInt(
+            self, t("Change quantity"),
+            t("Quantity for {name}:").format(name=name),
+            int(max(1, aktuell)), 1, int(max(1, hoechst)))
+        return int(_wert) if _ok else None
+
+    def _sell_menge_fragen(self, row):
+        """Doppelklick / Rechtsklick auf die Menge der Verkaufsliste."""
+        _rows = getattr(self, "_sell_rows", None) or []
+        if not (0 <= int(row) < len(_rows)):
+            return
+        _h = _rows[int(row)]
+        _voll = int(_h.quantity or 0)
+        _neu = self._menge_fragen(_h.name or "", self._sell_menge(_h), _voll)
+        if _neu is not None:
+            self._sell_menge_setzen(_h.type_id, _neu, _voll)
+
+    def _sh_abziehen_gesetzt(self, an):
+        self.settings["sh_kaeufe_abziehen"] = bool(an)
+        config.save_settings_async(self.settings)
+        if an:
+            self._shopping_kaeufe_abziehen()
+
+    def _shopping_kaeufe_abziehen(self):
+        """Gekauftes von der Einkaufsliste abziehen (emm980) - laeuft beim
+        Oeffnen der Einkaufsliste und bei "Load prices". Rechnet in
+        `store.shopping_kaeufe_abziehen`. -> Liste der veraenderten Zeilen."""
+        if not bool(self.settings.get("sh_kaeufe_abziehen", True)):
+            return []
+        try:
+            _res = store.shopping_kaeufe_abziehen()
+        except Exception as _e980:
+            self._log_exception("Einkaufsliste: Gekauftes abziehen", str(_e980))
+            return []
+        if not _res:
+            return []
+        self._render_shopping()
+        _teile = [
+            (t("{name} done").format(name=_z["name"]) if _z["entfernt"] else
+             t("{name} \u2212{n}").format(
+                 name=_z["name"], n=f"{_z['bought']:,}".replace(",", "'")))
+            for _z in _res[:4]]
+        # DIE LISTE STEHT AUCH IM KURZHINWEIS (emm980, am Fenster gesehen):
+        # die Statuszeile wird gleich darauf von "Order depth & daily volume
+        # loaded." ueberschrieben.
+        self._flash_tip(t("Bought and deducted: {liste}").format(
+            liste=", ".join(_teile[:3]) + (" \u2026" if len(_res) > 3 else "")))
+        self.statusBar().showMessage(
+            t("Shopping list \u2013 bought and deducted: {liste}").format(
+                liste=", ".join(_teile))
+            + (" \u2026" if len(_res) > 4 else ""), 10000)
+        return _res
+
+    def _shopping_kaufart(self, ids, quelle):
+        """Kaufart von Zeilen der Einkaufsliste umstellen (emm973): "" =
+        Sofortkauf, steht im Multibuy; "daytrade" = eigene Buy-Order.
+        -> Anzahl umgestellter Zeilen."""
+        _n = 0
+        for _rid in (ids or []):
+            if _rid is None:
+                continue
+            store.update_shopping(_rid, source=quelle)
+            _n += 1
+        if _n:
+            self._render_shopping()
+            self._flash_tip(t("{n} row(s) changed \u2713").format(n=_n))
+        return _n
+
+    def _shopping_menge_fragen(self, row):
+        """Rechtsklick "Change quantity" in der Einkaufsliste (emm972) -
+        derselbe Speicherweg wie der Doppelklick in die Zelle."""
+        _c0 = self.sh_table.item(int(row), 0)
+        _c2 = self.sh_table.item(int(row), 2)
+        if _c0 is None or _c2 is None:
+            return
+        _alt = int("".join(ch for ch in _c2.text() if ch.isdigit()) or 1)
+        _neu = self._menge_fragen(
+            store.item_name_rein(_c0.text()) or _c0.text(), _alt, 2_000_000_000)
+        if _neu is not None and _neu != _alt:
+            store.update_shopping(_c0.data(Qt.UserRole), qty=_neu)
+            self._render_shopping()
+
     def _sell_sort_value(self, h, col, target_mode, tax, broker):
         """Berechnet denselben Wert wie die jeweilige Spalte beim Rendern -
         wiederverwendet für Klick-Sortierung."""
         sell_now = (getattr(self, "_sell_live", {}) or {}).get(h.type_id) \
             or (h.jita_sell_min or 0.0)
         price, _quelle = self._sell_zeilen_preis(h, sell_now, target_mode)
-        net = price * h.quantity * (1 - tax - broker)
-        cost = self._kostenbasis(h) * h.quantity
+        _q972 = self._sell_menge(h)              # emm972: Menge von Hand
+        net = price * _q972 * (1 - tax - broker)
+        cost = self._kostenbasis(h) * _q972
         profit = net - cost
-        return {1: (h.name or "").lower(), 3: h.quantity, 4: sell_now,
+        return {1: (h.name or "").lower(), 3: _q972, 4: sell_now,
                5: price, 6: net, 7: profit}.get(col, 0)
 
     def _sell_sort_by(self, col):
@@ -30690,7 +32425,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # moeglicherweise alten Portfolio-Preis, damit der Undercut
             # auf dem AKTUELLEN Markt sitzt.
             price, quelle = self._sell_zeilen_preis(h, sell_now, target_mode)
-            qty = h.quantity
+            qty = self._sell_menge(h)                # emm972: Menge von Hand
             net = price * qty * (1 - tax - broker)
             cost = self._kostenbasis(h) * qty        # Einkauf + Fracht (Basis)
             profit = net - cost                      # erwarteter Gewinn beim Verkauf
@@ -30782,7 +32517,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                     it.setForeground(QColor(color))
                 self.sell_table.setItem(i, col, it)
                 return it
-            _num(3, f"{qty:,}".replace(",", "'"))
+            # MENGE VON HAND (emm972): amber, wenn sie nicht der ganze
+            # Bestand ist; der Tooltip nennt beide Zahlen.
+            _hand972 = qty != int(h.quantity or 0)
+            _q3_972 = _num(3, f"{qty:,}".replace(",", "'"),
+                           theme.AMBER if _hand972 else None)
+            _q3_972.setToolTip(
+                (t("Set by you \u2013 you own {n}.").format(
+                    n=f"{int(h.quantity or 0):,}".replace(",", "'")) + "\n"
+                 if _hand972 else "")
+                + t("Click = copy quantity \u00b7 double-click = change quantity"))
             _num(4, isk(sell_now, suffix=False) if sell_now else "—")
             pit = _num(5, isk(price, suffix=False) if price else "—")
             if price:
@@ -31084,6 +32828,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
     def _sell_name_dblclick(self, row, col):
         it = self.sell_table.item(row, 1)
+        if col == 3:                       # emm972: Menge von Hand aendern
+            self._sell_menge_fragen(row)
+            return
         if col != 1:                       # Doppelklick abseits des Namens → Kursverlauf
             tid = it.data(Qt.UserRole + 1) if it else None
             if tid:
@@ -31111,6 +32858,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 break
 
     def _sell_cell_clicked(self, row, col):
+        if col == 3:                       # emm972: Menge kopieren wie in der Einkaufsliste
+            _q972 = self.sell_table.item(row, col)
+            _txt972 = (_q972.text() if _q972 else "").replace("'", "").strip()
+            if _txt972:
+                from PySide6.QtWidgets import QApplication
+                QApplication.clipboard().setText(_txt972)
+                self._flash_tip(t("Quantity {n} copied \u2713").format(n=_txt972))
+            return
         if col != 5:                       # Verkaufspreis-Spalte
             return
         it = self.sell_table.item(row, col)
@@ -31138,6 +32893,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         m = kontext_menue(self.sell_table)
         a_chart = m.addAction(t("Show history"))
         a_open = m.addAction(t("Open market in game"))
+        a_menge972 = m.addAction(t("Change quantity \u2026"))
         m.addSeparator()
         a_hide = m.addAction(" " + t("Hide temporarily"))
         a_fracht = None
@@ -31149,6 +32905,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         chosen = m.exec(self.sell_table.viewport().mapToGlobal(pos))
         if a_fracht is not None and chosen == a_fracht:
             self._fracht_aus_umschalten(tid)
+        elif chosen == a_menge972:
+            self._sell_menge_fragen(it.row())
         elif chosen == a_chart:
             self._open_chart_for(tid, cell.text())
         elif chosen == a_open:
@@ -31469,12 +33227,24 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             cid_list = [c["character_id"] for c in chars]
         else:
             cid_list = [sel]
-        # Charakter, mit dem „Öffnen“ den Ingame-Markt öffnet (gewählter, sonst erster)
-        self._ord_char_cid = sel if sel not in (None, "all") else chars[0]["character_id"]
+        # AUFTRAG DER PORTFOLIO-KARTE (emm975): "Check prices" dort prueft
+        # jede auslaufende Order AN IHREM ORT, nicht am Hub oben (Nutzer
+        # 22.11.2026: "ich kann den modify button nicht anklicken" - seine
+        # sechs Orders lagen in Jita, oben stand 4-HWWF). Der Auftrag liegt
+        # als Attribut bereit statt als Parameter: der Knopf "Load" haengt
+        # direkt an dieser Methode (lint Muster D).
+        _karte975 = self.__dict__.pop("_ord_karte_auftrag", None)
+        if _karte975:
+            cid_list = list(_karte975["cids"])
+        else:
+            # Charakter, mit dem „Öffnen“ den Ingame-Markt öffnet (gewählter, sonst erster)
+            self._ord_char_cid = sel if sel not in (None, "all") else store.erst_verknuepfter_id()
         client_id = self.settings.get("client_id")
         region, station, structure = self._active_hub()
-        active_loc = structure["structure_id"] if structure else station
         hub_lbl = self._active_hub_label()
+        if _karte975:
+            region, station, structure, _key975, hub_lbl = _karte975["ort"]
+        active_loc = structure["structure_id"] if structure else station
         self.statusBar().showMessage(t("Loading open orders + market prices ({hub}) \u2026").format(hub=hub_lbl))
 
         _woanders = {}
@@ -31588,8 +33358,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._ord_laeuft = False
             # Merken, WANN und fuer WELCHEN Hub geladen wurde - danach
             # entscheidet _on_tab_changed, ob neu geholt werden muss.
-            self._ord_geladen_at = _t_ord2.time()
-            self._ord_geladen_hub = res.get("hub")
+            if not _karte975:            # der Stand von "Order update" selbst
+                self._ord_geladen_at = _t_ord2.time()
+                self._ord_geladen_hub = res.get("hub")
             names = res.get("names") or {}
             costs = {h.type_id: (h.avg_buy or 0) for h in getattr(self, "_holdings", [])}
             # HANDELS-CHARAKTERE (Nutzer, Sitzung 16). Ist eine Menge gesetzt,
@@ -31645,6 +33416,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             # Struktur - dann greift in `_fees_for_hub` bewusst der
             # Rueckfall auf die hub-unabhaengigen Werte).
             _hubkey9 = self._active_hub_key()
+            if _karte975:                # Gebuehren des geprueften Ortes
+                _hubkey9 = _karte975["ort"][3]
 
             def _fees_row9(_cid9):
                 try:
@@ -31842,8 +33615,27 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 _e928 = _r928.get("erledigt884")
                 _r928["vol_total"] = (int(_e928.get("volume_total") or 0) if _e928
                                       else _vt928.get(_r928.get("order_id")))
+            if _karte975:
+                # NUR DIE KARTE: die Tabellen von "Order update" bleiben, wie
+                # sie sind (dort gilt weiter der Hub oben).
+                _pf975 = self.__dict__.setdefault("_pf_ordmod", {})
+                for _zb975, _rows975 in ((True, buy_rows), (False, sell_rows)):
+                    for _r975 in _rows975:
+                        if _r975.get("order_id") and not _r975.get("erledigt884"):
+                            _pf975[int(_r975["order_id"])] = dict(
+                                _r975, is_buy=_zb975)
+                self._ord_laeuft = False
+                try:
+                    self._pf_ablauf_fuellen()
+                finally:
+                    _karte975["danach"]()
+                return
             self._ordmod_buy = buy_rows
             self._ordmod_sell = sell_rows
+            try:                              # emm974: Karte im Portfolio
+                self._pf_ablauf_fuellen()
+            except Exception as _e974:
+                self._log_exception("Portfolio: auslaufende Orders", str(_e974))
             self._fill_order_table(self.buyord_table, buy_rows, True)
             self._fill_order_table(self.sellord_table, sell_rows, False)
             # frische Daten → Abarbeiten-Zustand + Markierungen zurücksetzen
@@ -31878,6 +33670,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self._ord_laeuft = False
             self.statusBar().showMessage(
                 t("Could not load the orders: ") + str(msg), 8000)
+            if _karte975:
+                _karte975["danach"](fehler=True)
 
         self._run(Worker(job), done, fail_cb=_ord_fehler)
 
@@ -33264,17 +35058,56 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         store.update_shopping(rid, qty=int(digits))
         self._render_shopping()
 
+    def _sh_namen_laden(self):
+        """Namens-Cache EINMAL in die Vorschlagsliste des Eingabefelds der
+        Einkaufsliste laden (emm957) - erst beim ersten Tippen, nicht beim
+        Programmstart (~13k Namen)."""
+        if self._sh_namen_ids is not None:
+            return
+        try:
+            _ids = {str(n): int(i) for i, n in store.all_names().items() if n}
+        except Exception:
+            _ids = {}
+        self._sh_namen_ids = _ids
+        self._sh_namen_modell.setStringList(sorted(_ids, key=str.lower))
+
+    def _shopping_dazu(self, tid, name, qty):
+        """EIN Item von Hand auf die Einkaufsliste (emm957) - der eine Weg
+        fuer das Eingabefeld der Liste und den Rechtsklick im Materialien-
+        Reiter. Steht es schon drauf, wird NICHTS veraendert (die Menge dort
+        gehoert dem Nutzer) -> False."""
+        tid = int(tid)
+        if tid in self._cart_ids():
+            self._flash_tip(t("already on the shopping list"))
+            self.statusBar().showMessage(
+                t("{name} is already on the shopping list \u2013 change the quantity there.").format(
+                    name=name))
+            return False
+        store.add_shopping(tid, name, max(1, int(qty or 1)), 0, 0)
+        self._render_shopping()
+        self._flash_tip(t("added to the shopping cart \u2713"))
+        self.statusBar().showMessage(t("{name} added.").format(name=name))
+        return True
+
     def shopping_add(self):
         name = self.sh_name.text().strip()
         qty = self.sh_qty.value()
         if not name:
             return
+        # Erst der Namens-Cache (kein Netz, Gross/Klein egal), dann ESI.
+        self._sh_namen_laden()
+        _klein957 = name.lower()
+        for _n957, _t957 in (self._sh_namen_ids or {}).items():
+            if _n957.lower() == _klein957:
+                if self._shopping_dazu(_t957, _n957, qty):
+                    self.shopping_load_prices()
+                self.sh_name.clear()
+                return
 
         def done(res):
-            store.add_shopping(res["id"], res["name"], qty, 0, 0)
+            if self._shopping_dazu(res["id"], res["name"], qty):
+                self.shopping_load_prices()
             self.sh_name.clear()
-            self.shopping_load_prices()
-            self.statusBar().showMessage(t("{name} added.").format(name=res['name']))
 
         def fail(_):
             self.statusBar().showMessage(t("Item not found \u2013 use the exact name."))
@@ -33295,6 +35128,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         return {"id": hit["id"], "name": hit["name"]}
 
     def shopping_load_prices(self):
+        self._shopping_kaeufe_abziehen()                 # emm980
         rows = store.list_shopping()
         if not rows:
             return
@@ -33411,12 +35245,420 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             return
 
     def _shopping_dblclick(self, row, col):
-        if col == 1:                       # Button-Spalte nicht abfangen
+        # Spalte 2 = Menge: der Doppelklick AENDERT sie dort (emm972) - vorher
+        # ging gleichzeitig der Preisverlauf auf und nahm dem Feld den Fokus.
+        if col in (1, 2):                  # Button-Spalte nicht abfangen
             return
         cell = self.sh_table.item(row, 0)
         tid = cell.data(Qt.UserRole + 1) if cell else None
         if tid:
             self._open_chart_for(tid, cell.text())
+
+    # ---- Favoriten-Items (emm962) -----------------------------------------
+    def _fav_panel_bauen(self):
+        """Die Favoritenliste rechts im Einkaufswagen: Kopf mit Anzahl,
+        Tabelle (Mehrfachauswahl), zwei Knoepfe. -> das Panel-Widget."""
+        box = QFrame(); box.setObjectName("Card")
+        box.setFixedWidth(300)
+        v = QVBoxLayout(box); v.setContentsMargins(10, 8, 10, 8); v.setSpacing(6)
+        self._fav_kopf = QLabel("")
+        self._fav_kopf.setStyleSheet(
+            f"font-size:13px; font-weight:800; letter-spacing:2px; color:{theme.AMBER};")
+        v.addWidget(self._fav_kopf)
+        # MIT PREISEN (emm968, Nutzer "3 ja"): Kauf am globalen Hub, Verkauf
+        # am "Sell in"-Hub von Regional Trading, Handelsgewinn je Stueck.
+        # + Stueck/Tag am Verkaufs-Hub (emm969): Grundlage des
+        # Mengenvorschlags und der Warnung bei duennem Markt.
+        tbl = QTableWidget(0, 5)
+        tbl.setHorizontalHeaderLabels(
+            [t("Item"), t("Buy"), t("Sell"), t("Profit/unit"), t("Units/day")])
+        from PySide6.QtWidgets import QHeaderView as _QHV968
+        # Der NAME bekommt den Platz, nicht die letzte Zahlenspalte (im Bild
+        # gemessen: mit der Qt-Vorgabe blieben dem Namen zwei Buchstaben).
+        tbl.horizontalHeader().setStretchLastSection(False)
+        tbl.horizontalHeader().setSortIndicator(0, Qt.AscendingOrder)
+        tbl.horizontalHeader().setSectionResizeMode(0, _QHV968.Stretch)
+        for _c968 in (1, 2, 3, 4):
+            tbl.horizontalHeader().setSectionResizeMode(
+                _c968, _QHV968.ResizeToContents)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setSelectionBehavior(QTableWidget.SelectRows)
+        tbl.setSelectionMode(QTableWidget.ExtendedSelection)
+        tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+        tbl.setIconSize(QSize(22, 22))
+        tbl.setToolTip(t(
+            "Your favourite items. Right-click any item anywhere in Eve MoMa "
+            "and choose \u201eAdd to favourites\u201c.\nSelect one or more rows "
+            "(Ctrl / Shift) and send them to the shopping list; a double-click "
+            "sends one item.\nQuantity = what trades in one day at the "
+            "\u201eSell in\u201c hub of Regional Trading (at least 1); change it "
+            "in the shopping list."))
+        tbl.cellDoubleClicked.connect(
+            lambda r, _c: self._fav_in_den_wagen(self._fav_ids([r])))
+        kopier_menue(tbl, self._fav_menu)
+        self.fav_table = tbl
+        v.addWidget(tbl, 1)
+        self._fav_leer = QLabel(t(
+            "No favourites yet. Right-click an item and choose "
+            "\u201eAdd to favourites\u201c."))
+        self._fav_leer.setObjectName("Muted"); self._fav_leer.setWordWrap(True)
+        v.addWidget(self._fav_leer)
+        b_sel = QPushButton(" " + t("Selected \u2192 shopping list"))
+        b_sel.setIcon(icons.icon("cart"))
+        b_sel.clicked.connect(lambda: self._fav_in_den_wagen(self._fav_ids()))
+        b_alle = QPushButton(" " + t("All favourites \u2192 shopping list"))
+        b_alle.setIcon(icons.icon("star"))
+        b_alle.clicked.connect(
+            lambda: self._fav_in_den_wagen(
+                [(f["type_id"], f["name"]) for f in store.fav_items()]))
+        self._fav_btn_sel, self._fav_btn_alle = b_sel, b_alle
+        v.addWidget(b_sel)
+        v.addWidget(b_alle)
+        # BREITE GEMESSEN, NICHT GESETZT (Lehre b66/aa396: auf Windows sind
+        # dieselben Knoepfe deutlich breiter als hier) - das Panel ist so
+        # breit wie sein breitester Knopf, mindestens 300 px.
+        box.setFixedWidth(max(620, b_sel.sizeHint().width() + 24,
+                              b_alle.sizeHint().width() + 24))
+        self._fav_fuellen()
+        return box
+
+    def _fav_fuellen(self):
+        """Tabelle der Favoriten aus der Datenbank neu fuellen."""
+        tbl = getattr(self, "fav_table", None)
+        if tbl is None:
+            return
+        try:
+            favs = store.fav_items()
+        except Exception as _e:
+            self._log_exception("Favoriten lesen", str(_e))
+            favs = []
+        _preise968 = self._fav_preise([f["type_id"] for f in favs])
+        tbl.setSortingEnabled(False)
+        tbl.setRowCount(len(favs))
+        for r, f in enumerate(favs):
+            it = QTableWidgetItem(f["name"])
+            it.setData(Qt.UserRole, int(f["type_id"]))
+            _p968 = _preise968.get(int(f["type_id"])) or {}
+            for _c968, _k968 in ((1, "kauf"), (2, "verkauf"), (3, "gewinn")):
+                _w968 = _p968.get(_k968)
+                _z968 = NumericItem(
+                    "\u2013" if _w968 is None else
+                    (("+" if (_k968 == "gewinn" and _w968 >= 0) else "") + isk_kurz(_w968)),
+                    _w968)
+                _z968.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if _k968 == "gewinn" and _w968 is not None:
+                    _z968.setForeground(QColor(
+                        theme.GREEN if _w968 >= 0 else theme.RED))
+                _z968.setToolTip(_p968.get("tip") or t(
+                    "No price: scan the hub with \u201eMarket scan\u201c first."))
+                tbl.setItem(r, _c968, _z968)
+            # STUECK/TAG (emm969) - dieselbe Zelle wie in Market stats.
+            _tx969, _w969, _f969, _tip969 = self._ms_stk_tag_zelle(
+                _p968.get("stk_tag"))
+            _z969 = NumericItem(_tx969, _w969)
+            _z969.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if _f969:
+                _z969.setForeground(QColor(_f969))
+            _z969.setToolTip(_tip969 or t(
+                "Units traded per day in the region of the \u201eSell in\u201c "
+                "hub (last {n} days, from stored history).").format(
+                    n=self.MSTATS_TAGE))
+            tbl.setItem(r, 4, _z969)
+            try:
+                from PySide6.QtGui import QIcon as _QIcon962
+                _pm = self._item_pixmap(int(f["type_id"]), size=32, allow_fetch=False)
+                if _pm is not None:
+                    it.setIcon(_QIcon962(_pm))
+            except Exception:
+                pass
+            tbl.setItem(r, 0, it)
+        tbl.setSortingEnabled(True)
+        self._fav_kopf.setText(t("FAVOURITES ({n})").format(n=len(favs)))
+        self._fav_leer.setVisible(not favs)
+        self._fav_btn_sel.setEnabled(bool(favs))
+        self._fav_btn_alle.setEnabled(bool(favs))
+
+    def _fav_preise(self, tids):
+        """{tid: {kauf, verkauf, gewinn, tip}} fuer die Favoritenliste (emm968).
+
+        kauf    = guenstigste Sell-Order am GLOBALEN Hub (oben), aus dessen
+                  letztem Markt-Scan (`_ms_bau_quelle`).
+        verkauf = guenstigste Sell-Order am "Sell in"-Hub von Regional
+                  Trading, aus DESSEN letztem Scan.
+        gewinn  = `_ms_handelsgewinn` - dieselbe Rechnung wie Market stats
+                  (Steuer, Broker, Fracht je Stueck; Regel 9).
+        Fehlt ein Scan oder sind beide Hubs derselbe, bleibt der Wert None -
+        die Zelle zeigt einen Strich, nichts wird erfunden."""
+        tids = [int(x) for x in (tids or [])]
+        if not tids:
+            return {}
+        try:
+            _q_kauf = self._ms_bau_quelle()
+            _n_kauf = self.g_hub.currentText() if hasattr(self, "g_hub") else "?"
+        except Exception:
+            return {}
+        _q_verk, _n_verk = None, None
+        _ziel = None
+        try:
+            _ziel = self.rg_tgt.currentData() if hasattr(self, "rg_tgt") else None
+            _n_verk = self.rg_tgt.currentText() if hasattr(self, "rg_tgt") else None
+        except RuntimeError:
+            _ziel = None
+        if isinstance(_ziel, dict):
+            try:
+                if _ziel.get("structure_id"):
+                    _q_verk = store.struct_source(int(_ziel["structure_id"]))
+                elif _ziel.get("region_id") or _ziel.get("station_id"):
+                    _q_verk = store.hub_source(int(hubs.hub_id_fuer(
+                        _ziel.get("region_id"), _ziel.get("station_id"))))
+            except Exception:
+                _q_verk = None
+        # STUECK/TAG in der Region des Verkaufs-Hubs (emm969) - dieselbe
+        # Quelle wie Market stats und Doctrines (`store.item_handel`).
+        _handel969 = {}
+        try:
+            _reg969 = None
+            if isinstance(_ziel, dict):
+                _reg969 = _ziel.get("region_id")
+                if not _reg969 and _q_verk:
+                    _reg969 = self._ms_ort_region(_q_verk)
+            if _reg969:
+                _handel969 = store.item_handel(
+                    int(_reg969), tids, self.MSTATS_TAGE) or {}
+        except Exception:
+            _handel969 = {}
+        _menge = set(tids)
+
+        def _lesen(q968):
+            if not q968:
+                return {}
+            try:
+                return {int(s["type_id"]): float(s["sell_min"])
+                        for s in store.get_snapshot(q968) or []
+                        if int(s["type_id"]) in _menge
+                        and (s.get("sell_min") or 0) > 0}
+            except Exception:
+                return {}
+        _pk = _lesen(_q_kauf)
+        _selber = bool(_q_verk) and str(_q_verk) == str(_q_kauf)
+        _pv = {} if _selber else _lesen(_q_verk)
+        _satz = self._fracht_satz()
+        try:
+            _vol = self._fracht_volumen(tids) if _satz > 0 else {}
+        except Exception:
+            _vol = {}
+        aus = {}
+        for tid in tids:
+            _m3 = (_vol or {}).get(tid)
+            _zeile = {"sell_min": _pv.get(tid), "global_preis": _pk.get(tid),
+                      "fracht_stk": (float(_m3) * _satz if (_m3 and _satz > 0) else None),
+                      "selber_ort": _selber}
+            _hg = self._ms_handelsgewinn(_zeile)
+            aus[tid] = {
+                "kauf": _pk.get(tid), "verkauf": _pv.get(tid),
+                "gewinn": (_hg[0] if _hg is not None else None),
+                "stk_tag": ((float(_handel969[tid]["vol"]) / max(1, self.MSTATS_TAGE))
+                            if tid in _handel969 else None),
+                "tip": t("Buy at {kauf}, sell at {verkauf} (\u201eSell in\u201c of "
+                         "Regional Trading). Prices from the last market scan "
+                         "of each hub; profit after tax, broker and freight.")
+                .format(kauf=_n_kauf or "?", verkauf=_n_verk or "?")}
+        return aus
+
+    def _fav_ids(self, zeilen=None):
+        """[(type_id, name)] der gewaehlten (oder genannten) Zeilen."""
+        tbl = getattr(self, "fav_table", None)
+        if tbl is None:
+            return []
+        if zeilen is None:
+            zeilen = sorted({i.row() for i in tbl.selectedIndexes()})
+        out = []
+        for r in zeilen:
+            it = tbl.item(r, 0)
+            if it is not None and it.data(Qt.UserRole):
+                out.append((int(it.data(Qt.UserRole)), it.text()))
+        return out
+
+    def _fav_in_den_wagen(self, items):
+        """Favoriten auf die Einkaufsliste. MENGENVORSCHLAG (emm969, Nutzer
+        21.11.2026 "alle 3 ja"): was am Verkaufs-Hub an EINEM Tag gehandelt
+        wird (aufgerundet, mindestens 1) - wie der Kauf-Knopf in Market
+        stats; ohne Historie 1. In der Einkaufsliste aenderbar. Was schon
+        drauf steht, bleibt, wie es ist. -> Anzahl neu hinzugefuegter Items."""
+        import math as _m969
+        items = list(items or [])
+        if not items:
+            self._flash_tip(t("Select one or more favourites first."))
+            return 0
+        schon = self._cart_ids()
+        try:
+            _p969 = self._fav_preise([int(i[0]) for i in items])
+        except Exception:
+            _p969 = {}
+        neu = 0
+        for tid, name in items:
+            if int(tid) in schon:
+                continue
+            _st969 = (_p969.get(int(tid)) or {}).get("stk_tag")
+            _q969 = max(1, int(_m969.ceil(float(_st969)))) if _st969 else 1
+            store.add_shopping(int(tid), name, _q969, 0, 0)
+            schon.add(int(tid))
+            neu += 1
+        if neu:
+            self._render_shopping()
+            self.shopping_load_prices()
+        self._flash_tip(t("{n} added to the shopping list \u2713").format(n=neu))
+        self.statusBar().showMessage(
+            t("{n} favourite(s) added to the shopping list, {k} were already on it.")
+            .format(n=neu, k=len(items) - neu))
+        return neu
+
+    def _fav_dazu(self, tid, name):
+        """Rechtsklick "Add to favourites" - von ueberall."""
+        try:
+            neu = store.fav_item_dazu(int(tid), name)
+        except Exception as _e:
+            self._log_exception("Favorit speichern", str(_e))
+            return False
+        self._fav_fuellen()
+        self._flash_tip(t("added to favourites \u2605") if neu
+                        else t("already in your favourites"))
+        return neu
+
+    def _fav_weg(self, ids):
+        """Favoriten entfernen (Rechtsklick in der Favoritenliste)."""
+        n = 0
+        for tid in ids:
+            if store.fav_item_weg(int(tid)):
+                n += 1
+        self._fav_fuellen()
+        return n
+
+    @staticmethod
+    def _fav_tabellen_wahl(tabelle, zeile, spalte=0, rolle=Qt.UserRole):
+        """[(type_id, name)] der MARKIERTEN Zeilen einer Tabelle (emm976) -
+        die type_id steht in `spalte` unter `rolle`. Liegt die angeklickte
+        Zeile nicht in der Markierung, gilt nur sie. Jedes Item einmal."""
+        try:
+            _zeilen = sorted({_i.row() for _i in tabelle.selectedIndexes()})
+        except Exception:
+            _zeilen = []
+        if zeile is not None and int(zeile) not in _zeilen:
+            _zeilen = [int(zeile)]
+        _aus, _gesehen = [], set()
+        for _r in _zeilen:
+            _c = tabelle.item(_r, spalte)
+            _tid = _c.data(rolle) if _c is not None else None
+            try:
+                _tid = int(_tid)
+            except (TypeError, ValueError):
+                continue
+            if _tid <= 0 or _tid in _gesehen:
+                continue
+            _gesehen.add(_tid)
+            _nc = tabelle.item(_r, spalte)
+            _nm = store.item_name_rein(_nc.text()) or _nc.text()
+            _aus.append((_tid, _nm))
+        return _aus
+
+    def _fav_mehrere_dazu(self, wahl, namen=None):
+        """Mehrere Items auf einmal in die Favoriten (emm976, Nutzer
+        22.11.2026: "ueberall soll das moeglich sein, aus transactions,
+        daytrade swingtrade regional trade portfolio"). `namen` {tid: name}
+        ersetzt den Zellentext, wo die Zelle nicht den Item-Namen traegt.
+        -> Anzahl neu hinzugefuegter."""
+        _neu = _schon = 0
+        for _tid, _nm in (wahl or []):
+            _nm = (namen or {}).get(int(_tid)) or _nm
+            try:
+                if store.fav_item_dazu(int(_tid), _nm):
+                    _neu += 1
+                else:
+                    _schon += 1
+            except Exception as _e:
+                self._log_exception("Favorit speichern", str(_e))
+        self._fav_fuellen()
+        self._flash_tip(t("{n} added to favourites \u2605").format(n=_neu))
+        self.statusBar().showMessage(
+            t("{n} added to favourites \u2605").format(n=_neu)
+            + ((" " + t("{n} were already in your favourites.").format(n=_schon))
+               if _schon else ""))
+        return _neu
+
+    def _fav_aktion(self, menu, tid, name, tabelle=None, zeile=None,
+                    spalte=0, rolle=Qt.UserRole, namen_spalte=None):
+        """EINE Stelle fuer den Menue-Eintrag "Add to favourites" (emm962,
+        Nutzer: "von ueberall her also aus allen Tabs ... per rechtsklick
+        aufs Item"). Steht das Item schon drin, heisst der Eintrag
+        "Remove from favourites". -> die Action (oder None ohne type_id).
+
+        MEHRFACHAUSWAHL (emm976): mit `tabelle` + `zeile` und mehr als einer
+        markierten Zeile heisst der Eintrag "Add n items to favourites" und
+        legt ALLE markierten dazu. `namen_spalte`: Spalte mit dem Item-Namen,
+        wenn die type_id in einer anderen Zelle steht (Transactions)."""
+        if tabelle is not None:
+            _wahl976 = self._fav_tabellen_wahl(tabelle, zeile, spalte, rolle)
+            if len(_wahl976) > 1:
+                _namen976 = {}
+                if namen_spalte is not None:
+                    for _r976 in sorted({_i.row() for _i in tabelle.selectedIndexes()}):
+                        _ct976 = tabelle.item(_r976, spalte)
+                        _cn976 = tabelle.item(_r976, namen_spalte)
+                        try:
+                            _namen976[int(_ct976.data(rolle))] = (
+                                store.item_name_rein(_cn976.text()) or _cn976.text())
+                        except (AttributeError, TypeError, ValueError):
+                            continue
+                a = menu.addAction(icons.icon("star"), t(
+                    "Add {n} items to favourites").format(n=len(_wahl976)))
+                a.triggered.connect(
+                    lambda _c=False, _w=list(_wahl976), _n=dict(_namen976):
+                        self._fav_mehrere_dazu(_w, _n))
+                return a
+        try:
+            tid = int(tid)
+        except (TypeError, ValueError):
+            return None
+        if tid <= 0:
+            return None
+        try:
+            drin = any(f["type_id"] == tid for f in store.fav_items())
+        except Exception:
+            drin = False
+        if drin:
+            a = menu.addAction(icons.icon("star"), t("Remove from favourites"))
+            a.triggered.connect(lambda _c=False, _t=tid: self._fav_weg([_t]))
+        else:
+            a = menu.addAction(icons.icon("star"), t("Add to favourites"))
+            a.triggered.connect(
+                lambda _c=False, _t=tid, _n=name: self._fav_dazu(_t, _n))
+        return a
+
+    def _fav_menu(self, pos):
+        """Rechtsklick in der Favoritenliste."""
+        tbl = self.fav_table
+        it = tbl.itemAt(pos)
+        if it is None:
+            return
+        wahl = self._fav_ids()
+        if (int(it.data(Qt.UserRole) or 0), it.text()) not in wahl:
+            wahl = self._fav_ids([it.row()])
+        if not wahl:
+            return
+        m = kontext_menue(tbl)
+        a_cart = m.addAction(icons.icon("cart"), t("\u2192 Shopping list"))
+        a_open = m.addAction(t("Open market in game"))
+        a_chart = m.addAction(t("Show history"))
+        a_weg = m.addAction(icons.icon("trash"), t("Remove from favourites"))
+        chosen = m.exec(tbl.viewport().mapToGlobal(pos))
+        if chosen == a_cart:
+            self._fav_in_den_wagen(wahl)
+        elif chosen == a_open:
+            self.open_ingame_market(wahl[0][0])
+        elif chosen == a_chart:
+            self._open_chart_for(wahl[0][0], wahl[0][1])
+        elif chosen == a_weg:
+            self._fav_weg([w[0] for w in wahl])
 
     def _shopping_menu(self, pos):
         it = self.sh_table.itemAt(pos)
@@ -33431,8 +35673,30 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         m = kontext_menue(self.sh_table)
         a_chart = m.addAction(t("Show history"))
         a_open = m.addAction(t("Open market in game"))
+        a_menge972 = m.addAction(t("Change quantity \u2026"))
+        # KAUFART UMSTELLEN (emm973): Daytrade-Zeile (eigene Buy-Order, nicht
+        # im Multibuy) <-> Sofortkauf (im Multibuy). Gilt fuer ALLE markierten
+        # Zeilen, wenn die angeklickte dazugehoert.
+        _rid973 = cell.data(Qt.UserRole)
+        _zeilen973 = sorted({_i.row() for _i in self.sh_table.selectedIndexes()})
+        if it.row() not in _zeilen973:
+            _zeilen973 = [it.row()]
+        _ids973 = [self.sh_table.item(_r, 0).data(Qt.UserRole) for _r in _zeilen973
+                   if self.sh_table.item(_r, 0) is not None]
+        _ist_dt973 = any(r["id"] == _rid973 and (r.get("source") or "") == "daytrade"
+                         for r in store.list_shopping())
+        a_art973 = m.addAction(
+            t("Buy instantly (include in multibuy)") if _ist_dt973
+            else t("Buy with a buy order (daytrade, not in multibuy)"))
+        self._fav_aktion(m, tid, store.item_name_rein(cell.text()) or cell.text(),
+                         tabelle=self.sh_table, zeile=it.row(),
+                         rolle=Qt.UserRole + 1)
         chosen = m.exec(self.sh_table.viewport().mapToGlobal(pos))
-        if chosen == a_chart:
+        if chosen == a_art973:
+            self._shopping_kaufart(_ids973, "" if _ist_dt973 else "daytrade")
+        elif chosen == a_menge972:
+            self._shopping_menge_fragen(it.row())
+        elif chosen == a_chart:
             self._open_chart_for(tid, cell.text())
         elif chosen == a_open:
             self.shopping_open(tid)
@@ -33572,6 +35836,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self.statusBar().showMessage(
                     t("Suggested quantity (by daily volume) applied for {n} items.").format(n=n)
                     + _zusatz)
+        elif vorschlag:
+            # ES GAB VORSCHLAEGE, nur aendern sie nichts (emm973): die Menge
+            # steht schon so da - oder das Orderbuch des Hubs oben ist so
+            # duenn, dass der Tiefen-Deckel sie auf die vorhandene Menge
+            # drueckt. Vorher stand hier "No suggestions available", obwohl
+            # Tagesvolumen da war.
+            self._flash_tip(t("Quantities unchanged"))
+            self.statusBar().showMessage(
+                (t("{n2} suggestion(s) capped by the order book of {hub} \u2013 "
+                   "buying more there would cost over 8 % above the best "
+                   "price. Switch the hub at the top to where you buy.").format(
+                       n2=tief_gedeckelt, hub=self._active_hub_label())
+                 if tief_gedeckelt else
+                 t("The quantities already match the suggestion.")))
         else:
             self._flash_tip(t("No suggestions available"))
             self.statusBar().showMessage(t(
@@ -33750,7 +36028,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     # Industry zu tun").
     # Die Leiste selbst BLEIBT (Logo, Tutorial, Discord, Spenden) - nur die
     # Handels-Werkzeuge verschwinden.
-    _NAV_INDUSTRIE = ("market", "characters", "settings")
+    # emm1005 (Nutzer 23.11.2026: "wenn der Industry Tab offen ist, soll in
+    # der linken Sidebar marketStats ebenfalls noch sichtbar sein. Die
+    # gleiche Sidebar Ansicht soll dann auch der Doctrines Tab haben").
+    _NAV_INDUSTRIE = ("market", "mstats", "characters", "settings")
+    # Reiter mit der gekuerzten Leiste (Schluessel aus `_tab_widget`).
+    _NAV_KURZ_REITER = ("build",)      # "stocks" ist seit emm1048 eine Seite IN "build"
     # VOR DIESEM REITER steht der Trennstrich: bis dahin Handel, danach
     # Produktion (Nutzer 23.09.2026). Eine Konstante, keine Zahl im Code -
     # sonst wandert der Strich beim naechsten neuen Reiter still mit.
@@ -33763,7 +36046,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         damit am Leben (Handler, Tests, Tutorial-Ziele greifen weiter).
         """
         _tw = getattr(self, "_tab_widget", None) or {}
-        ist_bau = cur is not None and cur is _tw.get("build")
+        ist_bau = cur is not None and any(
+            cur is _tw.get(_k1005) for _k1005 in self._NAV_KURZ_REITER)
         # NUR DIE LINKE LEISTE (Nutzer-Befund 22.09.2026: "wenn man auf
         # Industry wechselt, verschwinden auch Daytrade, Swingtrade,
         # Regional Trade - somit ist es unmoeglich zurueckzukehren").
@@ -33778,6 +36062,40 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             if b is None:
                 continue
             b.setVisible((not ist_bau) or k in self._NAV_INDUSTRIE)
+        # AUSNAHME EINKAUFSLISTE (emm958, Nutzer 20.11.2026: "wenn man per
+        # rechtsklick etwas zur shopping Liste hinzufuegt ueber den Bauplan,
+        # dann und nur dann sollte die shopping List in der linken Sidebar
+        # erscheinen wenn man den Industry Tab offen hat"). Der Entscheid
+        # vom 22.09. (nur drei Werkzeuge) bleibt - bis jemand AUS dem
+        # Bauplan etwas auf die Liste legt.
+        if ist_bau and self._nav_shopping_im_bau():
+            _b958 = (getattr(self, "_nav_buttons", None) or {}).get("shopping")
+            if _b958 is not None:
+                _b958.setVisible(True)
+
+    def _nav_shopping_im_bau(self):
+        """Steht die Einkaufsliste auch im Industry-Reiter links? Nur, wenn
+        aus einem Bauplan heraus etwas darauf gelegt wurde (Merker
+        `nav_shopping_bau`) UND die Liste nicht leer ist - eine geleerte
+        Liste nimmt den Merker wieder weg."""
+        if not self.settings.get("nav_shopping_bau"):
+            return False
+        if self._cart_ids():
+            return True
+        self.settings["nav_shopping_bau"] = False
+        config.save_settings_async(self.settings)
+        return False
+
+    def _nav_shopping_bau_merken(self):
+        """Aus dem Bauplan kam etwas auf die Einkaufsliste: ab jetzt steht
+        sie auch im Industry-Reiter in der linken Leiste (emm958)."""
+        if not self.settings.get("nav_shopping_bau"):
+            self.settings["nav_shopping_bau"] = True
+            config.save_settings_async(self.settings)
+        try:
+            self._nav_sichtbarkeit(self.tabs.currentWidget())
+        except RuntimeError:
+            pass
 
     def _on_tab_changed(self, idx):
         # keep the sidebar/top-bar highlight in sync, even on programmatic jumps
@@ -33802,6 +36120,15 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # dazwischen die Zahlen aendert.
         if cur is getattr(self, "mstats_tab", None):
             self._mstats_fuellen()
+        # FAVORITEN-PREISE BEIM OEFFNEN DES EINKAUFSWAGENS (emm968): sie
+        # haengen am globalen Hub und am "Sell in"-Hub - beide koennen sich
+        # seit dem letzten Fuellen geaendert haben.
+        if cur is (getattr(self, "_tab_widget", None) or {}).get("shopping"):
+            self._shopping_kaeufe_abziehen()             # emm980
+            try:
+                self._fav_fuellen()
+            except Exception as _e968:
+                self._log_exception("Favoriten-Preise", str(_e968))
         # PI LAEDT BEIM OEFFNEN VON SELBST (emm801; seit emm803 nur,
         # wenn der Reiter ueberhaupt existiert - sonst waere getattr
         # None und traefe cur=None).
@@ -33812,12 +36139,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # market button soll blinken wenn man den Tab das erstma mal
         # öffnen, da es sich anscheinend nicht vonalleine fetched"):
         # ohne geholten Markt blinkt der Fetch-Knopf kurz auf.
-        _msw854 = (getattr(self, "_tab_widget", None) or {}).get("stocks")
-        if _msw854 is not None and cur is _msw854:
-            try:
-                self._ms_tab_geoeffnet()
-            except Exception:
-                pass
+        # (Seit emm1048 ist Doctrines eine Seite im Industry-Stapel - der
+        # Ausloeser `_ms_tab_geoeffnet` steht deshalb in `_bau_nav`.)
         # (Der Ausloeser fuer Assets sass bis emm887 HIER - seit die
         # Seite im Industry-Stapel haengt, steht er in `_bau_nav`. Am
         # Tab-Wechsel koennte er nie wieder greifen.)
@@ -34143,7 +36466,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         # still selling" und "if it was a BUY transaction, maybe add the
         # button Open (market) like one has in shopping list".
         self.tx_table = QTableWidget(0, 8)
-        kopier_menue(self.tx_table)           # Rechtsklick -> Copy
+        kopier_menue(self.tx_table, self._tx_menu)   # Rechtsklick -> Copy + Item-Menue
         self.tx_table.setHorizontalHeaderLabels(
             [t("Date"), t("Type"), t("Item"), t("Qty"), t("still selling"),
              t("Price/unit"), t("Sum"), ""])
@@ -34171,6 +36494,30 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         root.addWidget(self.tx_note)
         self.tabs.addTab(w, t("Transactions"))
         self._transactions_w = w
+
+    def _tx_menu(self, pos):
+        """Rechtsklick in Transactions (emm976, Nutzer 22.11.2026: "aus
+        transactions ... soll man die favouritenliste befuellen koennen").
+        Die type_id steht in Spalte 7 ("Open"), der Name in Spalte 2."""
+        _it = self.tx_table.itemAt(pos)
+        if _it is None:
+            return
+        _c7 = self.tx_table.item(_it.row(), 7)
+        _c2 = self.tx_table.item(_it.row(), 2)
+        _tid = _c7.data(Qt.UserRole + 1) if _c7 is not None else None
+        if not _tid or _c2 is None:
+            return
+        m = kontext_menue(self.tx_table)
+        a_open = m.addAction(t("Open market in game"))
+        a_chart = m.addAction(t("Show history"))
+        self._fav_aktion(m, _tid, _c2.text(), tabelle=self.tx_table,
+                         zeile=_it.row(), spalte=7, rolle=Qt.UserRole + 1,
+                         namen_spalte=2)
+        chosen = m.exec(self.tx_table.viewport().mapToGlobal(pos))
+        if chosen == a_open:
+            self.open_ingame_market(int(_tid), _c7.data(Qt.UserRole + 2))
+        elif chosen == a_chart:
+            self._open_chart_for(int(_tid), _c2.text())
 
     def _tx_zelle_klick(self, row, col):
         """Klick in die Transaktions-Tabelle (emm914): nur Spalte 7
@@ -34826,6 +37173,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
     MSTATS_TOP = 15
     # Waehlbare Anzahl je Liste (emm929); Vorgabe bleibt MSTATS_TOP.
     MSTATS_ANZAHLEN = (15, 50, 100, 250)
+    # DUENNER MARKT (emm969): weniger als so viele Stueck pro Tag. Nutzer
+    # 21.11.2026: "Achtung Sachen wie schiffe, werden teilweise am Tag nur
+    # vielleicht 10 mal gehandelt bringen aber dennoch viel Profit" - darum
+    # KEINE Schwelle bei 10 oder 50, sondern erst unter EINEM Stueck je Tag:
+    # dann liegt die Ware laenger als einen Tag je Stueck.
+    MSTATS_DUENN = 1.0
+    # Wie tief die Rangliste ueber alle Orte je Ort liest (emm969).
+    MSTATS_RANG_TIEFE = 2000
     # BREITE DER KARTENSPALTE (emm896). Nutzer 11.11.2026: "begrenze
     # aber die Breite auf eine sinnvolle breite, damit wir falls noetig
     # noch platz fuer ne rechte Sidebar haben". MoMas Werkzeugleisten
@@ -34879,6 +37234,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 self.ms_anzahl.currentData() or self.MSTATS_TOP)
             self.settings["mstats_nur_baubar"] = bool(
                 self.ms_nur_baubar.isChecked())
+            self.settings["mstats_nur_gewinn"] = bool(      # emm968
+                self.ms_nur_gewinn.isChecked())
             config.save_settings_async(self.settings)
         except Exception:
             pass
@@ -34931,6 +37288,20 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         self.ms_nur_baubar.toggled.connect(
             lambda _c: self._ms_anzeige_aendern())
         kopf.addWidget(self.ms_nur_baubar)
+        # NUR GEWINNBRINGENDES (emm968, Nutzer 21.11.2026 "2 ja"): blendet
+        # in den Listen alles ohne positiven Handelsgewinn aus. Der Ort, der
+        # selbst der globale Hub ist, bleibt ungefiltert (kein Vergleich).
+        self.ms_nur_gewinn = QCheckBox(t("Only profitable to trade"))
+        self.ms_nur_gewinn.setIcon(icons.icon("coins"))    # b55: Symbol
+        self.ms_nur_gewinn.setToolTip(t(
+            "Shows only items with a positive trade profit: buy at your "
+            "global hub (top bar), sell at that place. The list of the "
+            "global hub itself stays complete."))
+        self.ms_nur_gewinn.setChecked(
+            bool(self.settings.get("mstats_nur_gewinn", False)))
+        self.ms_nur_gewinn.toggled.connect(
+            lambda _c: self._ms_anzeige_aendern())
+        kopf.addWidget(self.ms_nur_gewinn)
         self.ms_refresh = _btn_icon(QPushButton(t("Refresh")), "refresh")
         self.ms_refresh.clicked.connect(self._mstats_fuellen)
         kopf.addWidget(self.ms_refresh)
@@ -35032,8 +37403,9 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _l = QVBoxLayout(_box)
         _l.setContentsMargins(0, 0, 0, 0)
         _l.setSpacing(4)
-        _knopf = QPushButton("\u25b8  " + text)
+        _knopf = QPushButton(text)
         _knopf.setCheckable(True)
+        icons.klapp_setzen(_knopf, False)
         _knopf.setCursor(Qt.PointingHandCursor)
         _knopf.setStyleSheet(
             f"QPushButton {{ background: transparent; border: none;"
@@ -35048,7 +37420,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _gebaut = []
 
         def _um(an):
-            _knopf.setText(("\u25be  " if an else "\u25b8  ") + text)
+            icons.klapp_setzen(_knopf, an, text)
             if an and not _gebaut:
                 _gebaut.append(True)
                 for _w in (bauen() or []):
@@ -35219,15 +37591,42 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
 
         _n929 = self._ms_top_n()
         _bb929 = bool(self.settings.get("mstats_nur_baubar", False))
+        # HANDELSGEWINN GEGEN DEN GLOBALEN HUB (emm967, Nutzer 21.11.2026:
+        # "direkt vergleich zu global gesetzem Hub (meistens Jita) dann ein
+        # einkaufsbutton der mir nur sachen kauft bei denen ich gewinn mache
+        # wenn ich Jita einkaufen und am gewaehlten Hub verkaufe").
+        # Frachtsatz hier im GUI-Thread lesen, gerechnet wird im Hintergrund.
+        _satz967 = self._fracht_satz()
+        _selber967 = (str(source) == str(_bq924))
 
         def _job924():
             _top = self._ms_top_auswahl(
                 lambda lim: store.ort_top_gehandelt(source, region, _tage, lim),
                 _n929, _bb929)
             _kost = self._ms_baukosten([_x["type_id"] for _x in _top], _bq924)
+            _gp967, _fv967 = {}, {}
+            if not _selber967:
+                _tids967 = {int(_x["type_id"]) for _x in _top}
+                try:
+                    _gp967 = {int(s["type_id"]): float(s["sell_min"])
+                              for s in store.get_snapshot(_bq924) or []
+                              if int(s["type_id"]) in _tids967
+                              and (s.get("sell_min") or 0) > 0}
+                except Exception:
+                    _gp967 = {}
+                if _satz967 > 0:
+                    try:
+                        _fv967 = self._fracht_volumen(sorted(_tids967)) or {}
+                    except Exception:
+                        _fv967 = {}
             for _x in _top:
                 _x["baukosten"] = _kost.get(_x["type_id"])
                 _x["bau_hub"] = _bn924
+                _x["global_preis"] = _gp967.get(int(_x["type_id"]))
+                _m3_967 = _fv967.get(int(_x["type_id"]))
+                _x["fracht_stk"] = (float(_m3_967) * _satz967
+                                    if (_m3_967 and _satz967 > 0) else None)
+                _x["selber_ort"] = _selber967
             return _top
         _w922 = Worker(_job924)
 
@@ -35262,7 +37661,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _r, _s, _struct = self._active_hub()
         if _struct and _struct.get("structure_id"):
             return store.struct_source(int(_struct["structure_id"]))
-        return store.hub_source(int(_r))
+        return store.hub_source(int(hubs.hub_id_fuer(_r, _s)))     # emm952
 
     def _ms_baukosten(self, tids, quelle):
         """{tid: Baukosten je Stueck} fuer baubare Items (emm924), Material
@@ -35306,7 +37705,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 _aus[_tid] = float(_c)
         return _aus
 
-    def _ms_item_menue_bauen(self, tid, name, parent=None, menu=None):
+    def _ms_item_menue_bauen(self, tid, name, parent=None, menu=None,
+                             tabelle=None, zeile=None, spalte=0):
         """Baut das Menue (emm923, Nutzer 14.11.2026: "Rechtsklick open
         ingame market, zu einkaufsliste hinzufuegen, zu bauplan hinzufuegen,
         zu multibauplan hinzufuegen"). Rueckgabe (menu, {Action: was}) -
@@ -35319,6 +37719,8 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         akt = {}
         akt[menu.addAction(icons.icon("globe"), t("Open market in game"))] = "markt"
         akt[menu.addAction(icons.icon("cart"), t("\u2192 Shopping list"))] = "einkauf"
+        self._fav_aktion(menu, tid, name, tabelle=tabelle, zeile=zeile,
+                         spalte=spalte)                            # emm976/981
         try:
             _bp = getattr(industry.recipes_cached(), "product_to_bp", {}) or {}
         except Exception:
@@ -35326,9 +37728,75 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if int(tid) in _bp:
             menu.addSeparator()
             akt[menu.addAction(icons.icon("hammer"), t("Open build plan"))] = "bauplan"
+        # MEHRERE MARKIERTE ZEILEN -> MULTIPLAN (emm982, Nutzer 22.11.2026:
+        # "mehrere Items selektiere kann ich nicht mehrere Items zu einem
+        # multiplan hinzufuegen"). Dieselben zwei Eintraege wie im Scanner
+        # und in My Blueprints (`_multi_auswahl_menue`); nur BAUBARE Items
+        # der Auswahl zaehlen.
+        _ausw982 = self._ms_bau_auswahl(tabelle, zeile, spalte, _bp)
+        if len(_ausw982) >= 2:
+            if int(tid) not in _bp:
+                menu.addSeparator()
+            _akt982, _neu982 = self._multi_auswahl_menue(menu, _ausw982)
+            akt[_neu982] = ("multi_neu", _ausw982)
+            for _a, _pid in _akt982.items():
+                akt[_a] = ("multi_n", _pid, _ausw982)
+        elif int(tid) in _bp:
             for _a, _pid in self._multi_untermenue(menu, int(tid), name).items():
                 akt[_a] = ("multi", _pid)
         return menu, akt
+
+    @staticmethod
+    def _ms_bau_auswahl(tabelle, zeile, spalte, baubar):
+        """[{tid, name, vorgabe}] der markierten, sichtbaren, BAUBAREN Zeilen
+        (emm982) - leer, wenn die angeklickte Zeile nicht zur Markierung
+        gehoert oder keine Tabelle bekannt ist (dann gilt das Einzel-Menue)."""
+        if tabelle is None or zeile is None:
+            return []
+        _zeilen = sorted({_i.row() for _i in tabelle.selectedIndexes()
+                          if not tabelle.isRowHidden(_i.row())})
+        if int(zeile) not in _zeilen:
+            return []
+        _aus, _gesehen = [], set()
+        for _r in _zeilen:
+            _c = tabelle.item(_r, int(spalte))
+            _t982 = _c.data(Qt.UserRole) if _c is not None else None
+            if _t982 and int(_t982) in baubar and int(_t982) not in _gesehen:
+                _gesehen.add(int(_t982))
+                _aus.append({"tid": int(_t982), "name": _c.text(), "vorgabe": 1})
+        return _aus
+
+    @staticmethod
+    def _ms_tabellen_wahl(tbl, zeile):
+        """[(type_id, name)] der markierten Zeilen einer Market-stats-Tabelle
+        (emm971). Liegt die angeklickte Zeile NICHT in der Markierung, gilt
+        nur sie - wie in jeder anderen Tabelle."""
+        _zeilen = sorted({_i.row() for _i in tbl.selectedIndexes()})
+        if int(zeile) not in _zeilen:
+            _zeilen = [int(zeile)]
+        _aus = []
+        for _r in _zeilen:
+            _c = tbl.item(_r, 0)
+            if _c is not None and _c.data(Qt.UserRole):
+                _aus.append((int(_c.data(Qt.UserRole)), _c.text()))
+        return _aus
+
+    def _ms_mehrere_in_den_wagen(self, wahl):
+        """Mehrere markierte Items auf die Einkaufsliste (emm971), je Menge 1
+        wie der Einzel-Eintrag. Was schon drauf steht, bleibt.
+        -> Anzahl neu hinzugefuegter."""
+        _neu = 0
+        for _tid, _nm in (wahl or []):
+            if self._add_deal_to_cart(int(_tid), _nm, quelle=""):   # emm973
+                _neu += 1
+        if _neu:
+            self._render_shopping()
+        self._flash_tip(t("{n} item(s) put on the shopping list.").format(n=_neu))
+        self.statusBar().showMessage(
+            t("{n} item(s) put on the shopping list.").format(n=_neu)
+            + ((" " + t("{n} were already on the list.").format(
+                n=len(wahl) - _neu)) if len(wahl or []) > _neu else ""))
+        return _neu
 
     def _ms_item_menue_ausfuehren(self, was, tid, name):
         """Fuehrt die gewaehlte Menue-Aktion aus (emm923) - dieselben Wege
@@ -35336,7 +37804,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if was == "markt":
             self.open_ingame_market(tid)
         elif was == "einkauf":
-            if self._add_deal_to_cart(tid, name):
+            if self._add_deal_to_cart(tid, name, quelle=""):         # emm973
                 self._render_shopping()
                 self._flash_tip(t("added to the shopping cart \u2713"))
                 self.statusBar().showMessage(
@@ -35348,6 +37816,295 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.open_build_detail(tid, name, fresh=True)
         elif isinstance(was, tuple) and was[0] == "multi":
             self._multi_ende_zu_plan(was[1], tid, name, vorgabe=1)
+        elif isinstance(was, tuple) and was[0] == "multi_neu":       # emm982
+            self._multi_neu_aus_auswahl(was[1])
+        elif isinstance(was, tuple) and was[0] == "multi_n":
+            self._multi_enden_zu_plan(
+                was[1], [dict(x, qty=None) for x in was[2]])
+
+    def _ms_handelsgewinn(self, t4):
+        """HANDELSGEWINN je Stueck einer Top-Zeile (emm967): am globalen Hub
+        kaufen, an DIESEM Ort verkaufen.
+
+            Gewinn = Verkauf hier x (1 - Steuer - Broker)
+                     - (Preis am globalen Hub + Fracht je Stueck)
+
+        Fracht nur, wenn ein Frachtsatz gesetzt UND das Volumen bekannt ist
+        - sonst ohne (der Tooltip sagt es). -> (gewinn, einkauf, netto) oder
+        None: kein Preis am globalen Hub, keine Sell-Order hier, oder der
+        Ort IST der globale Hub (dann gibt es nichts zu vergleichen)."""
+        if not t4 or t4.get("selber_ort"):
+            return None
+        try:
+            _gp = float(t4.get("global_preis") or 0)
+            _vk = float(t4.get("sell_min") or 0)
+        except (TypeError, ValueError):
+            return None
+        if _gp <= 0 or _vk <= 0:
+            return None
+        _ein = _gp + float(t4.get("fracht_stk") or 0.0)
+        _netto = _vk * (1 - self._ms_gebuehren())
+        return _netto - _ein, _ein, _netto
+
+    def _ms_hub_gewechselt(self):
+        """Der globale Hub wurde gewechselt (emm970): Market stats neu
+        zeichnen, wenn die Seite gerade offen ist (sonst beim naechsten
+        Oeffnen), und die Favoriten-Preise auffrischen. -> True, wenn Market
+        stats neu geholt wurde."""
+        try:
+            if getattr(self, "fav_table", None) is not None:
+                self._fav_fuellen()
+        except Exception as _e:
+            self._log_exception("Favoriten nach Hub-Wechsel", str(_e))
+        _tab = getattr(self, "mstats_tab", None)
+        if _tab is None or not hasattr(self, "ms_karten"):
+            return False
+        if self.tabs.currentWidget() is not _tab:
+            return False
+        self._mstats_fuellen()
+        return True
+
+    def _ms_duenn(self, stk_tag):
+        """DUENNER MARKT? (emm969) - weniger als `MSTATS_DUENN` Stueck pro
+        Tag. Unbekannt (None) ist NICHT duenn: dann gibt es nichts zu warnen."""
+        try:
+            return stk_tag is not None and float(stk_tag) < self.MSTATS_DUENN
+        except (TypeError, ValueError):
+            return False
+
+    def _ms_stk_tag_zelle(self, stk_tag):
+        """Die Zelle "Stueck/Tag" - EINE Stelle fuer Market stats, die
+        Rangliste und die Favoriten (emm969, Regel 9).
+        -> (text, wert, farbe, tooltip). Duenner Markt: amber, eine
+        Nachkommastelle (sonst stuende dort "0") und der Grund im Tooltip."""
+        if stk_tag is None:
+            return ("\u2013", None, theme.MUTED, None)
+        _s = float(stk_tag)
+        if self._ms_duenn(_s):
+            return ("\u26a0 " + f"{_s:.1f}", _s, theme.AMBER, t(
+                "Thin market: less than one unit a day is traded here. "
+                "A high profit per unit helps little if the item sits for "
+                "weeks."))
+        return (f"{_s:,.0f}".replace(",", "'"), _s, None, None)
+
+    def _ms_rang_rechnen(self, je_ort, tage, n):
+        """RANGLISTE UEBER ALLE ORTE (emm969): die n Zeilen (Item an einem
+        Ort) mit dem hoechsten Handelsgewinn je TAG.
+
+        `je_ort` = [(Ortsname, [Top-Zeile ...])], Zeilen wie aus
+        `ort_top_gehandelt` plus global_preis/fracht_stk/selber_ort. Gewinn
+        je Stueck kommt aus `_ms_handelsgewinn` (Regel 9 - dieselbe Rechnung
+        wie Spalte, Filter und Kauf-Knopf); nur POSITIVER Gewinn. Gewinn/Tag
+        = Gewinn je Stueck x Stueck/Tag - ein Schiff mit 10 Stueck/Tag und
+        hohem Gewinn steht damit oben, Kleinkram mit Cent-Gewinn nicht."""
+        _tg = max(1, int(tage or 1))
+        aus = []
+        for _ort, _top in (je_ort or []):
+            for _t4 in (_top or []):
+                _hg = self._ms_handelsgewinn(_t4)
+                if _hg is None or _hg[0] <= 0:
+                    continue
+                _st = float(_t4.get("gehandelt") or 0) / _tg
+                # DUENNE MAERKTE RAUS (emm977, Nutzer 22.11.2026 "Ja,
+                # ausblenden"): unter `MSTATS_DUENN` Stueck/Tag ist es meist
+                # ein einzelner Fantasiepreis, kein Geschaeft - gesehen an
+                # seinen Daten: 0,0 Stueck/Tag mit +9,56 Mrd je Stueck. Nur
+                # HIER; die Listen je Ort zeigen sie weiter (mit Warnung).
+                if self._ms_duenn(_st):
+                    continue
+                _z = dict(_t4)
+                _z.update(ort=_ort, gewinn_stk=_hg[0], stk_tag=_st,
+                          gewinn_tag=_hg[0] * _st)
+                aus.append(_z)
+        aus.sort(key=lambda z: (-z["gewinn_tag"], str(z["ort"]),
+                                int(z["type_id"])))
+        return aus[:max(1, int(n or 1))]
+
+    def _ms_rang_widgets(self, zeilen, tage):
+        """Die Rangliste als normale Tabelle + Kauf-Knopf (emm969)."""
+        if not zeilen:
+            _leer = QLabel(t("No profitable trade found. Scan your global hub "
+                             "and the other places with \u201eMarket scan\u201c "
+                             "first."))
+            _leer.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+            _leer.setWordWrap(True)
+            return [_leer]
+        _zl = []
+        for _z in zeilen:
+            _zl.append((_z["type_id"], [
+                (str(_z["ort"]), None, theme.CYAN, None),
+                self._ms_stk_tag_zelle(_z["stk_tag"]),
+                ("+" + isk_kurz(_z["gewinn_stk"]), _z["gewinn_stk"],
+                 theme.GREEN, None),
+                ("+" + isk_kurz(_z["gewinn_tag"]), _z["gewinn_tag"],
+                 theme.GREEN, t(
+                     "Trade profit per unit \u00d7 units traded per day here. "
+                     "The upper limit if ALL of that trade were yours."))]))
+        _tbl = self._ms_item_tabelle(
+            [t("Item"), t("Sell at"), t("Units/day"), t("Trade profit/unit"),
+             t("Trade profit/day")], _zl)
+        _kn = QPushButton(" " + t("Profitable items \u2192 shopping list"))
+        _kn.setIcon(icons.icon("cart"))
+        _kn.setCursor(Qt.PointingHandCursor)
+        _kn.setToolTip(t(
+            "Puts every item of this list on the shopping list: buy at your "
+            "global hub (top bar). Quantity = what trades there in one day; "
+            "change it in the shopping list."))
+        _tbl.setToolTip(t(
+            "Items traded less than once a day are left out of this ranking."))
+        _kn.clicked.connect(
+            lambda _c=False, _tp=list(zeilen), _tg969=tage:
+                self._ms_handel_in_den_wagen(_tp, _tg969))
+        _w = QWidget()
+        _h = QHBoxLayout(_w)
+        _h.setContentsMargins(0, 2, 0, 0)
+        _h.addWidget(_kn, 0)
+        _h.addStretch(1)
+        self._ms_rang_knopf_letzter = _kn             # b-Suite
+        return [_tbl, _w]
+
+    def _ms_rang_zeilen(self, orte):
+        """Rangliste ueber alle gescannten Orte, im Hintergrund gerechnet
+        (emm969, Nutzer 21.11.2026 "alle 3 ja"). Je Ort mit Region - ausser
+        dem globalen Hub selbst - die gehandelte Ware lesen, gegen den
+        Sell-Preis am globalen Hub rechnen, nach Gewinn/Tag ordnen."""
+        _box = QWidget()
+        _bl = QVBoxLayout(_box)
+        _bl.setContentsMargins(0, 0, 0, 0)
+        _bl.setSpacing(2)
+        _warte = QLabel(t("Reading market history \u2026"))
+        _warte.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        _bl.addWidget(_warte)
+        _tage = self.MSTATS_TAGE
+        _n = self._ms_top_n()
+        _bq = self._ms_bau_quelle()
+        _bn = self.g_hub.currentText() if hasattr(self, "g_hub") else ""
+        _satz = self._fracht_satz()
+        _tiefe = self.MSTATS_RANG_TIEFE
+        _ziele = []
+        for _o in (orte or []):
+            _reg = self._ms_ort_region(_o["source"])
+            if _reg and str(_o["source"]) != str(_bq):
+                _ziele.append((self._mstats_ort_name(_o["source"]),
+                               _o["source"], int(_reg)))
+
+        def _job():
+            try:
+                _gp = {int(s["type_id"]): float(s["sell_min"])
+                       for s in store.get_snapshot(_bq) or []
+                       if (s.get("sell_min") or 0) > 0}
+            except Exception:
+                _gp = {}
+            _je = []
+            for _name, _src, _reg in _ziele:
+                _top = store.ort_top_gehandelt(_src, _reg, _tage, _tiefe)
+                # VORAUSWAHL OHNE FRACHT: Fracht macht den Gewinn nur
+                # kleiner - was schon ohne sie nichts bringt, braucht kein
+                # Volumen (spart die Abfrage fuer tausende Items).
+                _kand = []
+                for _x in _top:
+                    _x["global_preis"] = _gp.get(int(_x["type_id"]))
+                    _x["fracht_stk"] = None
+                    _x["selber_ort"] = False
+                    _x["bau_hub"] = _bn
+                    _hg = self._ms_handelsgewinn(_x)
+                    if _hg is not None and _hg[0] > 0:
+                        _kand.append(_x)
+                _je.append((_name, _kand))
+            if _satz > 0:
+                _tids = sorted({int(_x["type_id"]) for _, _k in _je for _x in _k})
+                try:
+                    _fv = self._fracht_volumen(_tids) or {}
+                except Exception:
+                    _fv = {}
+                for _, _k in _je:
+                    for _x in _k:
+                        _m3 = _fv.get(int(_x["type_id"]))
+                        if _m3:
+                            _x["fracht_stk"] = float(_m3) * _satz
+            return self._ms_rang_rechnen(_je, _tage, _n)
+        _w969 = Worker(_job)
+
+        def _fertig(zeilen):
+            try:
+                _warte.deleteLater()
+                for _zeile in self._ms_rang_widgets(zeilen, _tage):
+                    _bl.addWidget(_zeile)
+            except RuntimeError:                 # Seite neu gezeichnet
+                pass
+
+        def _fehler(msg):
+            try:
+                _warte.setText(f"{t('Error')}: {msg}")
+            except RuntimeError:
+                pass
+        _w969.done.connect(_fertig)
+        _w969.failed.connect(_fehler)
+        self.__dict__.setdefault("_ms_top_worker921", []).append(_w969)
+        _w969.start()
+        return [_box]
+
+    def _ms_rang_karte(self, orte):
+        """Die Karte ganz oben in Market stats (emm969): aufklappbar, gerechnet
+        wird erst beim Aufklappen (`_ms_klapper`). None, wenn es ausser dem
+        globalen Hub keinen Ort mit Region gibt."""
+        _bq = self._ms_bau_quelle()
+        if not any(self._ms_ort_region(_o["source"])
+                   and str(_o["source"]) != str(_bq) for _o in (orte or [])):
+            return None
+        _k = QFrame()
+        _k.setObjectName("Card")
+        _l = QVBoxLayout(_k)
+        _l.setContentsMargins(14, 10, 14, 10)
+        _l.setSpacing(6)
+        _ti = QLabel(t("Best trades across all your places"))
+        _ti.setStyleSheet(
+            f"color:{theme.TEXT}; font-size:15px; font-weight:700;")
+        _l.addWidget(_ti)
+        _l.addWidget(self._ms_klapper(
+            t("top items by trade profit per day (buy at your global hub)"),
+            lambda _o=tuple(orte): self._ms_rang_zeilen(_o)))
+        return _k
+
+    def _ms_handel_in_den_wagen(self, top, tage):
+        """Alles mit POSITIVEM Handelsgewinn auf die Einkaufsliste (emm967).
+        Menge = was dort an EINEM Tag gehandelt wird (Stueck/Tag, aufgerundet,
+        mindestens 1) - ein Vorschlag, in der Einkaufsliste aenderbar. Was
+        schon auf der Liste steht, bleibt. -> Anzahl neu hinzugefuegter."""
+        import math as _m967
+        _tg = max(1, int(tage or 1))
+        _posten = []
+        for _t4 in (top or []):
+            _hg = self._ms_handelsgewinn(_t4)
+            if _hg is None or _hg[0] <= 0:
+                continue
+            _posten.append((int(_t4["type_id"]),
+                            max(1, int(_m967.ceil(float(_t4.get("gehandelt") or 0) / _tg)))))
+        if not _posten:
+            self._flash_tip(t("Nothing here makes a trade profit against "
+                              "your global hub right now."))
+            return 0
+        _namen = store.cached_names([_p[0] for _p in _posten])
+        _schon = self._cart_ids()
+        _neu = _drauf = 0
+        for _tid, _q in _posten:
+            _nm = (_namen or {}).get(_tid)
+            if not _nm:
+                continue
+            if _tid in _schon:
+                _drauf += 1
+                continue
+            store.add_shopping(_tid, _nm, _q, 0, 0)
+            _schon.add(_tid)          # emm969: Rangliste nennt ein Item je Ort
+            _neu += 1
+        if _neu:
+            self._render_shopping()
+            self.shopping_load_prices()
+        self._flash_tip(
+            t("{n} item(s) put on the shopping list.").format(n=_neu)
+            + ((" " + t("{n} were already on the list.").format(n=_drauf))
+               if _drauf else ""))
+        return _neu
 
     def _ms_top_gehandelt_widgets(self, top, tage):
         """Top-Handelsware eines Ortes als TABELLE (emm925, Nutzer
@@ -35363,6 +38120,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                                  n=int(tage)))
             _leer.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
             return [_leer]
+        # NUR GEWINNBRINGENDES (emm968): Filter nach DERSELBEN Rechnung wie
+        # Spalte und Knopf. Nicht am globalen Hub selbst.
+        if (bool(self.settings.get("mstats_nur_gewinn", False))
+                and not all(_t4.get("selber_ort") for _t4 in top)
+                and any("global_preis" in _t4 for _t4 in top)):
+            top = [_t4 for _t4 in top
+                   if (self._ms_handelsgewinn(_t4) or (0,))[0] > 0]
+            if not top:
+                _leer968 = QLabel(t("Nothing here makes a trade profit against "
+                                    "your global hub right now."))
+                _leer968.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+                return [_leer968]
         _tg = max(1, int(tage))
         _rang_tip = t(
             "Ranked by ISK traded AND number of trades in the region "
@@ -35375,8 +38144,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             _zellen = [
                 (f"{_t4['abschluesse'] / _tg:,.0f}".replace(",", "'"),
                  _t4["abschluesse"] / _tg, None, None),
-                (f"{_t4['gehandelt'] / _tg:,.0f}".replace(",", "'"),
-                 _t4["gehandelt"] / _tg, None, None),
+                self._ms_stk_tag_zelle(_t4["gehandelt"] / _tg),   # emm969
                 (isk_kurz(_t4["isk"] / _tg), _t4["isk"] / _tg,
                  theme.AMBER, _rang_tip)]
             _bk = _t4.get("baukosten")
@@ -35394,10 +38162,62 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                           hub=_t4.get("bau_hub") or "?")))
             else:
                 _zellen.append(("\u2013", None, theme.MUTED, None))
+            # HANDELSGEWINN (emm967) - letzte Spalte, dieselbe Rechnung wie
+            # der Kauf-Knopf darunter (`_ms_handelsgewinn`).
+            _hg967 = self._ms_handelsgewinn(_t4)
+            if _hg967 is not None:
+                _gwh, _ein, _nt = _hg967
+                _zellen.append((
+                    ("+" if _gwh >= 0 else "") + isk_kurz(_gwh), _gwh,
+                    theme.GREEN if _gwh >= 0 else theme.RED,
+                    t("Trade profit per unit: buy at {hub} for {buy}{fracht}, "
+                      "sell here for {sell} ({net} after tax and broker).").format(
+                          hub=_t4.get("bau_hub") or "?",
+                          buy=isk(float(_t4.get("global_preis") or 0)),
+                          fracht=((" + " + isk(float(_t4["fracht_stk"]))
+                                   + " " + t("freight"))
+                                  if _t4.get("fracht_stk") else
+                                  " " + t("(no freight counted)")),
+                          sell=isk(_vk), net=isk(_nt))))
+                # GEWINN JE TAG (emm968, Nutzer "1 ja"): Gewinn je Stueck x
+                # Stueck/Tag - wo ist am meisten ISK zu holen. Stueck/Tag ist
+                # der GANZE Handel dort, nicht dein Anteil daran.
+                _gt968 = _gwh * (float(_t4.get("gehandelt") or 0) / _tg)
+                _zellen.append((
+                    ("+" if _gt968 >= 0 else "") + isk_kurz(_gt968), _gt968,
+                    theme.GREEN if _gt968 >= 0 else theme.RED,
+                    t("Trade profit per unit \u00d7 units traded per day here. "
+                      "The upper limit if ALL of that trade were yours.")))
+            else:
+                _zellen.append(("\u2013", None, theme.MUTED, None))
+                _zellen.append(("\u2013", None, theme.MUTED, None))
             _zeilen.append((_t4["type_id"], _zellen))
-        return [self._ms_item_tabelle(
+        _tbl967 = self._ms_item_tabelle(
             [t("Item"), t("Trades/day"), t("Units/day"), t("ISK/day"),
-             t("Build profit/unit")], _zeilen)]
+             t("Build profit/unit"), t("Trade profit/unit"),
+             t("Trade profit/day")], _zeilen)
+        # KAUF-KNOPF (emm967): nur wenn der Ort NICHT der globale Hub ist.
+        if all(_t4.get("selber_ort") for _t4 in top) or not any(
+                "global_preis" in _t4 for _t4 in top):
+            return [_tbl967]
+        _kn967 = QPushButton(" " + t("Profitable items \u2192 shopping list"))
+        _kn967.setIcon(icons.icon("cart"))
+        _kn967.setCursor(Qt.PointingHandCursor)
+        _kn967.setToolTip(t(
+            "Puts every item of this list with a POSITIVE trade profit on the "
+            "shopping list: buy at your global hub (top bar), sell here. "
+            "Quantity = what trades here in one day; change it in the "
+            "shopping list."))
+        _kn967.clicked.connect(
+            lambda _c=False, _tp=list(top), _tg967=tage:
+                self._ms_handel_in_den_wagen(_tp, _tg967))
+        _zl967 = QWidget()
+        _zh967 = QHBoxLayout(_zl967)
+        _zh967.setContentsMargins(0, 2, 0, 0)
+        _zh967.addWidget(_kn967, 0)
+        _zh967.addStretch(1)
+        self._ms_handel_knopf_letzter = _kn967        # b-Suite
+        return [_tbl967, _zl967]
 
     def _ms_item_tabelle(self, kopf, zeilen):
         """EINE Tabelle fuer beide Market-Stats-Listen (emm925) - Bauart
@@ -35454,10 +38274,18 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 return
             _tid0, _nm0 = int(_c0.data(Qt.UserRole)), _c0.text()
             menu, akt = self._ms_item_menue_bauen(
-                _tid0, _nm0, menu=kontext_menue(_t))
+                _tid0, _nm0, menu=kontext_menue(_t),
+                tabelle=_t, zeile=_it0.row())
             chosen = menu.exec(_t.viewport().mapToGlobal(pos))
             if chosen is not None and chosen in akt:
-                self._ms_item_menue_ausfuehren(akt[chosen], _tid0, _nm0)
+                # MEHRERE MARKIERTE ZEILEN (emm971, Nutzer 21.11.2026:
+                # "mehrere items selektieren und add shopping List
+                # funktioniert nicht") - die Einkaufsliste bekommt ALLE.
+                _wahl971 = self._ms_tabellen_wahl(_t, _it0.row())
+                if akt[chosen] == "einkauf" and len(_wahl971) > 1:
+                    self._ms_mehrere_in_den_wagen(_wahl971)
+                else:
+                    self._ms_item_menue_ausfuehren(akt[chosen], _tid0, _nm0)
         # RECHTSKLICK (emm923): Markt im Spiel, Einkaufsliste, Bauplan,
         # Multibauplan - dazu "Copy" wie in jeder Tabelle.
         kopier_menue(tbl, _menue)
@@ -35640,6 +38468,14 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 _je_reg.setdefault(int(_r), []).append(_o)
                 _zugeordnet.add(_o["source"])
         self._ms_leeren(self.ms_karten)
+        # RANGLISTE UEBER ALLE ORTE zuoberst (emm969).
+        try:
+            _rk969 = self._ms_rang_karte(_orte)
+        except Exception as _e969:
+            self._log_exception("Market stats Rangliste", str(_e969))
+            _rk969 = None
+        if _rk969 is not None:
+            self.ms_karten.addWidget(_rk969)
         _gezeigt = set()
         for _z in _reg:
             _st = _je_reg.get(int(_z["region"])) or []
@@ -35673,7 +38509,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _s = str(source or "")
         if _s.startswith("hub:"):
             try:
-                return int(_s[4:])
+                return int(hubs.region_von(int(_s[4:])))     # emm952: Hub-Nummer
             except (TypeError, ValueError):
                 return None
         if _s.startswith("struct:"):
@@ -35700,7 +38536,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         _s = str(source or "")
         if _s.startswith("hub:"):
             try:
-                return self._mstats_region_name(int(_s[4:]))
+                _n952 = int(_s[4:])
+                # Zusaetzliche NPC-Station (emm952): ihr eigener Name, nicht
+                # der Name der Region drumherum.
+                if hubs.ist_extra(_n952):
+                    return hubs.aufloesen(_n952)[1]
+                return self._mstats_region_name(_n952)
             except (TypeError, ValueError):
                 return _s
         if _s.startswith("struct:"):
@@ -36467,7 +39308,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
                 isk=isk(k.get("isk_gesamt") or 0, suffix=False))
 
             def _pfeil_text(on, _b=pf, _s=_sum_txt):
-                _b.setText(("\u25be " if on else "\u25b8 ") + _s)
+                icons.klapp_setzen(_b, on, _s)
             _pfeil_text(_offen)
             v.addWidget(pf)
             body = QWidget()
@@ -38424,7 +41265,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.s_pull_status.setText(
                 t("Reading skills & standings of {n} characters \u2026").format(n=len(chars)))
         try:
-            akey = hubs.hub_key_for_region(store.get_scan_region())
+            akey = hubs.standings_key(store.get_scan_hub())
         except Exception:
             akey = "jita"
         own = hubs.HUB_OWNERS.get(akey, {})
@@ -38786,13 +41627,19 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             self.s_hub_fee_lbl[key].setText(f"{bf:.3f} %")
         # active hub (the current scan region)
         try:
-            akey = hubs.hub_key_for_region(store.get_scan_region())
+            akey = hubs.standings_key(store.get_scan_hub())
         except Exception:
             akey = "jita"
+        # Zusaetzliche NPC-Station (emm952): kein Schluessel, keine
+        # hinterlegten Standings -> Broker-Gebuehr OHNE Rabatt.
         active_broker = config.effective_broker_fee(
             self.s_broker_rel.value(),
-            self.s_hub_faction[akey].value(), self.s_hub_corp[akey].value())
-        alabel = dict((k, l) for k, l, _r, _s in hubs.NPC_HUBS).get(akey, "Jita")
+            self.s_hub_faction[akey].value() if akey in self.s_hub_faction else 0.0,
+            self.s_hub_corp[akey].value() if akey in self.s_hub_corp else 0.0)
+        alabel = dict((k, l) for k, l, _r, _s in hubs.NPC_HUBS).get(akey)
+        if alabel is None:
+            _h952 = hubs.aufloesen(store.get_scan_hub())
+            alabel = _h952[1] if _h952 is not None else "Jita"
         self.s_fee_result.setText(
             t("\u2192 active hub {hub}:  sales tax {tax} %  \u00b7  "
               "broker fee {broker} %").format(
@@ -38814,9 +41661,16 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             return
         try:
             region = region if region is not None else store.get_scan_region()
+            _hub952 = store.get_scan_hub()
         except Exception:
             return
-        key = hubs.hub_key_for_region(region)
+        # Zusaetzliche NPC-Station gescannt (emm952): ihre Region gehoert
+        # vielleicht einem festen Hub - dessen Standings gelten hier NICHT.
+        # Kein Schluessel -> keine Standings -> Gebuehr ohne Rabatt.
+        if hubs.ist_extra(_hub952):
+            key = None
+        else:
+            key = hubs.hub_key_for_region(region)
         st = (self.settings.get("hub_standings", {}) or {}).get(key, {})
         self.settings["sales_tax_pct"] = config.effective_sales_tax(
             self.settings.get("skill_accounting", 4))
@@ -39032,7 +41886,7 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
         if from_skills:
             tax = config.effective_sales_tax(self.s_accounting.value())
             try:
-                akey = hubs.hub_key_for_region(store.get_scan_region())
+                akey = hubs.standings_key(store.get_scan_hub())
             except Exception:
                 akey = "jita"
             broker = config.effective_broker_fee(
@@ -39301,9 +42155,12 @@ class MainWindow(BauplanFenster, BauplanTabs, Optimizer, MultiBauplan,
             region = int(src.split(":", 1)[1])
         except (TypeError, ValueError):
             return 0
-        station = next((st for _k, _l, rg, st in hubs.NPC_HUBS if rg == region), None)
-        if station is None:
+        # Der Schluessel traegt die HUB-NUMMER (emm952): Region eines festen
+        # Hubs oder die Station einer zusaetzlichen.
+        _h952 = hubs.aufloesen(region)
+        if _h952 is None:
             return 0
+        region, station = _h952[2], _h952[3]
         ids = sorted(int(x) for x in type_ids)[:self.PORTFOLIO_LIVE_MAX]
         import concurrent.futures as _cf
 

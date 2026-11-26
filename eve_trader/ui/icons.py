@@ -277,6 +277,58 @@ def html(name, farbe=None, groesse=14, strich=2.0):
         return ""
 
 
+# FARBEN DER AUFKLAPP-PFEILE - dieselben wie in den sechs branch_*.svg der
+# Baeume (theme._BRANCH), damit Baum und Karte gleich aussehen.
+# Die Werte wohnen in theme.py (aa170/aa175: keine Hex-Farben am Theme vorbei).
+
+
+def klapp_pixmap(offen, farbe=None, groesse=16):
+    """Gefuelltes Dreieck: zu = nach rechts, offen = nach unten - dieselbe
+    Form wie die Aufklapp-Pfeile der Baeume (emm1020)."""
+    from PySide6.QtGui import QColor, QPolygonF
+    from PySide6.QtCore import QPointF
+    f = farbe or (theme.KLAPP_DUNKEL if getattr(theme, "THEME_HELL", False)
+                  else theme.KLAPP_HELL)
+    schluessel = ("klapp", bool(offen), f, int(groesse), 0.0)
+    fertig = _cache.get(schluessel)
+    if fertig is not None:
+        return fertig
+    k = float(groesse) / 16.0
+    punkte = ([(3.5, 5.5), (8, 10.5), (12.5, 5.5)] if offen
+              else [(5.5, 3.5), (10.5, 8), (5.5, 12.5)])
+    pm = QPixmap(int(groesse), int(groesse))
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    stift = p.pen(); stift.setColor(QColor(f)); stift.setWidthF(1.6 * k)
+    stift.setJoinStyle(Qt.RoundJoin)
+    p.setPen(stift)
+    p.setBrush(QColor(f))
+    p.drawPolygon(QPolygonF([QPointF(x * k, y * k) for x, y in punkte]))
+    p.end()
+    _cache[schluessel] = pm
+    return pm
+
+
+def klapp_setzen(knopf, offen, text=None):
+    """DIE EINE STELLE fuer jeden Auf-/Zuklapp-Knopf (emm1021, Nutzer
+    24.11.2026: "alle so machen damit man sie sieht").
+
+    Vorher drei Sorten: Baum-Pfeile von Qt, ein Linien-Symbol
+    (chevron / arrow_right - letzteres ist eigentlich der "Weiter"-Pfeil)
+    und kleine Textzeichen im Knopftext. Jetzt ueberall dasselbe helle,
+    gefuellte Dreieck; beim Ueberfahren Cyan. Der Zustand steht als
+    Eigenschaft `klapp_offen` am Knopf (frueher las man ihn am Textzeichen
+    ab) - der Text ist damit wieder nur Text.
+    """
+    ic = QIcon(klapp_pixmap(offen))
+    ic.addPixmap(klapp_pixmap(offen, theme.KLAPP_HOVER), QIcon.Active)
+    knopf.setIcon(ic)
+    knopf.setProperty("klapp_offen", bool(offen))
+    if text is not None:
+        knopf.setText(text)
+
+
 def icon(name, farbe=None, groesse=16, strich=2.0):
     """QIcon fuer Knoepfe, Menue-Eintraege und Tabellenzellen.
 

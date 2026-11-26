@@ -85,6 +85,16 @@ def ist_ende(tid, type_id, recipes) -> bool:
     return tid == type_id or (type_id == BUENDEL_ID and tid in buendel_enden(recipes))
 
 
+def buendel_gekaufte_enden(plan: dict) -> list:
+    """Die Enden eines Buendel-Plans, die er KAUFT statt baut (emm951) -
+    sortiert. EINE Quelle fuer Anzeige, Speichern, Fortschritt und Funfact:
+    gelesen aus der Entscheidung des Plans, nie nachgerechnet. Umfasst auch
+    Enden ohne Rezept (die wurden schon immer gekauft)."""
+    dec = (plan or {}).get("decision") or {}
+    return sorted(int(t) for t in ((plan or {}).get("buendel_enden") or {})
+                  if dec.get(t) == "buy")
+
+
 def buendel_kosten_je_ende(plan: dict) -> dict:
     """Was kostet JEDES Endprodukt eines Buendels - obwohl der Plan geteilte
     Zwischenprodukte nur EINMAL kauft oder baut?
@@ -636,6 +646,114 @@ def multihub_pfn(basis_fn, buecher, fracht_je_hub=None, volumes=None,
         _lp, _m, _hub, _roh = _leiter[0]
         return _lp if mit_fracht else _roh
     return _fn
+
+
+def fracht_mindest(volumen, kosten_m3, min_vol, pauschale) -> float:
+    """MINDESTVOLUMEN eines Frachtdienstes (emm961, Nutzer 21.11.2026: "Viele
+    Jumpfrachter service bieten zbsp 445isk per Kubik an ... hat man jetzt
+    aber nur sehr wenig kubik ... bis zu min. Volume von 50000 Kubik kostet
+    es einfach eine feste pauschale von 20millionen").
+
+    Rueckgabe: der ZUSCHLAG, der zu den schon gerechneten ISK/m3-Kosten
+    (`kosten_m3` = Satz x Volumen) dazukommt, damit die Strecke bis
+    `min_vol` die `pauschale` kostet. 0, wenn nichts transportiert wird,
+    eine der beiden Angaben fehlt oder das Volumen ueber dem Mindestvolumen
+    liegt. Nie negativ (Regel 3: lieber zu viel): liegt Satz x Volumen
+    knapp unter dem Mindestvolumen schon UEBER der Pauschale, bleibt es
+    beim Satz - die Fracht wird durch diese Angabe nie billiger."""
+    try:
+        v = float(volumen or 0)
+        mv = float(min_vol or 0)
+        p = float(pauschale or 0)
+        k = float(kosten_m3 or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if v <= 0 or mv <= 0 or p <= 0 or v > mv:
+        return 0.0
+    return max(0.0, p - k)
+
+
+def multihub_pauschal_wahl(buecher, bedarf, volumes, fracht_je_hub,
+                           min_vol, pauschale) -> set:
+    """Welche Kauf-Hubs LOHNEN sich wegen der Mindestvolumen-Pauschale nicht?
+
+    Nutzer 21.11.2026: "Kauft man Items ueber mehrere Hubs lohnt es sich
+    vielleicht nicht 10 Tritanium oder so auf einem anderen Hub zu kaufen
+    nur weil der Preis da guenstiger ist, die Pauschaltransportkosten
+    wuerden dann dazu fuehren dass man diese 10 tritanium dann doch am
+    selben hub kauft".
+
+    buecher  = {hub: {tid: [(preis, menge), ...]}} - ALLE gescannten Hubs
+    bedarf   = {tid: stueck} (die Einkaufsliste MIT Puffer)
+    Rueckgabe: Menge der Hub-Schluessel, die man besser WEGLAESST.
+
+    Gerechnet wird mit DENSELBEN Bausteinen wie Preis, Fracht und
+    Kopier-Knoepfe (`multihub_leiter`/`multihub_split`, Regel 9): fuer jede
+    Teilmenge der Hubs die Summe der Landepreise plus je Hub MIT Fracht der
+    Zuschlag aus `fracht_mindest`. Ein Hub faellt nur weg, wenn die Summe
+    dadurch ECHT kleiner wird UND dabei kein Stueck mehr unversorgt bleibt
+    als mit allen Hubs (sonst wuerde Material fehlen - Regel 3). Bei
+    Gleichstand bleiben mehr Hubs. Ohne Angaben oder bei mehr als acht
+    Hubs: leere Menge (nichts wird ausgeschlossen)."""
+    try:
+        mv = float(min_vol or 0)
+        p = float(pauschale or 0)
+    except (TypeError, ValueError):
+        return set()
+    hubs_alle = [str(h) for h in (buecher or {})]
+    if mv <= 0 or p <= 0 or len(hubs_alle) < 2 or len(hubs_alle) > 8:
+        return set()
+    raten = {}
+    for h in hubs_alle:
+        try:
+            raten[h] = float((fracht_je_hub or {}).get(h, 0) or 0)
+        except (TypeError, ValueError):
+            raten[h] = 0.0
+    # Nur ein Hub MIT Fracht kann unter die Pauschale fallen.
+    kandidaten = [h for h in hubs_alle if raten[h] > 0]
+    if not kandidaten:
+        return set()
+    b_str = {str(h): bk for h, bk in (buecher or {}).items()}
+
+    def _summe(aktiv):
+        teil = {h: b_str[h] for h in aktiv}
+        landung = 0.0
+        rest = 0
+        vol_h = {}
+        fr_h = {}
+        for tid, menge in (bedarf or {}).items():
+            try:
+                q = int(menge or 0)
+                v = float((volumes or {}).get(tid, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if q <= 0:
+                continue
+            lt = multihub_leiter(teil, int(tid), raten, v)
+            sp, offen = multihub_split(lt, q)
+            rest += int(offen)
+            for h, (n, _roh, mit) in sp.items():
+                landung += mit
+                vol_h[h] = vol_h.get(h, 0.0) + n * v
+                fr_h[h] = fr_h.get(h, 0.0) + n * v * raten.get(h, 0.0)
+        zuschlag = sum(fracht_mindest(vol_h[h], fr_h.get(h, 0.0), mv, p)
+                       for h in vol_h if raten.get(h, 0.0) > 0)
+        return landung + zuschlag, rest
+
+    basis, rest_basis = _summe(hubs_alle)
+    bestes, weg = basis, set()
+    import itertools as _it
+    for k in range(1, len(kandidaten) + 1):
+        for raus in _it.combinations(sorted(kandidaten), k):
+            aktiv = [h for h in hubs_alle if h not in raus]
+            if not aktiv:
+                continue
+            s, r = _summe(aktiv)
+            if r > rest_basis:
+                continue           # dann fehlte Material - nie weglassen
+            if s < bestes - 1e-6:
+                bestes, weg = s, set(raus)
+    return weg
 
 
 def ships_with_unpackaged_volume(type_ids) -> set:
@@ -3895,7 +4013,14 @@ def build_tree(type_id, price_fn, recipes: Recipes, opts: dict,
         # Aufrundung passiert in add_node() (main_window.py), NACHDEM mit der
         # Run-Zahl des Eltern-Jobs multipliziert wurde - nicht hier vorher.
         qeff = qty * (1 - me)
-        if mat_id in excluded:
+        # DIE ENDEN EINES BUENDELS SIND NIE "OWNED" (emm1030, Nutzer-
+        # Screenshot 24.11.2026: zwei Endprodukte auf der Blacklist standen
+        # im Rezept-Baum als "BUILD" ohne Runs und ohne Unterzeilen). Die
+        # RECHNUNG ignoriert die Blacklist fuer Enden laengst
+        # (production_plan, `_enden`) - gemessen: 100 Runs, gleiche Kosten -,
+        # nur dieser Baum schnitt sie ab. Die direkten Zutaten des Buendels
+        # SIND die Enden.
+        if mat_id in excluded and type_id != BUENDEL_ID:
             comps.append({"type_id": mat_id, "qty": qeff, "decision": "owned",
                           "unit_cost": 0.0, "buy_price": None, "build_cost": None,
                           "subtree": None})
@@ -4077,12 +4202,18 @@ def full_build_chain(type_id, units, recipes: Recipes, opts: dict,
     # baut. Das Endprodukt bleibt IMMER drin, auch wenn es in der Liste steht -
     # ohne das waere die Tabelle leer.
     _never = opts.get("never_build") or set()
+    # GEKAUFTE BUENDEL-ENDEN (emm951): was der Plan als Endprodukt KAUFT,
+    # braucht keine Blaupause - weder es selbst noch seine Kette. Der
+    # Aufrufer nennt sie (`chain_ohne`, aus der Entscheidung des Plans).
+    _ohne = {int(x) for x in (opts.get("chain_ohne") or ())}
 
     def recurse(tid, demand, depth):
         if demand <= 1e-9 or depth > max_depth:
             return
         if tid in _never and depth > 0:
             return                      # diese Stufe wird gekauft, nicht gebaut
+        if tid in _ohne and depth > 0:
+            return                      # gekauftes Ende des Buendels
         bp = recipes.product_to_bp.get(tid)
         if not bp:
             return                      # kein Rezept -> Blatt (Rohstoff), Ende
@@ -4340,6 +4471,24 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
     def _ist_ende(tid):
         return tid == type_id or tid in _enden
 
+    # KAUF-ENDEN (emm950, Nutzer 17.11.2026: "Das was sich lohnt bauen wir,
+    # das was sich nicht lohnt, kaufen wir ein"): Enden eines Buendels, die
+    # ein Rezept HABEN, aber gekauft werden sollen. Sie gehen exakt den Weg,
+    # den ein Ende OHNE Rezept schon immer geht (discover -> nicht baubar ->
+    # `buy`), also keine zweite Kauf-Rechnung. Nur Buendel-Enden zaehlen:
+    # das EINE Endprodukt eines normalen Plans und jede Zwischenstufe bleiben
+    # unberuehrt (dafuer gibt es never_build). Ohne die Option ist die Menge
+    # leer und nichts aendert sich.
+    _kauf_enden = {int(x) for x in (opts.get("kauf_enden") or ())} & _enden
+    # "KAUFEN, WENN BILLIGER" FUER BUENDEL-ENDEN (emm951, Schalter im
+    # Bauplan): ein Ende wird dann entschieden wie jede Zwischenstufe -
+    # gebaut, wenn der Bau nicht teurer ist als der Kauf AM HUB DES PLANS,
+    # und IMMER gebaut, wenn es dort keine echte Sell-Order gibt (kein
+    # Preisvergleich -> bauen). Vorgabe AUS: dann gilt unveraendert "ein
+    # Ende wird immer gebaut". Nur Buendel-Enden - das EINE Endprodukt eines
+    # normalen Plans bleibt ein Bau (Root-Kauf-Bug).
+    _enden_billig = bool(opts.get("enden_kauf_billig")) and bool(_enden)
+
     def _me_of(tid, activity):
         """ME-Faktor pro Item: Rig wirkt nur auf die passende Item-Domäne (me_map),
         sonst der pauschale Wert (Blueprint-ME ohne passenden Rig). Für invented
@@ -4465,10 +4614,25 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
         # normalen Plans bleibt hier bewusst wie bisher: bestehendes Verhalten
         # nicht mitveraendern.)
         _sperre = (tid in never or tid in excluded) and tid not in _enden
+        # DAS BUENDEL SELBST IST NIE GESPERRT (emm1017, Blacklist-Rundlauf
+        # 24.11.2026): das Gruppen-Haekchen "Komponenten" setzte die
+        # Buendel-ID in `excluded` - der Plan "kaufte" dann das Buendel
+        # (buy == {-1: 1}), baute nichts mehr und zeigte 2.74 statt 2.47 Mrd.
+        # Das Buendel ist kein Item, nur die Klammer um die Enden.
+        # EINE Bedingung fuer beides (das Buendel IST das `type_id` seines
+        # Plans; eine eigene Buendel-Zeile war doppelt - Rotprobe BLIND).
+        # DASSELBE FUER DAS EINE ENDPRODUKT EINES EINZELPLANS (Regel 9,
+        # gemessen 24.11.2026 an der echten SDE: Acolyte II x10 mit sich
+        # selbst in `excluded` -> buy == {Acolyte II: 10}, nichts gebaut).
+        # Wer einen Bauplan fuer X oeffnet, will X bauen - die Blacklist
+        # meint Zutaten. Nur die Blacklist: `never_build` am Endprodukt
+        # bleibt, wie es war.
+        if tid == type_id and tid in excluded and tid not in never:
+            _sperre = False
         if bp and mats and tid not in path and depth <= maxd and tid in never \
                 and tid not in excluded and tid not in _enden:
             never_hit.add(tid)
-        if not bp or not mats or tid in path or depth > maxd or _sperre:
+        if not bp or not mats or tid in path or depth > maxd or _sperre                 or tid in _kauf_enden:
             buildable[tid] = False
             return
         buildable[tid] = True
@@ -4561,11 +4725,22 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
         if ok:
             bcost, runs, eiv, activity, out_qty, bp_id, complete = build_estimate(tid, D)
             buy_est = (buy_price * D) if buy_price is not None else None
-            if _ist_ende(tid):
+            if _ist_ende(tid) and not (_enden_billig and tid in _enden):
                 # Endprodukt wird IMMER gebaut, nie gekauft. Sonst würde bei
                 # bcost > Marktpreis der Bauplan das Endprodukt „kaufen“ →
                 # total_cost = Marktpreis × Menge, Baukosten/Stk konstant und
                 # Gewinn exakt 0 (Sell = Baukosten). Das ist der Root-Kauf-Bug.
+                do_build = True
+            elif tid in _enden and not complete:
+                # BUENDEL-ENDE MIT SCHALTER "KAUFEN, WENN BILLIGER", ABER
+                # OHNE VOLLSTAENDIGE BAUKOSTEN (emm951, in der Fenster-
+                # Simulation gefunden): die Regel darunter ("ein Material
+                # ist nicht bepreisbar -> die fertige Komponente kaufen")
+                # kaufte Enden schon deshalb, weil am Hub ein Material ohne
+                # Preis war - der Plan wurde TEURER statt billiger (ein
+                # Schiff 9,3 -> 19,6 Mrd). Der Schalter heisst "kaufen,
+                # wenn BILLIGER": ohne vollstaendige Baukosten gibt es
+                # keinen Vergleich, also wird gebaut - wie ohne Schalter.
                 do_build = True
             elif activity == REACTION and not opts.get("build_reactions", True):
                 do_build = False           # Reaktionen global auf „kaufen“
@@ -4779,7 +4954,11 @@ def production_plan(type_id, units, price_fn, recipes: Recipes, opts: dict):
     # gegen buy/decision filtern, falls ein Item am Ende doch anders behandelt
     # wurde (z.B. Bestand hat es komplett gedeckt).
     never_build_hit = {tid for tid in never_hit if tid in buy or tid in decision}
-    return {"inv_buy": inv_buy, "inv_stock_used": inv_stock_used,
+    # Nur wenn es welche gibt - ein Plan ohne Kauf-Enden traegt den Schluessel
+    # nicht und ist damit Feld fuer Feld derselbe wie vor emm950.
+    _kauf_extra = ({"kauf_enden": sorted(_kauf_enden)} if _kauf_enden else {})
+    return {**_kauf_extra,
+            "inv_buy": inv_buy, "inv_stock_used": inv_stock_used,
             "total_cost": total, "mat_cost": mat_cost, "stock_cost": stock_cost,
             "mat_cost_adjusted": mat_cost_adjusted,
             "job_cost": jc_total,
@@ -5423,6 +5602,24 @@ def _binomial_p_at_least(n, k, prob):
     if prob >= 1.0:
         return 1.0
     pmf = (1.0 - prob) ** n          # P(X=0)
+    if pmf < 1e-280:
+        # (Schwelle 1e-280, nicht 0: schon im denormalen Bereich davor
+        # verliert die Rekursion Stellen - gemessen 600 bei 34 %: 1'791
+        # statt 1'804.)
+        # UNTERLAUF (emm992, gemessen 22.11.2026): bei grossem n wird
+        # (1-p)**n zu 0.0 (0.66**1794) - dann blieb die ganze Summe 0 und die
+        # Funktion meldete P = 1.0. Folge: 1'000 noetige Erfolge bei 34 %
+        # bekamen 1'794 Versuche (reicht im Schnitt fuer 610). Hier dieselbe
+        # Rekursion im LOGARITHMUS; ein einzelner Summand, der beim exp()
+        # unterlaeuft, ist wirklich vernachlaessigbar.
+        _lp = n * math.log1p(-prob)
+        _lq = math.log(prob) - math.log1p(-prob)
+        cdf_below = 0.0
+        for j in range(0, k):
+            if _lp > -745.0:
+                cdf_below += math.exp(_lp)
+            _lp += math.log((n - j) / (j + 1.0)) + _lq
+        return max(0.0, min(1.0, 1.0 - cdf_below))
     cdf_below = pmf                  # Summe P(X=0..k-1)
     for j in range(0, k - 1):
         pmf = pmf * (n - j) / (j + 1) * (prob / (1.0 - prob))
@@ -5445,12 +5642,25 @@ def invention_attempts_for_confidence(successes_needed, prob, confidence=0.75,
         return None
     if prob >= 1.0:
         return successes_needed
-    n = successes_needed
-    while n <= max_attempts:
-        if _binomial_p_at_least(n, successes_needed, prob) >= confidence:
-            return n
-        n += 1
-    return max_attempts
+    # HALBIEREN statt hochzaehlen (emm992): P waechst mit n, das kleinste n
+    # ist also dasselbe wie beim Hochzaehlen - nur braucht ein Plan mit
+    # 1'000 noetigen Erfolgen so ~25 statt ~2'000 Auswertungen.
+    def _reicht(n):
+        return _binomial_p_at_least(n, successes_needed, prob) >= confidence
+    if _reicht(successes_needed):
+        return successes_needed
+    lo, hi = successes_needed, successes_needed * 2
+    while not _reicht(hi):
+        if hi >= max_attempts:
+            return max_attempts
+        lo, hi = hi, min(max_attempts, hi * 2)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if _reicht(mid):
+            hi = mid
+        else:
+            lo = mid
+    return hi
 
 
 def me_invented_pct(inv_me, rig_me, ec_me=0.0):

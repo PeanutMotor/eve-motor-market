@@ -301,9 +301,33 @@ def upsert_character(cid: int, name: str) -> None:
 
 
 def list_characters() -> list:
+    """Alle verknuepften Charaktere - ALPHABETISCH (emm954, Discord Robust
+    18.11.2026: "for players with many characters, can all lists where you
+    need to select a character be alphabetical"). EINE Stelle fuer jede
+    Liste im Programm. Vorher stand hier die Reihenfolge des Verknuepfens;
+    wer genau DEN zuerst verknuepften braucht (Vorgabe-Charakter), fragt
+    `erst_verknuepfter_id()`."""
     with _conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT * FROM characters ORDER BY added_at")]
+            "SELECT * FROM characters "
+            "ORDER BY character_name COLLATE NOCASE, added_at")]
+
+
+def erst_verknuepfter_id():
+    """character_id des ZUERST verknuepften Charakters - oder None. Das war
+    bis emm954 `list_characters()[0]`: der Vorgabe-Charakter, wenn oben
+    "All characters" steht. Bei gleichem (oder fehlendem) Zeitpunkt gewinnt
+    der erste der Liste."""
+    chars = list_characters()
+    if not chars:
+        return None
+
+    def _wann(c):
+        try:
+            return float(c.get("added_at") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    return min(chars, key=_wann)["character_id"]
 
 
 def remove_character(cid: int) -> None:
@@ -530,7 +554,8 @@ def get_hub_source() -> str:
     return hub_source(get_scan_region())
 
 
-def save_snapshot(rows: list, region: int = 10000002, source: str = None) -> None:
+def save_snapshot(rows: list, region: int = 10000002, source: str = None,
+                  hub_id: int = None) -> None:
     import time
     now = time.time()
     with _conn() as c:
@@ -547,7 +572,11 @@ def save_snapshot(rows: list, region: int = 10000002, source: str = None) -> Non
         # Scan die GANZE Tabelle - ein Struktur-Scan nahm damit dem
         # Portfolio seine Hub-Preise weg und ersetzte sie durch die
         # Fantasiepreise einer einzelnen Spielerstruktur.
-        src = source or hub_source(region)
+        # `hub_id` (emm952): eine ZUSAETZLICHE NPC-Station legt ihre Preise
+        # unter ihrer Stations-Nummer ab ("hub:<station>") - sonst loeschte
+        # ihr Scan die Preise des festen Hubs derselben Region. Ohne hub_id
+        # bleibt alles beim Schluessel der Region.
+        src = source or hub_source(hub_id if hub_id else region)
         c.execute("DELETE FROM market_snapshot WHERE source=?", (src,))
         c.executemany(
             "INSERT OR REPLACE INTO market_snapshot "
@@ -569,6 +598,10 @@ def save_snapshot(rows: list, region: int = 10000002, source: str = None) -> Non
                   (str(int(region) if region else 0),))
         c.execute("INSERT OR REPLACE INTO scan_meta(k,v) VALUES('source', ?)",
                   (src,))
+        # Die HUB-NUMMER des Scans (emm952) - bei allem ausser einer
+        # zusaetzlichen Station dieselbe Zahl wie die Region.
+        c.execute("INSERT OR REPLACE INTO scan_meta(k,v) VALUES('hub_id', ?)",
+                  (str(int(hub_id) if hub_id else (int(region) if region else 0)),))
         if src.startswith("hub:"):
             c.execute("INSERT OR REPLACE INTO scan_meta(k,v) "
                       "VALUES('hub_source', ?)", (src,))
@@ -1111,6 +1144,20 @@ def get_scan_label(default: str = "Jita") -> str:
     with _conn() as c:
         row = c.execute("SELECT v FROM scan_meta WHERE k='hub_label'").fetchone()
     return (row["v"] if row and row["v"] else default)
+
+
+def get_scan_hub(default: int = 10000002) -> int:
+    """HUB-NUMMER des letzten Scans (emm952): Region - oder, bei einer
+    zusaetzlichen NPC-Station, deren Stations-Nummer. Datenbanken von vor
+    emm952 kennen den Eintrag nicht; dann gilt die Region wie bisher."""
+    with _conn() as c:
+        row = c.execute("SELECT v FROM scan_meta WHERE k='hub_id'").fetchone()
+    if row is None or row["v"] is None or row["v"] == "":
+        return get_scan_region(default)
+    try:
+        return int(row["v"])
+    except (TypeError, ValueError):
+        return get_scan_region(default)
 
 
 def get_scan_region(default: int = 10000002) -> int:
@@ -2300,6 +2347,53 @@ def init_shopping():
             c.execute("ALTER TABLE shopping ADD COLUMN source TEXT DEFAULT ''")
         if "sugg_qty" not in cols:
             c.execute("ALTER TABLE shopping ADD COLUMN sugg_qty INTEGER DEFAULT 0")
+        # GEKAUFTES ABZIEHEN (emm980): `seit` = wann die Zeile angelegt wurde
+        # (ISO, UTC - nur Kaeufe DANACH zaehlen), `tx_bis` = hoechste schon
+        # abgezogene transaction_id (kein Kauf wird zweimal abgezogen).
+        if "seit" not in cols:
+            c.execute("ALTER TABLE shopping ADD COLUMN seit TEXT")
+        if "tx_bis" not in cols:
+            c.execute("ALTER TABLE shopping ADD COLUMN tx_bis INTEGER DEFAULT 0")
+        # FAVORITEN-ITEMS (emm962). Eigene Tabelle `item_favoriten` - die
+        # Tabelle `favorites` gehoert den HUBS (Strukturen), nicht verwechseln.
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS item_favoriten (
+                   type_id INTEGER PRIMARY KEY, name TEXT, ts REAL)""")
+
+
+def fav_items() -> list:
+    """Favoriten-Items [{type_id, name}], alphabetisch (emm962)."""
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT type_id, name FROM item_favoriten "
+                "ORDER BY name COLLATE NOCASE, type_id").fetchall()
+    except sqlite3.OperationalError:
+        return []                  # Tabelle noch nicht angelegt
+    return [{"type_id": int(r["type_id"]), "name": r["name"] or str(r["type_id"])}
+            for r in rows]
+
+
+def fav_item_dazu(type_id, name) -> bool:
+    """Item in die Favoriten. False, wenn es schon drin stand (kein
+    Doppel - type_id ist der Schluessel)."""
+    init_shopping()
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT OR IGNORE INTO item_favoriten(type_id, name, ts) VALUES (?,?,?)",
+            (int(type_id), item_name_rein(name) or str(name or type_id), time.time()))
+        return cur.rowcount > 0
+
+
+def fav_item_weg(type_id) -> bool:
+    """Item aus den Favoriten nehmen. False, wenn es nicht drin stand."""
+    try:
+        with _conn() as c:
+            cur = c.execute("DELETE FROM item_favoriten WHERE type_id=?",
+                            (int(type_id),))
+            return cur.rowcount > 0
+    except sqlite3.OperationalError:
+        return False
 
 
 # ANZEIGE-MARKER, die nie in einen Item-Namen gehoeren (emm359, Nutzer:
@@ -2356,8 +2450,63 @@ def add_shopping(type_id, name, qty, buy=0.0, sell=0.0, source="", sugg_qty=0):
                 c.execute("UPDATE shopping SET qty=qty+? WHERE id=?", (qty, row["id"]))
         else:
             c.execute("INSERT INTO shopping(type_id,name,qty,buy_price,sell_price,"
-                      "source,sugg_qty) VALUES (?,?,?,?,?,?,?)",
-                      (type_id, name, qty, buy, sell, source, sugg_qty))
+                      "source,sugg_qty,seit) VALUES (?,?,?,?,?,?,?,?)",
+                      (type_id, name, qty, buy, sell, source, sugg_qty,
+                       _utc_iso_jetzt()))
+
+
+def _utc_iso_jetzt() -> str:
+    """Jetzt als ISO-Zeit in UTC - dasselbe Format wie `transactions.date`
+    (ESI: 2026-11-22T10:15:00Z), damit beide als Text vergleichbar sind."""
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def shopping_kaeufe_abziehen(jetzt_iso=None) -> list:
+    """GEKAUFTES VON DER EINKAUFSLISTE ABZIEHEN (emm980, Nutzer 22.11.2026:
+    "3. ja auch shopping list" - "pruefe dann bauen").
+
+    Je Zeile: alle KAEUFE dieses Items aus dem Wallet (alle verknuepften
+    Charaktere), die NACH dem Anlegen der Zeile liegen (`date >= seit`) und
+    noch nicht abgezogen wurden (`transaction_id > tx_bis`). Die Menge sinkt
+    um das Gekaufte; ist nichts mehr uebrig, verschwindet die Zeile.
+
+    Eine Zeile ohne `seit` (aus der Zeit vor emm980) bekommt beim ersten
+    Lauf `jetzt` - fuer sie zaehlen also nur Kaeufe ab jetzt, nie alte.
+
+    Rueckgabe [{type_id, name, bought, rest, entfernt}] der veraenderten
+    Zeilen. GRENZE (dem Nutzer gesagt): das Wallet sagt nicht, WOFUER
+    gekauft wurde - ein Kauf desselben Items fuer etwas anderes zaehlt mit."""
+    init_shopping()
+    jetzt = jetzt_iso or _utc_iso_jetzt()
+    out = []
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, type_id, name, qty, seit, tx_bis FROM shopping").fetchall()
+        for r in rows:
+            if not r["seit"]:
+                c.execute("UPDATE shopping SET seit=? WHERE id=?",
+                          (jetzt, r["id"]))
+                continue
+            s = c.execute(
+                "SELECT COALESCE(SUM(quantity), 0) AS menge, "
+                "       COALESCE(MAX(transaction_id), 0) AS bis "
+                "FROM transactions WHERE type_id=? AND is_buy=1 "
+                "AND date>=? AND transaction_id>?",
+                (r["type_id"], r["seit"], int(r["tx_bis"] or 0))).fetchone()
+            gekauft = int(s["menge"] or 0)
+            if gekauft <= 0:
+                continue
+            rest = int(r["qty"] or 0) - gekauft
+            if rest <= 0:
+                c.execute("DELETE FROM shopping WHERE id=?", (r["id"],))
+            else:
+                c.execute("UPDATE shopping SET qty=?, tx_bis=? WHERE id=?",
+                          (rest, int(s["bis"] or 0), r["id"]))
+            out.append({"type_id": int(r["type_id"]), "name": r["name"],
+                        "bought": gekauft, "rest": max(0, rest),
+                        "entfernt": rest <= 0})
+    return out
 
 
 def list_shopping():

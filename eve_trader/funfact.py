@@ -74,13 +74,23 @@ def plan_enden(plan):
     p = plan or {}
     roh = (p.get("enden") or []) if p.get("multi") else [
         (p.get("type_id"), p.get("qty"))]
+    # GEKAUFTE ENDEN SIND NICHT GEBAUT (emm951): ein Buendel merkt sich beim
+    # Speichern, welche Enden es kauft (`enden_gekauft`) - die zaehlen nicht
+    # in "built". Alte Plaene tragen das Feld nicht und zaehlen wie bisher.
+    gek = set()
+    if p.get("multi"):
+        for g in (p.get("enden_gekauft") or []):
+            try:
+                gek.add(int(g))
+            except (TypeError, ValueError):
+                pass
     out = []
     for e in roh:
         try:
             t, q = int(e[0]), int(e[1])
         except (TypeError, ValueError, IndexError):
             continue
-        if t > 0 and q > 0:
+        if t > 0 and q > 0 and t not in gek:
             out.append((t, q))
     return out
 

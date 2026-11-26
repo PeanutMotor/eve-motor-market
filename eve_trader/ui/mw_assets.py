@@ -387,8 +387,8 @@ class AssetsTab:
                        if char_assets.ort_art(ort) == "structure"
                        else f"#{ort}")
             auf = (int(cid), int(ort)) in self._as_offen
-            kn = QPushButton(("▾ " if auf else "▸ ")
-                             + f"{onm} · {len(mengen)}")
+            kn = QPushButton(f"{onm} · {len(mengen)}")
+            icons.klapp_setzen(kn, auf)
             kn.setCursor(Qt.PointingHandCursor)
             kn.setStyleSheet(
                 f"QPushButton{{background:transparent; border:none; "
@@ -423,8 +423,7 @@ class AssetsTab:
             if not tbl.rowCount():          # lazy: erst beim Oeffnen
                 self._assets_ort_fuellen(tbl, mengen, namen)
         tbl.setVisible(not auf)
-        kn.setText(("▸ " if auf else "▾ ")
-                   + f"{onm} · {len(mengen)}")
+        icons.klapp_setzen(kn, not auf, f"{onm} · {len(mengen)}")
 
     def _assets_ort_fuellen(self, tbl, mengen, namen):
         # KOMPAKT (emm865, Nutzer-Screenshot: "Beim ausklappen des

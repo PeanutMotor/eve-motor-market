@@ -151,6 +151,31 @@ def _einmal_nachsehen():
         _laeuft.release()
 
 
+# Sitzungsunterlage, die NIE im Repo und NIE im Quelltext-Zip liegt
+# (.gitignore). Nur wo sie liegt, wird an diesem Projekt entwickelt.
+MERKDATEI = "CLAUDE.md"
+
+
+def erlaubt(settings=None, wurzel=None, eingefroren=None):
+    """Darf die Wache hier ueberhaupt laufen? (emm996, Nutzer 22.11.2026:
+    "ja" auf "nur noch bei dir aktiv, bei allen anderen aus".)
+
+    Der Helfer ist ein Werkzeug der FEHLERSUCHE an diesem Projekt - wer Eve
+    MoMa nur benutzt (EXE oder Quelltext von GitHub), braucht ihn nicht und
+    soll kein Programm haben, das auf Zuruf Dateien startet. Aktiv nur, wenn
+      * nicht als EXE gebaut (`sys.frozen`),
+      * nicht abgeschaltet (`settings["diagnose_auftraege"] is False`),
+      * die Sitzungsunterlage MERKDATEI in der Projektwurzel liegt.
+    """
+    if eingefroren is None:
+        eingefroren = bool(getattr(sys, "frozen", False))
+    if eingefroren:
+        return False
+    if (settings or {}).get("diagnose_auftraege") is False:
+        return False
+    return os.path.isfile(os.path.join(wurzel or WURZEL, MERKDATEI))
+
+
 def starte_wachen(fenster, settings=None):
     """Haengt die Wache in die Qt-Ereignisschleife.
 
@@ -158,7 +183,7 @@ def starte_wachen(fenster, settings=None):
     das Fenster nie einfriert. Ohne Qt oder bei abgeschalteter Einstellung
     passiert nichts.
     """
-    if (settings or {}).get("diagnose_auftraege") is False:
+    if not erlaubt(settings):
         return None
     try:
         from PySide6.QtCore import QTimer

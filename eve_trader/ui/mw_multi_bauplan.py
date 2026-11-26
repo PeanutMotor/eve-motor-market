@@ -62,6 +62,46 @@ from .mw_basis import NumericItem, isk
 from .mw_helpers import eigene_kopie_lage, ist_platzhalter_name, snapshot_ohne_ende
 
 
+class HoehenGriff(QFrame):
+    """Schmaler Streifen unter einer Tabelle: mit der Maus nach unten oder
+    oben ziehen = mehr oder weniger Zeilen zeigen (emm991, Nutzer 22.11.2026:
+    "unten an der karte die moeglichkeit laenger zu ziehen mit der Maus damit
+    man eben nicht unbedingt scrollen muesste"). Der Griff rechnet NICHTS -
+    er meldet nur: `start()` -> Ausgangshoehe, `ziehen(px)` waehrend der
+    Bewegung, `fertig()` beim Loslassen, `zurueck()` beim Doppelklick."""
+
+    def __init__(self, start, ziehen, fertig, zurueck):
+        super().__init__()
+        self._start, self._ziehen = start, ziehen
+        self._fertig, self._zurueck = fertig, zurueck
+        self._y0 = None
+        self._h0 = 0
+        self.setFixedHeight(9)
+        self.setCursor(Qt.SizeVerCursor)
+        self.setStyleSheet(
+            f"QFrame{{background:{theme.PANEL2}; border:1px solid {theme.BORDER}; "
+            f"border-radius:{theme.RAD_KLEIN};}}"
+            f"QFrame:hover{{background:{theme.CYAN}; border:1px solid {theme.CYAN};}}")
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._y0 = e.globalPosition().y()
+            self._h0 = int(self._start())
+
+    def mouseMoveEvent(self, e):
+        if self._y0 is not None:
+            self._ziehen(self._h0 + int(e.globalPosition().y() - self._y0))
+
+    def mouseReleaseEvent(self, e):
+        if self._y0 is not None:
+            self._y0 = None
+            self._fertig()
+
+    def mouseDoubleClickEvent(self, e):
+        self._y0 = None
+        self._zurueck()
+
+
 class MultiBauplan:
     # Ziel "der gerade OFFENE, noch nicht gespeicherte Bauplan" im Untermenue
     # "Add to multi build plan" (Nutzer 29.09.2026). Keine Plan-ID - ein
@@ -153,7 +193,7 @@ class MultiBauplan:
             box.setVisible(bool(offen))
         btn = (getattr(self, "_plan_multi_pfeil", None) or {}).get(pid)
         if btn is not None:
-            btn.setIcon(icons.icon("chevron" if offen else "arrow_right"))
+            icons.klapp_setzen(btn, offen)
         try:
             aus = [int(x) for x in (self.settings.get("bau_multi_zu") or [])]
         except (TypeError, ValueError):
@@ -358,6 +398,34 @@ class MultiBauplan:
         # Weg, die Invention fuer EIN Ende auszuschalten (Override oben).
         if self._multi_enden_erfindbar(recipes, enden):
             opts["invention"] = True
+        self._multi_kauf_opts(opts, recipes, enden)
+        return opts
+
+    def _multi_kauf_opts(self, opts, recipes, enden,
+                         billig=None, faction=None):
+        """Die zwei Kauf-Schalter des Buendels in die opts uebersetzen
+        (emm951) - die EINE Stelle dafuer: Oeffnen, Umschalten im Fenster und
+        die Karten-Schaetzung (die gibt `billig`/`faction` aus dem
+        gespeicherten Plan vor). AUS heisst: Schluessel WEG, nicht False -
+        `_bd_opts` ueberlebt den rebuild, und ein Plan ohne Schalter soll
+        exakt die opts von vor emm951 tragen."""
+        if billig is None:
+            billig = bool(getattr(self, "_bd_enden_kauf_billig", False))
+        if faction is None:
+            faction = bool(getattr(self, "_bd_enden_kauf_faction", False))
+        if billig:
+            opts["enden_kauf_billig"] = True
+        else:
+            opts.pop("enden_kauf_billig", None)
+        kauf = set()
+        if faction:
+            p2b = getattr(recipes, "product_to_bp", None) or {}
+            kauf = {int(x) for x in enden
+                    if int(x) in p2b and self._ms_faction(int(x))}
+        if kauf:
+            opts["kauf_enden"] = sorted(kauf)
+        else:
+            opts.pop("kauf_enden", None)
         return opts
 
     @staticmethod
@@ -517,7 +585,8 @@ class MultiBauplan:
                 continue
             je_bpc = max(1, int(_out.get("runs", 1) or 1))
             aus[tid] = {"copies": -(-noetig // je_bpc),   # ceil
-                        "runs": je_bpc, "bpo": False, "runs_known": True}
+                        "runs": je_bpc, "bpo": False, "runs_known": True,
+                        "erfunden": True}          # emm1037
         return aus
 
     def _multi_enden_ohne_decryptor(self):
@@ -693,6 +762,8 @@ class MultiBauplan:
                         (eintrag.get("own_bpc_je_ende") or {}).items()},
             "own_bpc_runs": {int(k): int(v) for k, v in
                              (eintrag.get("own_bpc_runs_je_ende") or {}).items()},
+            "kauf_billig": bool(eintrag.get("enden_kauf_billig")),
+            "kauf_faction": bool(eintrag.get("enden_kauf_faction")),
             "label": str(eintrag.get("label") or t("Multi build plan")),
         }
         self._bd_loading_saved = plan_id is not None
@@ -837,7 +908,31 @@ class MultiBauplan:
             plan_id, [{"tid": int(tid), "name": str(name),
                        "qty": qty, "vorgabe": vorgabe}])
 
-    def _multi_mengen_dialog(self, items, titel, hinweis=None):
+    # Was der Mengen-Dialog NEBEN der Liste braucht (Titel, Haken, Hinweis,
+    # Faktor, Knoepfe, Raender) - grosszuegig, lieber eine Zeile weniger.
+    MENGEN_DIALOG_REST_PX = 320
+
+    @staticmethod
+    def _multi_mengen_fenster_anpassen(dlg):
+        """Mengen-Dialog auf seinen Inhalt zusammenziehen (emm1010)."""
+        try:
+            dlg.adjustSize()
+        except RuntimeError:                 # Fenster schon geschlossen
+            pass
+
+    def _multi_mengen_listen_grenze(self, dlg=None):
+        """Wie hoch darf die Liste im Mengen-Dialog hoechstens sein, damit
+        das Fenster auf den Bildschirm passt? (emm999)"""
+        try:
+            from PySide6.QtWidgets import QApplication
+            _sc = (dlg.screen() if dlg is not None else None)                 or QApplication.primaryScreen()
+            _verf = int(_sc.availableGeometry().height())
+        except Exception:
+            _verf = 900
+        return max(160, int(_verf * 0.9) - self.MENGEN_DIALOG_REST_PX)
+
+    def _multi_mengen_dialog(self, items, titel, hinweis=None,
+                             voll_items=None, voll_an=False):
         """MENGEN-DIALOG, VORBEFUELLT (Nutzer 26.09.2026, Bedienidee 2: "den
         Mengen-Dialog aus dem Scanner vorbefuellen"). items = [{tid, name,
         vorgabe}] - EINE Zeile je Item mit eigener Menge, damit eine
@@ -853,32 +948,102 @@ class MultiBauplan:
         `hinweis` (emm857, zweiter Teil desselben Berichts: "ausserdem
         fehlen Module und ITems"): was bewusst NICHT im Plan ist (kein
         Rezept, Faction auf Kaufen), stand nur in einem fluechtigen
-        Flash-Tipp - jetzt steht es dauerhaft IM Dialog."""
-        from PySide6.QtWidgets import QDialog, QGridLayout
+        Flash-Tipp - jetzt steht es dauerhaft IM Dialog.
+
+        `voll_items` (emm951, Nutzer 17.11.2026: "aber ich will doch die
+        ganze Doctrine bauen ... eeh das ganze schiff"): die Liste fuer
+        KOMPLETTE Schiffe (volle Zielmenge, Markt ignoriert). Ist sie da,
+        zeigt der Dialog einen Haken, der zwischen "nur was fehlt" (items)
+        und "ganze Schiffe" (voll_items) umschaltet; `voll_an` hakt ihn vor.
+        Zurueck kommt die Liste, die beim Bestaetigen angezeigt war."""
+        from PySide6.QtWidgets import QDialog, QGridLayout, QCheckBox
         dlg = QDialog(self._tool_parent()); dlg.setWindowTitle(titel)
         dlg.setMinimumWidth(420)
         v = QVBoxLayout(dlg); v.setContentsMargins(18, 16, 18, 16); v.setSpacing(10)
         v.addWidget(QLabel(t("How many of each?")))
-        g = QGridLayout(); g.setHorizontalSpacing(12); g.setVerticalSpacing(6)
+        # DIE LISTE LAEUFT IN EINEM BILDLAUF-BEREICH (emm999, Nutzer-Bild
+        # 22.11.2026, Doctrines "Multi build plan (all ships)": rund 40
+        # Zeilen, "das popup fenster ist so lang dass ich nichts klicken
+        # kann ... weil das fenster unten am Monitor verschwindet"). Die
+        # Knoepfe stehen AUSSERHALB und bleiben damit immer erreichbar; die
+        # Liste ist hoechstens so hoch, dass das Fenster auf den Schirm
+        # passt.
+        from PySide6.QtWidgets import QScrollArea
+        from .mw_basis import ohne_mausrad
+        _gw = QWidget()
+        g = QGridLayout(_gw); g.setHorizontalSpacing(12); g.setVerticalSpacing(6)
+        g.setContentsMargins(0, 0, 8, 0)
+        _sa = QScrollArea(); _sa.setWidgetResizable(True)
+        _sa.setFrameShape(QFrame.NoFrame)
+        _sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _sa.setWidget(_gw)
+        self._multi_mengen_scroll = _sa          # b-Suite
+
+        def _listen_hoehe():
+            # AUS DEN ZEILEN GERECHNET, nicht aus `_gw.sizeHint()` (emm1010,
+            # Nutzer-Bilder 23.11.2026: nach dem Haken "Build complete
+            # ships" war die Liste leer). Zeilen, die in ein schon GEZEIGTES
+            # Fenster kommen, sind bis zur naechsten Ereignisrunde versteckt
+            # - das Layout zaehlt sie nicht, sizeHint war ~0 und die Liste
+            # 4 px hoch (nachgestellt in b1010).
+            _zh = max([sp.sizeHint().height() for sp in spins] or [24])
+            _n = max(1, len(spins))
+            _voll = _n * _zh + (_n - 1) * max(0, g.verticalSpacing()) + 4
+            _sa.setMaximumHeight(_voll)
+            _sa.setMinimumHeight(min(_voll, self._multi_mengen_listen_grenze(dlg)))
+            # Wird die Liste KUERZER (Haken aus/an), zieht sich das Fenster
+            # mit zusammen - sonst verteilt das Layout den freien Platz
+            # zwischen die Zeilen (sein erstes Bild).
+            QTimer.singleShot(0, lambda: self._multi_mengen_fenster_anpassen(dlg))
         spins = []
-        for _i, it in enumerate(items):
-            # Kauf-Enden (emm859: kein Rezept / Faction auf Kaufen)
-            # tragen ihr Etikett direkt in der Zeile.
-            _zn = str(it["name"]) + (" " + t("(buy)")
-                                     if it.get("kauf") else "")
-            g.addWidget(QLabel(_zn), _i, 0)
-            sp = QSpinBox(); sp.setRange(1, 100000000)
-            sp.setGroupSeparatorShown(True); sp.setMinimumWidth(120)
-            sp.setValue(max(1, int(it.get("vorgabe")
-                                   or it.get("qty") or 1)))
-            g.addWidget(sp, _i, 1)
-            spins.append(sp)
-        v.addLayout(g)
+        _gezeigt = {"items": list(items)}
+
+        def _fuellen(its):
+            while g.count():
+                _alt = g.takeAt(0).widget()
+                if _alt is not None:
+                    _alt.setParent(None)
+                    _alt.deleteLater()
+            del spins[:]
+            _gezeigt["items"] = list(its)
+            for _i, it in enumerate(its):
+                # Kauf-Enden (emm859: kein Rezept / Faction auf Kaufen)
+                # tragen ihr Etikett direkt in der Zeile.
+                _zn = str(it["name"]) + (" " + t("(buy)")
+                                         if it.get("kauf") else "")
+                g.addWidget(QLabel(_zn), _i, 0)
+                sp = QSpinBox(); sp.setRange(1, 100000000)
+                sp.setGroupSeparatorShown(True); sp.setMinimumWidth(120)
+                sp.setValue(max(1, int(it.get("vorgabe")
+                                       or it.get("qty") or 1)))
+                # Das Mausrad blaettert die Liste, es verstellt keine Menge.
+                ohne_mausrad(sp)
+                g.addWidget(sp, _i, 1)
+                spins.append(sp)
+            _listen_hoehe()
+
+        self._multi_mengen_voll_cb = None       # b-Suite
+        if voll_items:
+            _vcb = QCheckBox(t("Build complete ships (ignore market)"))
+            _vcb.setToolTip(t(
+                "Off: only what is missing on the market of your trade hub. "
+                "On: every ticked item with the full quantity for all ships - "
+                "what is already on the market there is ignored."))
+            _vcb.setChecked(bool(voll_an))
+            _vcb.toggled.connect(
+                lambda an: _fuellen(voll_items if an else items))
+            v.addWidget(_vcb)
+            self._multi_mengen_voll_cb = _vcb
+        _fuellen(voll_items if (voll_items and voll_an) else items)
+        v.addWidget(_sa)
         self._multi_mengen_hinweis_lbl = None   # b-Suite
         if hinweis:
+            # GRAU UND DIREKT UNTER DER LISTE (emm951, Nutzer las die
+            # orange Zeile als Warnung "ich muss das kaufen") - sie
+            # erklaert nur das Etikett.
             _hl = QLabel(str(hinweis))
             _hl.setWordWrap(True)
-            _hl.setStyleSheet(f"color:{theme.AMBER};")
+            _hl.setStyleSheet(f"color:{theme.MUTED};")
             v.addWidget(_hl)
             self._multi_mengen_hinweis_lbl = _hl
         # GANZE DOCTRINE xN (emm857, Nutzer: "kann ich die anzahl der
@@ -915,7 +1080,7 @@ class MultiBauplan:
             return None
         return [{"tid": int(it["tid"]), "name": str(it["name"]),
                  "qty": int(sp.value()) * max(1, int(fakt.value()))}
-                for it, sp in zip(items, spins)]
+                for it, sp in zip(_gezeigt["items"], spins)]
 
     def _multi_enden_zu_plan(self, plan_id, items):
         """EIN ODER MEHRERE Enden an einen gespeicherten Plan haengen (auch
@@ -1062,7 +1227,8 @@ class MultiBauplan:
             titel=t("Add {n} selected to multi build plan").format(n=n))
         return akt, a_neu
 
-    def _multi_neu_aus_auswahl(self, items, hinweis=None):
+    def _multi_neu_aus_auswahl(self, items, hinweis=None, voll_items=None,
+                               voll_an=False, plan_felder=None):
         """NEUER MULTI-BAUPLAN AUS EINER MEHRFACHAUSWAHL (Nutzer 26.09.2026,
         Bedienidee 1): mehrere Zeilen markieren -> Rechtsklick -> "New multi
         build plan from selection". Mengen im vorbefuellten Dialog, dann
@@ -1070,13 +1236,24 @@ class MultiBauplan:
         "Save build plan". Gleiche Items werden addiert
         (`_multi_ende_anhaengen`). Unter zwei verschiedenen Enden entsteht
         kein Buendel - dafuer gibt es "Open build plan"."""
-        if len({int(x["tid"]) for x in (items or [])}) < 2:
+        if len({int(x["tid"]) for x in ((voll_items if voll_an else items)
+                                        or [])}) < 2:
             self._flash_tip(t("Select at least two different items for a multi "
                               "build plan."))
             return None
-        _m = self._multi_mengen_dialog(items, t("New multi build plan"),
-                                       hinweis=hinweis)
+        if voll_items:
+            _m = self._multi_mengen_dialog(items, t("New multi build plan"),
+                                           hinweis=hinweis,
+                                           voll_items=voll_items,
+                                           voll_an=voll_an)
+        else:
+            _m = self._multi_mengen_dialog(items, t("New multi build plan"),
+                                           hinweis=hinweis)
         if _m is None:
+            return None
+        if voll_items and len({int(x["tid"]) for x in _m}) < 2:
+            self._flash_tip(t("Select at least two different items for a multi "
+                              "build plan."))
             return None
         erst = _m[0]
         _me0, _te0 = self._multi_ende_me_te_vorgabe(int(erst["tid"]))
@@ -1087,6 +1264,10 @@ class MultiBauplan:
                  [{"item_name": x["name"]} for x in _m])}
         for x in _m[1:]:
             e = self._multi_ende_anhaengen(e, int(x["tid"]), int(x["qty"]))
+        # PLAN-FELDER DES AUFRUFERS (emm951): der Doctrines-Reiter schaltet
+        # damit "Buy end products that are cheaper" EIN (Nutzer-Vorgabe) -
+        # sichtbar als Haken in der Endprodukte-Karte.
+        e.update(plan_felder or {})
         # Lager des offenen Fensters mitnehmen (emm308)
         self._bd_bestand_pending = self._bd_bestand_mitnehmen()
         _d = self._offener_bauplan()
@@ -1967,6 +2148,97 @@ class MultiBauplan:
                       "Multi-Bauplan: Namen nachholen", str(_m)),
                   overlay=False)
 
+    def _multi_ohne_bp_fragen(self, sicher_namen, unklar_namen):
+        """Rueckfrage vor dem Entfernen -> "sicher" | "alle" | None."""
+        box = QMessageBox(self._tool_parent())
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(t("Multi build plan"))
+
+        def _liste(namen):
+            return ", ".join(namen[:12]) + (" \u2026" if len(namen) > 12 else "")
+        txt = ""
+        if sicher_namen:
+            txt += t("{n} end product(s) without blueprint:\n{liste}").format(
+                n=len(sicher_namen), liste=_liste(sicher_namen))
+        if unklar_namen:
+            txt += ("\n\n" if txt else "") + t(
+                "{n} unclear \u2013 the blueprint ownership could not be read "
+                "for every owner (see the Blueprints tab):\n{liste}").format(
+                    n=len(unklar_namen), liste=_liste(unklar_namen))
+        box.setText(txt)
+        b_sicher = b_alle = None
+        if sicher_namen:
+            b_sicher = box.addButton(
+                t("Remove {n}").format(n=len(sicher_namen)), QMessageBox.AcceptRole)
+        if unklar_namen:
+            b_alle = box.addButton(
+                t("Remove the unclear ones too ({n})").format(
+                    n=len(sicher_namen) + len(unklar_namen)),
+                QMessageBox.DestructiveRole)
+        box.addButton(t("Cancel"), QMessageBox.RejectRole)
+        box.exec()
+        _c = box.clickedButton()
+        if _c is not None and _c is b_sicher:
+            return "sicher"
+        if _c is not None and _c is b_alle:
+            return "all"
+        return None
+
+    def _multi_enden_ohne_bp_entfernen(self):
+        """ALLE ENDPRODUKTE OHNE BLAUPAUSE AUS DEM BUENDEL (emm1001, Nutzer
+        22.11.2026: "damit ich das nicht haendisch stueck fuer stueck
+        herauspicken muss"). Das Urteil kommt aus dem Blueprints-Reiter
+        (`_bd_bp_urteil`), die Auswahl aus `enden_ohne_blaupause`, das
+        Entfernen geht ueber `_multi_ende_entfernen` (EIN Weg, mit
+        Speichern) - nur der Neuaufbau laeuft EINMAL am Ende.
+        -> Anzahl entfernter Enden."""
+        from .mw_helpers import enden_ohne_blaupause
+        if getattr(self, "_bd_frozen", None):
+            self._flash_tip(t("The plan is frozen \u2013 remove end products one "
+                              "by one with the red X."))
+            return 0
+        enden = [int(a) for a, _b in (getattr(self, "_bd_buendel_enden", None) or [])]
+        sicher, unklar, ungeladen = enden_ohne_blaupause(
+            getattr(self, "_bd_bp_urteil", None), enden)
+        if ungeladen or getattr(self, "_bd_bp_urteil", None) is None:
+            self._flash_tip(t("Blueprint ownership is not loaded yet \u2013 press "
+                              "\u201eLoad everything from ESI\u201c under Tools first."))
+            return 0
+        if not sicher and not unklar:
+            self._flash_tip(t("Every end product has its blueprint \u2013 nothing "
+                              "to remove."))
+            return 0
+        namen = getattr(self, "_bd_names_ref", None) or {}
+        wahl = self._multi_ohne_bp_fragen(
+            [str(namen.get(x) or x) for x in sicher],
+            [str(namen.get(x) or x) for x in unklar])
+        if wahl is None:
+            return 0
+        weg = list(sicher) + (list(unklar) if wahl == "all" else [])
+        if len(enden) - len(weg) < 2:
+            self._flash_tip(t("At least two end products must remain \u2013 "
+                              "nothing removed."))
+            return 0
+        # EIN Neuaufbau und EINE Meldung am Ende statt je Ende.
+        _fn = getattr(self, "_bd_full_rebuild", None)
+        _tip = self.__dict__.get("_flash_tip")
+        self._bd_full_rebuild = None
+        self._flash_tip = lambda *a, **k: None
+        try:
+            for tid in weg:
+                self._multi_ende_entfernen(tid)
+        finally:
+            self._bd_full_rebuild = _fn
+            if _tip is None:
+                self.__dict__.pop("_flash_tip", None)
+            else:
+                self._flash_tip = _tip
+        if _fn is not None:
+            _fn()
+        self._flash_tip(t("{n} end product(s) without blueprint removed from the "
+                          "bundle.").format(n=len(weg)))
+        return len(weg)
+
     def _multi_ende_entfernen(self, tid):
         """Ein Endprodukt aus dem OFFENEN Buendel nehmen (Nutzer 26.09.2026:
         "nach genaueren Einstellungen habe ich festgestellt, dass sich einige
@@ -2154,7 +2426,24 @@ class MultiBauplan:
                     (getattr(self, "_bd_own_bpc_je_ende", None) or {}).items()},
                 "own_bpc_runs_je_ende": {
                     str(k): int(v) for k, v in
-                    (getattr(self, "_bd_own_bpc_runs_je_ende", None) or {}).items()}}
+                    (getattr(self, "_bd_own_bpc_runs_je_ende", None) or {}).items()},
+                # KAUF-SCHALTER + WAS DER PLAN DAMIT KAUFT (emm951). Die
+                # Liste kommt aus der Entscheidung des offenen Plans - sie
+                # sagt Fortschritt, "Completed" und Funfact, welche Enden
+                # nie einen Job bekommen.
+                "enden_kauf_billig": bool(getattr(self, "_bd_enden_kauf_billig", False)),
+                "enden_kauf_faction": bool(getattr(self, "_bd_enden_kauf_faction", False)),
+                "enden_gekauft": self._multi_gekaufte_enden()}
+
+    def _multi_gekaufte_enden(self, plan=None):
+        """[tid] der Enden, die der OFFENE Buendel-Plan kauft (emm951)."""
+        if plan is None:
+            _c = getattr(self, "_bd_plan_cache", None)
+            plan = _c[1] if _c else None
+        try:
+            return industry.buendel_gekaufte_enden(plan or {})
+        except Exception:
+            return []
 
     # Die vier Felder, die je Ende sofort gemerkt werden (s. unten).
     JE_ENDE_SOFORT = ("me_je_ende", "te_je_ende", "own_bpc_je_ende",
@@ -2333,6 +2622,78 @@ class MultiBauplan:
     # _einzel_absatz_zeigen (emm349) ist AUSGEBAUT (emm391, Nutzer
     # 04.10.2026: Sold/day nur noch in My Blueprints).
 
+    def _multi_enden_platz_nachfassen(self):
+        """Verzoegerte zweite Platz-Pruefung (emm1011) - nur schrumpfen."""
+        try:
+            self._multi_enden_platz_pruefen()
+        except RuntimeError:                 # Fenster inzwischen geschlossen
+            pass
+
+    def _multi_enden_platz_pruefen(self):
+        """DIE ENDPRODUKTE-LISTE DARF DEN REST NICHT ZUSAMMENDRUECKEN
+        (emm993, Nutzer-Bild 22.11.2026: "details tab kann jetzt gedrueckt
+        werden, nicht gut" - Liste hochgezogen, Details offen, die Zeilen
+        darunter lagen uebereinander).
+
+        NACHGESTELLT (Datenkopie, 9 Zeilen, Fenster 1164 px): die Kopfkarte
+        bekam 348 statt 381 px, die Liste ragte ueber ihre eigene Karte.
+        Gemessen wird der FEHLBETRAG des ganzen Fensters (Mindesthoehe des
+        Layouts minus Fensterhoehe); um so viele Zeilen schrumpft die Liste, aber nie
+        unter die Vorgabe ENDEN_SICHTBAR (dort galt das alte Verhalten).
+        Der gemerkte Wunsch bleibt - ist wieder Platz, gilt er wieder."""
+        import math
+        tbl = getattr(self, "_bd_multi_tbl", None)
+        dlg = getattr(self, "_bd_dialog", None)
+        if tbl is None or dlg is None:
+            return 0
+        try:
+            if dlg.layout() is None:
+                return 0
+            zh = (tbl.rowHeight(0) if tbl.rowCount() else 30) or 30
+            rand = tbl.horizontalHeader().height() + 2 * tbl.frameWidth() + 2
+            unten = max(1, min(tbl.rowCount(), self.ENDEN_SICHTBAR))
+            weg = 0
+            # NACHFASSEN: nach dem Schrumpfen kann die Mindesthoehe des
+            # Fensters noch einmal anders ausfallen (gemessen in b993: bei
+            # 6 Zeilen fehlte danach noch eine). Hoechstens so oft, wie es
+            # Zeilen gibt.
+            for _runde in range(max(1, tbl.rowCount())):
+                # ERST VERWERFEN, DANN MESSEN (emm1011): direkt nach einem
+                # Neuaufbau nennt das Layout noch die ALTE Mindesthoehe
+                # (gemessen: 1258 statt 1378) - die Liste blieb auf 9 Zeilen
+                # und lag ueber dem Rest (Nutzer-Bild 23.11.2026).
+                # ... und zwar auf JEDER Ebene zwischen Liste und Fenster:
+                # `setFixedHeight` meldet sich per Ereignis nach oben, eine
+                # Ebene je Runde - die Timer feuern davor (gemessen: 0 ms
+                # und 250 ms sahen beide noch 1258).
+                _w1011 = tbl
+                while _w1011 is not None and _w1011 is not dlg:
+                    _w1011 = _w1011.parentWidget()
+                    if _w1011 is not None and _w1011.layout() is not None:
+                        _w1011.layout().invalidate()
+                dlg.layout().activate()
+                # Was das Fenster MINDESTENS braeuchte, minus was es hat. Das
+                # Layout rechnet das selbst (Regel 8a) - die Liste geht mit
+                # ihrer festen Hoehe 1:1 darin ein.
+                fehl = dlg.layout().minimumSize().height() - dlg.height()
+                if fehl <= 0:
+                    break
+                # Die GESETZTE Hoehe zaehlt, nicht die gerade gezeichnete
+                # (emm1011): nach `setFixedHeight(9 Zeilen)` meldet
+                # `height()` bis zum naechsten Layout-Durchlauf noch die
+                # alten 5 - die Pruefung sah "schon klein genug" und liess
+                # die 9 stehen.
+                jetzt = int(round((tbl.minimumHeight() - rand) / float(zh)))
+                neu = max(unten, jetzt - int(math.ceil(fehl / float(zh))))
+                if neu >= jetzt:
+                    break
+                tbl.setFixedHeight(rand + zh * neu)
+                weg += jetzt - neu
+            return weg
+        except RuntimeError:                 # Qt-Objekt schon geloescht
+            pass
+        return 0
+
     def _multi_enden_karte(self, type_id, names, parent_layout):
         """Karte "Endprodukte" im Bauplan-Dialog - nur fuer ein Buendel.
 
@@ -2359,6 +2720,7 @@ class MultiBauplan:
         aufruft (self._bd_multi_refresh)."""
         if type_id != industry.BUENDEL_ID:
             self._bd_multi_refresh = None
+            self._bd_multi_hoehe_neu = None
             self._bd_multi_tbl = None
             self._bd_multi_karte = None
             # EINZELPLAN: dieselbe Karte, nur der Kopf - damit "+ Add build
@@ -2426,6 +2788,61 @@ class MultiBauplan:
         _body = QWidget()
         _bv = QVBoxLayout(_body)
         _bv.setContentsMargins(0, 0, 0, 0); _bv.setSpacing(6)
+        # DIE ZWEI KAUF-SCHALTER DES BUENDELS (emm951, Nutzer 17.11.2026:
+        # "Diese beiden Knoepfe muessen aber ersichtlich sein im Bauplan an
+        # einem sinnvollen Ort" / "beide standardmaessig auf off"). Sie
+        # stehen HIER, weil sie ueber genau diese Liste entscheiden: welches
+        # Endprodukt gebaut und welches gekauft wird. Regel 7: kein
+        # versteckter Wert - was rechnet, ist ein sichtbarer Haken.
+        from PySide6.QtWidgets import QCheckBox as _KCB
+        _kz = QHBoxLayout(); _kz.setContentsMargins(0, 0, 0, 0); _kz.setSpacing(18)
+        _kb_billig = _KCB(t("Buy end products that are cheaper to buy"))
+        _kb_billig.setToolTip(t(
+            "On: an end product of this bundle is bought instead of built "
+            "when buying it at the plan's hub costs less than building it. It "
+            "then stands in the shopping list and gets no job. Without a sell "
+            "order at the hub there is no comparison - it is built. Off "
+            "(default): every end product is built."))
+        _kb_faction = _KCB(t("Buy faction end products"))
+        _kb_faction.setToolTip(t(
+            "On: faction end products are bought, not built from LP "
+            "blueprints. Off (default): they are built like every other end "
+            "product."))
+        _kb_billig.setChecked(bool(getattr(self, "_bd_enden_kauf_billig", False)))
+        _kb_faction.setChecked(bool(getattr(self, "_bd_enden_kauf_faction", False)))
+
+        def _kauf_schalter(_an=False):
+            self._bd_enden_kauf_billig = bool(_kb_billig.isChecked())
+            self._bd_enden_kauf_faction = bool(_kb_faction.isChecked())
+            try:
+                self._multi_opts_je_ende(self._bd_opts,
+                                         getattr(self, "_bd_recipes", None))
+            except Exception as _ke:
+                self._log_exception("Multi-Bauplan: Kauf-Schalter", str(_ke))
+            self._bd_plan_cache = None
+            self._bd_tree_cache = None
+            _fn = getattr(self, "_bd_full_rebuild", None)
+            if _fn is not None:
+                _fn()
+        _kb_billig.toggled.connect(lambda _a=False: _kauf_schalter())
+        _kb_faction.toggled.connect(lambda _a=False: _kauf_schalter())
+        _kz.addWidget(_kb_billig); _kz.addWidget(_kb_faction)
+        # ENDPRODUKTE OHNE BLAUPAUSE ENTFERNEN (emm1001). EIN KNOPF, KEIN
+        # HAKEN: Entfernen laesst sich nicht "abhaken" - die Enden sind dann
+        # aus dem Plan (und dem gespeicherten Plan) heraus.
+        _ohne_bp_btn = QPushButton(t("Remove end products without blueprint"))
+        _ohne_bp_btn.setCursor(Qt.PointingHandCursor)
+        _ohne_bp_btn.setToolTip(t(
+            "Takes every end product out of this bundle whose blueprint you "
+            "do not own \u2013 for T2 the T1 original for the invention. Bought "
+            "end products stay. Uses the status of the Blueprints tab; you are "
+            "asked before anything is removed."))
+        _ohne_bp_btn.clicked.connect(lambda: self._multi_enden_ohne_bp_entfernen())
+        _kz.addWidget(_ohne_bp_btn)
+        self._bd_ohne_bp_btn = _ohne_bp_btn                  # b-Suite
+        _kz.addStretch()
+        _bv.addLayout(_kz)
+        self._bd_kauf_cbs = (_kb_billig, _kb_faction)       # b-Suite
         # KEIN ERKLAERTEXT MEHR IN DER KARTE (emm391, Nutzer 04.10.2026:
         # "dieser Text oben im Bauplan ist unnoetiger Reizueberfluss, weg
         # damit"). Die Erklaerung (Menge/ME/TE/Own BPC gelten je Ende, T2
@@ -2523,6 +2940,78 @@ class MultiBauplan:
         # wenigen Enden EINES Buendels, dort waren es alle Plaene).
         tbl.setIconSize(QSize(24, 24))
         _bv.addWidget(tbl)
+        # HOEHE ZIEHEN (emm991, Nutzer 22.11.2026): Griff direkt unter der
+        # Tabelle. Gemerkt wird die ZEILENZAHL, nicht die Pixelhoehe - die
+        # haengt an Schrift und Oberflaechen-Groesse. 0 = Vorgabe
+        # (ENDEN_SICHTBAR). Nie mehr Zeilen, als es Enden gibt: darunter
+        # stuende ein leerer Streifen (b85).
+        def _griff_rand991():
+            return (tbl.horizontalHeader().height()
+                    + 2 * tbl.frameWidth() + 2)
+
+        def _griff_zeilen991(px):
+            _zh = (tbl.rowHeight(0) if tbl.rowCount() else 30) or 30
+            _n = int(round((px - _griff_rand991()) / float(_zh)))
+            return max(1, min(tbl.rowCount() or 1, _n))
+
+        def _griff_ziehen991(px):
+            _n = _griff_zeilen991(px)
+            _zh = (tbl.rowHeight(0) if tbl.rowCount() else 30) or 30
+            tbl.setFixedHeight(_griff_rand991() + _zh * _n)
+            # emm993: nur so weit, wie Platz ist - gemerkt wird, was wirklich
+            # steht, nicht was die Maus wollte.
+            self._multi_enden_platz_pruefen()
+            self._bd_enden_zeilen991 = _griff_zeilen991(tbl.height())
+
+        def _griff_fertig991():
+            _n = int(getattr(self, "_bd_enden_zeilen991", 0) or 0)
+            if _n > 0:
+                self.settings["bau_multi_enden_zeilen"] = _n
+                config.save_settings(self.settings)
+
+        def _griff_zurueck991():
+            self._bd_enden_zeilen991 = 0
+            self.settings["bau_multi_enden_zeilen"] = 0
+            config.save_settings(self.settings)
+            _griff_ziehen991(_griff_rand991() + ((tbl.rowHeight(0) or 30)
+                                                 * self.ENDEN_SICHTBAR))
+            self._bd_enden_zeilen991 = 0
+
+        def _hoehe_setzen993():
+            """Tabellenhoehe = Vorgabe oder gezogener Wunsch - und danach
+            NIE mehr, als im Fenster Platz ist (emm993)."""
+            _zh = tbl.rowHeight(0) if tbl.rowCount() else 30
+            _n_sicht = max(1, min(tbl.rowCount(), self.ENDEN_SICHTBAR))
+            # emm991: selbst gezogene Zeilenzahl gilt statt der Vorgabe.
+            _wunsch991 = int(self.settings.get("bau_multi_enden_zeilen") or 0)
+            if _wunsch991 > 0:
+                _n_sicht = max(1, min(tbl.rowCount(), _wunsch991))
+            tbl.setFixedHeight(tbl.horizontalHeader().height()
+                               + (_zh or 30) * _n_sicht
+                               + 2 * tbl.frameWidth() + 2)
+            self._multi_enden_platz_pruefen()
+            # ... UND NOCH EINMAL NACH DER EREIGNISRUNDE (emm1011): was der
+            # Neuaufbau erst danach zeigt (Warnzeilen, Details), zaehlt mit.
+            QTimer.singleShot(0, self._multi_enden_platz_nachfassen)
+            # Die Mindesthoehe des Fensters steht erst fest, wenn auch die
+            # nachgezogenen Texte gesetzt sind (gemessen: 1258 gleich danach,
+            # 1378 kurz spaeter) - deshalb ein zweites Nachfassen.
+            QTimer.singleShot(250, self._multi_enden_platz_nachfassen)
+
+        def _hoehe_neu993():
+            try:
+                _hoehe_setzen993()
+            except RuntimeError:             # Fenster inzwischen geschlossen
+                pass
+        self._bd_multi_hoehe_neu = _hoehe_neu993
+
+        _griff991 = HoehenGriff(lambda: tbl.height(), _griff_ziehen991,
+                                _griff_fertig991, _griff_zurueck991)
+        _griff991.setToolTip(t(
+            "Drag down to show more end products without scrolling, drag up "
+            "for fewer. Double-click: back to the default height."))
+        _bv.addWidget(_griff991)
+        self._bd_multi_griff = _griff991
         # DIE SUMME DAZUSCHREIBEN (Nutzer-Befund 20.09.2026: "ich bin mir
         # nicht sicher ob hier auch die Rechnung beider Plaene stimmt, im
         # Profit wirkt es falsch"). Er hatte die Spalte selbst addiert und
@@ -2549,8 +3038,8 @@ class MultiBauplan:
             # Layout (b8-Falle: vorher waere daraus ein eigenes Fenster
             # geworden).
             _body.setVisible(bool(offen))
-            _klapp.setText(("\u25b4  " + t("Collapse")) if offen
-                           else ("\u25be  " + t("Expand")))
+            icons.klapp_setzen(_klapp, offen,
+                               t("Collapse") if offen else t("Expand"))
             _klapp.setToolTip(t("Hide the end products of this bundle")
                               if offen else
                               t("Show the end products of this bundle"))
@@ -2929,8 +3418,19 @@ class MultiBauplan:
             # Fracht und Extrakosten gerechnet sind - siehe rebuild()).
             self._bd_multi_je = dict(je)
             self._bd_multi_reihen = [int(tid) for tid, _k in reihen]
-            _unklar = self._multi_unklare_enden(plan)
-            _ohne_dec = self._multi_enden_ohne_decryptor()
+            # GEKAUFTE ENDEN (emm951): keine Blaupause, keine Invention -
+            # also auch keine Decryptor-/Kopien-Warnung fuer sie.
+            _gek951 = set(self._multi_gekaufte_enden(plan))
+            _unklar = [(_tu, _nu) for _tu, _nu in self._multi_unklare_enden(plan)
+                       if int(_tu) not in _gek951]
+            _ohne_dec = [_td for _td in self._multi_enden_ohne_decryptor()
+                         if int(_td) not in _gek951]
+            _kcbs = getattr(self, "_bd_kauf_cbs", None)
+            if _kcbs:
+                self._frost_widgets(_kcbs, False)
+                if self._bd_plan_fest():
+                    self._frost_widgets(_kcbs, True, t(
+                        "Plan frozen – unfreeze it first to change this."))
             _wl = getattr(self, "_bd_multi_warn_lbl", None)
             if _wl is not None:
                 _warn_teile = []
@@ -2962,7 +3462,12 @@ class MultiBauplan:
                 # Rechnung, die auch den Runplaner deckelt. Ohne eigene oder
                 # erfundene Kopie steht hier "\u221e" (BPO-Annahme wie bisher).
                 _bpd = _bp_je_ende.get(int(tid))
-                if _bpd:
+                if int(tid) in _gek951:
+                    _kop = NumericItem(t("bought"), -1)
+                    _kop.setToolTip(t(
+                        "This end product is bought, not built - it stands in "
+                        "the shopping list and needs no blueprint and no job."))
+                elif _bpd:
                     _kop = NumericItem(
                         # NUR ZAHLEN (Nutzer-Messung 24.09.2026: die Spalte
                         # war auf seinem Rechner 146 px breit - das Wort
@@ -3009,11 +3514,7 @@ class MultiBauplan:
             # Bildlaufleiste (Nutzer 26.09.2026, elf Enden: "wir koennen
             # nicht scrollen ... maximal 5 Endprodukte, dafuer eine
             # Scrollleiste rechts, so wie unten im Planer selbst").
-            _zh = tbl.rowHeight(0) if tbl.rowCount() else 30
-            _n_sicht = max(1, min(tbl.rowCount(), self.ENDEN_SICHTBAR))
-            tbl.setFixedHeight(tbl.horizontalHeader().height()
-                               + (_zh or 30) * _n_sicht
-                               + 2 * tbl.frameWidth() + 2)
+            _hoehe_setzen993()
             self._multi_enden_spalten(tbl)
 
         def _gewinn_nachziehen(satz=0.0, fracht=0.0, extra=0.0, gesamt=None):
@@ -3159,6 +3660,122 @@ class MultiBauplan:
         self._bd_multi_refresh = _refresh
         self._multi_gewinn_nachziehen = _gewinn_nachziehen
         return _refresh
+
+    # ------------------------------------------- Mengen-Vorschlag (emm987)
+    SUGG_TAGE = 90        # wie Market stats / Favoriten "Units/day"
+
+    def _bd_sell_region(self):
+        """(region_id | None, Hub-Name) des Verkaufs-Hubs dieses Bauplans."""
+        from .. import hubs, store
+        key = getattr(self, "_bd_sell_hub", None) or "jita"
+        if isinstance(key, tuple) and key and key[0] == "struct":
+            for f in self._market_structures():
+                if f.get("structure_id") == int(key[1]):
+                    _r = f.get("region_id") or f.get("region")
+                    return (int(_r) if _r else None), str(f.get("name") or key[1])
+            return None, str(key[1])
+        for k, lbl, region, _station in hubs.NPC_HUBS:
+            if k == key:
+                return int(region), str(lbl)
+        return None, str(key)
+
+    def _sugg_pct_fragen(self, vorgabe, hubname=""):
+        """Prozent-Eingabe fuer "Suggested quantity" (emm990) - direkt beim
+        Klick unter Tools. -> Zahl oder None (abgebrochen). Eigene Methode,
+        damit die Pruefung sie ersetzen kann (kein modales Fenster)."""
+        from PySide6.QtWidgets import QInputDialog
+        _v, _ok = QInputDialog.getInt(
+            self._tool_parent(), t("Suggested quantity"),
+            # DER HUB STEHT IN DER FRAGE (Nutzer 22.11.2026: er rechnete mit
+            # RD-G2R, im Plan stand "Sell in: Jita" - 1'686 Acolyte II
+            # statt 17).
+            t("Sell hub of this plan: {hub}\n"
+              "Build how much of the daily trade volume of its region? (%)\n"
+              "25 = a quarter of one day \u00b7 100 = one day \u00b7 300 = three days"
+              ).format(hub=hubname),
+            int(vorgabe), 1, 10000, 5)
+        return int(_v) if _ok else None
+
+    def _bd_menge_vorschlagen(self, pct=None):
+        """Tools -> "Suggested quantity" (emm987, Nutzer 22.11.2026): je
+        Endprodukt Menge = Anteil (beim Klick gefragt, Vorgabe 25 %) am Tagesvolumen in
+        der Region des Verkaufs-Hubs. Historie wird im Hintergrund geholt
+        (`scanner.history_cached`), gerechnet in `menge_aus_volumen`. Gesetzt
+        werden die MENGENFELDER - deren Handler rechnen den Plan neu, wie
+        von Hand getippt. Enden ohne Handelshistorie bleiben unveraendert
+        und werden genannt. Eingefroren: nichts (die Mengen sind gesperrt)."""
+        from .. import store
+        from .mw_helpers import menge_aus_volumen
+        if getattr(self, "_bd_frozen", None):
+            self._flash_tip(t("The plan is frozen \u2013 its quantities are fixed."))
+            return False
+        _enden = [int(a) for a, _b in (getattr(self, "_bd_buendel_enden", None) or [])]
+        _buendel = bool(_enden)
+        if not _buendel:
+            _tid0 = int(getattr(self, "_bd_type", 0) or 0)
+            if _tid0 <= 0:
+                return False
+            _enden = [_tid0]
+        region, hubname = self._bd_sell_region()
+        if not region:
+            self._flash_tip(t("The region of the sell hub \u201e{hub}\u201c is "
+                              "unknown \u2013 no trade volume.").format(hub=hubname))
+            return False
+        if pct is None:
+            pct = self._sugg_pct_fragen(
+                int(self.settings.get("bau_sugg_pct", 25) or 25), hubname)
+            if pct is None:
+                return False                         # abgebrochen
+        pct = max(1, int(pct))
+        if int(self.settings.get("bau_sugg_pct", 25) or 25) != pct:
+            self.settings["bau_sugg_pct"] = pct      # naechstes Mal Vorgabe
+            config.save_settings_async(self.settings)
+        tage = int(self.SUGG_TAGE)
+
+        def job():
+            from .. import scanner as _sc
+            for _t in _enden:
+                try:
+                    _sc.history_cached(_t, region)
+                except Exception:
+                    break                       # Rate-Limit o. ae.
+            return store.item_handel(region, _enden, tage)
+
+        def done(handel):
+            handel = handel or {}
+            _namen = store.cached_names(_enden)
+            gesetzt, ohne = [], []
+            for _t in _enden:
+                _m = menge_aus_volumen((handel.get(_t) or {}).get("vol"),
+                                       tage, pct)
+                if _m is None:
+                    ohne.append(_namen.get(_t) or f"#{_t}")
+                    continue
+                if _buendel:
+                    _w = (getattr(self, "_bd_multi_zeilen", None) or {}).get(_t)
+                    _feld = (_w or {}).get("menge")
+                else:
+                    _feld = getattr(self, "_bd_qty_spin", None)
+                    # EIN RUN IST UNTEILBAR: auf volle Runs AUFrunden.
+                    _schritt = int(_feld.singleStep() or 1) if _feld is not None else 1
+                    if _schritt > 1:
+                        _m = ((_m + _schritt - 1) // _schritt) * _schritt
+                if _feld is None:
+                    continue
+                _feld.setValue(int(_m))
+                gesetzt.append((_t, int(_m)))
+            _msg = t("{n} quantity(ies) set to {pct} % of the daily volume in "
+                     "the region of {hub} ({tage}-day average).").format(
+                         n=len(gesetzt), pct=pct, hub=hubname, tage=tage)
+            if ohne:
+                _msg += " " + t("No trade history, unchanged: {liste}").format(
+                    liste=", ".join(ohne[:6]) + (" \u2026" if len(ohne) > 6 else ""))
+            self._flash_tip(_msg, ms=getattr(self, "FLASH_LESEN_MS", 4000))
+            self._bd_sugg_letzte = {"set": gesetzt, "none": ohne,
+                                    "pct": pct, "region": region}
+        from .. import workers as _wk987
+        self._run(_wk987.Worker(job), done, overlay=False)
+        return True
 
     def _multi_hub_sell_job(self, enden, key):
         """Verkaufspreise ALLER Enden am gewaehlten Verkaufs-Hub (fuer

@@ -292,6 +292,18 @@ KEIN_DECRYPTOR = "Kein Decryptor"
 # de_scan5: an
 # de_scan4: an
 
+# SCC-ZUSCHLAG AUF MARKT-ORDERS IN SPIELERSTRUKTUREN (emm1013, Nutzer
+# 24.11.2026: "ist der nicht immer gleich? da koennte man pro Spieler
+# Tradehub doch einfach diesen Fixwert lassen ... pruefe ob es auch wirklich
+# stimmt"). NACHGESCHLAGEN, nicht aus dem Kopf: EVE University Wiki
+# (Sales_tax / Trading): in Upwell-Strukturen ist die Broker Fee "a fixed SCC
+# surcharge of 0.5% plus a percentage set by the structure owner", von Skills
+# unberuehrt; beim Sofortverkauf ("Immediate") faellt beides nicht an.
+# GEMESSEN 24.11.2026 (Nutzer-Screenshot, RD-G2R, Dauer "3 Months"):
+# "SCC surcharge (0.5%)  -340'550" auf 68'110'000 ISK = exakt 0.5 %, daneben
+# "Broker's fee (1.0%)" des Besitzers. Gilt NUR fuer Spielerstrukturen.
+SCC_ZUSCHLAG_STRUKTUR_PCT = 0.5
+
 DEFAULT_SETTINGS = {
     "client_id": EMBEDDED_CLIENT_ID,   # baked-in id for distribution (optional)
     "callback_port": 8635,    # must match the callback URL you register
@@ -485,6 +497,16 @@ DEFAULT_SETTINGS = {
     # es sei denn man schliesst das Dropdown"). Ersetzt `bau_multi_offen`
     # (Standard zu, 20.09.2026); der alte Schlüssel wird nicht mehr gelesen.
     "bau_multi_zu": [],
+    # Checkliste im Bauplan (emm1044): an, bis man sie einmal ausschaltet
+    "bau_checkliste_an": True,
+    # emm991: selbst gezogene Zeilenzahl der Endprodukte-Karte (0 = Vorgabe).
+    "bau_multi_enden_zeilen": 0,
+    # emm998: Verkaufs-Hub fuer My Blueprints / Build from stock / Bau-Scanner.
+    # None = wie der Hub oben; sonst "jita"/... oder ["struct", id].
+    "ind_sell_hub": None,
+    # emm1006: vom Nutzer abgelesene Verkaufsgebuehren je Spielerstruktur:
+    # {str(structure_id): {"broker": %, "scc": %}}.
+    "struct_fees": {},
     # Zugeklappte Karten im Invention-Reiter (Blaupausen-IDs), Standard
     # offen (Nutzer 26.09.2026: "kompakter, verbraucht zu viel Platz").
     "bau_inv_zu": [],
@@ -507,6 +529,11 @@ DEFAULT_SETTINGS = {
     "bau_transport_mode": "per_m3",  # "per_m3" (ISK/m3) or "per_trip" (flat/fuel per trip)
     "bau_transport_rate": 0.0,    # ISK per m3 (mode "per_m3")
     "bau_transport_trip_cost": 0.0,  # ISK flat cost per trip, e.g. fuel (mode "per_trip")
+    # MINDESTVOLUMEN DES FRACHTDIENSTES (emm961): bis zu diesem Volumen kostet
+    # die Strecke die Pauschale statt ISK/m3. Beide 0 = aus (Vorgabe) - dann
+    # rechnet der Plan genau wie bisher.
+    "bau_transport_min_vol": 0.0,    # m3
+    "bau_transport_min_flat": 0.0,   # ISK
     # Frei eingebbarer Einmalbetrag je Bauplan (gekaufte BPCs, Gebuehren) -
     # geht vom Gewinn ab, nicht in die Baukosten je Stueck.
     "bau_extra_cost": 0.0,
@@ -854,19 +881,7 @@ def plaene_archivieren(data, jetzt=None) -> int:
         q = dict(p)
         q["archiviert_ts"] = jetzt
         alt.append(q)
-    import tempfile
-    fd, tmp = tempfile.mkstemp(prefix="archiv-", suffix=".tmp", dir=app_data_dir())
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(alt, f, separators=(",", ":"))
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, pfad)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+    if not _archiv_schreiben(alt):
         return 0
     ids = {str(p.get("id")) for p in weg}
     data["bau_saved_plans"] = [p for p in plans if str(p.get("id")) not in ids]
@@ -874,6 +889,117 @@ def plaene_archivieren(data, jetzt=None) -> int:
         if isinstance(data.get(k), list):
             data[k] = [x for x in data[k] if str(x) not in ids]
     return len(weg)
+
+
+def _archiv_schreiben(liste) -> bool:
+    """Die Archivdatei SICHER schreiben (erst Nebendatei, dann tauschen)."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix="archiv-", suffix=".tmp", dir=app_data_dir())
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(liste, f, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, bauplan_archiv_path())
+        return True
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def bauplan_archiv_lesen():
+    """Die archivierten Plaene. [] bei fehlender Datei, None bei UNLESBARER
+    (dann darf niemand die Datei ueberschreiben - sonst waeren Plaene weg)."""
+    pfad = bauplan_archiv_path()
+    if not os.path.exists(pfad):
+        return []
+    try:
+        with open(pfad, encoding="utf-8") as f:
+            alt = json.load(f) or []
+        return [p for p in alt if isinstance(p, dict)] if isinstance(alt, list) else None
+    except Exception:
+        return None
+
+
+def plaene_ins_archiv(data, ids, jetzt=None) -> int:
+    """VON HAND archivieren (emm949, Nutzer 15.11.2026: "gerne wuerde ich
+    Plaene archivieren und ausblenden koennen und bei Bedarf zurueckholen").
+    Verschiebt die genannten ERLEDIGTEN Plaene ins Archiv - ein Buendel nimmt
+    seine Mitglieder (`quellen`) mit. NICHT verschoben wird ein Plan, der
+    nicht erledigt ist oder den ein verbleibender Plan als Quelle nennt.
+    Erst wenn die Archivdatei sicher steht, verlassen die Plaene die
+    Settings (Speichern macht der Aufrufer)."""
+    import time as _t
+    jetzt = jetzt if jetzt is not None else _t.time()
+    plans = list(data.get("bau_saved_plans") or [])
+    s = {str(i) for i in (ids or [])}
+    for p in plans:
+        if str(p.get("id")) in s:
+            s |= {str(q) for q in (p.get("quellen") or [])}
+    s = {str(p.get("id")) for p in plans
+         if str(p.get("id")) in s and p.get("done_manual")}
+    while True:
+        halter = set()
+        for p in plans:
+            if str(p.get("id")) not in s:
+                halter |= {str(q) for q in (p.get("quellen") or [])}
+        frei = s - halter
+        if frei == s:
+            break
+        s = frei
+    if not s:
+        return 0
+    alt = bauplan_archiv_lesen()
+    if alt is None:
+        return 0
+    for p in plans:
+        if str(p.get("id")) in s:
+            q = dict(p)
+            q["archiviert_ts"] = jetzt
+            alt.append(q)
+    if not _archiv_schreiben(alt):
+        return 0
+    data["bau_saved_plans"] = [p for p in plans if str(p.get("id")) not in s]
+    for k in ("bau_plan_reihenfolge", "bau_plan_eigene_folge", "bau_plan_sortierung"):
+        if isinstance(data.get(k), list):
+            data[k] = [x for x in data[k] if str(x) not in s]
+    return len(s)
+
+
+def plaene_aus_archiv(data, ids, speichern=None) -> int:
+    """Archivierte Plaene ZURUECKHOLEN (emm949). Ein Buendel bringt seine
+    Mitglieder mit. Reihenfolge gegen Verlust: erst stehen die Plaene wieder
+    in den Settings (und `speichern(data)` ist gelaufen), DANN verlassen sie
+    die Archivdatei - bricht es dazwischen ab, steht ein Plan doppelt, nie
+    gar nicht. Was schon in den Settings steht, wird nicht verdoppelt."""
+    alt = bauplan_archiv_lesen()
+    if not alt:
+        return 0
+    s = {str(i) for i in (ids or [])}
+    for p in alt:
+        if str(p.get("id")) in s:
+            s |= {str(q) for q in (p.get("quellen") or [])}
+    holen = [p for p in alt if str(p.get("id")) in s]
+    if not holen:
+        return 0
+    plans = list(data.get("bau_saved_plans") or [])
+    da = {str(p.get("id")) for p in plans}
+    for p in holen:
+        if str(p.get("id")) in da:
+            continue
+        q = dict(p)
+        q.pop("archiviert_ts", None)
+        plans.append(q)
+        da.add(str(p.get("id")))
+    data["bau_saved_plans"] = plans
+    if speichern is not None:
+        speichern(data)
+    weg = {str(p.get("id")) for p in holen}
+    _archiv_schreiben([p for p in alt if str(p.get("id")) not in weg])
+    return len(holen)
 
 
 def _nach_migrationen(data: dict) -> dict:
@@ -1062,17 +1188,17 @@ def _nach_migrationen(data: dict) -> dict:
             _migrated = True
         except Exception:
             pass
-    # ERLEDIGTE PLAENE ARCHIVIEREN (emm388, laeuft bei jedem Laden):
-    # done_manual ohne Zeitstempel bekommt ihn JETZT (die 30 Tage zaehlen ab
-    # heute - nie rueckwirkend raten), danach wandern faellige ins Archiv.
+    # done_manual ohne Zeitstempel bekommt ihn JETZT (nie rueckwirkend raten).
+    # KEIN AUTOMATISCHES ARCHIVIEREN MEHR (emm949, Nutzer 15.11.2026: "geht
+    # das automatisch? das mag ich nicht") - emm388 schob erledigte Plaene
+    # nach 30 Tagen von selbst ins Archiv; ab jetzt nur noch von Hand
+    # (`plaene_ins_archiv`, Knopf "Archive" auf der Karte).
     try:
         import time as _t_arch
         for _p in (data.get("bau_saved_plans") or []):
             if _p.get("done_manual") and not _p.get("done_ts"):
                 _p["done_ts"] = _t_arch.time()
                 _migrated = True
-        if plaene_archivieren(data):
-            _migrated = True
     except Exception:
         pass
     if _migrated:

@@ -86,7 +86,7 @@ def _realistic_build_qty(sell_price):
 # ---- universe / current prices ---------------------------------------------
 def build_snapshot(progress=None, region: int = config.FORGE_REGION,
                    should_cancel=None, station: int = None,
-                   hub_label: str = None) -> list:
+                   hub_label: str = None, hub_id: int = None) -> list:
     """Page through every sell+buy order in a region, aggregate per type_id.
     If 'station' is given, only orders AT that station are counted, so the scan
     reflects the actual trade hub (Jita 4-4, Amarr EFA, …) instead of the whole
@@ -235,7 +235,7 @@ def build_snapshot(progress=None, region: int = config.FORGE_REGION,
     if should_cancel and should_cancel():
         return []
     rows = list(agg.values())
-    store.save_snapshot(rows, region)
+    store.save_snapshot(rows, region, hub_id=hub_id)
     if hub_label:
         store.set_scan_label(hub_label)
     return rows

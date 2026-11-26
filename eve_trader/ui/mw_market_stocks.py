@@ -279,8 +279,10 @@ class MarketStocks:
         # Doppelklick springt zur Karte, Kopfklick sortiert (manuell -
         # die Kosten-Zellen sind Texte wie "37,234,988 ISK", Qt wuerde
         # sie als Strings sortieren).
-        self.ms_docs.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.ms_docs.customContextMenuRequested.connect(self._ms_docs_menue)
+        # RECHTSKLICK MIT "Copy" (emm1048): seit die Seite im Industry-Reiter
+        # haengt, gilt auch fuer diese Tabelle die Zusage "jede Tabelle hat
+        # Rechtsklick-Copy" (b135) - vorher fehlte es hier.
+        kopier_menue(self.ms_docs, self._ms_docs_menue)
         self.ms_docs.cellDoubleClicked.connect(self._ms_doc_zeigen)
         # EIN KLICK OEFFNET DIE DOCTRINE LINKS (emm932).
         self.ms_docs.cellClicked.connect(
@@ -317,60 +319,14 @@ class MarketStocks:
             "fees and the build cost. Items without a price there use "
             "the Jita sell price instead - the note column says so."))
         rv2.addWidget(self.ms_docs, 1)
-        self.ms_multi_btn = QPushButton(
-            " " + t("Selected doctrines → one multi build plan"))
-        self.ms_multi_btn.setIcon(icons.icon("package"))
-        self.ms_multi_btn.setCursor(Qt.PointingHandCursor)
-        self.ms_multi_btn.setToolTip(t(
-            "Select one or more doctrines in the list (Ctrl/Shift) and "
-            "turn everything they are missing into ONE multi build "
-            "plan. Same rules as per doctrine: unticked, faction-buy "
-            "and no-recipe items are named and left out."))
-        self.ms_multi_btn.clicked.connect(self._ms_multiplan_auswahl)
-        _kn933 = QHBoxLayout()
-        _kn933.addWidget(self.ms_multi_btn, 0)
-        # BAU-RANGLISTE (emm933, Nutzer 14.11.2026: Idee 4 - "ja").
-        self.ms_rang_btn = QPushButton(" " + t("Build ranking"))
-        self.ms_rang_btn.setIcon(icons.icon("trophy"))
-        self.ms_rang_btn.setCursor(Qt.PointingHandCursor)
-        self.ms_rang_btn.setToolTip(t(
-            "All items of all doctrines, ranked by build profit per unit "
-            "times the missing quantity - what earns most when you fill "
-            "the hub. Needs \u201eFetch market\u201c."))
-        self.ms_rang_btn.clicked.connect(lambda: self._ms_rangliste_zeigen())
-        _kn933.addWidget(self.ms_rang_btn, 0)
-        _kn933.addStretch(1)
-        rv2.addLayout(_kn933)
-        # SPRUNG ZUR INDUSTRIE (emm860, Nutzer: "haette ich gerne das
-        # Die Rechte Sidebar von Industry mitkommt, und zwar ... My
-        # Buildplans, Industry Jobs, Stock Locations, Structures").
-        # Die Seiten LEBEN im Industry-Reiter (ein Qt-Widget hat genau
-        # einen Platz) - statt einer Kopie springen diese Knoepfe mit
-        # EINEM Klick dorthin: Reiter wechseln + Seite waehlen,
-        # derselbe Weg wie die Industry-Rail selbst (_bau_nav).
-        _ue3 = QLabel(t("INDUSTRY"))
-        _ue3.setStyleSheet(f"color:{theme.MUTED}; font-weight:800; "
-                           f"padding-top:6px;")
-        rv2.addWidget(_ue3)
-        from PySide6.QtWidgets import QGridLayout as _QG860
-        _ig = _QG860()
-        _ig.setHorizontalSpacing(6)
-        _ig.setVerticalSpacing(6)
-        self._ms_ind_knoepfe = []
-        for _i860, (_txt, _ikn, _seite) in enumerate((
-                (t("My build plans"), "copy", 2),
-                (t("Industry jobs"), "clock", 4),
-                (t("Stock locations"), "map", 6),
-                (t("Structures"), "factory", 3))):
-            _kn = QPushButton(" " + _txt)
-            _kn.setIcon(icons.icon(_ikn))   # b55: Symbolpflicht
-            _kn.setCursor(Qt.PointingHandCursor)
-            _kn.setToolTip(t("Jumps to this page in the Industry tab."))
-            _kn.clicked.connect(
-                lambda _c=False, s=_seite: self._ms_industrie_sprung(s))
-            _ig.addWidget(_kn, _i860 // 2, _i860 % 2)
-            self._ms_ind_knoepfe.append((_kn, _seite))
-        rv2.addLayout(_ig)
+        # UNTER DER UEBERSICHT STEHT NICHTS MEHR (emm1009, Nutzer 23.11.2026:
+        # "die knoepfe industry jobs, my buildplans und stock locations
+        # structures sind nicht noetig, bitte komplett entfernen. Selected
+        # Doctrines one multi build plan auch entfernen, Buildranking wer
+        # braucht das? keiner, entfernen"). HEBT emm853 (Sammel-Knopf),
+        # emm860 (vier Industry-Sprungknoepfe) und emm933 (Rangliste) auf.
+        # Der Multiplan fuer markierte Doctrinen bleibt im Rechtsklick der
+        # Uebersicht; die Rangliste hat keinen Zugang mehr.
 
         split = QSplitter(Qt.Horizontal)
         split.addWidget(scroll)
@@ -398,7 +354,11 @@ class MarketStocks:
 
         # NAME (emm919, Nutzer 14.11.2026: "eigentlich auch ein nicht
         # passender Name"): der Reiter fuellt Doktrinen am Markt auf.
-        tab_icon(self.tabs, w, t("Doctrines (Beta)"), "clipboard")
+        # SEITE IM INDUSTRY-REITER STATT EIGENEM HAUPTREITER (emm1048, Muster
+        # Assets emm887). Der Knopf dazu sitzt in der rechten Leiste und
+        # heisst "Doctrines" (ohne Beta, emm1050).
+        self.b_stack.addWidget(w)               # 8 - Doctrines
+        self._ms_w = w
         self._ms_markt = None
         self._ms_worker = None
         # Doctrine-Schaetzungen (emm853): {doc_id: dict|None}, dazu eine
@@ -1118,6 +1078,76 @@ class MarketStocks:
         kopf.addWidget(_del936, 0)
         card._ren_kn, card._del_kn = _ren936, _del936   # b-Suite
         v.addLayout(kopf)
+        # KNOEPFE FUER DIE GANZE DOCTRINE (emm965, Nutzer 21.11.2026: "was
+        # mir fehlt sind diese knoepfe Doctrine uebergreifend fuer ALLE
+        # schiffe in der Doctrine ... somit kann ich alles was fehlt oder
+        # gebraucht wird direkt einkaufen in Jita und nach RD- bringen. oder
+        # halt bauen"). DIESELBEN zwei Handler wie je Schiff (Regel 9) -
+        # sie nehmen ohnehin eine Liste: gleiche Items ueber mehrere Schiffe
+        # werden addiert, abgewaehlte Zeilen bleiben draussen.
+        card._alle_multi_kn = card._alle_buy_kn = None
+        if docs:
+            _alle965 = QHBoxLayout()
+            _alle965.setSpacing(8)
+            _lbl965 = QLabel(t("All ships of this doctrine:"))
+            _lbl965.setStyleSheet(f"color:{theme.MUTED};")
+            _alle965.addWidget(_lbl965, 0)
+            _am965 = QPushButton(" " + t("Multi build plan (all ships)"))
+            _am965.setIcon(icons.icon("package"))
+            _am965.setCursor(Qt.PointingHandCursor)
+            _am965.setToolTip(t(
+                "One multi build plan for everything ticked and missing "
+                "across ALL ships of this doctrine."))
+            _am965.clicked.connect(
+                lambda _c=False, _d=list(docs): self._ms_multiplan_docs(_d))
+            _ab965 = QPushButton(" " + t("Copy missing (all ships, multibuy)"))
+            _ab965.setIcon(icons.icon("clipboard"))
+            _ab965.setCursor(Qt.PointingHandCursor)
+            _ab965.setToolTip(t(
+                "Copies everything ticked and missing across ALL ships of "
+                "this doctrine as Name<TAB>quantity - the same item on "
+                "several ships is added up. Paste straight into EVE's "
+                "multibuy."))
+            _ab965.clicked.connect(
+                lambda _c=False, _d=list(docs): self._ms_multibuy(_d))
+            _aw966 = QPushButton(" " + t("Missing \u2192 shopping list (all ships)"))
+            _aw966.setIcon(icons.icon("cart"))
+            _aw966.setCursor(Qt.PointingHandCursor)
+            _aw966.setToolTip(t(
+                "Puts everything ticked and missing across ALL ships of this "
+                "doctrine on the shopping list - the same item on several "
+                "ships is added up."))
+            _aw966.clicked.connect(
+                lambda _c=False, _d=list(docs): self._ms_in_den_wagen(_d))
+            card._alle_wagen_kn = _aw966                  # b-Suite
+            # AUSWAHL-HELFER FUER DIE GANZE DOCTRINE (emm968, Nutzer "4 ja")
+            # - eigene Zeile, dieselbe Regel wie je Schiff.
+            _alle968 = QHBoxLayout()
+            _alle968.setSpacing(8)
+            _aj968 = QPushButton(" " + t("Tick only what is cheaper at Jita (all ships)"))
+            _aj968.setIcon(icons.icon("globe"))
+            _aj968.setCursor(Qt.PointingHandCursor)
+            _aj968.clicked.connect(
+                lambda _c=False, _d=list(docs): self._ms_auswahl_docs("jita", _d))
+            _abb968 = QPushButton(" " + t("Tick only what is worth building (all ships)"))
+            _abb968.setIcon(icons.icon("hammer"))
+            _abb968.setCursor(Qt.PointingHandCursor)
+            _abb968.clicked.connect(
+                lambda _c=False, _d=list(docs): self._ms_auswahl_docs("bau", _d))
+            card._alle_auswahl_kn = (_aj968, _abb968)     # b-Suite
+            # ZWEI AUFKLAPP-KNOEPFE STATT FUENF (emm1008, Nutzer 23.11.2026:
+            # "die ganzen knoepfe in Doctrine tab sind mir zu unsortiert zu
+            # unuebersichtlich zu viel"). Die fuenf Knoepfe leben weiter
+            # (Handler, Tooltips, b-Suite) - nur unsichtbar hinter dem Menue.
+            card._alle_menue_kn = (
+                self._ms_menue_knopf(t("Select"), "check", [_aj968, _abb968]),
+                self._ms_menue_knopf(t("Buildplan/Shopping"), "cart",
+                                     [_am965, _ab965, _aw966]))
+            for _mk1008 in card._alle_menue_kn:
+                _alle965.addWidget(_mk1008, 0)
+            _alle965.addStretch(1)
+            v.addLayout(_alle965)
+            card._alle_multi_kn, card._alle_buy_kn = _am965, _ab965   # b-Suite
         card._leer_lbl = None
         if not docs:
             # LEERE DOCTRINE: sagen, wie es weitergeht, und den Knopf
@@ -1181,8 +1211,9 @@ class MarketStocks:
         v.setSpacing(4)
         kopf = QHBoxLayout()
         kopf.setSpacing(8)
-        pfeil = QPushButton("▸ " + (doc.get("name") or "?"))
+        pfeil = QPushButton(doc.get("name") or "?")
         pfeil.setCheckable(True)
+        icons.klapp_setzen(pfeil, False)
         pfeil.setCursor(Qt.PointingHandCursor)
         pfeil.setStyleSheet(
             f"QPushButton{{text-align:left; border:none; background:none; "
@@ -1324,7 +1355,6 @@ class MarketStocks:
         alle_an.setToolTip(t(
             "Ticks every position of this card again – the counterpart "
             "of „Untick fully covered“."))
-        kn_zeile.addWidget(alle_an, 0)
         self._ms_tickall_letzter = alle_an        # b-Suite
         voll_weg = QPushButton(" " + t("Untick fully covered"))
         voll_weg.setIcon(icons.icon("minus"))      # b55: Symbolpflicht
@@ -1333,7 +1363,6 @@ class MarketStocks:
             "Unticks every position that is already at 100% - what is "
             "left ticked is exactly your remaining work. You can still "
             "tick/untick every row by hand."))
-        kn_zeile.addWidget(voll_weg, 0)
         # DER WEG ZUM MULTIBAUPLAN SICHTBAR (emm853, Nutzer: "ich moechte
         # aber auch eine ganze doctrine ... zu einem Multibauplan
         # machen"). Die Mechanik gab es seit emm841 - aber nur im
@@ -1347,7 +1376,6 @@ class MarketStocks:
             "New multi build plan from ticked positions"))
         multi_kn.clicked.connect(
             lambda _c=False, d=doc: self._ms_multiplan(d))
-        kn_zeile.addWidget(multi_kn, 0)
         self._ms_multi_knopf_letzter = multi_kn   # b-Suite
         # KAUFEN STATT BAUEN (emm854): die Fehlmengen direkt als EVE-
         # Multibuy - fuer alles, was man nicht baut, der schnellste Weg.
@@ -1359,7 +1387,6 @@ class MarketStocks:
             "Name<TAB>quantity - paste straight into EVE's multibuy."))
         buy_kn.clicked.connect(
             lambda _c=False, d=doc: self._ms_multibuy([d]))
-        kn_zeile.addWidget(buy_kn, 0)
         self._ms_buy_knopf_letzter = buy_kn       # b-Suite
         # DAS GANZE SCHIFF INS SPIEL (emm946, Nutzer 15.11.2026: "keinen
         # button um das ganze schiff ingame zu oeffnen im fitting Fenster,
@@ -1387,6 +1414,7 @@ class MarketStocks:
         # (emm947). Vorher stand hier nur ein grauer Satz, der Schalter
         # war im Dialog und im Rechtsklick versteckt.
         fac_cb = QCheckBox(t("Build faction items myself (LP blueprints)"))
+        fac_cb.setIcon(icons.icon("hammer"))     # emm1048 (b55: Symbol)
         fac_cb.setChecked(bool(doc.get("faction_bauen")))
         fac_cb.setToolTip(t(
             "Some players bought faction blueprints with loyalty points. "
@@ -1399,6 +1427,43 @@ class MarketStocks:
         self._ms_fac_haken_letzter = fac_cb       # b-Suite
         kn_zeile.addStretch(1)
         kv.addLayout(kn_zeile)
+        # ZWEITE ZEILE (emm966, Nutzer 21.11.2026): zwei Auswahl-Helfer und
+        # der Weg in den Einkaufswagen. Eigene Zeile - die erste ist voll.
+        nur_jita = QPushButton(" " + t("Tick only what is cheaper at Jita"))
+        nur_jita.setIcon(icons.icon("globe"))      # b55: Symbolpflicht
+        nur_jita.setCursor(Qt.PointingHandCursor)
+        nur_jita.setToolTip(t(
+            "Ticks only the positions that are cheaper to buy at Jita than "
+            "at this trade hub (the column \u201echeaper at\u201c, freight "
+            "included when you set a rate) and unticks the rest. What stays "
+            "ticked is what you haul in for a profit."))
+        nur_bau = QPushButton(" " + t("Tick only what is worth building"))
+        nur_bau.setIcon(icons.icon("hammer"))      # b55: Symbolpflicht
+        nur_bau.setCursor(Qt.PointingHandCursor)
+        nur_bau.setToolTip(t(
+            "Ticks only the positions whose build cost is below the Jita "
+            "price (delivered, when you set a freight rate) and unticks the "
+            "rest. Items without a recipe or without a price stay unticked."))
+        wagen_kn = QPushButton(" " + t("Missing \u2192 shopping list"))
+        wagen_kn.setIcon(icons.icon("cart"))       # b55: Symbolpflicht
+        wagen_kn.setCursor(Qt.PointingHandCursor)
+        wagen_kn.setToolTip(t(
+            "Puts every ticked position that is missing on the shopping "
+            "list, with the missing quantity. Items already on the list "
+            "stay as they are."))
+        wagen_kn.clicked.connect(
+            lambda _c=False, d=doc: self._ms_in_den_wagen([d]))
+        self._ms_auswahl_knoepfe_letzte = (nur_jita, nur_bau, wagen_kn)   # b-Suite
+        # ZWEI AUFKLAPP-KNOEPFE STATT SIEBEN (emm1008): "Select" (was ist
+        # angehakt) und "Missing" (wohin mit dem Fehlenden). Daneben bleiben
+        # nur "Copy fit" und der Faction-Haken; die zweite Knopfzeile ist weg.
+        _sel1008 = self._ms_menue_knopf(
+            t("Select"), "check", [alle_an, voll_weg, nur_jita, nur_bau])
+        _mis1008 = self._ms_menue_knopf(
+            t("Buildplan/Shopping"), "cart", [multi_kn, buy_kn, wagen_kn])
+        kn_zeile.insertWidget(0, _sel1008, 0)
+        kn_zeile.insertWidget(1, _mis1008, 0)
+        self._ms_menue_knoepfe_letzte = (_sel1008, _mis1008)            # b-Suite
 
         # SECHS SPALTEN STATT ZWOELF (emm874, Nutzer 08.11.2026 zum
         # Screenshot: "meiner meinung nach viel zu viel Zahlen"). Er hat
@@ -1420,7 +1485,7 @@ class MarketStocks:
         # nummern der Rechnung, Sortierung und Pruefungen unveraendert.
         tbl = QTableWidget(0, 10)
         tbl.setHorizontalHeaderLabels([
-            "", t("Item"), t("missing"), t("cost"), t("cheaper at"),
+            "", t("Item"), t("missing"), t("cost (missing)"), t("cheaper at"),
             t("on book"), t("Trades/day"), t("Units/day"),
             t("Build profit/unit"), t("per ship")])
         tbl.horizontalHeader().moveSection(9, 1)
@@ -1734,12 +1799,18 @@ class MarketStocks:
             self._ms_render()
         alle_an.clicked.connect(_alle_an)
 
+        # EIN Weg fuer das einzelne Schiff und die ganze Doctrine (emm968,
+        # Regel 9): `_ms_auswahl_docs`.
+        nur_jita.clicked.connect(
+            lambda _c=False, d=doc: self._ms_auswahl_docs("jita", [d]))
+        nur_bau.clicked.connect(
+            lambda _c=False, d=doc: self._ms_auswahl_docs("bau", [d]))
+
         koerper.setVisible(False)
         v.addWidget(koerper)
 
         def _klappen(on):
-            pfeil.setText(("▾ " if on else "▸ ")
-                          + (doc.get("name") or "?"))
+            icons.klapp_setzen(pfeil, on, doc.get("name") or "?")
             koerper.setVisible(on)
             # ZUSTAND UEBERLEBT DEN NEUBAU (emm841): _ms_render baut die
             # Karten bei jedem Haken/Regelwechsel/Abruf neu - ohne das
@@ -1837,25 +1908,18 @@ class MarketStocks:
         # DASSELBE MENUE WIE MARKET STATS (emm930): Markt im Spiel,
         # Einkaufsliste, Bauplan, Multibauplan - EINE Stelle
         # (`_ms_item_menue_bauen`), "Copy" kommt ueber kopier_menue.
+        # MEHRFACHAUSWAHL -> FAVORITEN auch hier (emm981); die type_id steht
+        # in Spalte 1. Der Materials-Tab des Bauplans bleibt bewusst ohne
+        # (Nutzer 22.11.2026: "nicht im Bauplan, da gehts ums bauen nicht
+        # ums traden").
         menu, akt_map = self._ms_item_menue_bauen(
-            int(tid), zelle.text(), menu=kontext_menue(tbl))
+            int(tid), zelle.text(), menu=kontext_menue(tbl),
+            tabelle=tbl, zeile=r, spalte=1)
         self._ms_pos_menu_letztes = menu          # b-Suite
         akt = menu.exec(tbl.viewport().mapToGlobal(pos))
         if akt is not None and akt in akt_map:
             self._ms_item_menue_ausfuehren(akt_map[akt], int(tid),
                                            zelle.text())
-
-    def _ms_industrie_sprung(self, seite):
-        """Ein Klick von Market Stocks zur Industry-Seite (emm860):
-        Reiter wechseln und DIESELBE Navigation nutzen wie die
-        Industry-Rail (_bau_nav, Regel 9)."""
-        _bw = (getattr(self, "_tab_widget", None) or {}).get("build")
-        if _bw is not None:
-            self.tabs.setCurrentWidget(_bw)
-        try:
-            self._bau_nav(int(seite))
-        except Exception:
-            pass
 
     def _ms_alter_zeigen(self):
         """Die "data N min old"-Zeile lebendig halten (emm854): jede
@@ -1888,7 +1952,14 @@ class MarketStocks:
         blinken wenn man den Tab das erstma mal öffnen, da es sich
         anscheinend nicht vonalleine fetched"). Bewusst bei JEDEM
         Oeffnen ohne Daten (nicht nur dem ersten) und bewusst nur acht
-        Schlaege: ein Hinweis, kein Alarm."""
+        Schlaege: ein Hinweis, kein Alarm.
+
+        emm1014 (Nutzer 24.11.2026: "Fetch market bitte beim oeffnen von
+        Doctrines automatisch ausfuehren"): ZUERST versucht MoMa den Abruf
+        SELBST. Geblinkt wird nur noch, wo das nicht geht (kein Hub, keine
+        Doctrine)."""
+        if self._ms_auto_abruf():
+            return
         if getattr(self, "_ms_markt", None):
             return
         if getattr(self, "_ms_blink_timer", None) is not None:
@@ -1912,6 +1983,35 @@ class MarketStocks:
         self._ms_blink_timer = tm
         tm.start()
         _tick()
+
+    # Juenger als das gilt der Marktstand beim Oeffnen als frisch (emm1014):
+    # wer zwischen den Reitern hin- und herklickt, loest nicht jedes Mal
+    # einen Struktur-Abruf aus. Der Knopf holt jederzeit sofort neu.
+    MS_AUTO_ABRUF_ALT_S = 600
+
+    def _ms_auto_abruf(self):
+        """Beim Oeffnen des Reiters den Markt SELBST holen (emm1014).
+        True = ein Abruf wurde gestartet oder laeuft schon. Still, ohne
+        Meldung: fehlt Hub oder Doctrine, passiert nichts (dafuer blinkt
+        der Knopf wie bisher) - `_ms_fetch` wuerde dort einen Hinweis
+        aufblitzen lassen, den hier niemand bestellt hat."""
+        if not hasattr(self, "ms_fetch_btn"):
+            return False
+        if not self.ms_fetch_btn.isEnabled():
+            return True                              # laeuft schon
+        _m = getattr(self, "_ms_markt", None) or {}
+        try:
+            _alter = time.time() - float(_m.get("ts") or 0)
+        except (TypeError, ValueError):
+            _alter = None
+        if _m and _alter is not None and _alter < self.MS_AUTO_ABRUF_ALT_S:
+            return False                             # frisch genug
+        if not isinstance(self.ms_hub.currentData(), dict):
+            return False
+        if not doctrinen.alle_items(self._ms_state()["doctrinen"]):
+            return False
+        self._ms_fetch()
+        return True
 
     def _ms_blink_stopp(self):
         tm = getattr(self, "_ms_blink_timer", None)
@@ -2003,7 +2103,7 @@ class MarketStocks:
                    if _it936 is not None else "")
         if not docs and not _ord936:
             return
-        menu = QMenu(self.ms_docs)
+        menu = kontext_menue(self.ms_docs)     # traegt "Copy" mit (emm1048)
         a_multi = a_buy = a_karte = a_ren = a_del = None
         if docs:
             a_multi = menu.addAction(icons.icon("package"),
@@ -2167,6 +2267,158 @@ class MarketStocks:
                  for p in erg["positionen"]
                  if int(p["tid"]) not in abgew]
         return erg, paare
+
+    def _ms_auswahl_docs(self, art, docs):
+        """Auswahl-Helfer fuer EIN Schiff oder ALLE Schiffe einer Doctrine
+        (emm966/emm968): setzt je Schiff die Haken nach `_ms_auswahl_regel`.
+        -> (angehakt, gesamt) oder None, wenn nichts verglichen werden kann
+        (kein Marktabruf / kein Frachtsatz fuer den Jita-Vergleich)."""
+        markt = getattr(self, "_ms_markt", None) or {}
+        if not markt.get("ts"):
+            self._flash_tip(t("Press \u201eFetch market\u201c first \u2013 "
+                              "without prices there is nothing to compare."))
+            return None
+        # OHNE FRACHTSATZ vergleicht die Spalte "cheaper at" gar nicht
+        # (marktdeckung.fracht_vergleich: dann steht ueberall "here",
+        # grau). Der Helfer wuerde ALLES abhaken - lieber sagen, was fehlt.
+        if art == "jita" and self._fracht_satz() <= 0:
+            self._flash_tip(t(
+                "Set a freight rate first (sell list or Regional Trading) "
+                "\u2013 without it Jita and this hub cannot be compared."))
+            return None
+        st = self._ms_state()
+        jita = markt.get("jita") or {}
+        _an_n = _alle_n = 0
+        for doc in (docs or []):
+            erg = marktdeckung.doctrine_deckung(
+                doc, markt.get("buch") or {}, jita,
+                float(st.get("aufschlag_pct") or 30))
+            pos = erg["positionen"]
+            try:
+                m3map = self._fracht_volumen([int(p["tid"]) for p in pos])
+            except Exception:
+                m3map = {}
+            _an = self._ms_auswahl_regel(art, pos, jita, m3map,
+                                         markt.get("baukosten") or {})
+            st["abgewaehlt"][str(doc.get("id"))] = sorted(
+                int(p["tid"]) for p in pos if int(p["tid"]) not in _an)
+            _an_n += len(_an)
+            _alle_n += len(pos)
+        self._ms_speichern()
+        self._ms_render()
+        self._flash_tip(t("{n} of {m} position(s) ticked.").format(
+            n=_an_n, m=_alle_n))
+        return _an_n, _alle_n
+
+    def _ms_auswahl_regel(self, art, positionen, jita, m3map, baukosten):
+        """Welche Positionen bleiben ANGEHAKT? (emm966) -> Menge der type_ids.
+
+        art "jita": was laut Spalte "cheaper at" in JITA guenstiger ist
+            (Nutzer 21.11.2026: "dann kaufe ich nur was in jita guenstiger
+            ist und in RD teurer damit ich gewinn mache"). DERSELBE
+            Vergleich wie die Spalte (`_ms_fracht_zeile`, Regel 9) - mit
+            Fracht, wenn ein Satz gesetzt ist. Gibt es am Hub gar kein
+            Angebot, ist Jita die einzige Quelle und zaehlt mit.
+        art "bau": was sich zu BAUEN lohnt - Baukosten unter dem
+            Jita-Preis (frei Haus, wenn ein Frachtsatz gesetzt ist). Ohne
+            Rezept/Baukosten oder ohne Jita-Preis: nicht angehakt (kein
+            Vergleich moeglich - nichts wird erfunden)."""
+        an = set()
+        for p in (positionen or []):
+            tid = int(p["tid"])
+            _fr, _vg, _lk = self._ms_fracht_zeile(p, jita, m3map)
+            if art == "jita":
+                if (_vg or {}).get("guenstiger") == "jita":
+                    an.add(tid)
+            elif art == "bau":
+                _bk = (baukosten or {}).get(tid)
+                _kauf = (_vg or {}).get("jita_frei_haus") or (jita or {}).get(tid)
+                try:
+                    if _bk and _kauf and float(_bk) < float(_kauf):
+                        an.add(tid)
+                except (TypeError, ValueError):
+                    pass
+        return an
+
+    def _ms_menue_knopf(self, titel, symbol, knoepfe):
+        """EIN Aufklapp-Knopf fuer mehrere Aktionen (emm1008) - das Muster
+        von "Tools" im Bauplan. `knoepfe` sind die bisherigen QPushButtons:
+        sie bleiben als (unsichtbare) Kinder am Leben und behalten Handler,
+        Tooltip und Sperr-Zustand; ein Menue-Eintrag DRUECKT seinen Knopf.
+        So gibt es weiter genau EINEN Weg je Aktion (Regel 9)."""
+        kn = QPushButton(" " + titel)
+        kn.setIcon(icons.icon(symbol))
+        kn.setCursor(Qt.PointingHandCursor)
+        menue = QMenu(kn)
+        menue.setToolTipsVisible(True)
+        paare = []
+        for k in knoepfe:
+            k.setParent(kn)
+            k.hide()
+            a = menue.addAction(k.icon(), k.text().strip())
+            a.triggered.connect(lambda _c=False, _k=k: _k.click())
+            paare.append((a, k))
+
+        def _abgleichen():
+            for a, k in paare:
+                a.setEnabled(k.isEnabled())
+                a.setToolTip(k.toolTip())
+        menue.aboutToShow.connect(_abgleichen)
+        _abgleichen()
+        kn.setMenu(menue)
+        kn._ms_paare = paare
+        return kn
+
+    def _ms_in_den_wagen(self, docs):
+        """Fehlmengen (nach Haken) auf die EINKAUFSLISTE (emm966, Nutzer:
+        "punkt 1 ausfuehren"). Dieselbe Quelle wie Multibuy und Multiplan
+        (`_ms_fehl_paare`, Regel 9); gleiche Items ueber mehrere Schiffe
+        werden addiert. Was schon auf der Liste steht, bleibt unveraendert.
+        -> Anzahl neu hinzugefuegter Items."""
+        st = self._ms_state()
+        markt = getattr(self, "_ms_markt", None) or {}
+        bedarf966 = {}
+        for doc in docs:
+            _erg, paare = self._ms_fehl_paare(doc, st, markt)
+            for tid, q in paare:
+                if q > 0:
+                    bedarf966[tid] = bedarf966.get(tid, 0) + q
+        if not bedarf966:
+            self._flash_tip(t("Nothing ticked is missing - there is "
+                              "nothing to build."))
+            return 0
+        namen = store.cached_names(sorted(bedarf966))
+        schon = self._cart_ids()
+        neu = drauf = namenlos966 = 0
+        for tid, q in sorted(bedarf966.items()):
+            nm = (namen or {}).get(int(tid))
+            if not nm:
+                namenlos966 += 1
+                continue
+            if int(tid) in schon:
+                drauf += 1
+                continue
+            store.add_shopping(int(tid), nm, int(q), 0, 0)
+            neu += 1
+        if neu:
+            self._render_shopping()
+            self.shopping_load_prices()
+        # EINKAUFSLISTE LINKS EINBLENDEN (emm1007, Nutzer 23.11.2026: "Dein
+        # Vorschlag von Doctrines gefaellt mir sehr gut"). Der Doctrines-
+        # Reiter hat seit emm1005 die kurze Leiste ohne "Shopping list" - wer
+        # hier etwas darauf legt, will dorthin. Derselbe Merker wie im
+        # Bauplan (emm958); auch wenn alles schon darauf stand.
+        if neu or drauf:
+            self._nav_shopping_bau_merken()
+        _zusatz = ""
+        if drauf:
+            _zusatz += " " + t("{n} were already on the list.").format(n=drauf)
+        if namenlos966:
+            _zusatz += " " + t("({n} without a resolved name skipped)")\
+                .format(n=namenlos966)
+        self._flash_tip(t("{n} item(s) put on the shopping list.").format(n=neu)
+                        + _zusatz)
+        return neu
 
     def _ms_multibuy(self, docs):
         """Fehlmengen (nach Haken) als EVE-Multibuy in die
@@ -2343,24 +2595,44 @@ class MarketStocks:
             self._ms_rec_worker854 = w
             w.start()
             return
-        sammel, namen_akk, raus, kauf_tids = {}, {}, [], set()
-        for doc in docs:
-            erg, paare = self._ms_fehl_paare(doc, st, markt)
-            namen = store.cached_names(
-                [p["tid"] for p in erg["positionen"]])
-            items, _raus, _kauf = self._ms_bau_items(doc, paare, namen,
-                                                     rec=rec)
-            raus += [x for x in _raus if x not in raus]
-            # KAUF-POSTEN KOMMEN MIT (emm859, Nutzer: "ja aber wenn nur
-            # kaufen, muss das in die Einkaufsliste vom Multiplan
-            # selber"): als Enden ohne Rezept kauft der Plan sie und
-            # fuehrt sie in seiner Einkaufsliste - vorher wurden sie
-            # nur GENANNT und fehlten im Plan.
-            for x in items + _kauf:
-                sammel[x["tid"]] = sammel.get(x["tid"], 0) + x["qty"]
-                namen_akk[x["tid"]] = x["name"]
-                if x.get("kauf"):
-                    kauf_tids.add(x["tid"])
+        raus = []
+
+        def _sammeln951(markt_x):
+            """Posten aller Doctrinen zu EINER Liste - einmal gegen den
+            Markt ("was fehlt"), einmal gegen ein leeres Buch ("ganze
+            Schiffe", emm951): dieselbe Rechnung, nur andere Eingabe."""
+            sammel, namen_akk, kauf_tids = {}, {}, set()
+            for doc in docs:
+                erg, paare = self._ms_fehl_paare(doc, st, markt_x)
+                namen = store.cached_names(
+                    [p["tid"] for p in erg["positionen"]])
+                items9, _raus, _kauf = self._ms_bau_items(doc, paare, namen,
+                                                          rec=rec)
+                raus.extend(x for x in _raus if x not in raus)
+                # KAUF-POSTEN KOMMEN MIT (emm859, Nutzer: "ja aber wenn nur
+                # kaufen, muss das in die Einkaufsliste vom Multiplan
+                # selber"): als Enden ohne Rezept kauft der Plan sie und
+                # fuehrt sie in seiner Einkaufsliste - vorher wurden sie
+                # nur GENANNT und fehlten im Plan.
+                for x in items9 + _kauf:
+                    sammel[x["tid"]] = sammel.get(x["tid"], 0) + x["qty"]
+                    namen_akk[x["tid"]] = x["name"]
+                    if x.get("kauf"):
+                        kauf_tids.add(x["tid"])
+            return [{"tid": tid, "name": namen_akk[tid], "qty": q,
+                     "kauf": tid in kauf_tids}
+                    for tid, q in sorted(sammel.items())]
+
+        items = _sammeln951(markt)
+        # GANZE SCHIFFE: volle Zielmenge, als gaebe es am Hub nichts.
+        voll_items = _sammeln951({})
+        # WAS DER PLAN DANN SELBST ENTSCHEIDET (Nutzer-Vorgabe 17.11.2026:
+        # "erstelle ich einen Bauplan aus dem Doctrines Tab heraus ist der
+        # Buy endproducts that are Cheaper auf ON"). Faction folgt dem
+        # Haken der Schiffskarte: wer sie nicht selbst baut, kauft sie.
+        plan_felder = {
+            "enden_kauf_billig": True,
+            "enden_kauf_faction": any(not d.get("faction_bauen") for d in docs)}
         # KURZ (Nutzer 07.11.2026: "zu viel text"): die Kauf-Posten
         # stehen ja schon als "(buy)"-Zeilen IM Dialog - der Hinweis
         # erklaert nur noch das Etikett, ohne die Liste zu wiederholen.
@@ -2369,9 +2641,12 @@ class MarketStocks:
             hinweis = t("(buy) = bought, not built (no recipe, or "
                         "faction set to buy) – lands in the plan's "
                         "shopping list.")
-        items = [{"tid": tid, "name": namen_akk[tid], "qty": q,
-                  "kauf": tid in kauf_tids}
-                 for tid, q in sorted(sammel.items())]
+        if len(items) < 2 and len(voll_items) >= 2:
+            # Am Markt fehlt (fast) nichts - ganze Schiffe gehen trotzdem.
+            self._multi_neu_aus_auswahl(items, hinweis=hinweis,
+                                        voll_items=voll_items, voll_an=True,
+                                        plan_felder=plan_felder)
+            return
         if len(items) < 2:
             if raus:
                 self._flash_tip(hinweis,
@@ -2383,7 +2658,9 @@ class MarketStocks:
                 self._flash_tip(t("Nothing ticked is missing - there is "
                                   "nothing to build."))
             return
-        self._multi_neu_aus_auswahl(items, hinweis=hinweis)
+        self._multi_neu_aus_auswahl(items, hinweis=hinweis,
+                                    voll_items=voll_items,
+                                    plan_felder=plan_felder)
 
     # --------------------------------------------- Doctrine-Uebersicht
     def _ms_docs_fuellen(self, st, markt):
